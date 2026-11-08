@@ -908,7 +908,9 @@ bool RunTilemapSelfTest()
             // blob は手触りの合流 (snapshot v69: Scene 節に TimeControl の 6 語・FeelState・先行入力の窓) で再採取した。
             // WorldHash は手触りが内容ゲートなので不変
             constexpr uint64_t kBareWorldHash = 0x01DCBAE1E3D7C026ull;
-            constexpr uint64_t kBareBlobDigest = 0xA70D1424062E91CCull;
+            // M96 (粒子の fieldInfluence、snapshot v74) で再採取した: Particles 節が書く sizeof(ParticleEmitterComponent) が 4 バイト伸びた。
+            // 空の DFLD 節は上で除いてあるので、ほかの差は無い。Debug == Release
+            constexpr uint64_t kBareBlobDigest = 0xC22274C44F017EA4ull;
             check(bare.worldHash == kBareWorldHash, "tile gate: the world hash of a scene without a Tilemap equals the pre-M94k value");
             check(bare.sectionStripped && bare.blobDigest == kBareBlobDigest,
                   "tile gate: the snapshot bytes equal the pre-M94k blob plus the version word and one empty TM2D section");

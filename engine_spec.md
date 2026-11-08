@@ -3022,6 +3022,37 @@ scripted preset / hit-stop / slow / shake-and-stop, a bouncing `FeelTrigger` bal
 with ungated script-driven objects). Hit-stop is global (for a per-character stop use `AnimatorSetPause`, §10.14 A; the two compose: a global freeze holds `pauseTicks`). No fast-forward. The C# lane cannot play feels. The input buffer is
 covered by self tests, not by a replay job. Visuals and real rumble need the manual checklist (`docs/test_checklists.md`, M94).
 
+### 10.16 Disturbance field (M96, ADR-036)
+
+A grid field that the player's steps, attacks, explosions, enemies and wind actually disturb, and that fog, grass, water ripples, particles and snow / sand trails read. One field carries four channels: **flow** (always), **density**, **trail** (2D only) and **ripple** (2D only). Decision record: [`docs/adr/ADR-036-disturbance-field.md`](docs/adr/ADR-036-disturbance-field.md). Usage: [`docs/engine-feature-guide.md`](docs/engine-feature-guide.md).
+
+**State and ownership.** `Scene::Disturbance()` owns a `DisturbanceState` (at most **4 slots**, one per field, in ascending entity-index order; a 5th field is not simulated and warns once). The computation lives in stateless functions under `src/Engine/Engine/Disturbance/`. A field is a `DisturbanceFieldComponent` (TypeId 96, hash-relevant) with `shape` = `GroundLayer` (2D, a slab `[baseY, baseY + thickness]`, `cellsY` fixed at 1) or `Volume` (3D). Sources are `DisturbanceSourceComponent` (TypeId 97): `Moving` takes the velocity from a CharacterController, then a non-kinematic Rigidbody, then the position difference; `Constant` is a fan or smoke vent. Only entities that carry the component are sources (nothing becomes a source implicitly). The grid origin is an integer cell (`originCell × cellSize`); `followTarget` shifts it by whole cells once the target is `followMargin` cells away (cells that come in are at rest). A 2D layer with `followTerrain` stores a per-column base height (`columnBaseY`), baked from `SampleTerrainHeightWorld` when the field is (re)built and for the columns that enter on a follow shift; it is state, so a restore never re-bakes.
+
+**Where it runs (contract).** Phase 4 of the tick, after Fracture and before particles, only on a `stepSim` tick (so hit stop freezes it, like particles). Per field in entity-index order: sweep and initialise, follow shift, source injection (serial), queued impulses (serial; the queue is emptied after all fields were injected), velocity advection, relaxation toward the wind target, speed clamp, pressure projection (Jacobi, fixed `pressureIterations` from zero each tick), density advection, density / trail restore, one ripple step, range enforcement. Advection, projection, restore and ripple read the previous array and write only their own cell, and are split by rows with `jobs::ParallelRanges` (jobs on / off give the same hash). Injection of Radial impulses is treated as a divergence source in the projection. Arithmetic is `+ - × ÷ sqrt floor min max` only (decay is a keep rate per tick); `check_rules.ps1` rule 18 enforces it.
+
+**Queue rule.** `FieldAddImpulse` (C++ script ABI) and the animation event `"kind": "disturb"` push onto a queue of 256. Whatever is queued is consumed by the first field step after it was queued: from `Update` the same tick, from `LateUpdate` the next. A scene with no field drops the queue in that step. The queue is hash and snapshot state.
+
+**Hash and snapshot.** Content-gated: no slot and an empty queue fold nothing, so scenes without a field keep their hash streams. The `'DFLD'` section (after TM2D, before World) is always written (SimSnapshot **v76** now; v70 added the section and the two types, v71 solver fields, v72 Volume, v73 follow, v74 particles, v75 terrain-following layers, v76 terrain trails). Flow-y (Volume) and `columnBaseY` fold only when non-empty. Play start / stop and scene changes clear the state. `--hash-dump` prints a per-field subtotal.
+
+**Reading.** `FieldSample` (C++ and C#) interpolates bilinearly (trilinearly in 3D) at the call time: from `Update` the previous tick's result, from `LateUpdate` this tick's. Outside the grid it returns the rest state (flow = the field's wind target). 2D density includes the height profile `p(y)` used by the renderer. C# cannot write (`FieldAddImpulse` returns 0).
+
+**Handing to the renderer.** The Renderer layer receives a POD (`DisturbanceFieldUpload`) and never the state. 2D layers go into a `Texture2DArray` (`RGBA16F` = vx, vz, density, trail + `RG16F` = ripple height, column base-height offset); Volumes are up to four `Texture3D` (`RGBA16F`). The upload is skipped when the sequence number is unchanged. Constants shared with HLSL are covered by rule 9 (including the particle compute's aux slot `kParticleFieldAuxSrvSlot` = `MYE_DFLD_SRV_AUX` = 8).
+
+| Reader | How |
+|---|---|
+| Ground fog (2D) | Per pixel ray-march of the slab at fixed steps (`GroundFogComposite`, 10 composition sites); self-lit, optional per-field sun light (`fogSunLight`, no shadow) and local lights (`fogLocalLights`, at most 8, no shadow). Needs no froxel. Forward without a skybox gets a background-only full-screen pass |
+| Volume fog (3D) | Froxel injection of up to 4 Volumes. A view with the froxel off and an `autoFroxel` fog Volume runs a field-only mode (no global medium, analytic fog over the full range, god rays stay) |
+| Grass | `MyEngineSurface.hlsli` reserved textures + `MyeFieldSample`; `GrassField.surface.hlsl` bends along the flow |
+| Water | `water_surface.hlsl` and `WaterGerstner.surface.hlsl` add the ripple gradient to the normal; buoyancy is untouched |
+| Particles | `fieldInfluence × (flow − velocity)` as acceleration. CPU reads the state directly; GPU reads the last uploaded textures (one frame late); local-space emitters do not read |
+| Terrain trails | `forward_terrain` / `deferred_terrain` darken / tint by the trail and bend the normal; the collider is unchanged. Colour and strength live on `TerrainComponent` |
+
+**Not supported / limits.** Nothing is pushed physically (rigid bodies, cloth, ropes, aerodynamics, buoyancy and `SampleWind` are untouched). Sun light and local lights have no shadows. The trail is not advected. Base heights do not follow a collider that moves at run time. The slope does not steer the flow. Animation-event positions come from the previous tick's WorldMatrix (one tick late). A field that is 128² with all channels costs about 0.4 MB per snapshot (see ADR-036 for the time-travel effect).
+
+**Numbers.** ABI **v35 = 202 slots** (`FieldAddImpulse`, `FieldSample` appended after `SetFeelOutputScale`; `MyeFieldImpulse` 52 B, `MyeFieldSample` 32 B). SimSnapshot **v76**. TypeId **96 / 97**. check_rules **rule 18**.
+
+**Verification.** `MYE_SELFTEST_ONLY=disturbance` (fast) and `disturbancelong` (full), `Editor.exe --field-bench` (best-window timing and baked final hash), `--field-demo` (the fog plaza), the replay job `field` and jobs A/B, `tools\check_rules_selftest.ps1`. Manual items are in the M96 section of [`docs/test_checklists.md`](docs/test_checklists.md).
+
 ---
 
 ## 11. Debug/Release Consistency Policy
@@ -3050,6 +3081,7 @@ Eliminate cases in which the engine works in Debug but fails in Release, or vice
 | 14 | Line endings follow `.gitattributes`: the index holds LF for every text file, files declared `eol=crlf` (`.bat`, Visual Studio project files) are CRLF in the working tree, and no LF text file carries a CR (`docs/line-endings.md`) |
 | 15 | Raw D3D11 / DXGI types stay inside the rendering boundary of §6.3. Outside `src/Engine/Renderer/`, only the files on the rule's allow list may include `d3d11*` / `dxgi*` / `d3dcompiler` or name `ID3D11*` / `IDXGI*` / `D3D11_*` / `DXGI_*`; the list is a ratchet (an entry that no longer exists is an error too), so adding one is a design decision that also updates §6.3 (M93b) |
 | 16 | (warning only) Documents under `docs/`, `README.md`, `engine_spec.md` and `AGENTS.md` do not carry the developer machine's absolute paths (a drive letter followed by `HAL`, `HAKtokyo` or `Users`, and `file:` URLs with a drive letter); links are repository-relative. Two historical records are allow-listed with their reasons (M93d) |
+| 18 | (`check_rules.ps1` rule 18) The disturbance-field simulation (`src/Engine/Engine/Disturbance/*.cpp`, excluding self tests and the render hand-off) does not call CRT transcendental functions (`exp`, `pow`, `log`, `sin`, `cos`, `tan` and the like): they differ across CRTs and would break the Debug / Release / WARP bit match. Decay is a keep rate per tick. The rule itself is checked by `tools\check_rules_selftest.ps1` (violating input must produce an error), which the `rules` job of `replay_verify.bat` runs (§10.16) |
 
 ### 11.3 Automated Verification: Replay Consistency Test
 
@@ -3838,7 +3870,7 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M95)
+### 12.2 What was actually built (M0-M96)
 
 **2026-07-19 → 2026-11-05, over 600 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
@@ -3872,6 +3904,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | 2D lane (side-scrolling) | M94 | Plane-constrained 3D solver as the 2D physics (`plane2D` invariant bit-exact, one-way platforms, a 2D CharacterController mode, polygon / edge shapes, Effector2D, GridAgent2D A*); integer-sorted `Sprite2D` with sorting layers, groups, masks, Sliced / Tiled, sprite-sheet animation as a controller state; tilemaps with rule / animated / breakable tiles whose edits are a sparse sim-state table; Light2D with shadows and normal maps, Line2D, SpriteShape2D, sprite surface shaders, Parallax2D; PixelPerfectCamera2D and Camera2DFollow; Sprite / Tile Palette editors and a 2D Scene View; ABI v31 = 188, SimSnapshot v65, TypeId 81-93, `--2d-demo` with goldens `2d` / `2d_lights` and the `2d` replay job (§6.15, §10.5, §10.9, §10.13, ADR-033) |
 | Game feel | M94 (game feel line, GitHub side, merged 2026-11-05) | Hit-stop and timed slow motion on the tick gate, a `FeelState` table of played feels (copies of `MyeFeelDesc`) whose camera shake / kick / FOV, decaying rumble and screen pulse are pure functions of state and interpolation, `.feel.json` presets edited live with curve editing and Undo, `FeelTrigger` (TypeId 81) and `SpringFollow` (TypeId 82), input buffering and stick response curves in `actions.json`, Feel Monitor, `--feel-demo` and the replay job `feel`; content-gated hashing keeps other scenes' hash streams unchanged (§10.15, **ABI v31**, 175 → 181 slots, SimSnapshot v51, ADR-035) |
 | Action combat foundations | M95 | Hit stop (`pauseTicks`), part overlap / sphere sweep queries, interruptible controller transitions, CC-vs-CC push-out with contact reports, vertical root motion, event times in seconds / frames; ABI v32 = 193, SimSnapshot v66-v68, controller v3, ADR-034 (§10.14). Plus the three-layer selftest (`MYE_SELFTEST_ONLY`, `--selftest-list`, `--selftest-full`; §11.3) |
+| Disturbance field | M96 | A sim-owned grid field (2D ground layer or 3D volume, up to 4) with flow / density / trail / ripple channels, driven by `DisturbanceSourceComponent`, queued impulses (`FieldAddImpulse`, the animation event `disturb`) and uniform wind, solved as a stable-fluids reduction (semi-Lagrangian advection, fixed-iteration Jacobi projection, keep-rate decay, no CRT transcendentals: check_rules rule 18), row-parallel with jobs A/B proof, optionally following a target or the terrain relief. Read by ray-marched ground fog (also in Forward without a skybox), froxel volume fog, grass, water ripples, CPU / GPU particles and terrain trails, and by scripts through `FieldSample`; content-gated hashing keeps other scenes' hash streams unchanged (§10.16, **ABI v35**, 200 -> 202 slots, SimSnapshot v76, TypeId 96 / 97, ADR-036) |
 | Hardening, documentation and dogfooding close-out | M93 (maintenance line a-g, GitHub side, merged 2026-11-05) | (a) the C# host compares the API table's `version` with the mirror's `kExpectedApiVersion` at `Bootstrap.Initialize` and refuses a stale `MyeScripting.dll` (rule 11-e); (b) §6.3's rendering boundary rewritten to match the implementation and frozen by rule 16 (26-file allow list, a ratchet); (c) the review ledger `docs/rev/oversights.md` §8 with the status of all 55 fix requirements, plus the small fixes (`AdjustWindowRectExForDpi` / `WM_DPICHANGED`, NaN-safe `Clamp01` / histogram bins / modal damping, cascade-split and exposure-speed guards); (d) README / AGENTS / feature guide refreshed, 100+ machine-specific absolute paths removed from docs, rule 17 warns if they return; (e) the last five dogfooding findings: `--debug-draw-log`, `builtin://wheel`, the missing-`PhysicsEnvironment` warning, `SendScriptMessage` / `onMessage` (**ABI v33**, 193 → 194 slots after the merge; the CharacterController contact events of this line were dropped in favour of M95's opt-in `reportContacts`); (f) document-level Undo for the Animator Controller, Animation Preview and Audio Mixer windows (`UndoDocOp`, `DocUndoRecorder`); (g) the three largest sources split into per-responsibility translation units by pure code motion — `DemoContent.cpp` → `DemoContent{Render,Animation,Flow,Physics,Vfx,Audio,Ui,Ai,Compute}.cpp`, `PhysicsSystem.cpp` → `PhysicsCharacters.cpp` / `PhysicsMaterials.cpp` / `PhysicsBodyOps.cpp` (+ `PhysicsSystemInternal.h`, `RaycastWorld` into `PhysicsQueries.cpp`), `InspectorWindow.cpp` → `InspectorWindowAssets.cpp` / `InspectorWindowNav.cpp` (the physics and inspector splits were redone on the merged code) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
@@ -3891,7 +3924,7 @@ to the physics roadmap.
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (after the 2026-11-05 merges: ABI v34 = 200, TypeId 95, SimSnapshot v69, ADR-035). Plan files that name a specific future number are stale on that point |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (after M96: ABI v35 = 202, TypeId 97, SimSnapshot v76, ADR-036; before it, after the 2026-11-05 merges: ABI v34 = 200, TypeId 95, SimSnapshot v69, ADR-035). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | **Closed.** All 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are settled: `--debug-draw-log` (11), `builtin://wheel` (13), the missing-`PhysicsEnvironment` warning (19) and `SendScriptMessage` / `onMessage` (20, ABI v33) shipped in M93e; CharacterController contacts (17) shipped in M95 (`reportContacts` / `collideCharacters`, ADR-034) |
 
 ---
@@ -3933,7 +3966,8 @@ ADR-027 skeletal pose program (M89) /
 **ADR-030 Compute.ForEach: one kernel source, State on the CPU, Fx GPU-first** (§10.12) /
 **ADR-033 the 2D lane: plane-constrained 3D solver, integer sort keys, assets plus a sparse sim-state diff** (§6.15, §10.13) /
 **ADR-034 CCs exchange no momentum: priority push-out from the start-of-tick pose plus contact reports** (§10.14).
-**ADR-035 game feel: store what was played, derive what is shown** (§10.15; written as ADR-031 on the GitHub side).
+**ADR-035 game feel: store what was played, derive what is shown** (§10.15; written as ADR-031 on the GitHub side) /
+**ADR-036 disturbance field: the simulation owns the field, fog / grass / water / particles / trails only read it** (§10.16).
 
 ---
 

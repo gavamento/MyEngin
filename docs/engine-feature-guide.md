@@ -1,6 +1,6 @@
 # MyEngine 全機能ガイド
 
-調査日: 2026-09-11（追補: 2026-10-27、M93 / 2026-11-04、M94）。対象: このリポジトリの作業ツリー。
+調査日: 2026-09-11（追補: 2026-10-27、M93 / 2026-11-04、M94 / 2026-11-09、M96）。対象: このリポジトリの作業ツリー。
 
 この文書は、MyEngine が何をできるエンジンなのかを、制作者・利用者・説明を聞く人に向けて整理したものです。実装の入口、コンポーネント、エディタ操作、検証手段を対応させています。詳細な列挙は機能リファレンス（`docs/engine-feature-reference.md` として計画されたが、リポジトリには未収録）に委ねる前提で書かれているため、組込みコンポーネント・ABI・CLI の一覧は正本のソース（`src/Engine/Core/Ecs/Components.h`、`src/Shared/EngineAPI.h`、`src/Engine/Engine/App/EngineCli.cpp`）を参照してください。
 
@@ -504,3 +504,19 @@ Build Settings は、スクリプト再ビルド、クックの準備、Runtime 
 | 機能 | 入口と実装 |
 |---|---|
 | 手触り (GitHub 側の M94) | 目的: ヒットの手触りを 1 つの資産として作り、Play しながら調整する。入口: `.feel.json` (Assets の Create > 手触りプリセット、アセット Inspector でライブ編集・カーブエディタ・Undo・プレビュー)、`MyePlayFeel` / `MyeHitStop` / `MyeSlowMotion` / `MyeCameraShake` / `MyeCameraKick` / `MyeRumble` (C++、ABI v31)、`FeelTrigger` (接触で鳴らす)、`SpringFollow` (ばね追従)、`actions.json` の `bufferTicks` / `response` / `outerDeadzone`、Window > Feel Monitor、`--feel-demo`。既定値と制約: 手触りを使わないシーンのハッシュ列は不変、C# レーンからは鳴らせない、低い % のスローはカクつく。検証入口: `Feel*SelfTest` / `SpringFollowSelfTest`、`replay_verify` の feel ジョブ、[test_checklists.md](test_checklists.md) の M94 節。根拠: [ADR-035](adr/ADR-035-game-feel.md)、[FeelState.h](../src/Engine/Engine/Feel/FeelState.h)、[FeelMath.h](../src/Shared/FeelMath.h) |
+
+## 21. 追補（2026-11-09）: M96 かき乱しフィールド（動く霧と、その汎用化）
+
+プレイヤーの歩き・攻撃・爆発・敵の動き・風で実際に動く「場」を置けます。1 つの場が流れ・濃さ・跡・波紋を持ち、霧・草・水面・粒子・地形の跡が同じ場を読みます。ゲームロジックも `FieldSample` で足元の値を読めます。設計判断: [ADR-036](adr/ADR-036-disturbance-field.md)、契約: [engine_spec.md §10.16](../engine_spec.md)、手動確認: [test_checklists.md](test_checklists.md) の M96 節。デモは `Runtime.exe --field-demo`（霧の広場）。
+
+| 機能 | 入口と実装 |
+|---|---|
+| 霧の広場の作り方 | 目的: 歩くと割れて時間で戻る地面の霧を置く。入口: エンティティに `DisturbanceField`（Add Component > VFX、日本語名「かき乱しフィールド」）を付け、`shape = GroundLayer`、`cellsX` / `cellsZ` は既定の 128、`cellSize` 0.25 m（32 m 四方）のまま、`fogDensity` / `fogColor` で霧の濃さと色を決める。格子はエンティティの位置を中心に最初の step で固定される（以後エンティティを動かしても動かない）。霧は地面の霧専用の描画で、フロクセルは要らない。既定値と制約: 有効な場は entity index の若い順に 4 個まで（5 個目は sim されず WARN）。霧の明るさは自己照明（`fogBrightness`）で、`fogSunLight` で太陽光を足せる（影なし、既定 off）。`fogLocalLights` で近くの点・スポットライトが最大 8 本まで霧を照らす（影なし、既定 off）。Forward でもスカイボックスが無い背景に霧が掛かる。根拠: [DisturbanceFieldComponent](../src/Engine/Core/Ecs/Components.h)、[ground_fog.hlsli](../assets/shaders/ground_fog.hlsli) |
+| 源の付け方 | 目的: 動く物や出しっぱなしの噴き出しが場を動かす。入口: 動かしたい物に `DisturbanceSource`（「かき乱しの源」）を付ける。`Moving`（既定）は CharacterController、なければ非 kinematic の Rigidbody、なければ位置の差分から速度を自動で取る。`Constant` は扇風機・煙の噴き出し口（`constantVelocity`）。`radius` が効く範囲、`strength` が流れの混ざりやすさ、`densityDelta` が負で霧を晴らし、正で煙を足す。`trailDepth` を上げると雪・砂に筋が残り、`ripple` を上げると水面に波紋が出る。既定値と制約: 付けた物だけが源になる（全物体を暗黙に源にはしない）。敵や破片はプレハブに付ける。根拠: [DisturbanceStep.cpp](../src/Engine/Engine/Disturbance/DisturbanceStep.cpp) |
+| 風と流れ | 目的: 一様風で霧が流れる。入口: `PhysicsEnvironment.windVelocity` × 場の `windScale`。風上の縁から静止濃度の霧が入ってくる。渦の強さは `pressureIterations`（既定 20、0 で投影しない）。既定値と制約: 物理（剛体・布・空力・浮力）は場に押されない。`SampleWind` は変わらない |
+| 斬撃・爆発（スクリプトとアニメイベント） | 目的: 振りや爆発で霧を散らす。入口 (C++): `MyeFieldPoint` / `MyeFieldRadial` / `MyeFieldCone`（`ScriptAPI.h`、ABI v35）。Update から呼べば同じ tick、LateUpdate なら次の tick に効く。入口 (アニメイベント): Animator Controller の `clipEvents` に `"kind": "disturb"` の 1 件を書く（`radius` / `speed` / `shape` = `point` / `radial` / `cone` / `dir`（コントローラのエンティティの空間）/ `coneDeg` / `density` / `trail` / `ripple`。例は `assets/anims/field_swing.controller.json`）。位置は既存の `joint` 規則で、前 tick の WorldMatrix から作るので 1 tick 遅れる。既定値と制約: C# からは積めない（`FieldAddImpulse` は常に 0）。ヒットストップ中は場も止まり、積んだインパルスは再開後の最初の step で効く |
+| 足元の霧を読む | 目的: 「ここは霧が濃いか」「足跡が残っているか」を判定する。入口 (C++): `MyeFieldSampleAt(ctx, pos, out)` で `MyeFieldSample`（`velocity` / `density` / `trail` / `ripple` / `field`）を読む。入口 (C#): `MyeScript` を継承したスクリプトの `FieldSample(pos, out sample)` / `FieldSample(field, pos, out sample)`（`MyeScript.cs`）。戻り値 1 = 場の中、0 = 外（out は 0 埋め）。`field` を空にすると位置を含む場のうち entity index 最小。Update からは前 tick の結果、LateUpdate からはこの tick の結果。例: `if (MyeFieldSampleAt(ctx, myPos, s) && s.density < 0.3f) { /* 霧が晴れている = 見つかりやすい */ }` |
+| 立体の煙（Volume） | 目的: 浮力で昇る煙や、プレイヤーの周りだけの霧。入口: `shape = Volume`、推奨の寸法 `cellsX / cellsY / cellsZ = 32 / 16 / 32`、`buoyancy` で濃い煙が昇る。**描画にフロクセルが必要**: ビューのフロクセルが off でも、`autoFroxel`（既定 on）の霧を出す Volume があれば「場だけのモード」で自動的に回る（グローバルの媒質は 0、解析フォグは全区間、ゴッドレイは降ろさない。出入りで INFO ログ 1 行）。止めるなら `autoFroxel` を切る。GPU の約 7 MB と注入パスの時間が掛かる。Volume も 4 個まで描かれる（有効な場は合わせて 4 個）。プレイヤーに付いてくる層は `followTarget`（`followMargin` セルずれたら整数セルでずらす） |
+| 起伏に沿う霧 | 目的: 丘の上でも霧が地面に潜らない。入口: GroundLayer の `followTerrain`（既定 off、変えると作り直す）。列ごとの基準高さを作り直しの step で地形から焼く（128² 列で 6〜10 ms を 1 回）。地形を実行時に動かしても追わない |
+| 粒子・草・水・跡 | 粒子: エミッタの `fieldInfluence`（0 = 影響なし、CPU / GPU とも。y は Volume の中だけ）。草: サーフェスシェーダ（`GrassField.surface.hlsl` が例。`_BendPerSpeed` / `_MaxBend`）。水: `water_surface.hlsl` と `WaterGerstner.surface.hlsl` が波紋を法線に足す。跡: 地形の `TerrainComponent` の跡の色・強さ（雪・砂）。マスは既定 0.25 m なので足跡の形でなく通った筋になる |
+| 確認 | `Runtime.exe --field-demo`、`--field-bench`、`MYE_SELFTEST_ONLY=disturbance`、replay_verify の `field` ジョブ。デバッグは場の `drawDebug` で速度の矢印と濃さ、Profiler のスコープ `disturbance` |

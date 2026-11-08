@@ -466,6 +466,7 @@ exit /b 0
 
 :job_rules
 pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules.ps1 || exit /b 1
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools\check_rules_selftest.ps1 || exit /b 1
 exit /b 0
 
 rem ---------------------------------------------------------------- :jobsab_one

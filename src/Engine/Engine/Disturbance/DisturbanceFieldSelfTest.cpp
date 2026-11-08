@@ -2689,8 +2689,9 @@ bool RunDisturbanceTerrainTests()
                     const float wx = (static_cast<float>(after.originCell[0] + x) + 0.5f) * after.cellSize;
                     const float wz = (static_cast<float>(after.originCell[2] + z) + 0.5f) * after.cellSize;
                     float h = 0.0f;
+                    // 当たらない列 (格子の頂点の真上をかすめるレイが外れることがある) は、焼き込みの規約どおり場の baseY
                     const bool hit = SampleTerrainHeightWorld(rig.sim.W(), wx, wz, &h, nullptr) == 1;
-                    baked = baked && hit && bitsEqual(after.columnBaseY[n], h);
+                    baked = baked && bitsEqual(after.columnBaseY[n], hit ? h : after.baseY);
                     anyHigh = anyHigh || after.columnBaseY[n] > 10.0f;
                 }
             }

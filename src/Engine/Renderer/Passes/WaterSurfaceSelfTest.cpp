@@ -584,6 +584,7 @@ void TestWaterPassHonorsWaveCount(GraphicsDevice& device, const std::wstring& en
         MyEnginePerFrameCB rest = {};
         rest.cameraPos = { 0.0f, 10.0f, 0.0f };
         rest.ambient = { 0.5f, 0.5f, 0.5f };
+        rest.fogMode = -1; // 0 埋めのままだと linear フォグ (start = end = 0) で全面がフォグ色になる
         std::memcpy(perFrame.data() + sizeof(vpT), &rest, sizeof(rest));
     }
     D3D11_BUFFER_DESC pfd = {};

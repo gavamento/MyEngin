@@ -1,8 +1,8 @@
 # sub-17: 仕上げ (ADR-036・文書・カタログ・全検証)
 
 - 依存: 全部 (波 W5。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミット待ち)
+- 往復: 1
 
 
 ## 並列の注意 (波 W5)
@@ -49,4 +49,14 @@ spec §5 の 26, 27, 28, 30。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (coder、2026-11-09)
+
+- 文書: `docs\adr\ADR-036-disturbance-field.md` (新規)、`engine_spec.md` §10.16 + §11.2 の規則 18 + §12.2 + §13 の ADR 一覧、`docs\engine-feature-guide.md` §21、`docs\test_checklists.md` の M96 節。AGENTS / CLAUDE は不変
+- ツール: `tools\check_rules.ps1` 規則 9 に `kParticleFieldAuxSrvSlot` ⇔ `MYE_DFLD_SRV_AUX` (particle_sim) を 1 組、`tools\replay_verify.bat` の rules ジョブに `check_rules_selftest.ps1` を接続
+- まとめ実行で見つけた FAIL 3 件を直した (すべてテスト側の期待値): tilemap (`kBareBlobDigest` = sub-11 の粒子 `sizeof(ParticleEmitterComponent)` +4 B で再採取 0xC22274C44F017EA4)、watersurface (W4 追補の ApplyFog 修正で、0 埋めの PerFrame CB が linear フォグ扱いで全面がフォグ色になるのを `fogMode = -1` で明示)、disturbance (sub-10 のテスト: 頂点の真上でレイが外れる列の期待値を baseY に)
+- 検証の結果は SELF_EVAL (司会への返信) を参照
+- 局所ライト / フロクセル注入の GPU 時間は ADR-036 の計測表。`GfogLocalLightRadiance` と `LightSample` の共有ヘッダ化は見送り (common.hlsli を全シェーダが include するため、最終検証の後に絵へ触れない方を選んだ)
+- 撮影: scratchpad\m96-shots\sub17_*.png (field-demo の Forward / Deferred、フロクセル付き)
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。ADR-036 / engine_spec §10.16 ほか / 機能ガイド / test_checklists、規則 9 の t8、rules ジョブに規則 18 の自己検査。まとめ実行: selftest-full Debug / Release 116 suites 0 failed (直した 3 件はテストの期待値で原因サブを断定済み)、replay_verify 24 / 24、shot_verify は既存の flow_title だけ、三校は既存の 2 件だけ、受け入れ 26 の物理は差分なし。式の共有ヘッダ化の見送り、GUI の目視項目のユーザー送りを受理

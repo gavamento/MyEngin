@@ -380,6 +380,13 @@ $constGroups = @(
             'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_PFLD_SAMPLER\s+(\d+)'
         }
     },
+    @{
+        label = 'kParticleFieldAuxSrvSlot / MYE_DFLD_SRV_AUX (particle_sim)'
+        sites = @{
+            'src\Engine\Engine\Particles\GpuParticleBackend.h' = 'constexpr\s+int\s+kParticleFieldAuxSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_DFLD_SRV_AUX\s+(\d+)'
+        }
+    },
     # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{
