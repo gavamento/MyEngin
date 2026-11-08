@@ -534,6 +534,8 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
     // Wireframe (M40b) はフルスクリーン三角形が線になってしまうためスキップ
     if (!wire) {
         skybox_.Render(device, shaders, view);
+        // スカイ無しの背景: 地面の霧とフロクセルを掛ける (Deferred の背景分岐と同じ。条件が欠けたら何もしない)
+        skybox_.RenderBackgroundFog(device, shaders, view);
     }
 
     // 水面 (スカイボックス後・透明メッシュ前)

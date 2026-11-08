@@ -22,12 +22,20 @@ public:
     // 深度テストが要るため RTV+DSV を自前で再バインドする (deferred のライトパス後は DSV 無し)
     void Render(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view);
 
+    // Forward のスカイ無しの背景 (clearColor のまま残った画素) に、地面の霧とフロクセルを掛ける全画面パス
+    // (Deferred の光パスの背景分岐と同じ式)。条件が欠けたら何も描かない = 絵はビット不変。
+    // スカイを描く経路 (Render) とは排他: skyMode >= 0 のビューでは false。
+    static bool NeedsBackgroundFog(const RenderView& view);
+    void RenderBackgroundFog(GraphicsDevice& device, ShaderManager& shaders, const RenderView& view);
+
 private:
     bool ready_ = false;
     AssetID shader_ = {};     // gradient (skybox.hlsl)
     AssetID shaderCube_ = {}; // cubemap (skybox_cubemap.hlsl、M38b)
     AssetID shaderPano_ = {}; // panoramic (skybox_panoramic.hlsl)
+    AssetID shaderBgFog_ = {}; // Forward の背景の霧 (forward_background_fog.hlsl)
     Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> bgFogCb_;
     Microsoft::WRL::ComPtr<ID3D11DepthStencilState> depthReadOnly_;
     Microsoft::WRL::ComPtr<ID3D11BlendState> blendOpaque_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;     // cubemap 用 LINEAR/CLAMP
