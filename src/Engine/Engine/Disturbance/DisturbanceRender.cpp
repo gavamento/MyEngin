@@ -60,6 +60,7 @@ int32_t BuildDisturbanceFieldUpload(World& world, const DisturbanceState* state,
         l.fogColor[2] = std::max(FiniteOr(r.comp.fogColor.z, 1.0f), 0.0f);
         l.fogBrightness = std::max(FiniteOr(r.comp.fogBrightness, 1.0f), 0.0f);
         l.fogSunLight = r.comp.fogSunLight;
+        l.fogLocalLights = r.comp.fogLocalLights;
 
         const DisturbanceSlot* slot = nullptr;
         if (state != nullptr) {

@@ -17,6 +17,9 @@
 #define MYE_GFOG_SAMPLER 8
 #define MYE_GFOG_CB 6
 #define MYE_GFOG_VIEW_CB 7
+#define MYE_GFOG_LIGHT_CB 8
+// 照らす局所ライトの最大本数 (C++ の kGroundFogMaxLights)
+#define MYE_GFOG_MAX_LIGHTS 8
 // 板の積分の段数 (C++ の kGroundFogSteps)
 #define MYE_GFOG_STEPS 24
 // スカイの代わりに使う「遠方」までの距離 [m]
@@ -36,6 +39,22 @@ cbuffer GroundFogViewCB : MYE_DFLD_REG(b, MYE_GFOG_VIEW_CB)
     float4 gGfogSunColor; // xyz = 太陽の色 × 強度 (リニア), w = 散乱アルベド
     float4 gGfogAmbient;  // xyz = 環境光 (リニア)
     float4x4 gGfogInvViewProj; // transpose(inverse(view * proj))。背景 (ジオメトリ無し) の視線の復元用
+};
+
+// 局所ライト 1 本の縮約した写し。C++ の GroundFogLightCB と同じ並び (float4 x 4 = 64 バイト)
+struct GroundFogLight
+{
+    float4 posRange;  // xyz = 位置, w = range
+    float4 colorKind; // rgb = 色 × 強度, w = 種類 (1 = 点, 2 = スポット)
+    float4 dirInner;  // xyz = 光の進行方向 (正規化), w = cosInner
+    float4 outerPad;  // x = cosOuter
+};
+
+// 地面の霧を照らす局所ライト。C++ の GroundFogLightsCB と同じ並び
+cbuffer GroundFogLightCB : MYE_DFLD_REG(b, MYE_GFOG_LIGHT_CB)
+{
+    uint4 gGfogLightHeader; // x = 本数 (0..MYE_GFOG_MAX_LIGHTS), y = 照らす層のビット (bit i = 層 i)
+    GroundFogLight gGfogLights[MYE_GFOG_MAX_LIGHTS];
 };
 
 // フロクセル注入の HenyeyGreenstein と同一式 (cosTheta = dot(光の進行方向, 散乱点 → カメラ方向))
@@ -64,13 +83,57 @@ float2 GfogSlab(float o, float d, float lo, float hi, float2 range)
     return float2(max(range.x, min(a, b)), min(range.y, max(a, b)));
 }
 
-// 段 1 つぶんの散乱放射輝度 (単位 σ あたり)。局所ライトの寄与はここへ 1 項足す (sub-15)
-float3 GfogStepRadiance(DisturbanceLayer L, float3 p, float3 rayDir)
+// 区間 [t0, t1] の線分が影響球に触れるライトのビット。段のループの前に 1 回だけ作り、遠いライトを段ごとに評価しない
+uint GfogLightMask(float3 origin, float3 rayDir, float t0, float t1)
+{
+    uint mask = 0;
+    const uint count = min(gGfogLightHeader.x, (uint)MYE_GFOG_MAX_LIGHTS);
+    [loop] for (uint n = 0; n < count; ++n) {
+        const float3 toLight = gGfogLights[n].posRange.xyz - origin;
+        const float t = clamp(dot(toLight, rayDir), t0, t1);
+        const float3 d = toLight - rayDir * t;
+        const float range = gGfogLights[n].posRange.w;
+        if (dot(d, d) < range * range) {
+            mask |= 1u << n;
+        }
+    }
+    return mask;
+}
+
+// 局所ライト 1 本の、点 p での入射放射輝度 (色 × 強度 × 減衰)。
+// 減衰とスポットの式は common.hlsli の LightSample と同じ (霧と面で光の届き方を揃える。common.hlsli は読み込まない)
+float3 GfogLocalLightRadiance(GroundFogLight lt, float3 p, out float3 travelDir)
+{
+    const float3 toLight = lt.posRange.xyz - p;
+    const float dist = length(toLight);
+    const float3 toLightDir = toLight / max(dist, 1e-4f);
+    travelDir = -toLightDir;
+    const float d = saturate(1.0f - dist / max(lt.posRange.w, 1e-4f));
+    float atten = d * d;
+    if (lt.colorKind.w > 1.5f) { // スポット
+        const float cosA = dot(travelDir, lt.dirInner.xyz);
+        const float spot = saturate((cosA - lt.outerPad.x) / max(lt.dirInner.w - lt.outerPad.x, 1e-4f));
+        atten *= spot * spot;
+    }
+    return lt.colorKind.rgb * atten;
+}
+
+// 段 1 つぶんの散乱放射輝度 (単位 σ あたり)。lightMask = この層・この線分に届く局所ライトのビット (0 = 照らさない)
+float3 GfogStepRadiance(DisturbanceLayer L, float3 p, float3 rayDir, uint lightMask)
 {
     float3 radiance = gGfogSunColor.w * gGfogAmbient.xyz + L.fogColor.rgb * L.look.y; // 環境光 + 自己照明
     if (L.fogColor.w > 0.5f && gGfogSunDir.w > 0.5f) {
         // 太陽光 (影なし)。位相関数の向きは「光の進行方向」と「散乱点 → カメラ」
         radiance += gGfogSunColor.w * gGfogSunColor.xyz * GfogPhase(dot(gGfogSunDir.xyz, -rayDir), gGfogCamPos.w);
+    }
+    // 立っているビットだけ処理する (ビットを下から順に消していく。ループ変数が毎回変わるので打ち切りが確実)
+    uint remaining = lightMask;
+    [loop] while (remaining != 0) {
+        const uint n = firstbitlow(remaining);
+        remaining &= remaining - 1u;
+        float3 travelDir;
+        const float3 li = GfogLocalLightRadiance(gGfogLights[n], p, travelDir);
+        radiance += gGfogSunColor.w * li * GfogPhase(dot(travelDir, -rayDir), gGfogCamPos.w);
     }
     return radiance;
 }
@@ -83,6 +146,9 @@ float3 GfogIntegrateLayer(uint i, float3 origin, float3 rayDir, float t0, float 
     const float dt = (t1 - t0) / (float)MYE_GFOG_STEPS;
     float transmittance = 1.0f;
     float3 inscatter = 0.0f;
+    // この層が局所ライトで照らす設定のときだけ、届くライトを数える (additive は in-scatter を足さないので不要)
+    const uint lightMask = (!additive && (gGfogLightHeader.y & (1u << i)) != 0)
+                               ? GfogLightMask(origin, rayDir, t0, t1) : 0u;
     [loop] for (int k = 0; k < MYE_GFOG_STEPS; ++k) {
         const float t = t0 + ((float)k + jitter) * dt;
         const float3 p = origin + rayDir * t;
@@ -93,7 +159,7 @@ float3 GfogIntegrateLayer(uint i, float3 origin, float3 rayDir, float t0, float 
         const float stepT = exp(-sigma * dt);
         // 1 段の中で σ が一定として厳密に積分する: ∫ σ·exp(-σs) ds = 1 - exp(-σ·dt)
         if (!additive) {
-            inscatter += transmittance * (1.0f - stepT) * GfogStepRadiance(L, p, rayDir);
+            inscatter += transmittance * (1.0f - stepT) * GfogStepRadiance(L, p, rayDir, lightMask);
         }
         transmittance *= stepT;
     }

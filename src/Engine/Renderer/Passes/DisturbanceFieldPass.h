@@ -12,6 +12,7 @@
 namespace mye {
 
 class GraphicsDevice;
+struct SceneLightData;
 
 // 同時に描ける 2D 層の数 (assets\shaders\disturbance_common.hlsli の MYE_DFLD_MAX_LAYERS と一致。規則 9)
 constexpr int kDisturbanceMaxLayers = 4;
@@ -31,6 +32,10 @@ constexpr int kGroundFogSrvAuxSlot = 33;
 constexpr int kGroundFogSamplerSlot = 8;
 constexpr int kGroundFogCbSlot = 6;
 constexpr int kGroundFogViewCbSlot = 7;
+// 局所ライト (点・スポット) の CB。HLSL の MYE_GFOG_LIGHT_CB と一致 (規則 9)。b4 は速度が使う
+constexpr int kGroundFogLightCbSlot = 8;
+// 地面の霧が照らす局所ライトの最大本数 (同 MYE_GFOG_MAX_LIGHTS と一致。規則 9)
+constexpr int kGroundFogMaxLights = 8;
 // 板の積分の段数 (同 MYE_GFOG_STEPS と一致。規則 9)
 constexpr int kGroundFogSteps = 24;
 // 霧の位相関数の異方性 g と散乱アルベド (フロクセル注入の既定 FroxelSettings と同じ値 = 面の明るさの基準を揃える)
@@ -63,6 +68,7 @@ struct DisturbanceLayerUpload {
     float fogColor[3] = { 1.0f, 1.0f, 1.0f };
     float fogBrightness = 1.0f;
     bool fogSunLight = false; // true: 平行光を霧に当てる (影なし)
+    bool fogLocalLights = false; // true: 点・スポットのライトを霧に当てる (最大 kGroundFogMaxLights 本、影なし)
     // 場のエンティティ (index, generation)。どの層がどの場かを、転送を省く判定に使う
     uint32_t entityIndex = 0;
     uint32_t entityGeneration = 0;
@@ -94,6 +100,22 @@ struct GroundFogViewCB {
 };
 static_assert(sizeof(GroundFogViewCB) == 128, "HLSL の GroundFogViewCB と一致させること");
 
+// 局所ライト 1 本の縮約した写し (HLSL の GroundFogLight と同じ並び。float4 x 4 = 64 バイト)
+struct GroundFogLightCB {
+    float posRange[4] = {};   // xyz = 位置, w = range [m]
+    float colorKind[4] = {};  // rgb = 色 × 強度, w = 種類 (1 = 点, 2 = スポット)
+    float dirInner[4] = {};   // xyz = 光の進行方向 (正規化), w = cosInner
+    float outerPad[4] = {};   // x = cosOuter
+};
+static_assert(sizeof(GroundFogLightCB) == 64, "HLSL の GroundFogLight と一致させること");
+
+// HLSL の cbuffer GroundFogLightCB と同じ並び。header.x = 本数, header.y = 照らす層のビット (bit i = 層 i)
+struct GroundFogLightsCB {
+    uint32_t header[4] = {};
+    GroundFogLightCB lights[kGroundFogMaxLights];
+};
+static_assert(sizeof(GroundFogLightsCB) == 16 + 64 * kGroundFogMaxLights, "HLSL の GroundFogLightCB と一致させること");
+
 // RenderSystem が詰める、この描画のカメラとライトの値
 struct GroundFogViewParams {
     float camPos[3] = {};
@@ -102,6 +124,8 @@ struct GroundFogViewParams {
     float sunColor[3] = {};
     float ambient[3] = {};
     float invViewProj[16] = {}; // transpose(inverse(view * proj))
+    // この描画のライト一覧 (局所ライトの選び方の入力)。null = 局所ライトなし
+    const SceneLightData* lights = nullptr;
 };
 
 // HLSL の cbuffer DisturbanceFieldCB と同じ並び
@@ -117,7 +141,15 @@ struct DisturbanceFieldGpu {
     ID3D11ShaderResourceView* flowSRV = nullptr; // Texture2DArray RGBA16F (vx, vz, 濃さ, 跡)
     ID3D11ShaderResourceView* auxSRV = nullptr;  // Texture2DArray RG16F (波紋 h, 基準面のずれ)
     DisturbanceFieldCB cb;
+    // 局所ライトで照らす層のビット (bit i = 層 i)。層の CB は変えないので別に持つ
+    uint32_t localLightMask = 0;
 };
+
+// 局所ライトの選び方 (純粋関数。同じ入力から同じ結果)。lights の点・スポットのうち、影響球が localLightMask の
+// 層の板 (AABB) のどれかと交わるものを、ライト一覧の順に最大 kGroundFogMaxLights 本まで out へ詰める。
+// 戻り値 = 条件を満たしたライトの総数 (kGroundFogMaxLights を超えた分は落とした本数 = 戻り値 - 8)
+int SelectGroundFogLights(const SceneLightData& lights, const DisturbanceFieldCB& layers, uint32_t localLightMask,
+                          GroundFogLightsCB& out);
 
 // 2D 層の Texture2DArray の所有者。GPU は読むだけ — sim の状態は CPU (決定論) が持つ。
 // 転送は層ごとの UpdateSubresource。配列の寸法は有効な層の最大値で、層ごとの UV 範囲は CB に載せる
@@ -151,6 +183,8 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D11Buffer> groundFogLayersCb_;
     Microsoft::WRL::ComPtr<ID3D11Buffer> groundFogViewCb_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> groundFogLightsCb_;
+    bool lightOverflowWarned_ = false; // 8 本を超えた WARN を出したか (超過が解消したら戻す)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> groundFogSampler_;
     // 層ごとの基準高さのずれの最小 / 最大 (板を包む範囲)。転送したときに更新する
     float offsetRange_[kDisturbanceMaxLayers][2] = {};

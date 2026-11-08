@@ -2656,7 +2656,7 @@ struct DisturbanceFieldComponent {
     bool fogSunLight = false;   // true: 平行光 (太陽) を霧に当てる (影なし)
     bool autoFroxel = true;     // true: フロクセルが off でもこの場の霧のために自動で回す
     bool drawDebug = false;     // 速度の矢印と濃さを debugLines に描く
-    uint8_t pad0 = 0;           // 明示パディング (スナップショットの生バイトに未初期化を残さない)
+    bool fogLocalLights = false; // true: 点・スポットのライトを霧に当てる (最大 8 本、影なし。地面の霧だけ)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

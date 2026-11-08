@@ -2076,7 +2076,8 @@ void RegisterBuiltinComponents()
         MYE_JP("霧の消散係数 (1/m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, fogDensity, Float, 0.0f, 20.0f)),
         MYE_JP("霧の色", MYE_FIELD(DisturbanceFieldComponent, fogColor, Float3)),
         MYE_JP("霧の明るさ", MYE_FIELD_RANGE(DisturbanceFieldComponent, fogBrightness, Float, 0.0f, 10.0f)),
-        MYE_JP("霧に太陽光を当てる", MYE_FIELD_TIP(DisturbanceFieldComponent, fogSunLight, Bool, "light the fog with the directional light (no shadows: it also shines under trees). The ground layer fog does not need the froxel fog; point / spot lights do not light it yet")),
+        MYE_JP("霧に太陽光を当てる", MYE_FIELD_TIP(DisturbanceFieldComponent, fogSunLight, Bool, "light the fog with the directional light (no shadows: it also shines under trees). The ground layer fog does not need the froxel fog")),
+        MYE_JP("霧を局所ライトで照らす", MYE_FIELD_TIP(DisturbanceFieldComponent, fogLocalLights, Bool, "light the ground layer fog with point / spot lights (up to 8 lights, no shadows, costs GPU time). Ignored by Volumes: the froxel fog already has light beams and shadows")),
         MYE_JP("フロクセルを自動で回す", MYE_FIELD_TIP(DisturbanceFieldComponent, autoFroxel, Bool, "run the froxel fog for this field even when the camera has it off (about 7 MB of GPU memory and one inject pass). Volumes only: the ground layer fog is drawn without the froxel fog")),
         MYE_JP("デバッグ描画", MYE_FIELD(DisturbanceFieldComponent, drawDebug, Bool)),
     });
