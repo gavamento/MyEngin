@@ -219,7 +219,7 @@
 - フロクセルのモード (sub-08、§2 #15。Volume の霧だけが対象): カメラ / グローバルで on = **フル** (従来 + 場の媒質)。off で `autoFroxel` の霧の Volume がある = **場だけ** (グローバルの媒質 0、解析フォグは全区間、ゴッドレイを降ろさない)。それ以外 = off (従来)。モードの出入りで INFO ログ 1 行
 - 編集中 (Play 前・状態が無い場): 静止状態の定数 (`restDensity`) で描く。描画レーンは sim の状態を作らない
 - 描画への受け渡し: Renderer 層は POD (`DisturbanceFieldUpload`) だけを受け取る (`AcousticVolumeUpload` と同じ。`AcousticVolumePass.h:17-27`)。2D = Texture2DArray `RGBA16F` (vx, vz, ρ, τ) + `RG16F` (R = 波紋 h、G = 列の基準高さ − baseY)、3D = 最大 4 本の Texture3D `RGBA16F` (vx, vy, vz, ρ)。通番が前回と同じなら転送しない。共有する定数とレイアウトは C++ と HLSL を一致させる (規則 9、CB の `static_assert`)
-- 粒子 (sub-10): CPU の粒子は sim の状態を直接引く (ハッシュ対象の経路)、GPU の粒子は 2D / 3D テクスチャを引く。`fieldInfluence` × (場の流れ − 粒子の速度) を加速度に足す
+- 粒子 (sub-10): CPU の粒子は sim の状態を直接引く (ハッシュ対象の経路)、GPU の粒子は 2D / 3D テクスチャを引く。`fieldInfluence` × (場の流れ − 粒子の速度) を加速度に足す。**y 成分は Volume の中だけ寄せる** (2D 層の流れの y は常に 0 なので、寄せると上昇する煙の vy を 0 へ潰す)。ローカル空間 (`simulationSpace = 1`) のエミッタは場を読まない (座標がワールドでない。深度衝突と同じ扱い)。GPU は直近の描画が上げたテクスチャを読む (1 フレーム遅れ、見た目のレーン)。場が重なったときの選び方は CPU (entity index 順) と GPU (2D 層 → Volume の順) で違ってよい (sub-11 round 1 で決定)
 - 水面 (sub-11): `water_surface.hlsl` の法線に波紋の勾配を足す (可能なら VS の変位も)。浮力 (`WaterWaveComponent` の CPU 側) は変えない
 - 跡 (sub-12): `forward_terrain` / `deferred_terrain` の色を跡で暗く / 指定色へ寄せ、法線を跡の勾配で曲げる (凹みの変位は任意)。当たり判定は変えない
 - 草 (sub-13): サーフェスシェーダ用の予約テクスチャ + `MyeFieldSample` を `MyEngineSurface.hlsli` に足し、`GrassField.surface.hlsl` の VS で流れの向きに倒す。デモに草束 (細い箱のエンティティを数百) を置く
@@ -372,6 +372,7 @@
 - 2026-11-09 (sub-07 round 1): 受け入れ 20 の性能の線を jobs ありへ (§2 #27)、§4.1 I の風を Volume では xyz と明記
 - 2026-11-09 (sub-07 round 2、中間のまとめ実行で発覚): §4.1 C の波紋の注入を「加算」から「目標の高さへ寄せる」(有界) に変更。sub-12 のテストの前提ではなく、sub-01 の式の欠陥と判定
 - 2026-11-09 (sub-07 round 3): §4.1 C の波紋の寄せに hPrev も含める (coder の実測による訂正)
+- 2026-11-09 (sub-11 round 1): §4.3 の粒子に、y は Volume だけ寄せる・ローカル空間は読まない・GPU の 1 フレーム遅れと場の選び方の違いを明記
 
 ## 付録 A. 並列の予約表 (W1〜W5)
 
