@@ -398,7 +398,7 @@
 | `DisturbanceFieldComponent` の末尾 (`Components.h`) と反射登録 (`Components.cpp`) | W1: sub-04 (末尾に 2 欄) と sub-15 (`pad0` の改名だけ。末尾は触らない)。W2: sub-07。W3: sub-09。W4: sub-10 |
 | `DisturbanceSourceComponent` | どのサブも触らない |
 | `ParticleEmitterComponent` の末尾と登録 | W3: sub-11 |
-| `TerrainComponent` の末尾と登録 | W4: sub-13 (跡の見た目の欄。§2 #26) |
+| `TerrainComponent` の末尾と登録 | W4: sub-13 (跡の見た目の欄 `trailColor` / `trailStrength` / `trailBendDepth`。§2 #26)。地形の CB (`TerrainObjectCB`、b4、208 → 224 B) も sub-13 だけ |
 | `DisturbanceSlot` / `DisturbanceState` / DFLD の Write・Read・ハッシュ | sub-04 (W1。移流の作業配列は状態にしない)、sub-07 (W2)、sub-09 (W3。ずらしは関数の追加で、スロットの欄は増やさない)、sub-10 (W4) |
 | `ClipEventKind` / `ControllerClipEvent` の末尾 | W2: sub-06 |
 | `EngineAPI.h` / `Interop.cs` / `ScriptAPI.h` | W1: sub-05 |
