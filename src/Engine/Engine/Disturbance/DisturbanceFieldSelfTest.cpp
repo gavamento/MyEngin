@@ -832,18 +832,18 @@ bool RunDisturbanceVolumeTests(bool heavy)
           "volume: buoyancy defaults to 0 and is the last field");
     {
         auto s = std::make_unique<Sim>();
-        const EntityID v = AddVolume(*s, 3.0f, 2.0f, -1.0f, 32, 16, 32);
+        const EntityID v = AddVolume(*s, 3.0f, 2.0f, -1.0f, 16, 8, 16);
         s->Flush();
         FieldOf(*s, v)->channels = 7; // 跡・波紋のビットは Volume では無視される
         s->Step(2);
         check(s->D().Slots().size() == 1 && s->D().OverflowWarnCount() == 0, "volume: a Volume field creates a state and does not warn");
         const DisturbanceSlot& slot = s->D().Slots()[0];
-        const size_t n = 32u * 16u * 32u;
-        check(slot.shape == kDisturbanceVolume && slot.cellsY == 16 && slot.flowX.size() == n && slot.flowY.size() == n
+        const size_t n = 16u * 8u * 16u;
+        check(slot.shape == kDisturbanceVolume && slot.cellsY == 8 && slot.flowX.size() == n && slot.flowY.size() == n
                   && slot.flowZ.size() == n && slot.channels == kDisturbanceChannelDensity && slot.trail.empty()
                   && slot.ripple.empty() && slot.density.size() == n,
               "volume: 3 flow components and a density array only (trail / ripple bits are ignored)");
-        check(slot.originCell[0] == 6 - 16 && slot.originCell[1] == 4 - 8 && slot.originCell[2] == -2 - 16,
+        check(slot.originCell[0] == 6 - 8 && slot.originCell[1] == 4 - 4 && slot.originCell[2] == -2 - 8,
               "volume: the origin is centered on the entity on every axis");
         check(IsRestVolume(slot, 0.0f), "volume: with no source the field stays at the rest state");
         s->Step(58);
@@ -920,7 +920,7 @@ bool RunDisturbanceVolumeTests(bool heavy)
     }
 
     // ---- 浮力 (受け入れ 20) ----
-    {
+    if (heavy) {
         const auto run = [&](float buoyancy, std::vector<float>& centroids) {
             auto s = std::make_unique<Sim>();
             const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
@@ -954,7 +954,7 @@ bool RunDisturbanceVolumeTests(bool heavy)
     }
 
     // ---- 風は 3 成分に効く ----
-    {
+    if (heavy) {
         auto s = std::make_unique<Sim>();
         GameObject env = s->scene.CreateGameObjectTracked("Environment");
         env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 0.0f, 1.0f, 0.0f };
@@ -1039,7 +1039,7 @@ bool RunDisturbanceVolumeTests(bool heavy)
 
     // ---- 決定論: 2 ワールド並走 (acc 20) ----
     {
-        const int ticks = heavy ? 600 : 120;
+        const int ticks = heavy ? 600 : 20;
         auto a = std::make_unique<Sim>();
         auto b = std::make_unique<Sim>();
         const VolumeScenario sa = BuildVolumeScenario(*a);
@@ -1066,7 +1066,7 @@ bool RunDisturbanceVolumeTests(bool heavy)
     }
 
     // ---- スナップショット往復 (acc 20) ----
-    if (!heavy) {
+    if (heavy) {
         auto a = std::make_unique<Sim>();
         const VolumeScenario sc = BuildVolumeScenario(*a);
         a->Flush();
@@ -1112,7 +1112,123 @@ bool RunDisturbanceVolumeTests(bool heavy)
 
 namespace {
 
-// heavy = false: Fast 層 (小さい場・短い tick 数で全項目)、true: Full 層 (仕様どおりの大きさ・tick 数の重い 4 項目だけ)
+// review-1 の修正の回帰: 復元後の描画の通番 / 巨大な速度 / 格子外の流れ = 風。Fast 層に載せる小さな場だけを使う
+bool RunDisturbanceRobustnessTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+
+    // ---- 復元の後の描画の通番 ----
+    {
+        // 中身の違う 2 つの blob (インパルスの向きだけが違う)
+        std::vector<std::byte> blobs[2];
+        for (int k = 0; k < 2; ++k) {
+            auto sim = std::make_unique<Sim>();
+            AddField(*sim, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity | kDisturbanceChannelTrail);
+            sim->Flush();
+            sim->Step(2);
+            DisturbanceQueueImpulse(sim->scene, MakeImpulse(0.0f, 0.1f, 0.0f, 1.0f, k == 0 ? 1.0f : -1.0f, 0.0f, 2.0f));
+            sim->Step(3);
+            SimRefs refs;
+            refs.scene = &sim->scene;
+            check(CaptureSimSnapshot(refs, blobs[k]), "serial: capture succeeds");
+        }
+        auto target = std::make_unique<Sim>();
+        AddField(*target, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity);
+        target->Flush();
+        target->Step(2);
+        SimRefs refs;
+        refs.scene = &target->scene;
+        const uint64_t serial0 = target->D().RenderSerial();
+        check(RestoreSimSnapshot(refs, blobs[0].data(), blobs[0].size()), "serial: restore A succeeds");
+        const uint64_t afterA = target->D().RenderSerial();
+        target->transforms.Update(target->W());
+        target->Step(3);
+        const uint64_t stepA = target->D().RenderSerial();
+        check(RestoreSimSnapshot(refs, blobs[1].data(), blobs[1].size()), "serial: restore B succeeds");
+        const uint64_t afterB = target->D().RenderSerial();
+        target->transforms.Update(target->W());
+        target->Step(3);
+        const uint64_t stepB = target->D().RenderSerial();
+        check(afterA > serial0 && afterB > afterA, "serial: each restore moves the serial past the scene's previous one");
+        check(stepA != stepB, "serial: the same number of ticks after restoring different blobs does not give the same serial");
+    }
+
+    // ---- 巨大な速度でも落ちず、流れは cellSize * 60 を超えない ----
+    {
+        const float speeds[3] = { 1.0e11f, 1.0e30f, -1.0e30f };
+        bool finite = true;
+        bool bounded = true;
+        for (const bool volume : { false, true }) {
+            for (const float speed : speeds) {
+                for (uint32_t shape = 0; shape <= kFieldImpulseCone; ++shape) {
+                    auto sim = std::make_unique<Sim>();
+                    const EntityID f = volume ? AddVolume(*sim, 0.0f, 0.0f, 0.0f, 12, 12, 12)
+                                              : AddField(*sim, 0.0f, 0.0f, 0.0f, 24, 24, kDisturbanceChannelMask);
+                    sim->Flush();
+                    sim->Step();
+                    FieldImpulse imp = MakeImpulse(0.0f, volume ? 0.0f : 0.2f, 0.0f, 1.5f, 1.0f, 0.5f, speed);
+                    imp.dir[1] = volume ? 0.3f : 0.0f;
+                    imp.shape = shape;
+                    imp.coneCos = 0.5f;
+                    DisturbanceQueueImpulse(sim->scene, imp);
+                    sim->Step(10);
+                    const DisturbanceSlot& s = sim->D().Slots()[0];
+                    const float cap = FieldOf(*sim, f)->cellSize * 60.0f * 1.001f;
+                    for (size_t i = 0; i < s.flowX.size(); ++i) {
+                        const float vy = s.flowY.empty() ? 0.0f : s.flowY[i];
+                        const float len = std::sqrt((s.flowX[i] * s.flowX[i] + vy * vy) + s.flowZ[i] * s.flowZ[i]);
+                        finite = finite && std::isfinite(len);
+                        bounded = bounded && len <= cap;
+                    }
+                    for (float v : s.density) {
+                        finite = finite && std::isfinite(v);
+                    }
+                }
+            }
+        }
+        check(finite, "huge speed: 2D / Volume x (1e11, 1e30, -1e30) x (Point, Radial, Cone) stay finite for 10 steps");
+        check(bounded, "huge speed: the flow never exceeds cellSize * 60");
+    }
+
+    // ---- 格子の縁の外は静止状態 (= 風) として読む ----
+    {
+        const auto windSim = [](bool volume) {
+            auto sim = std::make_unique<Sim>();
+            GameObject envGo = sim->scene.CreateGameObjectTracked("Environment");
+            envGo.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 2.0f, 0.0f, 0.0f };
+            if (volume) {
+                AddVolume(*sim, 0.0f, 4.0f, 0.0f, 16, 8, 16);
+            } else {
+                AddField(*sim, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity);
+            }
+            sim->Flush();
+            sim->Step(300);
+            return sim;
+        };
+        FieldSampleOut out;
+        auto flat = windSim(false);
+        // 格子は x, z とも [-2, 2) m。縁から 0.1 マス (0.025 m) の位置
+        const bool westIn = DisturbanceSampleAt(flat->D(), flat->W(), kNullEntity, { -1.975f, 0.1f, 0.0f }, out);
+        check(westIn && std::fabs(out.flow[0] - 2.0f) < 0.02f, "edge: 0.1 cell inside the west edge of a 2D layer reads the wind (2.0)");
+        const bool southIn = DisturbanceSampleAt(flat->D(), flat->W(), kNullEntity, { 0.0f, 0.1f, -1.975f }, out);
+        check(southIn && std::fabs(out.flow[0] - 2.0f) < 0.02f, "edge: 0.1 cell inside the south edge of a 2D layer reads the wind (2.0)");
+        auto vol = windSim(true);
+        // 格子は x, z とも [-4, 4) m、y は [2, 6) m。縁から 0.1 マス (0.05 m)
+        const bool volIn = DisturbanceSampleAt(vol->D(), vol->W(), kNullEntity, { -3.95f, 4.0f, 0.0f }, out);
+        check(volIn && std::fabs(out.flow[0] - 2.0f) < 0.02f, "edge: 0.1 cell inside the west edge of a Volume reads the wind (2.0)");
+        const bool volBottom = DisturbanceSampleAt(vol->D(), vol->W(), kNullEntity, { 0.0f, 2.05f, 0.0f }, out);
+        check(volBottom && std::fabs(out.flow[0] - 2.0f) < 0.02f, "edge: 0.1 cell above the bottom of a Volume reads the wind (2.0)");
+    }
+    return ok;
+}
+
+// heavy = false: Fast 層 (小さい場・短い tick 数の項目だけ)、true: Full 層 (仕様どおりの大きさ・tick 数の重い項目と、時間の掛かる往復・ソルバの確認)
 bool RunDisturbanceFieldImpl(bool heavy)
 {
     MYE_LOG_INFO("==== Disturbance field self test (%s) ====", heavy ? "long" : "fast");
@@ -1564,7 +1680,7 @@ bool RunDisturbanceFieldImpl(bool heavy)
     }
 
     // ---- スナップショット往復 (acc 4) ----
-    if (!heavy) {
+    if (heavy) {
         auto a = std::make_unique<Sim>();
         const Scenario sc = BuildScenario(*a);
         a->Flush();
@@ -1619,7 +1735,7 @@ bool RunDisturbanceFieldImpl(bool heavy)
 
     // ---- 2 ワールドの並走と焼き込み (acc 9) ----
     {
-        const int ticks = heavy ? 600 : 100;
+        const int ticks = heavy ? 600 : 30;
         uint64_t finalHash = 0;
         const bool same = RunTwoWorlds(ticks, finalHash);
         MYE_LOG_INFO("  [disturbance] two-world scenario final hash @%d = %016llX", ticks,
@@ -1633,13 +1749,15 @@ bool RunDisturbanceFieldImpl(bool heavy)
             // M96g round 3: 波紋の注入を「h と hPrev を目標の高さ ripple へ寄せる」式に変えた (spec §4.1 C)。0x2D2D2A180F889F62 → 下の値
             // M96i: DisturbanceFieldComponent が followTarget / followMargin で 88 → 100 B に伸び、World のカラムの生バイトが変わった
             // (0x851C4663912825C1 → 下の値。2D の sim の式は変えていない)。--field-bench の Debug / Release が同じ値を出す
-            constexpr uint64_t kBakedFinalHash = 0x0D0CBC4DCBEE185Eull;
+            // 注入する目標速度を cellSize * 60 で切るようにした。場面の歩く源が 400 tick ごとに巻き戻る 1 tick で
+            // 約 960 m/s の速度を注入していたのが切られ、2D の流れが変わった (0x0D0CBC4DCBEE185E → 下の値)。--field-bench の Debug / Release が同じ値を出す
+            constexpr uint64_t kBakedFinalHash = 0x67C1AB58E919A515ull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
 
     // ---- 流れのソルバ (acc 3 / 13 / 16) ----
-    if (!heavy) {
+    if (heavy) {
         SolverChecks(check);
     }
 
@@ -1679,6 +1797,11 @@ bool RunDisturbanceFieldImpl(bool heavy)
 
     if (!heavy) {
         RunDisturbanceAbiTests(check); // M96d (ABI v35)
+    }
+
+    // review-1 の修正 (通番・巨大な速度・格子外の流れ)
+    if (!heavy && !RunDisturbanceRobustnessTests()) {
+        ++failCount;
     }
 
     // 水面の波紋 (M96 sub-12)
@@ -2305,6 +2428,31 @@ bool RunDisturbanceFollowTests()
         }
         check(same, "follow snapshot: 100 ticks after the round trip every tick hash matches (followTarget survives the restore)");
     }
+
+    // ---- 風の中で追従: 入ってきたマスの流れは風 (静止状態) ----
+    for (const bool volume : { false, true }) {
+        auto sim = std::make_unique<Sim>();
+        GameObject envGo = sim->scene.CreateGameObjectTracked("Environment");
+        envGo.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 2.0f, 0.0f, 0.0f };
+        GameObject target = sim->scene.CreateGameObjectTracked("Target");
+        const EntityID field = volume ? AddVolume(*sim, 0.0f, 0.0f, 0.0f, 32, 8, 32, "Field")
+                                      : AddField(*sim, 0.0f, 0.0f, 0.0f, 32, 32, kDisturbanceChannelDensity, "Field");
+        FieldOf(*sim, field)->cellSize = 0.25f;
+        FieldOf(*sim, field)->followTarget = target.Id();
+        FieldOf(*sim, field)->followMargin = 8;
+        sim->Flush();
+        sim->Step(200);
+        TransformOf(*sim, target.Id())->position.x = 2.0f; // 8 マス
+        sim->Step();
+        const DisturbanceSlot& s = sim->D().Slots()[0];
+        const int cy = volume ? 4 : 0;
+        const size_t rowBase = static_cast<size_t>(32) * (static_cast<size_t>(16) + static_cast<size_t>(32) * static_cast<size_t>(cy));
+        const float vxIncoming = s.flowX[static_cast<size_t>(31) + rowBase];
+        const float vxKept = s.flowX[static_cast<size_t>(10) + rowBase];
+        check(s.originCell[0] == -16 + 8 && std::fabs(vxIncoming - 2.0f) < 0.02f && std::fabs(vxKept - 2.0f) < 0.05f,
+              volume ? "follow wind: Volume columns that come in read the wind (2.0), not 0"
+                     : "follow wind: 2D columns that come in read the wind (2.0), not 0");
+    }
     return ok;
 }
 
@@ -2880,20 +3028,20 @@ bool RunDisturbanceFieldSelfTest()
 {
     const bool localLightsOk = RunDisturbanceLocalLightTests();
     const bool animEventOk = RunDisturbanceAnimEventTests();
-    const bool grassOk = RunDisturbanceGrassTests();
     const bool backgroundFogOk = RunBackgroundFogConditionTests();
-    const bool followOk = RunDisturbanceFollowTests();
-    const bool particleOk = RunDisturbanceParticleTests();
     const bool froxelModeOk = RunVolumeFroxelModeTests();
-    const bool terrainOk = RunDisturbanceTerrainTests();
-    const bool terrainTrailOk = RunDisturbanceTerrainTrailTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && followOk && particleOk
-           && froxelModeOk && terrainOk && terrainTrailOk;
+    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && backgroundFogOk && froxelModeOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()
 {
-    return RunDisturbanceFieldImpl(true);
+    // Fast 層に収まらない項目 (草・追従・粒子・地形) もここで走らせる
+    const bool grassOk = RunDisturbanceGrassTests();
+    const bool followOk = RunDisturbanceFollowTests();
+    const bool particleOk = RunDisturbanceParticleTests();
+    const bool terrainOk = RunDisturbanceTerrainTests();
+    const bool terrainTrailOk = RunDisturbanceTerrainTrailTests();
+    return RunDisturbanceFieldImpl(true) && grassOk && followOk && particleOk && terrainOk && terrainTrailOk;
 }
 
 int RunDisturbanceFieldBenchmark()
@@ -2919,7 +3067,7 @@ int RunDisturbanceFieldBenchmark()
     ReportTerrainBakeBench(check);
     SolverChecks(check);
     // Volume の確認項目 (selftest を回さずに、この経路で実行して確かめる)
-    check(RunDisturbanceVolumeTests(false), "volume checks (the same ones the disturbance suite runs)");
+    check(RunDisturbanceVolumeTests(true), "volume checks (the same ones the long disturbance suite runs)");
 
     // 性能: 128 x 128、動く源 3 + 定常の源 1 + 風。step と HashWorld を別々に測る。
     // jobs なし / あり、反復回数とチャネルを変えた内訳 (どこが重いか) を並べる

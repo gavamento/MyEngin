@@ -38,6 +38,7 @@ FeelState 型なら `SimSourcesOf` が Scene から引くので配線が要ら�
 
 sim の計算に CRT の超越関数 (`exp / pow / log / sin / cos / tan` 等) を使わない。減衰は UE Niagara Fluids の「Dissipation (大きいほど速く消える)」と逆向きの**残し率 (keep / tick)** で持つ (音響の `glowKeepPerTick` と同じ流儀)。
 check_rules 規則 18 が `src/Engine/Engine/Disturbance/*.cpp` (selftest と描画への詰め替えを除く) を機械検査し、`tools/check_rules_selftest.ps1` が「違反を仕込むと実際に error になる」ことを `replay_verify` の rules ジョブで毎回確かめる。
+例外: インパルスを組む境界 (ABI の `FieldAddImpulse` とアニメイベント) の角度 → `coneCos` の `std::cos` は許す (物理の `PhysicsCharacters.cpp` に前例がある。spec §2 #28)。規則 18 の検査範囲 (`Disturbance/*.cpp`) の外にある。
 
 ### D4. 計算方式 — 安定流体 (Stam) の簡約
 

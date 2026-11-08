@@ -817,6 +817,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     refs.scene->UI() = scene.ui; // M70c
     refs.scene->Feel() = scene.feel; // M94c
     refs.scene->InputBuffer() = scene.inputBuffer; // M94f
+    disturbance.InheritRenderSerial(refs.scene->Disturbance()); // 描画の通番は状態ではないので引き継ぐ
     refs.scene->Disturbance() = std::move(disturbance); // M96
     refs.scene->Lanes() = sessionLanes; // M81b
     refs.scene->Persist().Entries() = std::move(scene.persist);

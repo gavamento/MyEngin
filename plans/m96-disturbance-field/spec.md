@@ -1,7 +1,7 @@
 # M96 かき乱しフィールド (動く霧と、その汎用化) — 仕様書
 
 - slug: m96-disturbance-field
-- 状態: 完了 (2026-11-09、sub-01〜17 と W4 統合後の修正。レビュー待ち) / 確定 (2026-11-08。§7 の `[ユーザーに聞ける]` 1〜7 は司会が聞いた。推奨と違う回答 3 / 4 / 5 / 6 を §2 #12 / #14 / #15 / #16 と §3〜§6 に反映し、サブを 12 → 14 本にした。経緯は §8。ユーザー判断の確定事項は台帳「ユーザー判断」節)
+- 状態: 完了 (2026-11-09、sub-01〜18。review round 2 待ち) / 確定 (2026-11-08。§7 の `[ユーザーに聞ける]` 1〜7 は司会が聞いた。推奨と違う回答 3 / 4 / 5 / 6 を §2 #12 / #14 / #15 / #16 と §3〜§6 に反映し、サブを 12 → 14 本にした。経緯は §8。ユーザー判断の確定事項は台帳「ユーザー判断」節)
 - 依頼原文:
   このエンジンに
   ゼルダの伝説時のオカリナにある動く霧を実装したい
@@ -57,6 +57,7 @@
 | 25 | スカイボックスの無い背景 (clear 色) に Forward でも地面の霧・フロクセルの霧を掛けるか | Forward には背景を描くシェーダが無く、clear 色のまま残る (sub-03 round 2 の実測 sub03r2_03)。Deferred は光パスの背景分岐 (albedo.a < 0.5) で地面の霧とフロクセルを掛けている。golden には Forward + `--froxel` の `fog` (`tools\shot_verify.bat:257`) がある | **Forward でも掛ける** (2026-11-08。R13 の取り消し)。**フロクセルの背景も Deferred に揃える** (2026-11-08。planner の推奨「揃えない」の逆) | Forward の不透明の後・透明の前に、**背景だけを塗る全画面の三角形**を 1 回描く。深度は far で、深度テストは LESS_EQUAL・書き込みなし = clear のままの画素にだけ乗る。色は clear 色に、Deferred の背景分岐と**同じ処理** (地面の霧 `GroundFogCompositeBackground` → フロクセルの合成。フロクセルの部分は Deferred の背景分岐の式を写す) を掛けたもの。解析フォグ (`FogComponent`) の背景の扱いは今の Forward のまま変えない (依頼の外)。**描く条件 = Forward のビュー かつ スカイボックスを描いていない かつ (霧のある GroundLayer が 1 枚以上 または そのビューでフロクセルが走る)**。条件が欠けたらパスそのものが走らず、絵はビット不変。既存の「Forward + フロクセル + スカイ無し」のシーンは**背景の画素だけ**変わる (受け入れ 36 で、変わってよいシーンと差 0 のシーンを分け、golden の更新手順を決める)。sub-15 の後に置き、局所ライトも同じ関数で揃う。sub-16。却下: clear 色を霧の色へ寄せる = 視線ごとの通過長が出ない / 単色のスカイボックスを自動で描く = スカイの設定と見分けが付かない |
 | 26 | 跡 (雪・砂) の見た目の欄 (色・強さ) をどこに置くか | 場の側 (DisturbanceFieldComponent) に置くと、並列の波で同じ struct の末尾を触るサブ (sub-07 / 09 / 10) と重なる。跡の色は「その地面が雪か砂か」で決まるので、意味としても地面の持ち物 | planner 裁定 (並列化のとき、2026-11-08) `[ユーザーに聞ける]` | **TerrainComponent の末尾** (見た目の欄。sim は読まない。snapshot は v76)。1 つの場が雪と砂の両方の地形にまたがっても、それぞれの色で描ける。却下: 場の側 = 1 つの場に色が 1 つしかなく、並列の波でも衝突する |
 | 27 | Volume の性能の線 (受け入れ 20) | sub-07 の実測: 32×16×32・20 反復で Release・jobs なし 1.99〜2.04 ms (最良の窓)、jobs あり 0.59 ms、反復 0 で 1.25 ms。2D の同条件は 1.11 ms。3D は速度が 3 成分、Jacobi が 7 点なので、同じマス数でも約 1.8 倍が本質的に掛かる。実行時の既定は jobs あり | planner 裁定 (ユーザー不在、2026-11-09) `[ユーザーに聞ける]` | **jobs ありで 1.67 ms 以下を合格の線にし、jobs なしの値は ADR-036 に書く**。既定の寸法・反復回数は変えない。却下: Volume の既定の反復を 10 に下げる = 渦が弱くなり、jobs なしでも約 1.6 ms で線ぎりぎり / 既定の寸法を 32×8×32 に下げる = 煙の柱の高さ方向の解像度が半分になる / 三線形の SIMD 化 = 決定論の確認が要る別の仕事 |
+| 28 | インパルスの `coneCos` を CRT の `std::cos` で作ってよいか (review-1 #6) | 規則 18 は `Disturbance\` の sim ファイルだけを見ており、`coneCos` は TickRunner.cpp:281 / EngineApiTable.cpp:562 (境界の糊) で `std::cos` から作られ、ハッシュ対象のキューに入る。物理は既に `std::cos` を sim で使う (`PhysicsCharacters.cpp:309` 等)。replay_verify (Debug / Release / Server、WARP の CI) は PASS | planner 裁定 (ユーザー不在) | **許す** (前例と同じ)。§4.4 に例外として明記し、ADR-036 にも書く。却下: 角度の定数表 / 多項式 = 新しい近似の誤差の契約が増えるのに、守る相手 (CRT の違い) が今の構成に無い |
 
 ## 3. スコープ
 
@@ -114,7 +115,7 @@
 - 距離 `d`: 3D = 点とセル中心の距離。2D = 水平距離と板からの縦のはみ出し `dy = max(0, baseY − py, py − (baseY + thickness))` を合わせた距離。`d >= radius` のマスは触らない (格子外は書かない)
 - 重み `w = (1 − d / radius)²`
 - 速さ係数 `s`: Moving の源 = `min(|v_src| / fullSpeed, 1)` (`fullSpeed <= 0` なら 1)、Constant の源とインパルス = 1
-- 流れ: 目標速度 `u`、混ぜ率 `a = clamp(w × strength, 0, 1)` (インパルスは `a = w`)、`v += a × (u − v)`。2D は xz 成分だけ
+- 流れ: 目標速度 `u`、混ぜ率 `a = clamp(w × strength, 0, 1)` (インパルスは `a = w`)、`v += a × (u − v)`。2D は xz 成分だけ。**`u` は長さを `cellSize × 60` (1 tick 1 セル) で切ってから使う** (review-1 #2: 受け付けた有限の大きな速度が移流の逆追跡でマス座標の int 変換を範囲外にし、配列の外を読んだ)。移流・三線形の逆追跡も、FloorToInt の前にマス座標を格子の範囲 (± 数マス) へ切る (二重の守り)
   - Moving: `u` = 源の速度 (D)。Constant: `u` = 源の回転 × `constantVelocity`
   - インパルス Point: `u = dir × speed` / Radial: `u = normalize(セル中心 − 点) × speed` (`d` が 1e-6 未満のマスは `u = 0`) / Cone: Point に `w × saturate((cosθ − coneCos) / (1 − coneCos))` を掛ける (θ = `dir` とセル方向の角)
 - 濃さ (濃さチャネルがあるとき): `Δ = w × s × densityDelta` (`densityDelta` ∈ [−1, 1])。`Δ < 0` なら `ρ += Δ × ρ` (晴らす)、`Δ > 0` なら `ρ += Δ × (1 − ρ)` (足す = 煙)
@@ -141,7 +142,7 @@
 
 #### G. 読み取り (`FieldSample`)
 
-- 引数の場 (null なら位置を含む有効な場のうち entity index 最小) の、位置での値をセル中心の双線形 (3D は三線形) で返す。格子外のマスは静止状態として補間する (静止状態の流れ = その場の目標速度 = 風 × windScale。sub-04 以降)
+- 引数の場 (null なら位置を含む有効な場のうち entity index 最小) の、位置での値をセル中心の双線形 (3D は三線形) で返す。格子外のマスは静止状態として補間する (静止状態の流れ = その場の目標速度 = 風 × windScale。sub-04 以降。読み取り・移流・追従のずらしで入ってきたマスの全部で同じ値を使う = review-1 #4 / #5)
 - 2D の「含む」= xz が格子内、かつ y ∈ `[baseY − thickness, baseY + 2 × thickness]`
 - 2D の濃さは高さの形 `p(y) = y <= baseY ? 1 : saturate(1 − (y − baseY) / thickness)` を掛けた値 (描画と同じ式)。`followTerrain` の場の `baseY` は列の基準高さの双線形
 - 返す値: 流れ (vec3、2D は y = 0)・濃さ・跡・波紋の高さ・場のエンティティ。無効なチャネルの値は 0 (濃さチャネルが無い場の濃さも 0)
@@ -228,9 +229,9 @@
 
 ### 4.4 非機能
 
-- 決定論: sim の計算は float、`+ − × ÷ sqrt floor min max` だけ。`std::exp / pow / log / sin / cos / tan` 等は Disturbance の sim ファイル (`src\Engine\Engine\Disturbance\*.cpp` のうち描画への詰め替えを除く) で使わない (check_rules 規則 18、sub-01)。順序決定に使うキーは entity index と積んだ順だけ。`_DEBUG` 分岐なし
+- 決定論: sim の計算は float、`+ − × ÷ sqrt floor min max` だけ。**例外: インパルスを組む境界** (ABI `FieldAddImpulse` とアニメイベントの配送で `coneDeg` → `coneCos` を作る所) は CRT の `std::cos` を使ってよい。物理の前例 (`PhysicsCharacters.cpp:309` など) と同じで、Debug / Release / WARP は同じ CRT を使い、replay_verify が番人 (review-1 #6 で裁定)。step の中 (規則 18 の対象) では使わない。`std::exp / pow / log / sin / cos / tan` 等は Disturbance の sim ファイル (`src\Engine\Engine\Disturbance\*.cpp` のうち描画への詰め替えを除く) で使わない (check_rules 規則 18、sub-01)。順序決定に使うキーは entity index と積んだ順だけ。`_DEBUG` 分岐なし
 - 並列: §2 #9。jobs あり / なしでハッシュ一致 (replay_verify `jobsab` にフィールドのデモを足す、sub-04)
-- 性能: 1 フィールドの sim + ハッシュが Release・jobs なしで 1.67 ms/tick 以下 (§5 の 15 / 20)。Debug の selftest は既定層 60 秒の目安を壊さない (スイート `disturbance` は Debug 2 秒以下なら Fast、超えたら重い部分を Full へ)
+- 性能: 1 フィールドの sim + ハッシュが Release・jobs なしで 1.67 ms/tick 以下 (§5 の 15 / 20)。Debug の selftest は既定層 60 秒の目安を壊さない (スイート `disturbance` は Debug 約 2.5 秒以下なら Fast、超えたら重い部分を Full へ。sub-18 で 2 → 2.5 秒に緩めた)
 - ローカライズ: Inspector の欄名は `MYE_JP`、新しい UI 文字列は `Tr()` と `LocalizationTable.inl` の両言語 (規則 10)
 - レイヤー: sim は Engine 層、描画は Renderer 層 (POD だけ受け取る)。生の D3D 型を Renderer の外へ出さない (規則 16)
 - 新しいファイルを足したら `tools\gen_project_files.ps1`
@@ -279,6 +280,7 @@
 | 34 | 地面の霧の専用描画: (a) sub-02 と同じカメラ・フレームで、霧の領域の行ごとの平均輝度の 2 階差分の最大値が sub-02 より小さい (横縞が消えた。画像を並べる) (b) フロクセル off で霧が写り、フロクセルのパスが走らない (c) 場の無い既存デモ 2 本の絵が `2687227` のビルドと差 0 (d) 霧の後ろの透明物と霧の中の不透明物が同じように霞む (e) 960×540 / 1920×1080 で層 1 / 4 枚の GPU 時間を報告 | スクショ、`--img-diff`、GpuTimer | 03 |
 | 35 | 地面の霧の局所ライト: (a) `fogLocalLights = false` の絵が切り替え前と差 0 (b) true でランタンの周りの霧が明るい。層から離れたライトは絵を変えない (c) 9 本で 8 本だけ使われ WARN 1 回 (d) ライト 0 / 1 / 8 本の GPU 時間を報告 | `--img-diff`、スクショ、ログ、GpuTimer | 15 |
 | 36 | Forward のスカイ無しの背景: (a) sub-03 round 2 と同じ地平線向きの場面で、Forward の背景に地面の霧が掛かる。Forward と Deferred を並べて背景の領域の平均輝度の差を報告 (目視で同じ霧) (b) **差 0 であるべき絵** (`--img-diff --tol 0`、着手前 = sub-15 のコミットのビルドと比較): Deferred の全部、スカイのある Forward の全部 (`--field-demo` はスカイが無いので (c) 側)、フロクセルも地面の霧も無い Forward の全部 (golden の `demo_forward` / `demo_forward_fxaa` / `demo_render_forward` / `acoustic_forward` など) (c) **変わってよい絵** = Forward かつスカイ無しかつフロクセルが走るシーン。coder がデモと golden を全部洗って一覧にし、各々について「パスを一時的に止めたビルドの絵が着手前とビット一致」(変化はこのパスだけが原因) と「差分の画素が背景 (深度 far) の画素に限られる」を示す。前後の画像を並べる (d) golden の更新: (c) の 2 点を満たした golden だけを `tools\shot_verify.bat --update` で撮り直し、差分画像を目視してからコミットに含める。(c) を満たさない golden の変化は不具合として直す (memory `golden-diff-triage`: 塗り潰す前に原因を断定する) (e) 霧の後ろの透明物が背景の霧の上に正しく重なる (f) パスの GPU 時間 | スクショ、`--img-diff`、`shot_verify.bat`、GpuTimer | 16 |
+| 37 | review-1 の修正: (a) 中身の違う 2 つの blob を続けて復元すると描画の通番が違い、復元の前後で通番が増える (b) 2D / Volume に速度 1e11 / 1e30 / −1e30 のインパルスを積んで数 step 回しても落ちず、値が有限 (c) Fast 層の `disturbance` が Debug 約 2.5 秒以下 (重い項目は `disturbancelong` へ。sub-18 で 22.3 → 2.5 秒。§4.4 の 2 秒の線は、残りが減衰 150 tick・波紋 1000 tick など意味を削らないと縮まないので 2.5 秒へ緩める) かつ既定層の全体 (`--selftest`、Debug) が M95 の層分けの規則 (2 回の実測の大きい方が 55 秒以内。超えたら Full の本数を N+1) を満たす (d) 風 (2,0,0) の場の縁から 0.1 マスの `FieldSample` の vx が 2.0 (± 1%) (e) 風のある追従で、入ってきた列の vx が風と同じ (f) RunOneTick のコメントが RunOneTick の直前にある | selftest + 所要時間の計測 | 18 |
 
 ## 6. サブ分割
 
@@ -321,6 +323,7 @@
 | sub-15 | 地面の霧を局所ライトで照らす (ON/OFF、最大 8 本、影なし) | sub-03 (W1) | 12, 30, 35 | `M96o: 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし)` |
 | sub-16 | Forward のスカイ無しの背景に地面の霧とフロクセルを掛ける (背景だけの全画面パス、golden の更新) | sub-15 (W2) | 12, 30, 36 | `M96p: Forward でもスカイの無い背景に地面の霧とフロクセルを掛ける (背景だけの全画面パス)` |
 | sub-17 | 仕上げ (ADR-036・文書・カタログ・全検証) | 全部 (W5) | 26, 27, 28, 30 | `M96q: かき乱しフィールドの文書 (ADR-036、engine_spec、機能ガイド、確認項目) と全検証` |
+| sub-18 | review-1 の修正 (通番・速度の上限・Fast 層の時間・静止状態の流れ・コメント) | sub-17 | 12, 26, 28, 37 | `M96r: かき乱しフィールドのレビュー 1 の修正 (復元後の描画の通番、速度の上限、selftest の層分け、静止状態の流れ)` |
 
 荷重のかかる未知の順: (1) 3 点セットと決定論 (sub-01、済み) → (2) フロクセルで霧として見えるか (sub-02、済み。横縞が出たので専用描画へ) → (3) 地面の霧を 10 か所の合成で既存の絵を 1 ビットも変えずに足せるか (sub-03) → (4) 流れのコスト (sub-04)。見た目の他の用途は sub-02 のアップロード経路に乗るだけなので後ろへ回した。
 
@@ -378,6 +381,10 @@
 - 2026-11-09 (W4 の統合後、司会の目視): `--field-demo` の池 (PondWater、(5, 0.12, -2)、8 m 四方) の位置に、霧が掛からず白飛びした矩形が出た。sub-17 の前に「W4 統合後の修正」として 1 本直す (受け入れ 23 / 34 の回帰)
 - 2026-11-09 (W4 統合後の修正 round 1): 池の白飛びは W4 の回帰ではなく、M77b (746775c) 以来の `water_surface.hlsl` の `ApplyFog` の引数の並びの誤り (fogColor に視距離が入る) が、Fog の無い `--field-demo` の池で露見したもの。並びを宣言どおりに直した。水面を持つデモ・golden は `--field-demo` だけ (デモの組み立てコードの grep) なので golden への影響は無い
 - 2026-11-09 (sub-17 round 1): 最後のまとめ実行で全部 PASS (既存の別件を除く)。`ground_fog.hlsli::GfogLocalLightRadiance` と `common.hlsli::LightSample` の式の二重管理は維持 (共有ヘッダ化は全シェーダに触れるので見送り。ADR-036 に記録)。別件: `SampleTerrainHeightWorld` が地形の頂点の真上でレイを外すことがある (物理側の既存の挙動。M96 では列の基準高さが baseY に落ちるだけ)
+- 2026-11-09 (review-1): FAIL (major 3 / minor 4)。§4.1 C に目標速度の上限と逆追跡の座標の切り詰め、§4.1 G に静止状態の流れを読み取り・ずらしでも使うこと、§4.4 と §2 #28 に `coneCos` の CRT の例外、§5 に 37、§6 に sub-18 を追加。焼き込み値は付録 A.2 どおり sub-18 が `--field-bench` で採り直す
+- 2026-11-09 (ユーザー指示「その場で聞く方に戻して」、司会経由): M80 方式をやめる。`[ユーザーに聞ける]` の論点は印を付けて返し、司会がその場で聞く。保留中の §2 #27 (Volume の性能の線) と §2 #28 (`coneCos` の `std::cos`) は司会が聞く (回答が推奨と違えば補足で反映する)
+- 2026-11-09 (sub-18 round 1): Fast 層の disturbance の線を 2 → 2.5 秒に緩めた (§4.4、§5 の 37 (c))。既定層の全体が Debug 66.6 秒で、M95 の層分けの規則 (`plans\m95-action-combat\spec.md:111`、55 秒超なら N+1) を割っているので、37 (c) に入れて sub-18 で直す
+- 2026-11-09 (sub-18 round 2): 既定層を M95 の規則で直した (Full に simparallel / watersurface を追加、上位 12 本。Debug 49.5 秒)
 
 ## 付録 A. 並列の予約表 (W1〜W5)
 

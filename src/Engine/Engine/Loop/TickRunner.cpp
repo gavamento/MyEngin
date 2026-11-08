@@ -248,8 +248,7 @@ static void DeliverScriptMessages(std::vector<ScriptMessage>* queue, std::vector
     batch->clear();
 }
 
-// 固定 tick 1 回分 (engine_spec.md 5.3 のフェーズ 3/3.5/3.6/4/5/7 + tick 末の出力レーン)。
-// (契約は TickRunner.h の TickServices)
+// アニメイベント (disturb) からかき乱しのインパルスを組む。向きはエンティティの回転で回す
 void BuildClipEventImpulse(World& world, const AnimEventFired& ev, FieldImpulse& out)
 {
     const ControllerClipEvent& def = *ev.def;
@@ -284,6 +283,8 @@ void BuildClipEventImpulse(World& world, const AnimEventFired& ev, FieldImpulse&
     out.ripple = def.disturbRipple;
 }
 
+// 固定 tick 1 回分 (engine_spec.md 5.3 のフェーズ 3/3.5/3.6/4/5/7 + tick 末の出力レーン)。
+// (契約は TickRunner.h の TickServices)
 void RunOneTick(TickServices& ts)
 {
     EngineContext& ctx = *ts.ctx;

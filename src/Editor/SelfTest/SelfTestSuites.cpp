@@ -129,7 +129,7 @@ namespace mye {
 
 namespace {
 
-// 全走の順。Full は Debug の所要時間が長い上位 10 本 (sub-00b の計測表: plans/m95-action-combat/sub-00b.md)
+// 全走の順。Full は Debug の所要時間が長い上位 12 本 (sub-00b の計測表の 10 本に、M96 で simparallel / watersurface を足した: plans/m95-action-combat/sub-00b.md)
 // (M95 で足す場合は末尾の M95 マーカーの下へ)
 const SelfTestSuite kSuites[] = {
     { "ecs", mye::RunEcsSelfTest, SelfTestTier::Fast, "" },
@@ -144,7 +144,7 @@ const SelfTestSuite kSuites[] = {
     { "jobsystem", mye::RunJobSystemSelfTest, SelfTestTier::Fast, "" },
     { "vfx", mye::RunVfxSelfTest, SelfTestTier::Fast, "" },
     { "particle", mye::RunParticleSelfTest, SelfTestTier::Fast, "" },
-    { "simparallel", mye::RunSimParallelSelfTest, SelfTestTier::Fast, "M90g: sim の並列化 (jobs あり / なし一致)" },
+    { "simparallel", mye::RunSimParallelSelfTest, SelfTestTier::Full, "M90g: sim の並列化 (jobs あり / なし一致)" },
     { "assetops", mye::RunAssetOpsSelfTest, SelfTestTier::Fast, "" },
     { "font", mye::RunFontSelfTest, SelfTestTier::Fast, "" },
     { "audio", mye::RunAudioSelfTest, SelfTestTier::Fast, "" },
@@ -198,7 +198,7 @@ const SelfTestSuite kSuites[] = {
     { "surfaceshader", mye::RunSurfaceShaderSelfTest, SelfTestTier::Fast, "M79a: サーフェス規約・生成エントリ" },
     { "surfacematerial", mye::RunSurfaceMaterialSelfTest, SelfTestTier::Full, "M79b: Forward 描画とマテリアル Properties" },
     { "surfacedeferred", mye::RunSurfaceDeferredSelfTest, SelfTestTier::Full, "M79c: Deferred サーフェス段・CSM 影" },
-    { "watersurface", mye::RunWaterSurfaceSelfTest, SelfTestTier::Fast, "M79e: 水面サーフェス経路・MyEngineWater" },
+    { "watersurface", mye::RunWaterSurfaceSelfTest, SelfTestTier::Full, "M79e: 水面サーフェス経路・MyEngineWater" },
     { "fracture", mye::RunFractureSelfTest, SelfTestTier::Full, "M80a: 破壊分割コア (閉じ判定・平面切断)" },
     { "fractureeditor", mye::RunFractureEditorSelfTest, SelfTestTier::Full, "M80i: 破壊物 Inspector の焼き回り" },
     { "fractureskin", mye::RunFractureSkinSelfTest, SelfTestTier::Fast, "M80j: スキンメッシュの破壊" },
@@ -247,8 +247,8 @@ const SelfTestSuite kSuites[] = {
     { "feelsystem", mye::RunFeelSystemSelfTest, SelfTestTier::Fast, "M94c (手触り): 再生中の手触り (経過・置換・評価・内容ゲート)" },
     { "feellibrary", mye::RunFeelLibrarySelfTest, SelfTestTier::Fast, "M94d (手触り): .feel.json の往復・名前の解決・FeelTrigger" },
     { "springfollow", mye::RunSpringFollowSelfTest, SelfTestTier::Fast, "M94g (手触り): ばね追従 (瞬間移動・収束・空間変換・回転)" },
-    { "disturbance", mye::RunDisturbanceFieldSelfTest, SelfTestTier::Fast, "M96: かき乱しフィールド (静止・減衰と復元・注入の境界・源の速度・波紋・寿命・往復・並走)" },
-    { "disturbancelong", mye::RunDisturbanceFieldLongSelfTest, SelfTestTier::Full, "M96: かき乱しフィールドの重い項目 (128x128 を 600 tick・1200 tick の復元・10000 tick の波紋・600 tick 並走と焼き込みハッシュ)" },
+    { "disturbance", mye::RunDisturbanceFieldSelfTest, SelfTestTier::Fast, "M96: かき乱しフィールド (静止・減衰と復元・注入の境界・源の速度・波紋・寿命・短い並走・復元後の通番・巨大な速度・格子外の風)" },
+    { "disturbancelong", mye::RunDisturbanceFieldLongSelfTest, SelfTestTier::Full, "M96: かき乱しフィールドの重い項目 (128x128 を 600 tick・1200 tick の復元・10000 tick の波紋・600 tick 並走と焼き込みハッシュ・スナップショット往復・ソルバ・Volume の浮力と風と並走と往復・草・追従・粒子・地形)" },
 };
 
 const SelfTestAlias kAliases[] = {

@@ -173,6 +173,25 @@ float Saturate(float v)
     return std::min(std::max(v, 0.0f), 1.0f);
 }
 
+// 注入する目標速度を流れの上限 (cellSize * 60) へ切る。巨大・非有限の速度を移流の逆追跡へ渡さない
+// (入口は有限かどうかしか見ない)。useY が偽なら y 成分は長さに数えない (2D)
+void LimitInjectionSpeed(Injection& in, float cellSize, bool useY)
+{
+    const float cap = cellSize * kDisturbanceTickRate;
+    const auto bound = [cap](float v) { return std::isfinite(v) ? std::min(std::max(v, -cap), cap) : 0.0f; };
+    in.flowX = bound(in.flowX);
+    in.flowZ = bound(in.flowZ);
+    in.flowY = useY ? bound(in.flowY) : 0.0f;
+    in.radialSpeed = bound(in.radialSpeed);
+    const float len = std::sqrt((in.flowX * in.flowX + in.flowY * in.flowY) + in.flowZ * in.flowZ);
+    if (len > cap) {
+        const float k = cap / len;
+        in.flowX *= k;
+        in.flowY *= k;
+        in.flowZ *= k;
+    }
+}
+
 // 範囲 [lo, hi) のセル番号 (中心が (pos - r, pos + r) に入りうる範囲) を格子の内側へ切って返す。空なら false
 bool CellRange(float pos, float radius, float cellSize, int32_t origin, int32_t count, int32_t& lo, int32_t& hi)
 {
@@ -189,9 +208,11 @@ bool CellRange(float pos, float radius, float cellSize, int32_t origin, int32_t 
 }
 
 // radialDx / radialDz が非 null なら、流れに足した差分をそこへ加算する (Radial の発散源。投影が引く)
-void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vector<float>* radialDx = nullptr,
+void Inject(DisturbanceSlot& s, float thickness, const Injection& inRaw, std::vector<float>* radialDx = nullptr,
             std::vector<float>* radialDz = nullptr)
 {
+    Injection in = inRaw;
+    LimitInjectionSpeed(in, s.cellSize, false);
     // 非有限の入力は何も書かない (半径 0 以下も同じ)
     if (!(in.radius > 0.0f) || !std::isfinite(in.radius) || !std::isfinite(in.pos[0]) || !std::isfinite(in.pos[1])
         || !std::isfinite(in.pos[2])) {
@@ -275,9 +296,11 @@ void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vecto
 
 // Inject の 3D 版 (Volume)。距離は 3D のユークリッド距離で、濃さだけを持つ (跡・波紋は無い)。
 // radialDx / Dy / Dz が非 null なら流れに足した差分をそこへ加算する (Radial の発散源)
-void Inject3D(DisturbanceSlot& s, const Injection& in, std::vector<float>* radialDx, std::vector<float>* radialDy,
+void Inject3D(DisturbanceSlot& s, const Injection& inRaw, std::vector<float>* radialDx, std::vector<float>* radialDy,
               std::vector<float>* radialDz)
 {
+    Injection in = inRaw;
+    LimitInjectionSpeed(in, s.cellSize, true);
     if (!(in.radius > 0.0f) || !std::isfinite(in.radius) || !std::isfinite(in.pos[0]) || !std::isfinite(in.pos[1])
         || !std::isfinite(in.pos[2])) {
         return;
@@ -494,9 +517,19 @@ int32_t FloorToInt(float f)
     return i - (f < static_cast<float>(i) ? 1 : 0);
 }
 
+// マス座標を格子の外側 2 マス手前〜1 マス先へ切る (FloorToInt の前提を守る)。補間は格子外 = 一定値なので、切っても値は変わらない。
+// 非有限は下端へ寄せる
+float ClampCellCoord(float f, int32_t n)
+{
+    const float hi = static_cast<float>(n + 1);
+    return !(f > -2.0f) ? -2.0f : (f > hi ? hi : f);
+}
+
 // 双線形 (マス座標 fx, fz。マス中心が整数)。格子の外のマスは outside を返す
 float Bilinear(const std::vector<float>& a, int32_t nx, int32_t nz, float fx, float fz, float outside)
 {
+    fx = ClampCellCoord(fx, nx);
+    fz = ClampCellCoord(fz, nz);
     const int32_t x0 = FloorToInt(fx);
     const int32_t z0 = FloorToInt(fz);
     const float tx = fx - static_cast<float>(x0);
@@ -530,6 +563,9 @@ struct TriCoord {
 TriCoord MakeTriCoord(int32_t nx, int32_t ny, int32_t nz, float fx, float fy, float fz)
 {
     TriCoord c;
+    fx = ClampCellCoord(fx, nx);
+    fy = ClampCellCoord(fy, ny);
+    fz = ClampCellCoord(fz, nz);
     c.x0 = FloorToInt(fx);
     c.y0 = FloorToInt(fy);
     c.z0 = FloorToInt(fz);
@@ -1124,7 +1160,7 @@ void AdvectDensity3D(DisturbanceSlot& s, const FieldParams& p, DisturbanceState:
 }
 
 // 配列 1 本を (dx, dy, dz) マスずらす (追従)。新しい (x, y, z) は古い (x + dx, y + dy, z + dz) の値で、
-// 古い配列の外から入ってくるマスは rest。前の配列を読んで別の配列へ書くので走査順に依らない
+// 古い配列の外から入ってくるマスは rest (呼び出し側が配列ごとに決める)。前の配列を読んで別の配列へ書くので走査順に依らない
 void ShiftArray(std::vector<float>& a, std::vector<float>& out, int32_t nx, int32_t ny, int32_t nz, int32_t dx, int32_t dy,
                 int32_t dz, float rest)
 {
@@ -1178,9 +1214,16 @@ void FollowShift(World& world, const FieldParams& p, DisturbanceSlot& s, std::ve
     const int32_t nx = s.cellsX;
     const int32_t ny = s.cellsY;
     const int32_t nz = s.cellsZ;
-    ShiftArray(s.flowX, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
-    ShiftArray(s.flowZ, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
-    ShiftArray(s.flowY, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    // 入ってきたマスの流れは静止状態 (= 目標速度)
+    float target[3] = { 0.0f, 0.0f, 0.0f };
+    if (volume) {
+        WindTarget3D(world, p, target);
+    } else {
+        WindTarget(world, p, target[0], target[2]);
+    }
+    ShiftArray(s.flowX, scratch, nx, ny, nz, d[0], d[1], d[2], target[0]);
+    ShiftArray(s.flowZ, scratch, nx, ny, nz, d[0], d[1], d[2], target[2]);
+    ShiftArray(s.flowY, scratch, nx, ny, nz, d[0], d[1], d[2], target[1]);
     ShiftArray(s.columnBaseY, scratch, nx, ny, nz, d[0], d[1], d[2], s.baseY);
     ShiftArray(s.density, scratch, nx, ny, nz, d[0], d[1], d[2], p.restDensity);
     ShiftArray(s.trail, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
@@ -1383,6 +1426,16 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
         }
         const float thickness = ClampOr(comp->thickness, 0.05f, 20.0f, 1.0f);
         const float rest = ClampOr(comp->restDensity, 0.0f, 1.0f, 1.0f);
+        // 格子の外の流れは静止状態 (= 風の目標速度)。移流と同じ関数から取る
+        const float noPos[3] = { 0.0f, 0.0f, 0.0f };
+        FieldParams windParams = SanitizeField(s.entity, *comp, noPos);
+        windParams.cellSize = s.cellSize;
+        float wind[3] = { 0.0f, 0.0f, 0.0f };
+        if (s.shape == kDisturbanceVolume) {
+            WindTarget3D(world, windParams, wind);
+        } else {
+            WindTarget(world, windParams, wind[0], wind[2]);
+        }
         if (s.shape == kDisturbanceVolume) {
             // 3D: 格子の中 (3 軸とも [0, cells)) の三線形。高さの形 p(y) は無く、濃さはそのまま
             const float gx = pos.x / s.cellSize - static_cast<float>(s.originCell[0]);
@@ -1397,9 +1450,9 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
             const float fz = gz - 0.5f;
             out.field = s.entity;
             out.vertical = true;
-            out.flow[0] = Trilinear(s.flowX, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
-            out.flow[1] = Trilinear(s.flowY, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
-            out.flow[2] = Trilinear(s.flowZ, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
+            out.flow[0] = Trilinear(s.flowX, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, wind[0]);
+            out.flow[1] = Trilinear(s.flowY, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, wind[1]);
+            out.flow[2] = Trilinear(s.flowZ, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, wind[2]);
             if ((s.channels & kDisturbanceChannelDensity) != 0) {
                 out.density = Trilinear(s.density, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, rest);
             }
@@ -1419,8 +1472,8 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
             continue;
         }
         out.field = s.entity;
-        out.flow[0] = Bilinear(s.flowX, s.cellsX, s.cellsZ, fx, fz, 0.0f);
-        out.flow[2] = Bilinear(s.flowZ, s.cellsX, s.cellsZ, fx, fz, 0.0f);
+        out.flow[0] = Bilinear(s.flowX, s.cellsX, s.cellsZ, fx, fz, wind[0]);
+        out.flow[2] = Bilinear(s.flowZ, s.cellsX, s.cellsZ, fx, fz, wind[2]);
         if ((s.channels & kDisturbanceChannelDensity) != 0) {
             // 高さの形 p(y): 板の下端より下は 1、上へ thickness かけて 0 (描画と同じ式)
             const float shape = pos.y <= base ? 1.0f : Saturate(1.0f - (pos.y - base) / thickness);

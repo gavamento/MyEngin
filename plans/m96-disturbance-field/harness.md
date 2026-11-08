@@ -58,11 +58,13 @@
 | sub-14 | OK | 1 | 7b99fba (統合 44c80d4) | 草 |
 | sub-15 | OK | 1 | 332ccd0 (統合 be28b81) | 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし) |
 | sub-16 | OK | 1 | b19e3e9 (統合 256f582) | Forward のスカイ無し背景に地面の霧とフロクセル (全画面パス、golden 更新) |
-| sub-17 | OK | 1 | (このコミット) | 仕上げ (ADR-036・文書)。まとめ実行: selftest-full D/R 116/0、replay 24/24、shot 31/1 (既存 flow_title)、三校 既存 2 件 |
+| sub-17 | OK | 1 | 2b11247 | 仕上げ (ADR-036・文書)。まとめ実行: selftest-full D/R 116/0、replay 24/24、shot 31/1 (既存 flow_title)、三校 既存 2 件 |
+| sub-18 | OK | 2 | (このコミット) | review-1 の修正 (#1〜5, #7、#6 は ADR 追記)。受け入れ 37。最後に selftest-full / replay / shot を回す |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 3/3/4/4 | major 3 (復元後の描画通番が 1 に戻る / 巨大な速度で AV / disturbance Fast 層が Debug 22.3 s)、minor 4 (縁の流れ 0 / 追従で入る列の流れ 0 / coneCos の std::cos = planner / コメント位置)。全文 review-1.md |
 
 ## 一時停止 → 再開済み (2026-11-08 22:2x 停止、同日再開。ユーザー指示「一時停止して、少ししたら再開する」)
 W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末尾の「中断メモ (2026-11-08)」から続ける (coder は新しく起動し、中断メモと worktree の場所を渡す)。
@@ -104,3 +106,4 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 - (planner、2026-11-08) 並列化: 波 W1 (04 実装中 / 05 / 12 / 15)、W2 (06 / 07 / 14 / 16)、W3 (08 / 09 / 11)、W4 (10 / 13)、W5 (17)。予約表は spec 付録 A、統合は付録 B。W1 の前に計画ファイルだけを先にコミット (B.0)。中間のまとめ実行は W2 の統合の後
 - (planner、2026-11-09) 別件: golden `flow_title` が着手前 (bc957ea) から FAIL (maxDiff 62、944 画素、画面下の文字の明るさ)。M96 と無関係。`tools\check_rules.ps1` は powershell.exe 5 では構文エラー、pwsh で実行する
 - (planner、2026-11-09) 別件: `SampleTerrainHeightWorld` (PhysicsBodyOps.cpp) が地形格子の頂点の真上でレイを外すことがある (sub-17 で発見)。M96 の影響は該当列の基準高さが baseY に落ちるだけ。直すなら物理側の別の仕事
+- (司会、2026-11-09 朝) ユーザー判断: 質問の運用を「その場で聞く」に戻す。Q-1 (Volume 性能を jobs あり 1.67 ms 線で合格) = 推奨どおり「よい」。Q-2 (インパルスの coneCos を std::cos で作る、spec §2 #28) = 推奨どおり「使ってよい」。Notion の質問表にも記入済み

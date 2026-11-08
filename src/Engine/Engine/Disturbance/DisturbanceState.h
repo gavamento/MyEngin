@@ -143,6 +143,10 @@ public:
     // 描画用の通番 (状態ではない。ハッシュ・スナップショットに入れない)。step のたびに +1
     uint64_t RenderSerial() const { return renderSerial_; }
 
+    // 置き換わる側 (previous) の通番を引き継いで +1 する。復元で新品へ読んだ状態を差し替える直前に呼び、
+    // 中身の違う場なのに通番が前回と一致して描画の転送が省かれるのを防ぐ
+    void InheritRenderSerial(const DisturbanceState& previous) { renderSerial_ = previous.renderSerial_ + 1; }
+
     // 5 個目以降の場の警告を出した回数 (selftest 用。状態ではない)
     uint32_t OverflowWarnCount() const { return overflowWarnCount_; }
 
