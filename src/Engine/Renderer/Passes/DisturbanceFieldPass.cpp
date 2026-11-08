@@ -375,6 +375,10 @@ bool DisturbanceFieldPass::BindGroundFog(GraphicsDevice& device, const Disturban
     dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
     ID3D11SamplerState* samp[1] = { groundFogSampler_.Get() };
     dc->PSSetSamplers(kGroundFogSamplerSlot, 1, samp);
+    // サーフェスシェーダの VS (草の倒れ。MyeFieldSample) が同じ番号で読む。層の CB だけ (b7 / b8 は PS 専用)
+    dc->VSSetConstantBuffers(kGroundFogCbSlot, 1, cbs);
+    dc->VSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
+    dc->VSSetSamplers(kGroundFogSamplerSlot, 1, samp);
     return true;
 }
 
@@ -387,6 +391,9 @@ void DisturbanceFieldPass::UnbindGroundFog(GraphicsDevice& device)
     dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
     ID3D11SamplerState* samp[1] = {};
     dc->PSSetSamplers(kGroundFogSamplerSlot, 1, samp);
+    dc->VSSetConstantBuffers(kGroundFogCbSlot, 1, cbs);
+    dc->VSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
+    dc->VSSetSamplers(kGroundFogSamplerSlot, 1, samp);
 }
 
 void DisturbanceFieldPass::Release()

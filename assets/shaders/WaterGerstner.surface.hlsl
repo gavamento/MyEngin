@@ -73,7 +73,12 @@ VSOut VSMain(VSIn v)
 
 float4 PSMain(VSOut i) : SV_Target
 {
-    const float3 n = normalize(i.normalW);
+    float3 n = normalize(i.normalW);
+    // かき乱しフィールドの波紋 (M96)。water_surface.hlsl の PSMain と同じ足し方で、層が無ければ n は不変
+    const float2 rippleGrad = MyeFieldRippleGradient(i.posW);
+    if (any(rippleGrad != 0.0f)) {
+        n = normalize(n + float3(-rippleGrad.x, 0.0f, -rippleGrad.y));
+    }
     const float shadow = MyeSunShadow(i.posW);
     const float ndotl = saturate(dot(n, -gSunDirection)) * shadow;
     const float4 waterColor = lerp(gMyeWaterDeepColor, gMyeWaterShallowColor, ndotl);

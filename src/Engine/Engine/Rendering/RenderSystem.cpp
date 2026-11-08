@@ -713,13 +713,14 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     ResolveCamera(world, cameraOverride, f);
     DecideTaaAndFroxel(world, path, target, cameraOverride, f);
     CollectLights(world, f);
+    // 草 (サーフェスシェーダの VS) が影エントリでも同じ場を読むので、カスケード影より前に束縛する
+    UpdateDisturbanceField(world, device, f);
+    UpdateDisturbanceVolumes(world, device, f); // フロクセルの注入 (UpdateFroxel) が読む
     CollectDrawables(world, resources, target, f);
     RenderCascadeShadows(world, device, shaders, resources, f);
     AllocateShadowAtlas(device, shaders, resources, f);
     PrepareEnvironment(world, device, shaders, resources, target, cameraOverride, f);
     UpdateRtScene(device, shaders, resources, target, f);
-    UpdateDisturbanceField(world, device, f); // フロクセルの注入が読むので UpdateFroxel の前
-    UpdateDisturbanceVolumes(world, device, f);
     UpdateFroxel(device, shaders, target, f);
     UpdateAcousticVolume(device, target, f);
 
@@ -2147,11 +2148,12 @@ void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, 
     if (BuildDisturbanceFieldUpload(world, state, up) <= 0) {
         return;
     }
-    // 霧のある層、または波紋の配列を持つ層 (水面が読む。water_surface.hlsl) があれば転送する
+    // 霧のある層、状態を持つ層 (流れを草が読む。MyeFieldSample / 波紋を水面が読む) があれば転送する。
+    // 状態の無い層 (編集中) は流れが無いので、霧が無ければ従来どおり転送しない
     bool anyFog = false;
     for (int32_t i = 0; i < up.layerCount; ++i) {
         const DisturbanceLayerUpload& l = up.layers[i];
-        anyFog = anyFog || (l.hasDensity && l.fogDensity > 0.0f) || (l.hasState && l.ripple != nullptr);
+        anyFog = anyFog || (l.hasDensity && l.fogDensity > 0.0f) || l.hasState;
     }
     if (!anyFog || !disturbancePass_.Upload(device, up)) {
         return;

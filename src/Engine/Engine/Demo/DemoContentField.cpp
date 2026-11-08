@@ -274,6 +274,33 @@ void AddFieldDemoSwing(EngineContext& ctx)
     actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kFieldSwingControllerGuid };
 }
 
+// 草束 (M96 sub-14): 霧の広場の中ほどに細い箱の草を格子状に並べる。ボールが通った所の草が流れの向きへ倒れ、
+// 流れが引くと戻る (GrassField.surface。倒れは VS が場を読んで決める)。ずらしは整数の混ぜだけ = 決定的
+void AddFieldDemoGrass(EngineContext& ctx, Scene& s, const AssetID cube)
+{
+    constexpr int kBladesX = 21;
+    constexpr int kBladesZ = 21;
+    constexpr float kSpacing = 0.5f;
+    constexpr float kOriginX = -5.0f;
+    constexpr float kOriginZ = 3.0f;
+    const AssetID grass = MaterialLibrary::HashForPath(ctx.assetsRoot + L"\\materials\\GrassField.mat.json");
+    for (int iz = 0; iz < kBladesZ; ++iz) {
+        for (int ix = 0; ix < kBladesX; ++ix) {
+            const uint32_t h = static_cast<uint32_t>(ix) * 73856093u ^ static_cast<uint32_t>(iz) * 19349663u;
+            const float jx = static_cast<float>(h & 0xFFu) / 255.0f - 0.5f;
+            const float jz = static_cast<float>((h >> 8) & 0xFFu) / 255.0f - 0.5f;
+            const float height = 0.45f + 0.25f * static_cast<float>((h >> 16) & 0xFFu) / 255.0f;
+            GameObject blade = s.CreateGameObject("Grass");
+            blade.SetLocalPosition(kOriginX + (static_cast<float>(ix) + 0.7f * jx) * kSpacing, height * 0.5f,
+                                   kOriginZ + (static_cast<float>(iz) + 0.7f * jz) * kSpacing);
+            blade.SetLocalScale(0.08f, height, 0.08f);
+            auto* mr = blade.AddComponent<MeshRendererComponent>();
+            mr->mesh = cube;
+            mr->material = grass;
+        }
+    }
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -299,6 +326,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoPond(s, sphere);
     AddFieldDemoSmoke(s);
     AddFieldDemoSwing(ctx);
+    AddFieldDemoGrass(ctx, s, cube);
     s.GetWorld().ApplyStructuralChanges();
 }
 
