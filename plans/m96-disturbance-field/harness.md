@@ -55,7 +55,7 @@
 | sub-11 | 未着手 | 0 | | 粒子 (CPU / GPU) |
 | sub-12 | OK | 1 | 4e871bb | 水面の波紋 |
 | sub-13 | 未着手 | 0 | | 跡 (地形) |
-| sub-14 | 実装中 (W2, worktree) | 0 | | 草 |
+| sub-14 | OK (統合待ち) | 1 | 7b99fba (ブランチ m96-w2-sub14) | 草 |
 | sub-15 | OK | 1 | 332ccd0 (統合 be28b81) | 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし) |
 | sub-16 | 実装中 (W2, worktree) | 0 | | Forward のスカイ無し背景に地面の霧とフロクセル (全画面パス、golden 更新) |
 | sub-17 | 未着手 | 0 | | 仕上げ (ADR-036・文書)。最後のまとめ実行 |
@@ -77,6 +77,7 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 ## W2 (2026-11-09 開始)
 - W1 統合完了: 04 d4e54f4 / 05 5ca2e83 / 15 be28b81 / 12 4e871bb (sub-12 は前任のマージコミットを避け差分だけ当てた)
 - W2 の worktree は司会が master の先頭から手で作る: C:\HAL\MyEngin\.claude\worktrees\w2-sub06 / w2-sub07 / w2-sub14 / w2-sub16 (ブランチ m96-w2-sub06 等)
+- sub-14 OK (7b99fba)。統合の目視点に追加: RenderSystem.cpp の UpdateDisturbanceField 呼び出しが CollectLights 直後に 1 か所だけあり、sub-07 の UpdateFroxel 周りと食い違っていない。planner が直した sub-17.md (手動確認の追加) はメイン側に未コミットで残してある
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)
