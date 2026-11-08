@@ -5,6 +5,7 @@
 #include <DirectXMath.h>
 
 #include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
 #include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
@@ -27,11 +28,19 @@ struct SkyCB {
     XMFLOAT4 starsTime; // x = 瞬きの時刻 (描画通番 / 60) / yzw = 未使用
 };
 
+// forward_background_fog.hlsl の BackgroundFogCB (b3) と同一レイアウト
+struct BackgroundFogCB {
+    XMFLOAT4 clear;        // rgb = clear 色, a = clear のアルファ
+    XMFLOAT4 froxel;       // x = enabled / y = スライス数
+    XMFLOAT4 froxelScreen; // xy = レンダーターゲット実寸 (px)
+};
+
 } // namespace
 
 void SkyboxPass::Shutdown()
 {
     cb_.Reset();
+    bgFogCb_.Reset();
     depthReadOnly_.Reset();
     blendOpaque_.Reset();
     sampler_.Reset();
@@ -45,6 +54,7 @@ bool SkyboxPass::Init(GraphicsDevice& device, ShaderManager& shaders)
     shader_ = shaders.Load("skybox");
     shaderCube_ = shaders.Load("skybox_cubemap"); // M38b
     shaderPano_ = shaders.Load("skybox_panoramic");
+    shaderBgFog_ = shaders.Load("forward_background_fog");
 
     D3D11_SAMPLER_DESC smp = {};
     smp.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -69,6 +79,11 @@ bool SkyboxPass::Init(GraphicsDevice& device, ShaderManager& shaders)
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     if (FAILED(dev->CreateBuffer(&bd, nullptr, cb_.GetAddressOf()))) {
+        return false;
+    }
+
+    bd.ByteWidth = sizeof(BackgroundFogCB);
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, bgFogCb_.GetAddressOf()))) {
         return false;
     }
 
@@ -172,6 +187,68 @@ void SkyboxPass::Render(GraphicsDevice& device, ShaderManager& shaders, const Re
         ID3D11ShaderResourceView* nullSrv[1] = { nullptr };
         dc->PSSetShaderResources(0, 1, nullSrv);
     }
+}
+
+bool SkyboxPass::NeedsBackgroundFog(const RenderView& view)
+{
+    if (view.skyMode >= 0) {
+        return false;
+    }
+    if (FroxelIsBound(view)) {
+        return true;
+    }
+    // 霧のある層 (ground_fog.hlsli が積分する層と同じ条件: 有効 && 濃さ > 0)
+    if (view.disturbance == nullptr) {
+        return false;
+    }
+    const DisturbanceFieldCB& cb = view.disturbance->cb;
+    const uint32_t count = (cb.header[0] < static_cast<uint32_t>(kDisturbanceMaxLayers))
+        ? cb.header[0]
+        : static_cast<uint32_t>(kDisturbanceMaxLayers);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (cb.layers[i].look[3] >= 0.5f && cb.layers[i].look[0] > 0.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SkyboxPass::RenderBackgroundFog(GraphicsDevice& device, ShaderManager& shaders,
+                                     const RenderView& view)
+{
+    if (!ready_ || !view.rtv || !view.dsv || !NeedsBackgroundFog(view)) {
+        return;
+    }
+    ShaderProgram* prog = shaders.Get(shaderBgFog_);
+    if (!prog || !prog->valid) {
+        return;
+    }
+    ID3D11DeviceContext* dc = device.Context();
+
+    BackgroundFogCB cb = {};
+    cb.clear = { view.clearColor[0], view.clearColor[1], view.clearColor[2], view.clearColor[3] };
+    cb.froxel = { FroxelIsBound(view) ? 1.0f : 0.0f, static_cast<float>(view.froxelSlices), 0.0f,
+                  0.0f };
+    cb.froxelScreen = { static_cast<float>(view.width), static_cast<float>(view.height), 0.0f,
+                        0.0f };
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    if (SUCCEEDED(dc->Map(bgFogCb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &cb, sizeof(cb));
+        dc->Unmap(bgFogCb_.Get(), 0);
+    }
+
+    // スカイと同じ状態: 深度は読むだけ (LESS_EQUAL・書き込み無し)、不透明ブレンド。
+    // SRV / サンプラはホストのパスが張ったもの (t7 / s2) をそのまま読む
+    dc->OMSetRenderTargets(1, &view.rtv, view.dsv);
+    dc->IASetInputLayout(nullptr);
+    dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    dc->VSSetShader(prog->vs.Get(), nullptr, 0);
+    dc->PSSetShader(prog->ps.Get(), nullptr, 0);
+    ID3D11Buffer* cbs[1] = { bgFogCb_.Get() };
+    dc->PSSetConstantBuffers(3, 1, cbs);
+    dc->OMSetDepthStencilState(depthReadOnly_.Get(), 0);
+    dc->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xFFFFFFFFu);
+    dc->Draw(3, 0);
 }
 
 } // namespace mye

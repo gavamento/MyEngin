@@ -549,6 +549,7 @@ $constGroups = @(
             'assets\shaders\skybox.hlsl'                 = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
             'assets\shaders\skybox_cubemap.hlsl'         = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
             'assets\shaders\skybox_panoramic.hlsl'       = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
+            'assets\shaders\forward_background_fog.hlsl' = 'Texture3D\s+gFroxelVolume\s*:\s*register\(t(\d+)\)'
         }
     },
     @{

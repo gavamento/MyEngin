@@ -29,6 +29,7 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Shared/EngineAPI.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Passes/SkyboxPass.h"
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 namespace mye {
@@ -1334,12 +1335,55 @@ bool RunDisturbanceLocalLightTests()
     return failCount == 0;
 }
 
+// Forward のスカイ無しの背景の霧 (SkyboxPass::NeedsBackgroundFog): パスを走らせる条件 (GPU を使わない純粋関数)
+bool RunBackgroundFogConditionTests()
+{
+    int failCount = 0;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+    RenderView view;
+    check(!SkyboxPass::NeedsBackgroundFog(view), "background fog: nothing to draw by default");
+
+    DisturbanceFieldGpu field;
+    field.cb.header[0] = 1;
+    field.cb.layers[0].look[0] = 0.5f; // 霧の濃さ
+    field.cb.layers[0].look[3] = 1.0f; // 有効
+    view.disturbance = &field;
+    check(SkyboxPass::NeedsBackgroundFog(view), "background fog: a layer with fog and no sky draws");
+
+    view.skyMode = 0;
+    check(!SkyboxPass::NeedsBackgroundFog(view), "background fog: a view with a sky never draws");
+    view.skyMode = -1;
+
+    field.cb.layers[0].look[0] = 0.0f;
+    check(!SkyboxPass::NeedsBackgroundFog(view), "background fog: a ripple-only layer (no fog) does not draw");
+    field.cb.layers[0].look[0] = 0.5f;
+    field.cb.layers[0].look[3] = 0.0f;
+    check(!SkyboxPass::NeedsBackgroundFog(view), "background fog: a disabled layer does not draw");
+    field.cb.layers[0].look[3] = 1.0f;
+    field.cb.header[0] = 0;
+    check(!SkyboxPass::NeedsBackgroundFog(view), "background fog: no layers does not draw");
+    field.cb.header[0] = 99; // 範囲外の本数でも配列を越えて読まない
+    field.cb.layers[0].look[0] = 0.0f;
+    check(!SkyboxPass::NeedsBackgroundFog(view), "background fog: an out-of-range layer count is clamped");
+
+    MYE_LOG_INFO("  background fog: %s", failCount == 0 ? "OK" : "FAILED");
+    return failCount == 0;
+}
+
 } // namespace
 
 bool RunDisturbanceFieldSelfTest()
 {
     const bool localLightsOk = RunDisturbanceLocalLightTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk;
+    const bool backgroundFogOk = RunBackgroundFogConditionTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk && backgroundFogOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()
