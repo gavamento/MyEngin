@@ -5,6 +5,7 @@
 //====================================================================================
 #pragma once
 #include <cstdint>
+#include <vector>
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -79,6 +80,8 @@ struct DisturbanceFieldUpload {
     DisturbanceLayerUpload layers[kDisturbanceMaxLayers];
     // sim の通番。**前回と同じで層の構成も同じなら転送しない** (sim は 60 Hz だが描画は何千 fps で回る)
     uint64_t serial = 0;
+    // layers[i].baseOffset の実体 (起伏に沿う層だけ詰める)。Build が作り、Upload が読む
+    std::vector<float> baseOffsetStorage[kDisturbanceMaxLayers];
 };
 
 // HLSL の DisturbanceLayer (float4 x 5) と同じ並び

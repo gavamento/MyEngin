@@ -62,6 +62,17 @@ float DfldHeightShape(float y, float baseY, float thickness)
     return y <= baseY ? 1.0f : saturate(1.0f - (y - baseY) / thickness);
 }
 
+// 層 li の格子座標 (gx, gz) での列の基準高さのずれ G [m] (列の基準高さ - baseY。起伏に沿う層。平らな層は 0)。
+// 板の高さは baseY + G で判定する (地面の霧・草・粒子・水面が同じ読み方をする。C++ の DisturbanceSampleAt と同じ意味)。
+// 状態を読む層 (extent.w >= 0.5) だけで呼ぶこと
+float DfldBaseOffsetAt(uint li, DisturbanceLayer L, float gx, float gz)
+{
+    const float2 uvLo = float2(0.5f, 0.5f) * L.texScale.xy;
+    const float2 uvHi = float2(L.extent.x - 0.5f, L.extent.y - 0.5f) * L.texScale.xy;
+    const float2 uv = clamp(float2(gx, gz) * L.texScale.xy, uvLo, uvHi);
+    return gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)li), 0).y;
+}
+
 // 層 i の位置 posW での消散係数 σ [1/m] (fogDensity × ρ × p(y) × 縁の立ち上げ)。層の格子の外 / 濃さチャネルなしは 0。
 // **sub-03 以降、読むのは地面の霧 (ground_fog.hlsli) だけ**。フロクセルは立体 (Volume) のみ読む
 float DfldLayerSigma(uint i, float3 posW)

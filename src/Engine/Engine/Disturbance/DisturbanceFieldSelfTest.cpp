@@ -24,6 +24,8 @@
 #include "nlohmann/json.hpp"
 #include "Engine/Engine/Disturbance/DisturbanceRender.h"
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
+#include "Engine/Core/Util/ByteIo.h"
+#include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
 #include "Engine/Engine/Replay/SimSnapshot.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -136,7 +138,7 @@ bool SameSlot(const DisturbanceSlot& a, const DisturbanceSlot& b)
 {
     return a.entity == b.entity && a.cellsX == b.cellsX && a.cellsZ == b.cellsZ && a.channels == b.channels
            && std::memcmp(a.originCell, b.originCell, sizeof(a.originCell)) == 0 && a.baseY == b.baseY
-           && a.shape == b.shape && a.cellsY == b.cellsY && SameBits(a.flowY, b.flowY)
+           && a.shape == b.shape && a.cellsY == b.cellsY && SameBits(a.flowY, b.flowY) && SameBits(a.columnBaseY, b.columnBaseY)
            && SameBits(a.flowX, b.flowX) && SameBits(a.flowZ, b.flowZ) && SameBits(a.density, b.density)
            && SameBits(a.trail, b.trail) && SameBits(a.ripple, b.ripple) && SameBits(a.ripplePrev, b.ripplePrev);
 }
@@ -826,7 +828,7 @@ bool RunDisturbanceVolumeTests(bool heavy)
     RegisterBuiltinComponents();
 
     // ---- 既定値と状態の形 ----
-    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 100,
+    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 104,
           "volume: buoyancy defaults to 0 and is the last field");
     {
         auto s = std::make_unique<Sim>();
@@ -1631,7 +1633,7 @@ bool RunDisturbanceFieldImpl(bool heavy)
             // M96g round 3: 波紋の注入を「h と hPrev を目標の高さ ripple へ寄せる」式に変えた (spec §4.1 C)。0x2D2D2A180F889F62 → 下の値
             // M96i: DisturbanceFieldComponent が followTarget / followMargin で 88 → 100 B に伸び、World のカラムの生バイトが変わった
             // (0x851C4663912825C1 → 下の値。2D の sim の式は変えていない)。--field-bench の Debug / Release が同じ値を出す
-            constexpr uint64_t kBakedFinalHash = 0x90646BB353FD22D5ull;
+            constexpr uint64_t kBakedFinalHash = 0x0D0CBC4DCBEE185Eull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
@@ -1705,7 +1707,7 @@ bool RunDisturbanceLocalLightTests()
         }
     };
     check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
-    check(sizeof(DisturbanceFieldComponent) == 100, "local lights: the component size is only the 12 bytes of followTarget / followMargin more (M96i)");
+    check(sizeof(DisturbanceFieldComponent) == 104, "local lights: the component size is only the 16 bytes of followTarget / followMargin / followTerrain more (M96i / M96j)");
 
     // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
     DisturbanceFieldCB layers;
@@ -2472,6 +2474,332 @@ bool RunDisturbanceParticleTests()
     return ok;
 }
 
+// ---- 地形に沿う層 (M96j) ----
+
+// 地形コライダー (shape = 4) 用の丘のハイトマップ。原点中心の 40 m 四方 (0.5 m 刻み)。
+// (centerX, centerZ) から radius までなだらかに peak [m] まで盛り上がる (外は 0)
+TerrainAsset::TerrainData MakeHillTerrain(float centerX, float centerZ, float radius, float peak)
+{
+    constexpr uint32_t kRes = 81;
+    constexpr float kSize = 40.0f;
+    TerrainAsset::TerrainData t;
+    t.heightW = kRes;
+    t.heightH = kRes;
+    t.worldSizeX = kSize;
+    t.worldSizeZ = kSize;
+    t.heightBase = 0.0f;
+    t.heightScale = peak;
+    t.heights.resize(static_cast<size_t>(kRes) * kRes);
+    for (uint32_t z = 0; z < kRes; ++z) {
+        for (uint32_t x = 0; x < kRes; ++x) {
+            const float wx = (static_cast<float>(x) / static_cast<float>(kRes - 1) - 0.5f) * kSize;
+            const float wz = (static_cast<float>(z) / static_cast<float>(kRes - 1) - 0.5f) * kSize;
+            const float r = std::sqrt((wx - centerX) * (wx - centerX) + (wz - centerZ) * (wz - centerZ));
+            const float u = std::max(0.0f, 1.0f - r / radius);
+            const float s = u * u * (3.0f - 2.0f * u);
+            t.heights[static_cast<size_t>(z) * kRes + x] = static_cast<uint16_t>(s * 65535.0f + 0.5f);
+        }
+    }
+    return t;
+}
+
+// 地形コライダーのライブラリを差し込む (終わったら元へ戻す)。丘は AssetID kHillId で引く
+struct TerrainLibScope {
+    static constexpr uint64_t kHillId = 0x96A0C0DE96A0C0DEull;
+    TerrainColliderLibrary lib;
+    TerrainColliderLibrary* previous = nullptr;
+    TerrainLibScope(float centerX, float centerZ, float radius, float peak)
+    {
+        previous = terraincol::Library();
+        lib.Register(AssetID{ kHillId }, MakeHillTerrain(centerX, centerZ, radius, peak));
+        terraincol::Install(&lib);
+    }
+    ~TerrainLibScope() { terraincol::Install(previous); }
+    TerrainLibScope(const TerrainLibScope&) = delete;
+    TerrainLibScope& operator=(const TerrainLibScope&) = delete;
+};
+
+EntityID AddHillCollider(Sim& s)
+{
+    GameObject go = s.scene.CreateGameObjectTracked("Hill");
+    auto* col = go.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kTerrain;
+    col->meshAsset = AssetID{ TerrainLibScope::kHillId };
+    return go.Id();
+}
+
+// 値が変わらない設定 (濃さは静止のまま)
+void FreezeField(DisturbanceFieldComponent* f)
+{
+    f->densityKeep = 1.0f;
+    f->velocityKeep = 1.0f;
+    f->windScale = 0.0f;
+    f->pressureIterations = 0;
+}
+
+// 丘 + 追従する層 + 動く源の 1 本の sim。Tick(t) が源と追従の相手を台本どおりに動かして 1 tick 進める
+struct TerrainRig {
+    Sim sim;
+    EntityID hill;
+    EntityID field;
+    EntityID target;
+    EntityID source;
+    TerrainRig()
+    {
+        hill = AddHillCollider(sim);
+        GameObject t = sim.scene.CreateGameObjectTracked("Target");
+        target = t.Id();
+        field = AddField(sim, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity | kDisturbanceChannelTrail, "Field");
+        auto* f = FieldOf(sim, field);
+        f->cellSize = 1.0f;
+        f->followTerrain = true;
+        f->followTarget = target;
+        f->followMargin = 4;
+        source = AddSource(sim, "Mover", -6.0f, 0.5f, 0.0f);
+        SourceOf(sim, source)->radius = 2.0f;
+        SourceOf(sim, source)->trailDepth = 0.3f;
+        SourceOf(sim, source)->densityDelta = -0.5f;
+        sim.Flush();
+    }
+    void Tick(int t)
+    {
+        TransformOf(sim, source)->position.x = -6.0f + static_cast<float>(t) * 0.1f;
+        TransformOf(sim, target)->position.x = static_cast<float>(t) * 0.05f;
+        sim.Step();
+    }
+};
+
+bool RunDisturbanceTerrainTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    RegisterBuiltinComponents();
+    const auto bitsEqual = [](float a, float b) { return std::memcmp(&a, &b, sizeof(float)) == 0; };
+
+    check(!DisturbanceFieldComponent{}.followTerrain, "terrain: followTerrain is off by default");
+
+    // (a) 丘の上と平地で、地形の高さ + 0.5 * thickness の濃さが一致する。followTerrain = false なら丘の上は層の外
+    {
+        TerrainLibScope terrain(0.0f, 0.0f, 8.0f, 3.0f);
+        constexpr float kExpectedDensity = 0.5f; // 高さの形 p(y) = 1 - 0.5 / thickness (静止の濃さは 1)
+        float hillHeight = 0.0f;
+        float flatHeight = 0.0f;
+        for (int follow = 1; follow >= 0; --follow) {
+            auto sim = std::make_unique<Sim>();
+            AddHillCollider(*sim);
+            const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, 32, 32, kDisturbanceChannelDensity);
+            FieldOf(*sim, field)->cellSize = 0.5f;
+            FieldOf(*sim, field)->followTerrain = follow != 0;
+            FreezeField(FieldOf(*sim, field));
+            sim->Flush();
+            sim->Step(2);
+            // 列 (16, 16) と (31, 31) の中心 (原点セル -16、マス 0.5 m)
+            const float hillX = 0.25f;
+            const float flatX = 7.75f;
+            check(SampleTerrainHeightWorld(sim->W(), hillX, hillX, &hillHeight, nullptr) == 1 && hillHeight > 2.5f,
+                  "terrain: the hill collider answers a height near the 3 m peak");
+            check(SampleTerrainHeightWorld(sim->W(), flatX, flatX, &flatHeight, nullptr) == 1 && flatHeight == 0.0f,
+                  "terrain: the flat part outside the hill answers 0");
+            FieldSampleOut onHill;
+            FieldSampleOut onFlat;
+            const bool hillIn = DisturbanceSampleAt(sim->D(), sim->W(), field, { hillX, hillHeight + 0.5f, hillX }, onHill);
+            const bool flatIn = DisturbanceSampleAt(sim->D(), sim->W(), field, { flatX, flatHeight + 0.5f, flatX }, onFlat);
+            const DisturbanceSlot& slot = sim->D().Slots()[0];
+            if (follow != 0) {
+                check(hillIn && flatIn && std::fabs(onHill.density - kExpectedDensity) < 1.0e-3f
+                          && std::fabs(onFlat.density - kExpectedDensity) < 1.0e-3f,
+                      "terrain: followTerrain reads the same density at terrain height + 0.5 m on the hill and on the flat");
+                check(slot.columnBaseY.size() == slot.CellCount(), "terrain: followTerrain allocates one base height per column");
+                check(bitsEqual(slot.columnBaseY[16 + 32 * 16], hillHeight) && slot.columnBaseY[31 + 32 * 31] == 0.0f,
+                      "terrain: the baked column height is the terrain height at the column center (absolute y)");
+            } else {
+                check(!hillIn && onHill.density == 0.0f && flatIn,
+                      "terrain: without followTerrain the hill top is outside the layer (sample 0) and the flat is inside");
+                check(slot.columnBaseY.empty(), "terrain: without followTerrain no per-column array is allocated");
+            }
+        }
+    }
+
+    // (b) 地形が無ければ followTerrain = true は false と配列がビット一致する (列の基準高さは場の y)
+    {
+        TerrainColliderLibrary* previous = terraincol::Library();
+        terraincol::Install(nullptr); // 地形コライダーなし
+        std::unique_ptr<Sim> sims[2];
+        EntityID movers[2];
+        for (int follow = 0; follow < 2; ++follow) {
+            sims[follow] = std::make_unique<Sim>();
+            const EntityID field = AddField(*sims[follow], 0.0f, 0.25f, 0.0f, 32, 32,
+                                            kDisturbanceChannelDensity | kDisturbanceChannelTrail | kDisturbanceChannelRipple);
+            FieldOf(*sims[follow], field)->cellSize = 0.5f;
+            FieldOf(*sims[follow], field)->followTerrain = follow != 0;
+            movers[follow] = AddSource(*sims[follow], "Mover", -6.0f, 0.5f, 0.0f);
+            SourceOf(*sims[follow], movers[follow])->radius = 2.0f;
+            SourceOf(*sims[follow], movers[follow])->trailDepth = 0.3f;
+            SourceOf(*sims[follow], movers[follow])->densityDelta = -0.5f;
+            SourceOf(*sims[follow], movers[follow])->ripple = 0.05f;
+            sims[follow]->Flush();
+        }
+        for (int t = 0; t < 120; ++t) {
+            for (int follow = 0; follow < 2; ++follow) {
+                TransformOf(*sims[follow], movers[follow])->position.x = -6.0f + static_cast<float>(t) * 0.1f;
+                sims[follow]->Step();
+            }
+        }
+        const DisturbanceSlot& off = sims[0]->D().Slots()[0];
+        const DisturbanceSlot& on = sims[1]->D().Slots()[0];
+        bool columnsAtBase = on.columnBaseY.size() == on.CellCount();
+        for (float v : on.columnBaseY) {
+            columnsAtBase = columnsAtBase && v == 0.25f;
+        }
+        check(off.columnBaseY.empty() && columnsAtBase, "terrain: no terrain collider means every column rests at the field's own y");
+        check(SameBits(off.flowX, on.flowX) && SameBits(off.flowZ, on.flowZ) && SameBits(off.density, on.density)
+                  && SameBits(off.trail, on.trail) && SameBits(off.ripple, on.ripple),
+              "terrain: with no terrain a followTerrain field matches a flat field bit for bit over 120 ticks");
+        terraincol::Install(previous);
+    }
+
+    // (c) 追従のずらし: 残った列はビット不変 (地形を後から動かしても焼き直さない)、入ってきた列だけ焼く
+    {
+        TerrainLibScope terrain(10.0f, 0.0f, 6.0f, 3.0f);
+        TerrainRig rig;
+        rig.sim.Step();
+        const DisturbanceSlot before = rig.sim.D().Slots()[0];
+        constexpr int kN = 16;
+        check(before.columnBaseY.size() == static_cast<size_t>(kN * kN), "terrain follow: the 16 x 16 field bakes 256 columns");
+        // 地形を 10 m 持ち上げる (残る列が焼き直されないことと、入る列が今の地形で焼かれることの両方を見る)
+        TransformOf(rig.sim, rig.hill)->position.y = 10.0f;
+        TransformOf(rig.sim, rig.target)->position.x = 4.0f; // 余白ちょうど
+        rig.sim.Step();
+        const DisturbanceSlot& after = rig.sim.D().Slots()[0];
+        check(after.originCell[0] == before.originCell[0] + 4, "terrain follow: the grid shifted by 4 cells");
+        bool kept = true;
+        bool baked = true;
+        bool anyHigh = false;
+        for (int z = 0; z < kN; ++z) {
+            for (int x = 0; x < kN; ++x) {
+                const size_t n = static_cast<size_t>(x + kN * z);
+                if (x + 4 < kN) {
+                    kept = kept && bitsEqual(after.columnBaseY[n], before.columnBaseY[static_cast<size_t>(x + 4 + kN * z)]);
+                } else {
+                    const float wx = (static_cast<float>(after.originCell[0] + x) + 0.5f) * after.cellSize;
+                    const float wz = (static_cast<float>(after.originCell[2] + z) + 0.5f) * after.cellSize;
+                    float h = 0.0f;
+                    const bool hit = SampleTerrainHeightWorld(rig.sim.W(), wx, wz, &h, nullptr) == 1;
+                    baked = baked && hit && bitsEqual(after.columnBaseY[n], h);
+                    anyHigh = anyHigh || after.columnBaseY[n] > 10.0f;
+                }
+            }
+        }
+        check(kept, "terrain follow: the columns that stay keep their baked height bit for bit (the moved terrain is not re-baked)");
+        check(baked && anyHigh, "terrain follow: only the incoming columns are baked, from the terrain as it is now");
+    }
+
+    // (d) 2 ワールドの一致と、スナップショットの往復 (列の配列が blob に載る)
+    {
+        TerrainLibScope terrain(10.0f, 0.0f, 6.0f, 3.0f);
+        TerrainRig a;
+        TerrainRig b;
+        bool same = true;
+        for (int t = 0; t < 160; ++t) {
+            a.Tick(t);
+            b.Tick(t);
+            same = same && a.sim.Hash() == b.sim.Hash();
+        }
+        check(same && SameSlot(a.sim.D().Slots()[0], b.sim.D().Slots()[0]), "terrain: two worlds match on every tick of 160 (hash and slot)");
+
+        TerrainRig c;
+        for (int t = 0; t < 60; ++t) {
+            c.Tick(t);
+        }
+        SimRefs refsC;
+        refsC.scene = &c.sim.scene;
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refsC, blob), "terrain snapshot: capture succeeds");
+        TerrainRig d;
+        SimRefs refsD;
+        refsD.scene = &d.sim.scene;
+        check(RestoreSimSnapshot(refsD, blob.data(), blob.size()), "terrain snapshot: restore succeeds");
+        check(!d.sim.D().Slots().empty() && SameSlot(c.sim.D().Slots()[0], d.sim.D().Slots()[0]),
+              "terrain snapshot: the restored slot has the same column heights");
+        bool cont = c.sim.Hash() == d.sim.Hash();
+        for (int t = 60; t < 160 && cont; ++t) {
+            c.Tick(t);
+            d.Tick(t);
+            cont = c.sim.Hash() == d.sim.Hash();
+        }
+        check(cont, "terrain snapshot: the restored scene continues bit-identically for 100 ticks");
+    }
+
+    // (e) Volume は無視、壊れた DFLD の検証、描画への基準高さ、切り替えでの作り直し
+    {
+        TerrainLibScope terrain(0.0f, 0.0f, 8.0f, 3.0f);
+        auto sim = std::make_unique<Sim>();
+        AddHillCollider(*sim);
+        const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, 32, 32, kDisturbanceChannelDensity, "Field");
+        FieldOf(*sim, field)->cellSize = 0.5f;
+        FieldOf(*sim, field)->followTerrain = true;
+        const EntityID volume = AddField(*sim, 0.0f, 0.0f, 0.0f, 8, 8, kDisturbanceChannelDensity, "Volume");
+        FieldOf(*sim, volume)->shape = 1;
+        FieldOf(*sim, volume)->cellsY = 8;
+        FieldOf(*sim, volume)->followTerrain = true;
+        sim->Flush();
+        sim->Step();
+        check(sim->D().Slots().size() == 2 && !sim->D().Slots()[0].columnBaseY.empty() && sim->D().Slots()[1].columnBaseY.empty(),
+              "terrain: a Volume ignores followTerrain");
+
+        {
+            std::vector<std::byte> bytes;
+            ByteWriter w(bytes);
+            DisturbanceState broken;
+            broken.Slots() = sim->D().Slots();
+            broken.Slots()[0].columnBaseY.pop_back();
+            broken.Write(w);
+            ByteReader r(bytes.data(), bytes.size());
+            DisturbanceState out;
+            check(!DisturbanceState::Read(r, out), "terrain: a DFLD section with a short column array is rejected");
+        }
+
+        DisturbanceFieldUpload up;
+        const size_t probe = 16 + 32 * 16;
+        check(BuildDisturbanceFieldUpload(sim->W(), &sim->D(), up) == 1 && up.layers[0].baseOffset != nullptr
+                  && up.layers[0].baseOffset[probe] == sim->D().Slots()[0].columnBaseY[probe] - sim->D().Slots()[0].baseY,
+              "terrain render: the upload carries column base height minus baseY");
+
+        FieldOf(*sim, field)->followTerrain = false;
+        sim->Step();
+        check(sim->D().Slots()[0].columnBaseY.empty(), "terrain: turning followTerrain off rebuilds the field without the column array");
+        BuildDisturbanceFieldUpload(sim->W(), &sim->D(), up);
+        check(up.layers[0].baseOffset == nullptr, "terrain render: a flat layer carries no base offset");
+    }
+    return ok;
+}
+
+// 128 x 128 列の焼き込みにかかる ms (作り直しの step の差。followTerrain あり - なし)。--field-bench が報告する
+void ReportTerrainBakeBench(const std::function<void(bool, const char*)>& check)
+{
+    TerrainLibScope terrain(0.0f, 0.0f, 8.0f, 3.0f);
+    double ms[2] = {};
+    for (int follow = 0; follow < 2; ++follow) {
+        auto sim = std::make_unique<Sim>();
+        AddHillCollider(*sim);
+        const EntityID field = AddField(*sim, 0.0f, 0.0f, 0.0f, 128, 128, kDisturbanceChannelDensity);
+        FieldOf(*sim, field)->followTerrain = follow != 0;
+        sim->Flush();
+        const auto t0 = std::chrono::steady_clock::now();
+        sim->Step(); // 初回の step がスロットを作る (焼き込みを含む)
+        const auto t1 = std::chrono::steady_clock::now();
+        ms[follow] = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    }
+    MYE_LOG_INFO("  [bench] terrain bake 128x128 columns: first step %.3f ms with followTerrain, %.3f ms without (bake = %.3f ms)", ms[1],
+                 ms[0], ms[1] - ms[0]);
+    check(ms[1] >= 0.0, "terrain bake bench ran");
+}
+
 } // namespace
 
 bool RunDisturbanceFieldSelfTest()
@@ -2483,8 +2811,9 @@ bool RunDisturbanceFieldSelfTest()
     const bool followOk = RunDisturbanceFollowTests();
     const bool particleOk = RunDisturbanceParticleTests();
     const bool froxelModeOk = RunVolumeFroxelModeTests();
+    const bool terrainOk = RunDisturbanceTerrainTests();
     return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && followOk && particleOk
-           && froxelModeOk;
+           && froxelModeOk && terrainOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()
@@ -2512,6 +2841,7 @@ int RunDisturbanceFieldBenchmark()
     MYE_LOG_INFO("  [bench] two-world scenario @600: match=%d final hash = 0x%016llXull", same ? 1 : 0,
                  static_cast<unsigned long long>(finalHash));
 
+    ReportTerrainBakeBench(check);
     SolverChecks(check);
     // Volume の確認項目 (selftest を回さずに、この経路で実行して確かめる)
     check(RunDisturbanceVolumeTests(false), "volume checks (the same ones the disturbance suite runs)");

@@ -3,6 +3,8 @@
 //  MyEngin/ 秋田蓮音                                                       11/08/2026
 //                                          かき乱しフィールド (M96) のショーケース (--field-demo、霧の広場)
 //====================================================================================
+#include <cstdio>
+
 #include "Engine/Engine/Demo/DemoContent.h"
 #include "Engine/Engine/Demo/DemoContentInternal.h"
 
@@ -370,6 +372,53 @@ void AddFieldDemoDust(Scene& s)
     }
 }
 
+// 丘 (M96j): 高さ 3 m の丘 (assets/terrain/field_hill.terrain.json、16 m 四方) と、そこへ登る球。
+// 場は 4 個で上限なので 2D 層を足さず、広場の層 (DisturbanceField) を followTerrain にして丘の上でも霧が地面を這うようにする。
+// 丘の無い列は地形が当たらず、層の下端は従来どおり場の y (0) のまま
+void AddFieldDemoHill(Scene& s, const AssetID sphere)
+{
+    // .meta の GUID (assets/terrain/field_hill.terrain.json.meta)
+    constexpr uint64_t kFieldHillTerrainGuid = 0x7c3a9e5d21b84f06ull;
+    constexpr float kHillX = 12.0f;
+    constexpr float kHillZ = 16.0f;
+
+    GameObject hill = s.CreateGameObject("FieldHill");
+    hill.SetLocalPosition(kHillX, 0.0f, kHillZ);
+    auto* terrain = hill.AddComponent<TerrainComponent>();
+    std::snprintf(terrain->source, sizeof(terrain->source), "terrain/field_hill.terrain.json");
+    auto* col = hill.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kTerrain;
+    col->meshAsset = AssetID{ kFieldHillTerrainGuid };
+    col->friction = 0.0f;
+
+    GameObject field = s.Find("DisturbanceField");
+    if (field) {
+        field.GetComponent<DisturbanceFieldComponent>()->followTerrain = true;
+    }
+
+    // 丘の裾 (南) から頂上へ向かって転がる球。斜面を登りながら霧を割る
+    GameObject ball = s.CreateGameObject("HillBall");
+    ball.SetLocalPosition(kHillX, 0.45f, kHillZ - 9.0f);
+    ball.SetLocalScale(0.8f, 0.8f, 0.8f);
+    auto* mr = ball.AddComponent<MeshRendererComponent>();
+    mr->mesh = sphere;
+    mr->material = AssetID{ HashStr("pdemo_ball") };
+    auto* ballCol = ball.AddComponent<ColliderComponent>();
+    ballCol->shape = collidershape::kSphere;
+    ballCol->radius = 0.5f;
+    ballCol->friction = 0.0f;
+    auto* rb = ball.AddComponent<RigidbodyComponent>();
+    rb->useDensity = true;
+    rb->velocity = { 0.0f, 0.0f, 5.0f };
+    auto* src = ball.AddComponent<DisturbanceSourceComponent>();
+    src->mode = 0;
+    src->radius = 1.5f;
+    src->strength = 0.5f;
+    src->fullSpeed = 3.0f;
+    src->densityDelta = -0.3f;
+    src->trailDepth = 0.5f;
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -398,6 +447,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoGrass(ctx, s, cube);
     AddFieldDemoFollow(s, sphere);
     AddFieldDemoDust(s);
+    AddFieldDemoHill(s, sphere);
     s.GetWorld().ApplyStructuralChanges();
 }
 

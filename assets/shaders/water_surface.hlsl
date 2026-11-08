@@ -190,7 +190,7 @@ VSOut VSMain(VSIn v)
 }
 
 // M96: かき乱しフィールド 2D 層の波紋チャネル (gDfldAux の R、メートル) の水平勾配 (dh/dx, dh/dz) を返す。
-// 層の格子の中で、水面の高さが層の baseY ± thickness にあるときだけ効く (別の高さの水面は乱さない)。
+// 層の格子の中で、水面の高さが層の板 (baseY + 列の基準高さのずれ G ± thickness) にあるときだけ効く (別の高さの水面は乱さない)。
 // 層が 0 枚 / 状態が無い / 波紋チャネルが無い (R = 0) なら 0 = 法線は動かない。見た目だけで浮力には関与しない
 float2 WaterRippleGradient(float3 posW)
 {
@@ -198,7 +198,7 @@ float2 WaterRippleGradient(float3 posW)
     const uint count = min(gDfldHeader.x, (uint)MYE_DFLD_MAX_LAYERS);
     [loop] for (uint li = 0; li < count; ++li) {
         const DisturbanceLayer L = gDfldLayers[li];
-        if (L.extent.w < 0.5f || abs(posW.y - L.originSize.w) > L.extent.z) {
+        if (L.extent.w < 0.5f) {
             continue;
         }
         const float cellSize = L.originSize.z;
@@ -208,6 +208,9 @@ float2 WaterRippleGradient(float3 posW)
         const float nz = L.extent.y;
         if (!(gx > 0.0f && gz > 0.0f && gx < nx && gz < nz)) {
             continue;
+        }
+        if (abs(posW.y - (L.originSize.w + DfldBaseOffsetAt(li, L, gx, gz))) > L.extent.z) {
+            continue; // 板 (baseY + G ± thickness) の外
         }
         // 縁では中心差分が片側になって勾配が半端になるので、縁の 2 マスで 0 へ落とす
         const float edge = min(min(gx, nx - gx), min(gz, nz - gz));

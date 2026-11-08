@@ -2667,6 +2667,9 @@ struct DisturbanceFieldComponent {
     // ---- 追従 (sim が読む) ----
     EntityID followTarget = kNullEntity;   // 生きていれば、その位置を中心に格子を整数セル単位でずらす。null = 固定
     int32_t followMargin = 4;             // 中心とのずれがこのセル数以上になった step でずらす [1, 格子の半分]
+    // ---- 地形に沿う (sim が読む。変えたら作り直す) ----
+    bool followTerrain = false;           // true: GroundLayer の層の下端を列ごとに地形の高さへ置く (焼き込み。Volume は無視)
+    uint8_t pad2[3] = {};                 // 明示パディング (生バイトに未初期化を残さない)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

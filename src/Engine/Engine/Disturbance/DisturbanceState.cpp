@@ -104,6 +104,7 @@ void DisturbanceState::Write(ByteWriter& w) const
         w.PodVector(s.flowX);
         w.PodVector(s.flowZ);
         w.PodVector(s.flowY);
+        w.PodVector(s.columnBaseY);
         w.PodVector(s.density);
         w.PodVector(s.trail);
         w.PodVector(s.ripple);
@@ -140,6 +141,7 @@ bool DisturbanceState::Read(ByteReader& r, DisturbanceState& out)
         s.flowX = r.PodVector<float>();
         s.flowZ = r.PodVector<float>();
         s.flowY = r.PodVector<float>();
+        s.columnBaseY = r.PodVector<float>();
         s.density = r.PodVector<float>();
         s.trail = r.PodVector<float>();
         s.ripple = r.PodVector<float>();
@@ -147,6 +149,8 @@ bool DisturbanceState::Read(ByteReader& r, DisturbanceState& out)
         const size_t n = s.CellCount();
         if (!r.Ok() || s.flowX.size() != n || s.flowZ.size() != n
             || s.flowY.size() != (s.shape == kDisturbanceVolume ? n : 0)
+            || (s.columnBaseY.size() != 0 && (s.shape != kDisturbanceGroundLayer || s.columnBaseY.size() != n
+                                              || !AllFinite(s.columnBaseY.data(), n)))
             || s.density.size() != ExpectedLength(s, kDisturbanceChannelDensity)
             || s.trail.size() != ExpectedLength(s, kDisturbanceChannelTrail)
             || s.ripple.size() != ExpectedLength(s, kDisturbanceChannelRipple)

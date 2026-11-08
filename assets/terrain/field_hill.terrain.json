@@ -1,0 +1,13 @@
+{
+  "type": "terrain",
+  "version": 1,
+  "worldSize": [ 16.0, 16.0 ],
+  "heightRes": [ 65, 65 ],
+  "splatRes": [ 64, 64 ],
+  "heightBase": -0.05,
+  "heightScale": 3.0,
+  "heightmap": "field_hill_height.png",
+  "layers": [
+    { "name": "grass", "tiling": [ 4.0, 4.0 ], "tint": [ 0.30, 0.42, 0.24 ] }
+  ]
+}
