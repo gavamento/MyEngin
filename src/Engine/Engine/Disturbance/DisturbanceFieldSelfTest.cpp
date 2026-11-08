@@ -2800,6 +2800,79 @@ void ReportTerrainBakeBench(const std::function<void(bool, const char*)>& check)
     check(ms[1] >= 0.0, "terrain bake bench ran");
 }
 
+// M96m: 地形の跡。描画側が読む跡 τ の元 (アップロードされる跡の配列) と、TerrainComponent の見た目の欄を確かめる。
+// trailKeep = 1 の場は跡が永続し、< 1 の場は消えていく。TerrainComponent の既定は「跡を描かない」(強さ 0)
+bool RunDisturbanceTerrainTrailTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    auto maxTrail = [](const DisturbanceLayerUpload& l) {
+        float m = -1.0f;
+        if (l.trail == nullptr) {
+            return m;
+        }
+        m = 0.0f;
+        const size_t n = static_cast<size_t>(l.cellsX) * static_cast<size_t>(l.cellsZ);
+        for (size_t k = 0; k < n; ++k) {
+            m = std::max(m, l.trail[k]);
+        }
+        return m;
+    };
+
+    // 既定 = 跡を描かない (既存の地形の絵は不変)。欄は反射に登録されている
+    {
+        const TerrainComponent t;
+        check(t.trailStrength == 0.0f, "terrain trail: the default strength is 0 (no trail is drawn)");
+        const ComponentDesc& d = ComponentRegistry::Get().Desc(TerrainComponent::sTypeId);
+        int found = 0;
+        for (const FieldDesc& f : d.fields) {
+            if (std::strcmp(f.name, "trailColor") == 0 || std::strcmp(f.name, "trailStrength") == 0
+                || std::strcmp(f.name, "trailBendDepth") == 0) {
+                ++found;
+            }
+        }
+        check(found == 3, "terrain trail: trailColor / trailStrength / trailBendDepth are registered");
+        check((d.flags & kComponentNoHash) != 0, "terrain trail: TerrainComponent stays NoHash (the look never enters the sim hash)");
+    }
+
+    // 永続 (trailKeep = 1) と消える (< 1) の 2 つの場。同じ源が通った後、源を止めて待つ
+    auto run = [&](float keep, float& afterWalk, float& afterWait) {
+        auto s = std::make_unique<Sim>();
+        const EntityID field = AddField(*s, 0.0f, 0.0f, 0.0f, 64, 64, kDisturbanceChannelTrail, "SnowField");
+        FieldOf(*s, field)->trailKeep = keep;
+        const EntityID walker = AddSource(*s, "Walker", -2.0f, 0.0f, 0.0f);
+        SourceOf(*s, walker)->trailDepth = 0.5f;
+        s->Flush();
+        s->Step(2);
+        for (int i = 0; i < 30; ++i) {
+            TransformOf(*s, walker)->position.x = -2.0f + 0.1f * static_cast<float>(i);
+            s->Step(1);
+        }
+        SourceOf(*s, walker)->trailDepth = 0.0f;
+        DisturbanceFieldUpload up;
+        BuildDisturbanceFieldUpload(s->W(), &s->D(), up);
+        afterWalk = maxTrail(up.layers[0]);
+        s->Step(600);
+        BuildDisturbanceFieldUpload(s->W(), &s->D(), up);
+        afterWait = maxTrail(up.layers[0]);
+    };
+    float keepWalk = 0.0f;
+    float keepWait = 0.0f;
+    run(1.0f, keepWalk, keepWait);
+    check(keepWalk > 0.3f, "terrain trail: a walking source leaves a trail the terrain shader can read");
+    check(keepWait == keepWalk, "terrain trail: trailKeep = 1 keeps the trail forever (bit-identical after 10 s)");
+    float fadeWalk = 0.0f;
+    float fadeWait = 0.0f;
+    run(0.99f, fadeWalk, fadeWait);
+    check(fadeWalk > 0.3f && fadeWait < fadeWalk * 0.1f, "terrain trail: trailKeep < 1 fades the trail away");
+    return ok;
+}
+
 } // namespace
 
 bool RunDisturbanceFieldSelfTest()
@@ -2812,8 +2885,9 @@ bool RunDisturbanceFieldSelfTest()
     const bool particleOk = RunDisturbanceParticleTests();
     const bool froxelModeOk = RunVolumeFroxelModeTests();
     const bool terrainOk = RunDisturbanceTerrainTests();
+    const bool terrainTrailOk = RunDisturbanceTerrainTrailTests();
     return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && followOk && particleOk
-           && froxelModeOk && terrainOk;
+           && froxelModeOk && terrainOk && terrainTrailOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()

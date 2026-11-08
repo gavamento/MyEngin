@@ -603,6 +603,12 @@ uint32_t TerrainSystem::Collect(World& world, MeshLibrary& meshes, TextureLibrar
                 item.entity = e;
                 item.chunkIndex = ci;
                 item.surface = entry->surface; // M58d (地形単位の値をチャンクへ複製)
+                // M96 sub-13: 跡の見た目は資産ではなくエンティティの欄 (同じ地形資産を雪にも砂にも使える)
+                const DirectX::XMFLOAT3 trailLinear =
+                    SrgbToLinear(DirectX::XMFLOAT3{ tc->trailColor.x, tc->trailColor.y, tc->trailColor.z });
+                item.surface.trailColorStrength = { trailLinear.x, trailLinear.y, trailLinear.z,
+                                                    std::clamp(tc->trailStrength, 0.0f, 1.0f) };
+                item.surface.trailBendDepth = tc->trailBendDepth;
                 // viewZ はチャンク AABB 中心のカメラ空間深度 (RenderItem と同じ規約)。
                 // 地形はエンティティ原点が全チャンクで共通なので、原点を使うと
                 // どのチャンクも同じ深度になり LOD (M58e) もソートも成立しない

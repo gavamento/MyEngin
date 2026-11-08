@@ -68,6 +68,10 @@ struct TerrainSurface {
     TerrainLayerBinding layers[kTerrainLayerCount];
     float metallic = 0.0f;
     float roughness = 0.92f; // 土/草は完全な拡散面に近い
+    // 跡 (M96 sub-13、かき乱しフィールドの跡チャネルの見た目)。TerrainComponent の欄を Collect が写す。
+    // rgb = リニア色、a = 強さ (0 = 跡を描かない = 既存の地形と同じ絵)。bendDepth = 跡の凹みの深さ [m] (法線だけ)
+    DirectX::XMFLOAT4 trailColorStrength = { 1.0f, 1.0f, 1.0f, 0.0f };
+    float trailBendDepth = 0.0f;
 };
 
 // 可視チャンク 1 枚の描画指示 (Renderer 層の純データ)。
