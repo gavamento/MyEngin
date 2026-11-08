@@ -26,14 +26,11 @@ void AddCamera(Scene& s)
     // 層 (高さ 0〜1 m) を斜めに見下ろすカメラ。球の通り道の筋が、地面の暗さと霧の白さの対比で読める
     camera.SetLocalPosition(0.0f, 7.0f, -12.0f);
     camera.SetLocalRotationEuler(36.0f, 0.0f, 0.0f);
-    // フロクセルを回して、グローバルの媒質は 0 (froxelDensity = 0) = 見えるのは場の霧だけ
-    auto* fx = camera.AddComponent<CameraPostFxComponent>();
-    fx->froxelOn = true;
-    fx->froxelDensity = 0.0f;
 }
 
 void AddLights(Scene& s)
 {
+    // 平行光 (既定の種類)。地面の霧に当たる太陽光 (fogSunLight) の出どころ
     GameObject sun = s.CreateGameObject("Sun");
     sun.AddComponent<LightComponent>();
     sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
@@ -78,6 +75,7 @@ void AddField(Scene& s)
     f->channels = kDisturbanceChannelDensity | kDisturbanceChannelTrail;
     f->densityKeep = 0.995f; // 筋が 10 秒近くかけて戻る
     f->fogDensity = 1.6f;    // 既定 (2.0) だと層が不透明で、晴れた筋が読めない
+    f->fogSunLight = true;   // 太陽の向きで霧の明るさが変わる (影なし)
 }
 
 // 霧を割って転がる球。物理の初速だけで動く (スクリプトなし = 決定的)。源は速度を剛体から自動で取る

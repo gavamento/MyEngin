@@ -17,8 +17,16 @@
 #include "common.hlsli"
 // スライス深度と逆射影 (3 パス共有)。MYE_FROXEL_GROUP もこちらが正本
 #include "froxel_common.hlsli"
-// かき乱しフィールド (M96) の 2D 層の霧。CB (b1)・t1 / t2・s1 はこのヘッダが宣言する
+// かき乱しフィールド (M96)。CB (b1)・t1 / t2・s1 はこのヘッダが宣言する。
+// 2D 層 (地面の霧) は ground_fog.hlsli が各ピクセルで描くので、ここは立体 (Volume) だけを読む
 #include "disturbance_common.hlsli"
+
+// 立体 (Volume) の霧。Volume が入る sub-07 までは何も足さない (sigma = 0・emit = 0 ちょうど)
+void DisturbanceVolumeFogAt(float3 posW, out float sigma, out float3 emit)
+{
+    sigma = 0.0f;
+    emit = 0.0f;
+}
 
 // C++ の FroxelInjectCB (src\Engine\Renderer\FroxelPass.cpp) とレイアウト一致 (2720 バイト)
 cbuffer FroxelInjectCB : register(b0)
@@ -92,10 +100,10 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     // M43a の height fog と同じ指数プロファイル。falloff == 0 なら exp(0) = 1 = 一様。
     // 分岐にしないのは、非一様フローを増やしても得るものが無いため (exp は十分安い)
     const float heightScale = exp(-gFroxelHeightFalloff * (posW.y - gFroxelBaseHeight));
-    // 場の霧 (M96)。層が無い / 外のセルは sigmaField = 0・emit = 0 ちょうどなので、足しても従来のビットは動かない
+    // 場の立体の霧 (M96)。無い / 外のセルは sigmaField = 0・emit = 0 ちょうどなので、足しても従来のビットは動かない
     float sigmaField;
     float3 fieldEmit;
-    DisturbanceFogAt(posW, sigmaField, fieldEmit);
+    DisturbanceVolumeFogAt(posW, sigmaField, fieldEmit);
     const float sigmaT = max(gFroxelDensity * heightScale, 0.0f) + sigmaField;
     const float sigmaS = sigmaT * gFroxelScatterAlbedo;
 
@@ -136,6 +144,6 @@ void CSMain(uint3 id : SV_DispatchThreadID)
         inscatter += L.color * (L.intensity * atten * shadow * phase);
     }
 
-    // 場の霧は環境光・局所ライトの散乱に加え、自己照明 (等方・影なし) を持つ。太陽光は sub-03
+    // 場の霧は環境光・局所ライトの散乱に加え、自己照明 (等方・影なし) を持つ
     gFroxelScatter[id] = float4(inscatter * sigmaS + fieldEmit, sigmaT);
 }

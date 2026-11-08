@@ -749,6 +749,11 @@ bool RunDisturbanceFieldImpl(bool heavy)
                   && up.layers[0].originCellX == 40 - 16 && up.layers[0].originCellZ == -16 - 16
                   && up.layers[0].baseY == 2.0f && up.layers[0].restDensity == 1.0f && up.layers[0].hasDensity,
               "render: before the first step the layer is a constant at the grid the step will build");
+        // 太陽光の bool は詰め替えを素通りして描画 (地面の霧の CB) へ届く
+        check(!up.layers[0].fogSunLight, "render: fogSunLight is off by default");
+        s->W().GetComponent<DisturbanceFieldComponent>(f)->fogSunLight = true;
+        check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && up.layers[0].fogSunLight,
+              "render: fogSunLight reaches the upload");
         s->Step(2);
         const DisturbanceSlot& slot = s->D().Slots()[0];
         check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && up.layers[0].hasState

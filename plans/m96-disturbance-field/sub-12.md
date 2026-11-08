@@ -1,4 +1,4 @@
-# sub-12: 跡 (地形の雪・砂)
+# sub-12: 水面の波紋
 
 - 依存: sub-11
 - 状態: 未着手
@@ -6,41 +6,39 @@
 
 ## やること
 
-spec §4.3 の跡、§7 R5。雪・砂の地形に、通った筋が残り (または時間で消え)、見た目に出る。
+spec §4.3 の水面、§2 #18。歩く・斬る・物が落ちると水面に波紋が広がる (見た目だけ)。
 
-1. `terrain_common.hlsli:60` の `SampleTerrainSurface` (または `forward_terrain` / `deferred_terrain` の呼び出し側) で、跡チャネルを持つ 2D 層の `τ` を引き、色を「跡の色」へ寄せ、`τ` の勾配で法線を曲げる (凹みの VS 変位は任意。入れたら影・当たり判定とのずれを SELF_EVAL に書く)
-2. 跡の色・強さの欄: 地形側 (TerrainComponent か地形のマテリアル) と場の側のどちらに置くかは、既存の地形のマテリアルの持ち方を見て coder が提案し、SELF_EVAL の「仕様との差分」に書く (planner が判定)。既存の地形の見た目は既定値で不変
-3. 束縛: sub-02 の RGBA16F 配列を地形のシェーダの空いた t スロット (t20〜t28 付近が地形で使用中) に。Forward と Deferred の両方
-4. 当たり判定は変えない
-5. デモ: `--field-demo` の末尾に小さな雪の地形 (跡チャネルの 2D 層、`trailKeep = 1`) を足し、人の経路が通るようにする
+1. 水面のシェーダ (`water_surface.hlsl`。Gerstner の M79 サーフェス `WaterGerstner.surface.hlsl` も対象にするかは coder が経路を確認して判断し、SELF_EVAL に書く) で、波紋チャネルを持つ 2D 層の `h` を引き、中心差分の勾配を法線に足す。VS に SRV を束縛できるなら変位も足す (できなければ法線だけ。理由を書く)
+2. 束縛: sub-02 の RG16F の配列 (R = 波紋) を、`water_surface.hlsl` の空いた t スロット (t0〜t8 が使用中、`:82-90`) に。番号は共有ヘッダへ
+3. 浮力 (`WaterWaveComponent` の CPU 側) は**変えない**
+4. デモ: `--field-demo` の末尾に浅い池 (水面 + 波紋チャネルの 2D 層、`baseY` を水面の高さに) を足し、デモの人の経路が池を横切るようにする
 
 ## やらないこと (このサブでは)
 
-- 地形の高さ (当たり判定) の変形
-- 足跡の形 (spec §7 R5: 0.25 m のマスでは筋になる)
+- 浮力・当たり判定への反映 (spec §2 #18)
+- 水面の解析波 (Gerstner) の変更
 
 ## 触る場所 (planner の見立て)
 
-- `assets\shaders\terrain_common.hlsli:26-60`、`forward_terrain.hlsl`、`deferred_terrain.hlsl`
-- 地形の描画パスの束縛 (`grep -rn "gTerrainSplat\|terrain" src\Engine\Renderer\Pipeline`)
+- `assets\shaders\water_surface.hlsl`、`src\Engine\Renderer\Passes\WaterPass.cpp` (束縛)、必要なら `WaterGerstner.surface.hlsl`
 - sub-02 の共有ヘッダ
 - `src\Engine\Engine\Demo\DemoContentField.cpp` の末尾
 
 ## 受け入れ条件 (このサブ)
 
-spec §5 の 12, 24, 30。
+spec §5 の 12, 23, 30。
 
-- 24: 人が雪を横切る前と後の 2 枚で筋が写る (`--img-diff`)。`trailKeep < 1` にした場合に消えていくことを 3 枚目で。`terrain` の selftest 不変
-- 跡チャネルの無いシーン (`--terrain-demo`) の絵が変わらない
+- 23: 人が池を渡る前と渡った後の 2 枚で、水面の領域に差がある (`--img-diff`、静止状態 2 回の差の 5 倍以上)。`watersurface` / `waterwave` の selftest 不変
+- 波紋チャネルの無いシーン (既存の水のデモ) の絵が変わらない (`--img-diff` で差 0 か、差の理由)
 - 12: replay_verify `field` PASS
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
-- `$env:MYE_SELFTEST_ONLY='terrain,disturbance,render'; bin\x64\Debug\Editor.exe --selftest`
-- スクショ (Runtime.exe、Forward と Deferred の両方)
+- `$env:MYE_SELFTEST_ONLY='watersurface,waterwave,disturbance,render'; bin\x64\Debug\Editor.exe --selftest`
+- スクショ (Runtime.exe)
 - SELF_EVAL を返す前: `bin\x64\Debug\Editor.exe --selftest`、`tools\check_rules.ps1`、`tools\replay_verify.bat`
 
 ## 実装メモ (coder が追記)

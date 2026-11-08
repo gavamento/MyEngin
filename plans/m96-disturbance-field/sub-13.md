@@ -1,4 +1,4 @@
-# sub-13: 草 (サーフェスシェーダの予約テクスチャ + デモの草束)
+# sub-13: 跡 (地形の雪・砂)
 
 - 依存: sub-12
 - 状態: 未着手
@@ -6,41 +6,41 @@
 
 ## やること
 
-spec §4.3 の草、§7 R6。通った所の草が倒れ、戻る。草の描画は今エンジンに無いので、M79 のサーフェスシェーダで作る。
+spec §4.3 の跡、§7 R5。雪・砂の地形に、通った筋が残り (または時間で消え)、見た目に出る。
 
-1. `MyEngineSurface.hlsli` に予約テクスチャ (sub-02 の 2D 配列) と CB、`MyeFieldSample(posW)` (流れと濃さを返す HLSL 関数) を足す。予約の束縛は既存の予約 (`gFroxelVolume` 等、`:127-131`) と同じ自動割り当ての規約に従う。プロジェクトのサーフェスシェーダから使えることを `docs\surface-shaders-deferred-limits.md` 等の既存の作者向け文書に 1 段落
-2. `assets\shaders\GrassField.surface.hlsl`: VS で、オブジェクト空間の高さに比例して流れの向きへ倒す (根元は動かない)。場が無い・流れ 0 なら真っ直ぐ。風の揺れ (時間の sin) は描画レーンなので使ってよい
-3. デモ: `--field-demo` の末尾に草束 (細い箱のエンティティ数百。数は描画の実測で決める) を霧の広場に並べる
-4. インスタンシング経路でサーフェスシェーダが使えるかを確認し (spec §7 R6)、使えなければ個別描画のまま描画時間を `--render-stats-dump` で測って報告
+1. `terrain_common.hlsli:60` の `SampleTerrainSurface` (または `forward_terrain` / `deferred_terrain` の呼び出し側) で、跡チャネルを持つ 2D 層の `τ` を引き、色を「跡の色」へ寄せ、`τ` の勾配で法線を曲げる (凹みの VS 変位は任意。入れたら影・当たり判定とのずれを SELF_EVAL に書く)
+2. 跡の色・強さの欄: 地形側 (TerrainComponent か地形のマテリアル) と場の側のどちらに置くかは、既存の地形のマテリアルの持ち方を見て coder が提案し、SELF_EVAL の「仕様との差分」に書く (planner が判定)。既存の地形の見た目は既定値で不変
+3. 束縛: sub-02 の RGBA16F 配列を地形のシェーダの空いた t スロット (t20〜t28 付近が地形で使用中) に。Forward と Deferred の両方
+4. 当たり判定は変えない
+5. デモ: `--field-demo` の末尾に小さな雪の地形 (跡チャネルの 2D 層、`trailKeep = 1`) を足し、人の経路が通るようにする
 
 ## やらないこと (このサブでは)
 
-- 草の配置ツール・地形の detail 草 (Unity Terrain の detail 相当) — 別のマイルストーン
-- 草の当たり判定
+- 地形の高さ (当たり判定) の変形
+- 足跡の形 (spec §7 R5: 0.25 m のマスでは筋になる)
 
 ## 触る場所 (planner の見立て)
 
-- `assets\shaders\MyEngineSurface.hlsli:120-135`、`MyEngineSurfaceEntries.hlsli`
-- `src\Engine\Renderer\Shader\SurfaceDrawBind.h` / `.cpp` (予約の束縛)、`ForwardPath.cpp:321-381` / `DeferredPath.cpp` の surface の CB
-- 新規 `assets\shaders\GrassField.surface.hlsl` (+ `.meta` は既存の生成規約に従う)
+- `assets\shaders\terrain_common.hlsli:26-60`、`forward_terrain.hlsl`、`deferred_terrain.hlsl`
+- 地形の描画パスの束縛 (`grep -rn "gTerrainSplat\|terrain" src\Engine\Renderer\Pipeline`)
+- sub-02 の共有ヘッダ
 - `src\Engine\Engine\Demo\DemoContentField.cpp` の末尾
 
 ## 受け入れ条件 (このサブ)
 
-spec §5 の 12, 25, 30。
+spec §5 の 12, 24, 30。
 
-- 25: 球・人が通る前 / 直後 / 戻った後の 3 枚で、通り道の草が倒れて戻る (`--img-diff`)。場の無いシーンに置いた草のマテリアルが真っ直ぐ立つ 1 枚
-- `surfaceshader` / `surfacematerial` / `surfacedeferred` の selftest 不変
+- 24: 人が雪を横切る前と後の 2 枚で筋が写る (`--img-diff`)。`trailKeep < 1` にした場合に消えていくことを 3 枚目で。`terrain` の selftest 不変
+- 跡チャネルの無いシーン (`--terrain-demo`) の絵が変わらない
 - 12: replay_verify `field` PASS
-- 草束の描画時間 (Release、`--render-stats-dump`)
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
-- `$env:MYE_SELFTEST_ONLY='surfaceshader,surfacematerial,surfacedeferred,disturbance'; bin\x64\Debug\Editor.exe --selftest`
-- スクショ (Runtime.exe、Forward と Deferred)
+- `$env:MYE_SELFTEST_ONLY='terrain,disturbance,render'; bin\x64\Debug\Editor.exe --selftest`
+- スクショ (Runtime.exe、Forward と Deferred の両方)
 - SELF_EVAL を返す前: `bin\x64\Debug\Editor.exe --selftest`、`tools\check_rules.ps1`、`tools\replay_verify.bat`
 
 ## 実装メモ (coder が追記)

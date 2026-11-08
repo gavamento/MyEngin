@@ -7,6 +7,7 @@
 
 #include "common.hlsli"        // M57追補: ApplyFog (register 宣言ゼロなので衝突しない)
 #include "froxel_common.hlsli" // M57追補: 受け持ちの分け方と合成 (同上)
+#include "ground_fog.hlsli" // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 
 cbuffer VfxCB : register(b0)
 {
@@ -81,6 +82,8 @@ SamplerState gFroxelSampler : register(s1);
 float4 PSMain(VSOut i) : SV_TARGET
 {
     float4 col = i.color * gTex.Sample(gSamp, i.uv);
+    // M96: 地面の霧。外側の大気 (下の解析フォグ / フロクセル) より先に掛ける
+    col.rgb = GroundFogComposite(col.rgb, i.posW, i.pos.xy);
     // ---- 大気散乱 (M29d + M43a、M57追補 でフロクセルと分担) ----
     // VFX クアッドは「深度を持つ alpha 合成のサーフェス」= 透明メッシュと同じ分類なので、
     // forward_lit.hlsl と同じ形。gFroxelEnabled==0 なら else 側 = ApplyFog だけ

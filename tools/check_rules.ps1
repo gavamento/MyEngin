@@ -257,6 +257,49 @@ $constGroups = @(
             'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_CB\s+(\d+)'
         }
     },
+    # M96c: 地面の霧 (ground_fog.hlsli) の PS 用の束縛番号と板の積分の段数。食い違うと別のリソースを読む / 段数が合わない (絵は出る)
+    @{
+        label = 'kGroundFogSrvFlowSlot / MYE_GFOG_SRV_FLOW'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogSrvFlowSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_SRV_FLOW\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogSrvAuxSlot / MYE_GFOG_SRV_AUX'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogSrvAuxSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_SRV_AUX\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogSamplerSlot / MYE_GFOG_SAMPLER'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogSamplerSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_SAMPLER\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogCbSlot / MYE_GFOG_CB'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogCbSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_CB\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogViewCbSlot / MYE_GFOG_VIEW_CB'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogViewCbSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_VIEW_CB\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogSteps / MYE_GFOG_STEPS'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogSteps\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_STEPS\s+(\d+)'
+        }
+    },
     # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{

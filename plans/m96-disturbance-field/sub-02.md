@@ -1,7 +1,7 @@
 # sub-02: 霧の描画 (2D) と `--field-demo`、replay ジョブ `field`
 
 - 依存: sub-01
-- 状態: OK (commit は司会が記入)
+- 状態: OK (commit 2687227)
 - 往復: 1
 
 ## やること
@@ -9,13 +9,13 @@
 spec §4.3 の「霧」「編集中」「描画への受け渡し」と、デモ・replay ジョブ。**このサブの一番の仕事は spec §7 R1 の判定**
 (フロクセルで薄い層の霧の割れ目が見えるか、尾を引きすぎないか) を数値と絵で出すこと。
 
-1. アップロード: RenderSystem (Engine 層) が Scene の `DisturbanceState` から 2D 層 (最大 4 枚) を POD `DisturbanceFieldUpload` に詰め、Renderer 層の新しいパス (`DisturbanceFieldPass`、`AcousticVolumePass` 型) が Texture2DArray `RGBA16F` (vx, vz, ρ, τ) と `RG16F` (R = 波紋 h、G = 基準面の高さのずれ = 列の基準高さ − baseY。sub-09 までは常に 0) へ転送する。寸法は有効な層の最大値、層ごとの UV 範囲と原点・cellSize・baseY・thickness・見た目の欄は CB。通番が前回と同じなら転送しない。float → half は `DirectXPackedVector` の変換など既存にあるもの
-   - 3D (sub-07) と粒子・水・地形・草 (sub-12〜13) が同じパスと CB を使う前提で、CB とテクスチャの束縛番号を 1 か所 (C++ と HLSL の共有ヘッダ / 定数) に決める。規則 9 の対象に入れる
+1. アップロード: RenderSystem (Engine 層) が Scene の `DisturbanceState` から 2D 層 (最大 4 枚) を POD `DisturbanceFieldUpload` に詰め、Renderer 層の新しいパス (`DisturbanceFieldPass`、`AcousticVolumePass` 型) が Texture2DArray `RGBA16F` (vx, vz, ρ, τ) と `RG16F` (R = 波紋 h、G = 基準面の高さのずれ = 列の基準高さ − baseY。sub-10 までは常に 0) へ転送する。寸法は有効な層の最大値、層ごとの UV 範囲と原点・cellSize・baseY・thickness・見た目の欄は CB。通番が前回と同じなら転送しない。float → half は `DirectXPackedVector` の変換など既存にあるもの
+   - 3D (sub-07) と粒子・水・地形・草 (sub-13〜13) が同じパスと CB を使う前提で、CB とテクスチャの束縛番号を 1 か所 (C++ と HLSL の共有ヘッダ / 定数) に決める。規則 9 の対象に入れる
    - 状態が無い場 (編集中・Play 前) は、テクスチャを読まず `restDensity` の定数として CB に載せる。描画レーンは sim の状態を作らない
-2. フロクセル: `froxel_inject.cs.hlsl:92-93` に場の密度を足す (spec §4.3 の式。`p(y)` と `edgeFade` は C++ の `DisturbanceSampleAt` の 2D の高さの形と同じ式。`p(y)` の基準は baseY + G チャネルのずれ)。散乱に `σ_field × fogColor × fogBrightness`。太陽光 (`fogSunLight`) と自動有効 (`autoFroxel`) は sub-03 — このサブではカメラの `froxelOn` が true のときだけ描く。`FroxelInjectCB` を変えるなら `FroxelPass.cpp:44` の `static_assert(2720)` と HLSL を同時に更新 (場の CB を別の b スロットにするなら 2720 は不変でよい)
+2. フロクセル: `froxel_inject.cs.hlsl:92-93` に場の密度を足す (spec §4.3 の式。`p(y)` と `edgeFade` は C++ の `DisturbanceSampleAt` の 2D の高さの形と同じ式。`p(y)` の基準は baseY + G チャネルのずれ)。散乱に `σ_field × fogColor × fogBrightness`。太陽光 (`fogSunLight`) と自動有効 (`autoFroxel`) は sub-08 — このサブではカメラの `froxelOn` が true のときだけ描く。`FroxelInjectCB` を変えるなら `FroxelPass.cpp:44` の `static_assert(2720)` と HLSL を同時に更新 (場の CB を別の b スロットにするなら 2720 は不変でよい)
 3. デモ `--field-demo` (霧の広場): `ShowcaseScenes.cpp` の表の末尾に `{ L"--field-demo", false, L"cache\\field_showcase.scene.json", nullptr, &BuildPlain<&BuildFieldShowcaseScene>, false }`、組み立ては新規 `src\Engine\Engine\Demo\DemoContentField.cpp`。中身: 平らな地面、2D 層の場 1 個 (濃さ + 跡)、`DisturbanceSource` 付きの球 3 個を物理の初速で霧の中へ転がす (スクリプト無しで決定的)、カメラに `CameraPostFx` (`froxelOn = true`、`froxelDensity = 0` = 場の霧だけ)、点光源 1 つ。sub-05 以降で人・爆発を足すので、要素ごとに関数を分ける (memory `demo-entity-order-is-rng-stream`: 後から足す物は関数の末尾)
 4. replay_verify のジョブ `field`: `tools\replay_verify.bat` の `:job_feel` (`:400-402`) の後に `:job_field` (`cache\field_showcase.scene.json` を消してから `call :chain cache\golden_field.rep "--field-demo" "--field-demo"`)、`:84` の `-Jobs` 一覧と `:87` の PASS 文、`:157` 付近の mismatch 診断。`tools\mcp\src\verify.rs:15` の `JOBS` (件数 23 → 24、`:251` の assert)
-5. (Inspector の注記と、フロクセルの自動有効は sub-03。このサブでは足さない)
+5. (Inspector の注記と、フロクセルの自動有効は sub-08。このサブでは足さない)
 6. 計測と判定 (spec §5 の 10):
    - `Runtime.exe --field-demo --screenshot cache\field_t060.png --shot-frame 60` (通過前)、球が通った直後、静止状態へ戻った後の 3 枚
    - 筋の領域と触っていない領域の平均輝度の差 (`Editor.exe --img-diff` か一時プローブ)、戻るまでのフレーム数
@@ -27,9 +27,9 @@ spec §4.3 の「霧」「編集中」「描画への受け渡し」と、デモ
 
 - 流れの移流 (sub-04)。このサブの霧は「晴れて戻る」だけで渦は巻かない
 - 地面の層専用の描画 (R1 で必要と判定されたら planner が別サブを足す)
-- 3D の描画 (sub-07)、粒子・水・地形・草 (sub-12〜13)
-- 平行光の注入とフロクセルの自動有効 (sub-03)
-- 地形の起伏に沿う基準面 (sub-09。G チャネルの受け口だけ作る)
+- 3D の描画 (sub-07)、粒子・水・地形・草 (sub-13〜13)
+- 平行光の注入とフロクセルの自動有効 (sub-08)
+- 地形の起伏に沿う基準面 (sub-10。G チャネルの受け口だけ作る)
 
 ## 触る場所 (planner の見立て)
 
@@ -52,7 +52,7 @@ spec §5 の 10, 11, 12, 30。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-14 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - `$env:MYE_SELFTEST_ONLY='disturbance,render,enginecli'; bin\x64\Debug\Editor.exe --selftest`
@@ -68,4 +68,4 @@ spec §5 の 10, 11, 12, 30。
 - 検証: Debug / Release ビルド警告 0、check_rules (増えた error なし。既存の harness.md CRLF 1 件は司会の編集物)、cargo test 49 PASS。selftest と replay_verify は運用指示で未実行
 
 ## フィードバック履歴
-- round 1: VERDICT OK (planner、2026-11-08)。R1 = 霧は見える・尾は理論 22 フレーム → 専用描画なし。横縞は許容の裁定 ([ユーザーに聞ける])。ノイズは同フレーム内の領域差で測る (19.6 / 0.03)。Play / Stop の Editor 操作確認は sub-14 の手動確認項目へ。selftest / replay_verify は運用どおり sub-07 後
+- round 1: VERDICT OK (planner、2026-11-08)。R1 = 霧は見える・尾は理論 22 フレーム → 専用描画なし。横縞は許容の裁定 ([ユーザーに聞ける])。ノイズは同フレーム内の領域差で測る (19.6 / 0.03)。Play / Stop の Editor 操作確認は sub-16 の手動確認項目へ。selftest / replay_verify は運用どおり sub-07 後

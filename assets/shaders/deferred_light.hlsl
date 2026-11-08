@@ -5,6 +5,7 @@
 // M57d: フロクセルのグリッド幾何とサンプル座標の式 (register 宣言は持たないヘッダ)
 #include "froxel_common.hlsli"
 #include "acoustic_common.hlsli" // M65e: 残光の式の正本 (register 宣言は持たない)
+#include "ground_fog.hlsli"       // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 
 cbuffer LightPass : register(b0)
 {
@@ -135,13 +136,15 @@ float4 PSMain(VSOut i) : SV_Target
         // ★グリッドより奥の解析フォグは**掛けない** — 背景は ApplyFog を受けない仕様
         //   (froxel off の経路も掛けていない) で、ここだけ足すと froxel の on/off で背景の色が
         //   食い違う。ここで消すのはフロクセル区間ぶんの段だけ
+        // M96: 地面の霧 (視線が層を通るときだけ変わる。層が無ければ gClearColor とビット恒等)
+        const float3 bgColor = GroundFogCompositeBackground(gClearColor.rgb, i.pos.xy, gScreenSize);
         if (gFroxelEnabled != 0) {
             const float2 bguv = i.pos.xy / gScreenSize;
             const float4 bgvol = gFroxelVolume.SampleLevel(
                 gIblSampler, float3(bguv, FroxelSampleWFar(gFroxelSlices)), 0);
-            return float4(gClearColor.rgb * bgvol.a + bgvol.rgb, gClearColor.a);
+            return float4(bgColor * bgvol.a + bgvol.rgb, gClearColor.a);
         }
-        return gClearColor;
+        return float4(bgColor, gClearColor.a);
     }
     const float3 n = normalize(gNormal.Load(pixel).xyz * 2.0f - 1.0f);
     const float3 posW = gPosition.Load(pixel).xyz;
@@ -246,6 +249,8 @@ float4 PSMain(VSOut i) : SV_Target
             : 0.0f;
         color += AcousticRadiance(max(glow, front), gAcousticParams.x, albedo.rgb, gAcousticParams.z);
     }
+    // ---- M96: 地面の霧。面のすぐ手前の霧なので、外側の大気 (下の解析フォグ / フロクセル) より先に掛ける ----
+    color = GroundFogComposite(color, posW, i.pos.xy);
     // ---- 大気散乱 (M29d + M43a の解析フォグ、M57d でフロクセルと分担) ----
     // ★ここが「霧を 3 回足さない」ための唯一の分岐点。同じ大気散乱を表現する仕組みが
     //   3 つある (解析フォグ / フロクセル / ゴッドレイ) ので、素直に全部足すと 3 倍になる。

@@ -13,6 +13,7 @@
 #include <DirectXPackedVector.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Renderer/Device/GpuBufferUtil.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 
 namespace mye {
@@ -114,6 +115,17 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         return false;
     }
 
+    // ---- 通番と層の構成が同じなら転送を省く (CB は下で毎回組む) ----
+    LayerKey keys[kDisturbanceMaxLayers];
+    for (int32_t i = 0; i < count; ++i) {
+        const DisturbanceLayerUpload& l = src.layers[i];
+        keys[i] = { l.entityIndex, l.entityGeneration, l.cellsX, l.cellsZ, l.hasState };
+    }
+    bool same = everUploaded_ && uploadedSerial_ == src.serial && uploadedCount_ == count;
+    for (int32_t i = 0; same && i < count; ++i) {
+        same = keys[i] == uploadedKeys_[i];
+    }
+
     // ---- CB は毎回組み直す (数十バイトで、編集中の設定変更をすぐ反映するため) ----
     DisturbanceFieldCB cb;
     cb.header[0] = static_cast<uint32_t>(count);
@@ -136,8 +148,26 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         c.fogColor[0] = l.fogColor[0];
         c.fogColor[1] = l.fogColor[1];
         c.fogColor[2] = l.fogColor[2];
+        c.fogColor[3] = l.fogSunLight ? 1.0f : 0.0f;
         c.texScale[0] = texWidth_ > 0 ? 1.0f / static_cast<float>(texWidth_) : 0.0f;
         c.texScale[1] = texHeight_ > 0 ? 1.0f / static_cast<float>(texHeight_) : 0.0f;
+        if (!same) {
+            // 状態を流し直すときだけ数え直す (描画は 60 Hz の sim より何倍も速く回る)
+            float lo = 0.0f;
+            float hi = 0.0f;
+            if (readTex && l.baseOffset != nullptr) {
+                const size_t n = static_cast<size_t>(l.cellsX) * static_cast<size_t>(l.cellsZ);
+                lo = hi = l.baseOffset[0];
+                for (size_t k = 1; k < n; ++k) {
+                    lo = (std::min)(lo, l.baseOffset[k]);
+                    hi = (std::max)(hi, l.baseOffset[k]);
+                }
+            }
+            offsetRange_[i][0] = lo;
+            offsetRange_[i][1] = hi;
+        }
+        c.texScale[2] = offsetRange_[i][0];
+        c.texScale[3] = offsetRange_[i][1];
     }
     gpu_.cb = cb;
     if (anyState) {
@@ -145,16 +175,6 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         gpu_.auxSRV = auxSrv_.Get();
     }
 
-    // ---- 転送。通番と層の構成が同じなら省く ----
-    LayerKey keys[kDisturbanceMaxLayers];
-    for (int32_t i = 0; i < count; ++i) {
-        const DisturbanceLayerUpload& l = src.layers[i];
-        keys[i] = { l.entityIndex, l.entityGeneration, l.cellsX, l.cellsZ, l.hasState };
-    }
-    bool same = everUploaded_ && uploadedSerial_ == src.serial && uploadedCount_ == count;
-    for (int32_t i = 0; same && i < count; ++i) {
-        same = keys[i] == uploadedKeys_[i];
-    }
     if (same || !anyState) {
         // 状態を読む層が無ければ転送するものが無い。鍵は更新して「次に状態が現れたら流す」ようにする
         if (!anyState) {
@@ -203,8 +223,81 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
     return true;
 }
 
+bool DisturbanceFieldPass::CreateGroundFogResources(GraphicsDevice& device)
+{
+    if (groundFogLayersCb_ && groundFogViewCb_ && groundFogSampler_) {
+        return true;
+    }
+    ID3D11Device* dev = device.Device();
+    D3D11_SAMPLER_DESC sd = {};
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    if (!gpubuf::CreateConstant(dev, sizeof(DisturbanceFieldCB), groundFogLayersCb_)
+        || !gpubuf::CreateConstant(dev, sizeof(GroundFogViewCB), groundFogViewCb_)
+        || FAILED(dev->CreateSamplerState(&sd, groundFogSampler_.ReleaseAndGetAddressOf()))) {
+        MYE_LOG_ERROR("DisturbanceFieldPass: 地面の霧の CB / サンプラを作れなかった (地面の霧は描かれない)");
+        groundFogLayersCb_.Reset();
+        groundFogViewCb_.Reset();
+        groundFogSampler_.Reset();
+        return false;
+    }
+    MYE_LOG_INFO("DisturbanceFieldPass: 地面の霧のリソースを作成 (板の積分 %d 段)", kGroundFogSteps);
+    return true;
+}
+
+bool DisturbanceFieldPass::BindGroundFog(GraphicsDevice& device, const DisturbanceFieldGpu* field,
+                                         const GroundFogViewParams& view)
+{
+    if (field == nullptr || field->cb.header[0] == 0 || !CreateGroundFogResources(device)) {
+        return false;
+    }
+    GroundFogViewCB v;
+    v.camPos[0] = view.camPos[0];
+    v.camPos[1] = view.camPos[1];
+    v.camPos[2] = view.camPos[2];
+    v.camPos[3] = kGroundFogAnisotropy;
+    for (int k = 0; k < 3; ++k) {
+        v.sunDir[k] = view.sunDir[k];
+        v.sunColor[k] = view.sunColor[k];
+        v.ambient[k] = view.ambient[k];
+    }
+    std::memcpy(v.invViewProj, view.invViewProj, sizeof(v.invViewProj));
+    v.sunDir[3] = view.hasSun ? 1.0f : 0.0f;
+    v.sunColor[3] = kGroundFogAlbedo;
+
+    ID3D11DeviceContext* dc = device.Context();
+    gpubuf::UploadCB(dc, groundFogLayersCb_.Get(), field->cb);
+    gpubuf::UploadCB(dc, groundFogViewCb_.Get(), v);
+    ID3D11Buffer* cbs[2] = { groundFogLayersCb_.Get(), groundFogViewCb_.Get() };
+    static_assert(kGroundFogViewCbSlot == kGroundFogCbSlot + 1, "2 本まとめて張る");
+    dc->PSSetConstantBuffers(kGroundFogCbSlot, 2, cbs);
+    ID3D11ShaderResourceView* srvs[2] = { field->flowSRV, field->auxSRV };
+    static_assert(kGroundFogSrvAuxSlot == kGroundFogSrvFlowSlot + 1, "2 本まとめて張る");
+    dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
+    ID3D11SamplerState* samp[1] = { groundFogSampler_.Get() };
+    dc->PSSetSamplers(kGroundFogSamplerSlot, 1, samp);
+    return true;
+}
+
+void DisturbanceFieldPass::UnbindGroundFog(GraphicsDevice& device)
+{
+    ID3D11DeviceContext* dc = device.Context();
+    ID3D11Buffer* cbs[2] = {};
+    dc->PSSetConstantBuffers(kGroundFogCbSlot, 2, cbs);
+    ID3D11ShaderResourceView* srvs[2] = {};
+    dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
+    ID3D11SamplerState* samp[1] = {};
+    dc->PSSetSamplers(kGroundFogSamplerSlot, 1, samp);
+}
+
 void DisturbanceFieldPass::Release()
 {
+    groundFogLayersCb_.Reset();
+    groundFogViewCb_.Reset();
+    groundFogSampler_.Reset();
     flowSrv_.Reset();
     auxSrv_.Reset();
     flowTex_.Reset();

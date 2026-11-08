@@ -6,6 +6,7 @@
 // なので衝突しない。**particle_gpu_common.hlsli 側には入れない** — あちらは emit/sim CS も
 // 読むので、描画専用のものを持ち込まない
 #include "froxel_common.hlsli"
+#include "ground_fog.hlsli" // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 // M63a: 四隅の回転/ストレッチ。**CPU バックエンド (particle_render.hlsl) と同じ 1 本**を
 // 呼ぶことが「2 実装が同じ絵を出す」(spec 7.5) の担保。register 宣言を持たないので衝突しない
 #include "particle_billboard.hlsli"
@@ -287,6 +288,12 @@ float4 PSMain(VSOut i) : SV_Target
     // 解析フォグが担うのは「視線がグリッドを出てから粒子まで」の残り区間だけ —
     // グリッドの中の粒子は残り 0m = f が厳密に 0 になり、フロクセル側だけが効く
     // (deferred_light の起点押し出しと同じ規約を距離側で書いたもの = 三重計上の回避)
+    // M96: 地面の霧 (CPU 版 particle_render.hlsl と同じ位置・同じ意味)
+    if (gFogColorBlend.w != 0.0f) {
+        col.rgb = GroundFogCompositeAdditive(col.rgb, i.posW, i.pos.xy);
+    } else {
+        col.rgb = GroundFogComposite(col.rgb, i.posW, i.pos.xy);
+    }
     float fogDist = i.dist;
     if (gFroxelParams.x != 0.0f) {
         fogDist = i.dist * (1.0f - FroxelFogHandoffFraction(i.viewZ, gFroxelParams.z));

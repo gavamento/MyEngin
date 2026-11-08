@@ -24,6 +24,19 @@ constexpr int kDisturbanceSrvAuxSlot = 2;
 constexpr int kDisturbanceSamplerSlot = 1;
 constexpr int kDisturbanceCbSlot = 1;
 
+// 地面の霧 (ground_fog.hlsli) の PS 用の束縛番号。全ての PS で共通の固定番号で、RenderSystem が 1 回の描画に 1 回だけ張る。
+// HLSL の MYE_GFOG_* と一致 (規則 9)。t20- は地形、b4 は速度、s0-s2 は IBL / 影が使う
+constexpr int kGroundFogSrvFlowSlot = 32;
+constexpr int kGroundFogSrvAuxSlot = 33;
+constexpr int kGroundFogSamplerSlot = 8;
+constexpr int kGroundFogCbSlot = 6;
+constexpr int kGroundFogViewCbSlot = 7;
+// 板の積分の段数 (同 MYE_GFOG_STEPS と一致。規則 9)
+constexpr int kGroundFogSteps = 24;
+// 霧の位相関数の異方性 g と散乱アルベド (フロクセル注入の既定 FroxelSettings と同じ値 = 面の明るさの基準を揃える)
+constexpr float kGroundFogAnisotropy = 0.3f;
+constexpr float kGroundFogAlbedo = 0.9f;
+
 // 2D 層 1 枚の転送指示。Engine 層が sim の状態 (または編集中の設定) から詰める。
 // ★DisturbanceState を直接受け取らない — Renderer から Engine を参照すると層の依存が逆流する
 //   (AcousticVolumeUpload と同じ。詰め替えは RenderSystem 側の仕事)
@@ -49,6 +62,7 @@ struct DisturbanceLayerUpload {
     float fogDensity = 2.0f;
     float fogColor[3] = { 1.0f, 1.0f, 1.0f };
     float fogBrightness = 1.0f;
+    bool fogSunLight = false; // true: 平行光を霧に当てる (影なし)
     // 場のエンティティ (index, generation)。どの層がどの場かを、転送を省く判定に使う
     uint32_t entityIndex = 0;
     uint32_t entityGeneration = 0;
@@ -68,6 +82,26 @@ struct DisturbanceLayerCB {
     float look[4] = {};
     float fogColor[4] = {};
     float texScale[4] = {};
+};
+
+// HLSL の cbuffer GroundFogViewCB と同じ並び (1 回の描画ごとに変わる値)
+struct GroundFogViewCB {
+    float camPos[4] = {};   // xyz = カメラ位置, w = HG の異方性
+    float sunDir[4] = {};   // xyz = 平行光の進行方向, w = 1: 平行光あり
+    float sunColor[4] = {}; // xyz = 色 × 強度 (リニア), w = 散乱アルベド
+    float ambient[4] = {};  // xyz = 環境光 (リニア)
+    float invViewProj[16] = {}; // transpose(inverse(view * proj))
+};
+static_assert(sizeof(GroundFogViewCB) == 128, "HLSL の GroundFogViewCB と一致させること");
+
+// RenderSystem が詰める、この描画のカメラとライトの値
+struct GroundFogViewParams {
+    float camPos[3] = {};
+    bool hasSun = false;
+    float sunDir[3] = { 0.0f, -1.0f, 0.0f };
+    float sunColor[3] = {};
+    float ambient[3] = {};
+    float invViewProj[16] = {}; // transpose(inverse(view * proj))
 };
 
 // HLSL の cbuffer DisturbanceFieldCB と同じ並び
@@ -94,6 +128,11 @@ public:
     bool Upload(GraphicsDevice& device, const DisturbanceFieldUpload& src);
     void Release();
 
+    // 地面の霧が読む CB / SRV / サンプラを PS の固定スロットへ張る。field が null / 層 0 枚なら何も張らず false。
+    // 張ったら描画の最後に UnbindGroundFog で剥がすこと (他のビューの描画に残さない)
+    bool BindGroundFog(GraphicsDevice& device, const DisturbanceFieldGpu* field, const GroundFogViewParams& view);
+    void UnbindGroundFog(GraphicsDevice& device);
+
     const DisturbanceFieldGpu& Gpu() const { return gpu_; }
     // 直近の転送にかかった CPU 時間 [ms]。転送を省いたフレームは 0 (= 「速い」ではなく「していない」)
     float LastUploadMs() const { return uploadMs_; }
@@ -108,6 +147,13 @@ private:
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> auxSrv_;
     int32_t texWidth_ = 0;
     int32_t texHeight_ = 0;
+    bool CreateGroundFogResources(GraphicsDevice& device);
+
+    Microsoft::WRL::ComPtr<ID3D11Buffer> groundFogLayersCb_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> groundFogViewCb_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> groundFogSampler_;
+    // 層ごとの基準高さのずれの最小 / 最大 (板を包む範囲)。転送したときに更新する
+    float offsetRange_[kDisturbanceMaxLayers][2] = {};
     bool createFailed_ = false; // 同じ寸法で一度落ちたら毎フレーム再試行してログを溢れさせない
     int32_t failedWidth_ = 0;
     int32_t failedHeight_ = 0;

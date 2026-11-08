@@ -463,6 +463,7 @@ private:
     AcousticVolumePass acousticPass_;
     // M96: かき乱しフィールドの 2D 層のテクスチャ配列。場が現れるまで 1 バイトも確保しない
     DisturbanceFieldPass disturbancePass_;
+    bool groundFogBound_ = false; // 今の描画で地面の霧を PS へ張ったか (描画の最後に剥がす)
     bool acousticSupplied_ = false; // 直近フレームで SRV を供給できたか (統計表示用)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)
     NavFillPass navFillPass_; // ナビメッシュの塗り (M82e、遅延 Init)

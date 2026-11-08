@@ -739,6 +739,10 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     f.occlusionBoxes = (hzbDebugMip != 0 && hzbDebugMax) ? &path.OcclusionDebugBoxes() : nullptr;
 
     DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
+    if (groundFogBound_) {
+        disturbancePass_.UnbindGroundFog(device); // 地面の霧の束縛は他のビューの描画へ残さない
+        groundFogBound_ = false;
+    }
     ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
     if (drawLowRes) {
         // 低解像度 RT を整数倍で画面へ。深度は呼び出し側の後段 (ギズモ等) のために 1 へ戻しておく
@@ -2127,20 +2131,55 @@ void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, 
     }
 }
 
-// かき乱しフィールド (M96) の 2D 層を GPU のテクスチャ配列へ上げ、view へ配線する (読むのはフロクセルの注入)。
-// フロクセルが走らない描画では転送しない。場が無ければ view.disturbance は null のまま = 従来と同じ絵
+// かき乱しフィールド (M96) の 2D 層を GPU のテクスチャ配列へ上げ、view へ配線する。
+// 地面の霧は各ピクセルが読む (ground_fog.hlsli) ので、フロクセルの on / off に依らず霧のある層があれば転送し、
+// PS の固定スロットへ張る (剥がすのは描画の最後)。霧のある層が無ければ view.disturbance は null のまま = 従来と同じ絵
 void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, FrameContext& f)
 {
     f.view.disturbance = nullptr;
-    if (!f.froxelOn || disturbanceWorld == nullptr) {
+    if (disturbanceWorld == nullptr) {
         return;
     }
     // 状態を読めるのは、状態を持つシーン自身の World を描くときだけ
     const DisturbanceState* state = (&world == disturbanceWorld) ? disturbance : nullptr;
     DisturbanceFieldUpload up;
-    if (BuildDisturbanceFieldUpload(world, state, up) > 0 && disturbancePass_.Upload(device, up)) {
-        f.view.disturbance = &disturbancePass_.Gpu();
+    if (BuildDisturbanceFieldUpload(world, state, up) <= 0) {
+        return;
     }
+    bool anyFog = false;
+    for (int32_t i = 0; i < up.layerCount; ++i) {
+        anyFog = anyFog || (up.layers[i].hasDensity && up.layers[i].fogDensity > 0.0f);
+    }
+    if (!anyFog || !disturbancePass_.Upload(device, up)) {
+        return;
+    }
+    f.view.disturbance = &disturbancePass_.Gpu();
+
+    GroundFogViewParams gf;
+    gf.camPos[0] = f.view.cameraPos.x;
+    gf.camPos[1] = f.view.cameraPos.y;
+    gf.camPos[2] = f.view.cameraPos.z;
+    gf.ambient[0] = f.lights.ambient.x;
+    gf.ambient[1] = f.lights.ambient.y;
+    gf.ambient[2] = f.lights.ambient.z;
+    {
+        const XMMATRIX vp = XMMatrixMultiply(XMLoadFloat4x4(&f.view.view), XMLoadFloat4x4(&f.view.proj));
+        XMFLOAT4X4 inv;
+        XMStoreFloat4x4(&inv, XMMatrixTranspose(XMMatrixInverse(nullptr, vp)));
+        std::memcpy(gf.invViewProj, &inv, sizeof(gf.invViewProj));
+    }
+    const int sun = FindDirectionalLight(f.lights);
+    if (sun >= 0) {
+        const GpuLight& g = f.lights.lights[sun];
+        gf.hasSun = true;
+        gf.sunDir[0] = g.direction.x;
+        gf.sunDir[1] = g.direction.y;
+        gf.sunDir[2] = g.direction.z;
+        gf.sunColor[0] = g.color.x * g.intensity;
+        gf.sunColor[1] = g.color.y * g.intensity;
+        gf.sunColor[2] = g.color.z * g.intensity;
+    }
+    groundFogBound_ = disturbancePass_.BindGroundFog(device, f.view.disturbance, gf);
 }
 
 // 音響の残光ボリューム (M65d) と解析的な波面: CPU の値を 3D テクスチャへ上げて view へ配線する

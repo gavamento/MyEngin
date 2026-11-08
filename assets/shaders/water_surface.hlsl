@@ -5,6 +5,7 @@
 #include "common.hlsli"
 #include "froxel_common.hlsli"
 #include "acoustic_common.hlsli"
+#include "ground_fog.hlsli" // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 
 cbuffer PerFrame : register(b0)
 {
@@ -279,6 +280,8 @@ float4 PSMain(VSOut i) : SV_Target
         waterColor.a = max(waterColor.a, foam * 0.9f);
     }
 
+    // M96: 地面の霧。外側の大気 (下のフォグ) より先に掛ける
+    litColor = GroundFogComposite(litColor, i.posW, i.pos.xy);
     // フォグ
     litColor = ApplyFog(litColor, viewDist, i.posW.y, gFogMode, gFogColor, gFogStart, gFogEnd,
                         gFogDensity, gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,

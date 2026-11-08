@@ -4,6 +4,7 @@
 
 // M57e: フロクセルのサンプル座標 (register 宣言を持たないヘッダ)
 #include "froxel_common.hlsli"
+#include "ground_fog.hlsli" // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 
 cbuffer SkyCB : register(b3)
 {
@@ -44,6 +45,8 @@ float4 PSMain(VSOut i) : SV_Target
     float4 pn = mul(float4(i.ndc, 0.0f, 1.0f), gInvViewProj);
     const float3 dir = normalize(pf.xyz / pf.w - pn.xyz / pn.w);
     float3 c = gSky.Sample(gSampler, dir).rgb;
+    // M96: 地面の霧。視線方向の遠方を「面」として扱い、外側の大気 (下のフロクセル) より先に掛ける
+    c = GroundFogCompositeSky(c, dir, i.pos.xy);
     if (gSkyFroxel.x != 0.0f) {
         const float4 v = gFroxelVolume.SampleLevel(
             gFroxelSampler,

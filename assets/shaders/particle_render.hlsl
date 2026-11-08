@@ -3,6 +3,7 @@
 
 #include "common.hlsli" // LinearizeDepth (M55a) / FogFactor。register 宣言は含まないので衝突しない
 #include "froxel_common.hlsli" // M57e: フロクセルのサンプル座標と受け持ちの分け方 (同上)
+#include "ground_fog.hlsli" // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 #include "particle_billboard.hlsli" // M63a: 四隅の回転/ストレッチとフリップブック (GPU バックエンドと共有)
 // M63d: パーティクルのライティング。**このファイルは register 宣言を持つ**ので、
 // 空きスロットを include の前に指定する (CPU 版は b0/t0-t3/s0 まで使用済み)。
@@ -198,6 +199,12 @@ float4 PSMain(VSOut i) : SV_Target
     // M57e: フロクセルが on のときは受け持ちを分ける — 解析フォグが担うのは
     // 「視線がグリッドを出てから粒子まで」の残り区間だけ。グリッドの中の粒子は
     // 残り 0m = f が厳密に 0 になり、フロクセル側だけが効く (deferred_light と同じ規約)
+    // M96: 地面の霧。加算合成には内向き散乱を足さない (フロクセルと同じ理由)
+    if (gBlendAdditive != 0) {
+        col.rgb = GroundFogCompositeAdditive(col.rgb, i.posW, i.pos.xy);
+    } else {
+        col.rgb = GroundFogComposite(col.rgb, i.posW, i.pos.xy);
+    }
     float fogDist = i.dist;
     if (gFroxelEnabled != 0) {
         fogDist = i.dist * (1.0f - FroxelFogHandoffFraction(i.viewZ, gFroxelFarZ));

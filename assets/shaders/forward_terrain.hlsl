@@ -20,6 +20,7 @@
 // M57e: フロクセルのサンプル座標と合成 (register 宣言を持たないヘッダ)
 #include "froxel_common.hlsli"
 #include "acoustic_common.hlsli" // M65e: 残光の式の正本
+#include "ground_fog.hlsli"       // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 
 cbuffer PerFrame : register(b0)
 {
@@ -156,6 +157,8 @@ float4 PSMain(VSOut i) : SV_Target
             : 0.0f;
         color += AcousticRadiance(max(glow, front), gAcousticParams.x, surf.albedo, gAcousticParams.z);
     }
+    // M96: 地面の霧。外側の大気 (下の解析フォグ / フロクセル) より先に掛ける
+    color = GroundFogComposite(color, i.posW, i.pos.xy);
     // 大気散乱 (M29d + M43a、M57e でフロクセルと分担)。forward_lit.hlsl と同一の分岐 —
     // 地形だけ霧が乗らないと Forward + froxel で地表と柱の霧が食い違う
     if (gFroxelEnabled != 0) {

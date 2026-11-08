@@ -21,6 +21,7 @@
 #include "common.hlsli"
 #include "froxel_common.hlsli"
 #include "acoustic_common.hlsli"
+#include "ground_fog.hlsli" // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
 
 // ---- 位置に効く値 (生成エントリがパスごとに代入する。M79 sub-01 最大のリスク箇所) ----
 static float4x4 gViewProj;
@@ -160,6 +161,10 @@ float3 MyeApplyFog(float3 color, float3 posW)
     // ★if の分岐それぞれで return せず 1 つの result に代入してから最後に 1 回だけ return する
     //   (fxc の初期化解析が早期 return の形だと誤検知の警告を出すため、形だけ変えて回避)
     const float4 clip = mul(float4(posW, 1.0f), gViewProj);
+    // M96: 地面の霧。外側の大気 (下の解析フォグ / フロクセル) より先に掛ける。段のずらしに画素位置が要る
+    const float2 gfogNdc = clip.xy / max(clip.w, 1e-5f);
+    color = GroundFogComposite(color, posW,
+                               float2(gfogNdc.x * 0.5f + 0.5f, 0.5f - gfogNdc.y * 0.5f) * gFroxelScreenSize);
     float3 result;
     if (gFroxelEnabled == 0 || clip.w <= 1e-5f) {
         result = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd, gCameraPos,
