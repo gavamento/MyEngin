@@ -48,7 +48,7 @@
 | sub-04 | OK | 2 | d4e54f4 | 流れのソルバ |
 | sub-05 | OK | 2 | e664245 (統合 5ca2e83) | スクリプトの口 (ABI v35 = 202) |
 | sub-06 | OK | 1 | 0784048 (統合 712bdfd) | アニメイベント disturb |
-| sub-07 | OK | 1 | 59704c5 (統合 946bb49) | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
+| sub-07 | OK | 3 | 59704c5 (統合 946bb49、追補 94239a1) | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
 | sub-08 | 未着手 | 0 | | Volume のフロクセル自動有効と太陽光の bool |
 | sub-09 | 未着手 | 0 | | 追従モード |
 | sub-10 | 未着手 | 0 | | 地形の起伏に沿う 2D 層 |
@@ -82,6 +82,10 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 - sub-07 OK (59704c5)。性能の線を「jobs ありで 1.67 ms」に変更 (spec §2 #27)。kBakedFinalHash 0x2D2D2A180F889F62 (sizeof 88)。統合の目視点: RenderSystem.cpp で UpdateDisturbanceVolumes が UpdateDisturbanceField (sub-14 で CollectLights 直後) のすぐ後、RenderTypes.h の append 位置、sizeof 88 の表明 (sub-15 テスト側も)
 - Notion 質問表: 「M96 かき乱しフィールド: ハーネスの保留質問」 https://app.notion.com/p/41202024a4d481ac811ac5365298b94d (Q-1 = Volume の性能の線)
 - W2 統合完了 (07 946bb49 → 06 712bdfd → 14 44c80d4 → 16 256f582)。競合は DemoContentField.cpp (共有の閉じ括弧と末尾の呼び出し)、DisturbanceFieldSelfTest.cpp (同、スイート関数の戻り値)、RenderSystem.cpp (UpdateDisturbanceVolumes を UpdateDisturbanceField の直後へ) を手で解いた。Debug / Release ビルド OK、check_rules 0 error / 59 warning。続いて中間のまとめ実行 (selftest-full Debug / Release、replay_verify)
+- 中間のまとめ実行 (2026-11-09): 1 回目は disturbance スイートで FAIL + クラッシュ (Volume の古い断言、Step のスロット列 move で参照がぶら下がり)。sub-07 round 2・3 で修正 (波紋の注入式の欠陥も planner が must で直させた)。修正後 --selftest-full Debug / Release とも 116 suites 0 failed、replay_verify 24 jobs PASS、check_rules 0 error。94239a1。kBakedFinalHash = 0x851C4663912825C1
+
+## W3 (2026-11-09 開始)
+- 09 / 11 / 08 を master (94239a1 の後の台帳コミット) から切った worktree で並列実装。統合順 09 → 11 → 08
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)
