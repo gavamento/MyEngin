@@ -296,7 +296,7 @@ float4 PSMain(VSOut i) : SV_Target
     }
     float fogDist = i.dist;
     if (gFroxelParams.x != 0.0f) {
-        fogDist = i.dist * (1.0f - FroxelFogHandoffFraction(i.viewZ, gFroxelParams.z));
+        fogDist = i.dist * (1.0f - FroxelParticleHandoff(gFroxelParams.x, i.viewZ, gFroxelParams.z));
     }
     const float f = FogFactor((int)gFogParams.x, gFogParams.y, gFogParams.z, gFogParams.w, fogDist);
     const bool blendAdditive = (gFogColorBlend.w != 0.0f);

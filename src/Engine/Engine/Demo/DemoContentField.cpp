@@ -214,7 +214,7 @@ void AddFieldDemoPond(Scene& s, const AssetID sphere)
 
 // 煙の柱 (M96g): Volume 32 x 16 x 32 (0.5 m) と、下から上向きに煙を吹き出す Constant の源。浮力で昇る。
 // 広場の爆発 (ZZFieldDemoDriver の Radial、(-7, 0.3, 1) 半径 4 m) の真上に噴き出し口を置き、爆発の瞬間に煙の根元が千切れて吹き飛ぶ。
-// Volume のフロクセルの霧はカメラの froxelOn が要る (自動で回すのは M96h)。froxelDensity = 0 で場の霧だけを描く
+// カメラのフロクセルは off のまま。autoFroxel (既定 true) が場だけのモードで煙を描く。fogSunLight で太陽の向きが煙の明るさに効く
 void AddFieldDemoSmoke(Scene& s)
 {
     constexpr float kVolumeX = -7.0f;
@@ -237,6 +237,7 @@ void AddFieldDemoSmoke(Scene& s)
     f->fogDensity = 3.0f;
     f->fogColor = { 0.3f, 0.3f, 0.34f }; // 白い地面の霧に対して読める暗い煙
     f->fogBrightness = 0.5f;
+    f->fogSunLight = true;
 
     GameObject vent = s.CreateGameObject("SmokeVent");
     vent.SetLocalPosition(kVolumeX, 0.5f, 1.0f);
@@ -246,16 +247,6 @@ void AddFieldDemoSmoke(Scene& s)
     src->strength = 0.4f;
     src->densityDelta = 0.5f;
     src->constantVelocity = { 0.0f, 2.0f, 0.0f };
-
-    GameObject camera = s.Find("Main Camera");
-    if (camera) {
-        auto* fx = camera.GetComponent<CameraPostFxComponent>();
-        if (fx == nullptr) {
-            fx = camera.AddComponent<CameraPostFxComponent>();
-        }
-        fx->froxelOn = true;
-        fx->froxelDensity = 0.0f;
-    }
 }
 
 // M96f: 骨アニメの人が剣を振る瞬間に、アニメイベント disturb で霧を斬る (field_swing.controller.json の

@@ -513,6 +513,7 @@ private:
     // M46d: viewKey 毎の描画通番 (Render 1 回で 1 進む)。テンポラル蓄積が
     // 「前フレームも同じビューを描いたか」を判定するのに使う (RT の on/off で履歴が混ざらない)
     uint32_t viewSerial_[4] = {};
+    bool froxelFieldOnly_[4] = {}; // viewKey 別に、直前の描画が場だけのモードだったか (入退出のログ用)
     // M55c: viewKey 毎の「前フレームに実際に描いた world 行列」(velocity の出所)。
     // viewKey==0 (AssetPreview) は履歴を持たない = velocity は常に 0
     PrevRenderWorldStore prevRender_[4];

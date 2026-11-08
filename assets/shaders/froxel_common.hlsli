@@ -111,6 +111,20 @@ float3 FroxelFogOrigin(float3 cameraPos, float3 posW, float viewZ, float gridFar
     return posW;
 }
 
+// 合成側のフラグ gFroxelEnabled の値: 0 = フロクセル無し / 1 = フル / 2 = 場だけのモード (C++ の kFroxelModeFieldOnly)。
+// 場だけのモードではフロクセルが持つのは Volume の霧だけなので、解析フォグは「フロクセル off」と同じく全区間
+// (起点 = カメラ) に掛ける。mode を float で受けるのは GPU パーティクルなど float で持つ CB があるため
+float3 FroxelFogOriginFor(float mode, float3 cameraPos, float3 posW, float viewZ, float gridFarZ)
+{
+    return (mode > 1.5f) ? cameraPos : FroxelFogOrigin(cameraPos, posW, viewZ, gridFarZ);
+}
+
+// 粒子の解析フォグ距離に掛ける「フロクセルに任せない割合」の補数。場だけのモードは 0 (全区間を解析フォグが持つ)
+float FroxelParticleHandoff(float mode, float viewZ, float gridFarZ)
+{
+    return (mode > 1.5f) ? 0.0f : FroxelFogHandoffFraction(viewZ, gridFarZ);
+}
+
 // 深度を持つサーフェスへの合成 (Lo = scene·T + inscatter)。
 // screenPos = SV_Position.xy / screenSize = レンダーターゲットの実寸。
 // サンプラは各パスが既に持っている LINEAR/CLAMP を渡す (統合契約 予約 2「サンプラを増やさない」)

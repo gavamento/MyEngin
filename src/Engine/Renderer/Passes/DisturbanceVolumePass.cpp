@@ -130,6 +130,10 @@ bool DisturbanceVolumePass::Upload(GraphicsDevice& device, const DisturbanceVolu
         c.fogColor[0] = v.fogColor[0];
         c.fogColor[1] = v.fogColor[1];
         c.fogColor[2] = v.fogColor[2];
+        c.fogColor[3] = v.fogSunLight ? 1.0f : 0.0f;
+        if (v.autoFroxel && v.hasDensity && v.fogDensity > 0.0f) {
+            gpu_.wantsAutoFroxel = true;
+        }
     }
     // 使わなくなった末尾のテクスチャは持ち続けない (Volume が減ったときの VRAM)
     for (int32_t i = count; i < kDisturbanceMaxVolumes; ++i) {

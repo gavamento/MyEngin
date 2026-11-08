@@ -1802,6 +1802,43 @@ bool RunBackgroundFogConditionTests()
     return failCount == 0;
 }
 
+// Volume の霧の太陽光 (fogSunLight) と自動フロクセル (autoFroxel): 描画への詰め替えと、合成側のモード値
+bool RunVolumeFroxelModeTests()
+{
+    int failCount = 0;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+    {
+        auto s = std::make_unique<Sim>();
+        const EntityID v0 = AddVolume(*s, 0.0f, 2.0f, 0.0f, 8, 8, 8, "Plain");
+        const EntityID v1 = AddVolume(*s, 10.0f, 2.0f, 0.0f, 8, 8, 8, "Sunny");
+        s->W().GetComponent<DisturbanceFieldComponent>(v1)->fogSunLight = true;
+        s->W().GetComponent<DisturbanceFieldComponent>(v1)->autoFroxel = false;
+        s->Flush();
+        DisturbanceVolumeUpload up;
+        check(BuildDisturbanceVolumeUpload(s->W(), &s->D(), up) == 2, "volume froxel mode: both volumes are packed");
+        check(!up.volumes[0].fogSunLight && up.volumes[0].autoFroxel, "volume froxel mode: defaults are fogSunLight off / autoFroxel on");
+        check(up.volumes[1].fogSunLight && !up.volumes[1].autoFroxel, "volume froxel mode: the flags reach the upload");
+        (void)v0;
+    }
+    {
+        RenderView view;
+        check(FroxelModeValue(view, false) == 0, "froxel mode value: unbound is 0");
+        check(FroxelModeValue(view, true) == kFroxelModeFull, "froxel mode value: bound is the full mode");
+        view.froxelFieldOnly = true;
+        check(FroxelModeValue(view, true) == kFroxelModeFieldOnly, "froxel mode value: bound and field-only is 2");
+        check(FroxelModeValue(view, false) == 0, "froxel mode value: field-only without a bound volume stays 0");
+    }
+    MYE_LOG_INFO("  volume froxel mode: %s", failCount == 0 ? "OK" : "FAILED");
+    return failCount == 0;
+}
+
 } // namespace
 
 namespace {
@@ -1981,7 +2018,8 @@ bool RunDisturbanceFieldSelfTest()
     const bool animEventOk = RunDisturbanceAnimEventTests();
     const bool grassOk = RunDisturbanceGrassTests();
     const bool backgroundFogOk = RunBackgroundFogConditionTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk;
+    const bool froxelModeOk = RunVolumeFroxelModeTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && froxelModeOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()

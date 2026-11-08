@@ -405,6 +405,9 @@ struct RenderView {
     // ---- M96g: かき乱しフィールドの Volume (3D。末尾 append。**null = Volume が無い = 従来と 1 ビットも同じ**) ----
     //   フロクセルの注入が最大 4 個を順に足す。RenderSystem が DisturbanceVolumePass の束を指すだけの非所有ポインタ
     const struct DisturbanceVolumeGpu* disturbanceVolumes = nullptr;
+    // true: フロクセルを「場だけのモード」で回している (Volume の霧だけを足す。グローバルの媒質は 0、解析フォグは全区間、
+    //   ゴッドレイは降ろさない)。合成側のフラグ (gFroxelEnabled) には kFroxelModeFieldOnly を入れる
+    bool froxelFieldOnly = false;
     // ---- M63d: パーティクルのライティング (末尾 append。**null = 従来と 1 ビットも同じ**) ----
     //      RenderSystem が光パスへ渡すのと同じ SceneLightData を指すだけの非所有ポインタ
     //      (terrain / decals / probes と同じ流儀)。**メッシュのライティングは今までどおり
@@ -682,6 +685,15 @@ inline bool FroxelIsBound(const RenderView& view)
         && view.froxelFarZ > 0.0f;
 }
 
+// 合成側のフラグ (HLSL の gFroxelEnabled など) の値。0 = フロクセル無し / 1 = フル / 2 = 場だけのモード。
+// 2 は froxel_common.hlsli の FroxelFogOriginFor / FroxelParticleFogFraction が読む (解析フォグを全区間に掛ける)
+constexpr int32_t kFroxelModeFull = 1;
+constexpr int32_t kFroxelModeFieldOnly = 2;
+inline int32_t FroxelModeValue(const RenderView& view, bool bound)
+{
+    return !bound ? 0 : (view.froxelFieldOnly ? kFroxelModeFieldOnly : kFroxelModeFull);
+}
+
 // M57e: Forward 系 PerFrame CB (b0) の末尾に置くフロクセルのブロック。
 // **C++ ミラーが 2 つある** (ForwardPath.cpp / DeferredPath.cpp の PerFrameCB) ので、
 // 形を 1 本にして「片方だけ直す」を構造的に不可能にしてある。
@@ -702,7 +714,7 @@ struct FroxelForwardCB {
 inline FroxelForwardCB MakeFroxelForwardCB(const RenderView& view, bool bound)
 {
     FroxelForwardCB out;
-    out.enabled = bound ? 1 : 0;
+    out.enabled = FroxelModeValue(view, bound);
     out.nearZ = view.froxelNearZ;
     out.farZ = view.froxelFarZ;
     out.slices = static_cast<float>(view.froxelSlices);

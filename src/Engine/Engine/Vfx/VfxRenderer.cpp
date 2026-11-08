@@ -516,7 +516,7 @@ VfxFogParams BuildVfxFogParams(const RenderView& view)
     // M57: 合成可否は **FroxelIsBound 1 本**。自作ゲートを書くと「サムネイル
     // (AssetPreviewCache の別 RenderSystem) だけが前フレームの残骸を読む」を潰せなくなる
     const bool bound = FroxelIsBound(view);
-    p.froxelEnabled = bound ? 1 : 0;
+    p.froxelEnabled = FroxelModeValue(view, bound);
     p.froxelNearZ = view.froxelNearZ;
     p.froxelFarZ = view.froxelFarZ;
     p.froxelSlices = static_cast<float>(view.froxelSlices);

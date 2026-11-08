@@ -2108,8 +2108,23 @@ void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, 
 {
     RenderView& view = f.view;
     SceneLightData& lights = f.lights;
-    const bool froxelOn = f.froxelOn;
     FroxelSettings& effectiveFroxel = f.effectiveFroxel;
+    // M96: 場だけのモード。カメラ (または Scene View のグローバル設定) のフロクセルが off でも、霧を出す autoFroxel の
+    // Volume があればフロクセルを回し、Volume の霧だけを足す。ユーザー設定は書き換えず、このフレームの実効値だけ決める。
+    // Volume の束 (view.disturbanceVolumes) は Decide より後に作られるので、判定はここ
+    const bool fieldOnly = !f.froxelOn && f.cameraFound && view.disturbanceVolumes != nullptr
+        && view.disturbanceVolumes->wantsAutoFroxel;
+    if (fieldOnly) {
+        effectiveFroxel.density = 0.0f; // グローバルの媒質は 0 (高さの霧も density に掛かるので 0)
+    }
+    view.froxelFieldOnly = fieldOnly;
+    if (target.viewKey < 4 && froxelFieldOnly_[target.viewKey] != fieldOnly) {
+        froxelFieldOnly_[target.viewKey] = fieldOnly;
+        MYE_LOG_INFO(fieldOnly ? "Froxel: view %u entered field-only mode (a disturbance Volume fog needs it)"
+                               : "Froxel: view %u left field-only mode",
+                     static_cast<unsigned>(target.viewKey));
+    }
+    const bool froxelOn = f.froxelOn || fieldOnly;
     // ★置き場所はここしかない: 上流に CollectEnvironment (高度フォグのパラメータ) と
     //   シャドウアトラス (SampleShadowAtlas の入力) が要り、下流の path.Render より
     //   前でないと消費側 (光パス) が積分結果を読めない。
@@ -2450,7 +2465,8 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
         // ここで潰すのは「このフレームで使う実効値」だけなので、froxel を切れば戻る
         // ★条件に path.AppliesFroxel() が要る — 積分結果を読まないパスで SRV の有無だけで
         //   判定すると「ゴッドレイだけ消えて霧が増えない」になる
-        if (view.froxelSRV != nullptr && path.AppliesFroxel()) {
+        // 場だけのモードはフロクセルに太陽の散乱が無い (Volume の霧だけ) ので降ろさない
+        if (view.froxelSRV != nullptr && path.AppliesFroxel() && !view.froxelFieldOnly) {
             effective.godrayIntensity = 0.0f;
         }
         // M44a: LUT の SRV 解決 (MaterialLibrary の GUID→パス解決と同じ流儀)。

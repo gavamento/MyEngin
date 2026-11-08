@@ -247,7 +247,7 @@ float3 MyeApplyFog(float3 color, float3 posW)
         const float2 screenPos =
             float2(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f) * gFroxelScreenSize;
         const float3 c = ApplyFog(color, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd,
-                                  FroxelFogOrigin(gCameraPos, posW, fviewZ, gFroxelFarZ), posW,
+                                  FroxelFogOriginFor((float)gFroxelEnabled, gCameraPos, posW, fviewZ, gFroxelFarZ), posW,
                                   gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
                                   gFogInscatterIntensity, gFogInscatterPower);
         result = FroxelComposite(gFroxelVolume, gIblSampler, screenPos, gFroxelScreenSize, fviewZ,

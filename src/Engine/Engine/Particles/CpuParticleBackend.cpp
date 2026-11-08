@@ -973,7 +973,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // 判定は FroxelIsBound 1 本 (Deferred / Forward / スカイと共有) = 「サムネイル
     // (AssetPreviewCache の別 RenderSystem) だけがゴミを読む」を構造的に潰してある
     const bool froxelBound = FroxelIsBound(view);
-    cbData.froxelEnabled = froxelBound ? 1 : 0;
+    cbData.froxelEnabled = FroxelModeValue(view, froxelBound);
     cbData.froxelNearZ = view.froxelNearZ;
     cbData.froxelFarZ = view.froxelFarZ;
     cbData.froxelSlices = static_cast<float>(view.froxelSlices);

@@ -1422,7 +1422,7 @@ void DeferredPath::RenderLighting(const RenderView& view, DeferredFrame& f)
     // 潰してある表示モードに霧だけ載せると「Unlit なのに霧がある」になる。
     // ★M57e: 判定式は透明後段 (pf.froxel) と**同じ変数**にした。式を 2 つ書くと
     //   「不透明にだけ霧がある」形で静かに食い違う
-    lp.froxelEnabled = froxelBound ? 1 : 0;
+    lp.froxelEnabled = FroxelModeValue(view, froxelBound);
     lp.froxelNearZ = view.froxelNearZ;
     lp.froxelFarZ = view.froxelFarZ;
     lp.froxelSlices = static_cast<float>(view.froxelSlices);
