@@ -234,7 +234,13 @@ void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vecto
                 s.trail[i] += w * in.trailDepth * (1.0f - s.trail[i]);
             }
             if (hasRipple) {
-                s.ripple[i] += w * in.speedFactor * in.ripple;
+                // h を目標の高さ ripple へ寄せる (足し込むと同じ場所への注入が 2 乗で伸びる)。ripple == 0 は h に触れない
+                if (in.ripple != 0.0f) {
+                    // hPrev も同じだけ寄せる (h だけ動かすと毎 tick 速度を与えて、目標の何倍にも行き過ぎる)
+                    const float pull = Saturate(w * in.speedFactor);
+                    s.ripple[i] += pull * (in.ripple - s.ripple[i]);
+                    s.ripplePrev[i] += pull * (in.ripple - s.ripplePrev[i]);
+                }
             }
         }
     }
@@ -1140,7 +1146,14 @@ void DisturbanceStep(World& world, DisturbanceState& state)
             slots.push_back(MakeRestSlot(p));
         }
     }
-    state.slots_ = std::move(slots);
+    // 個数が同じなら要素を入れ替えるだけにして、スロット列の確保先を動かさない (スロットへの参照を持つ側が dangling にならない)
+    if (state.slots_.size() == slots.size()) {
+        for (size_t i = 0; i < slots.size(); ++i) {
+            state.slots_[i] = std::move(slots[i]);
+        }
+    } else {
+        state.slots_ = std::move(slots);
+    }
 
     // 3. 源の注入 / 4. 配送待ちの注入 (全て直列。順序が結果に効く)
     std::vector<SourceNow> nows;

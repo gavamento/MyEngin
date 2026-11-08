@@ -119,7 +119,7 @@
   - インパルス Point: `u = dir × speed` / Radial: `u = normalize(セル中心 − 点) × speed` (`d` が 1e-6 未満のマスは `u = 0`) / Cone: Point に `w × saturate((cosθ − coneCos) / (1 − coneCos))` を掛ける (θ = `dir` とセル方向の角)
 - 濃さ (濃さチャネルがあるとき): `Δ = w × s × densityDelta` (`densityDelta` ∈ [−1, 1])。`Δ < 0` なら `ρ += Δ × ρ` (晴らす)、`Δ > 0` なら `ρ += Δ × (1 − ρ)` (足す = 煙)
 - 跡 (跡チャネル、2D のみ): `τ += w × trailDepth × (1 − τ)` (速さに依らない。立ち止まると深くなる)
-- 波紋 (波紋チャネル、2D のみ): `h += w × s × ripple` (メートル)
+- 波紋 (波紋チャネル、2D のみ): `ripple != 0` のときだけ、`a = clamp(w × s, 0, 1)` で `h += a × (ripple − h)`、**`hPrev` も同じ a で `ripple` へ寄せる** (メートル。h を目標の高さ `ripple` へ寄せる = 何 tick 続けても `|ripple|` を超えて伸びない。h だけを寄せると `h − hPrev` が毎 tick 速度として積もり、目標の約 3 倍まで行き過ぎた = sub-07 round 3 の実測)。**sub-07 round 2 で変更**: 元の `h += w × s × ripple` は、同じ場所へ毎 tick 足すと波動方程式に加速度を与えることになり、h が 2 乗で伸びて 8 tick で上限 `kMaxRippleHeight` に張り付いた (歩いて水を渡る源は、半径の中に数十 tick とどまる)。`ripple == 0` の源は波紋に触れない (他の源の波を消さないため)
 
 #### D. 源 (`DisturbanceSourceComponent`)
 
@@ -370,6 +370,8 @@
 - 2026-11-09 (sub-12 round 1): Gerstner の M79 サーフェスへの波紋は sub-12 の対象外とし、サーフェスシェーダの予約テクスチャを作る sub-14 に足した (受け入れ 23 の Gerstner の分)
 - 2026-11-09 (sub-16 round 1): 受け入れ 36 (b) の「スカイのある `--field-demo`」は誤り (`--field-demo` にスカイは無い)。(c) の変わってよい絵へ移した。golden `flow_title` の FAIL は着手前 (bc957ea) から同じで M96 と無関係の既存の別件 (台帳の申し送り)
 - 2026-11-09 (sub-07 round 1): 受け入れ 20 の性能の線を jobs ありへ (§2 #27)、§4.1 I の風を Volume では xyz と明記
+- 2026-11-09 (sub-07 round 2、中間のまとめ実行で発覚): §4.1 C の波紋の注入を「加算」から「目標の高さへ寄せる」(有界) に変更。sub-12 のテストの前提ではなく、sub-01 の式の欠陥と判定
+- 2026-11-09 (sub-07 round 3): §4.1 C の波紋の寄せに hPrev も含める (coder の実測による訂正)
 
 ## 付録 A. 並列の予約表 (W1〜W5)
 

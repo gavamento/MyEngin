@@ -2,7 +2,7 @@
 
 - 依存: sub-04 (波 W2。spec §6)
 - 状態: OK (W2 の統合待ち)
-- 往復: 1
+- 往復: 3
 
 
 ## 並列の注意 (波 W2)
@@ -65,3 +65,5 @@ spec §5 の 12, 20, 30。
 
 ## フィードバック履歴
 - round 1: VERDICT OK (planner、2026-11-09)。3D の注入・移流・浮力・7 点の投影・三線形の読み取り・flowY の DFLD / ハッシュ (非空のときだけ)・Texture3D 4 本・froxel の t3〜t6 / b2・デモ・v72 を確認。bench で Debug == Release、jobs あり / なし一致、Volume 4 個の描画を確認。性能は jobs なし約 2.0 ms で、受け入れ 20 の線を jobs ありに変更 (spec §2 #27、[ユーザーに聞ける])。風の xyz、(y, z) 行の並列、新規 DisturbanceVolumePass、kBakedFinalHash の差し替え、sub-15 のサイズ表明の修正を受理
+- round 2 (中間のまとめ実行の FIX): VERDICT REWORK (planner、2026-11-09)。Volume の寿命テストの置換、スロット列を move で入れ替えて参照がぶら下がる不具合の修正 (要素ごとの move 代入)、point の非正規化の許容 10% は受理。must: 波紋の注入の式の欠陥 (spec §4.1 C を変更)。テスト (b) の 8 → 3 tick の短縮は戻す
+- round 3 (中間のまとめ実行の FIX): VERDICT OK (planner、2026-11-09)。波紋の注入を有界の寄せに (h と hPrev)、とどまり続けても 0.0781 <= 0.08、抜けた後も有限、受け入れ 7 も PASS、kBakedFinalHash 0x851C4663912825C1 (Debug == Release)。hPrev も寄せる訂正を spec §4.1 C に反映

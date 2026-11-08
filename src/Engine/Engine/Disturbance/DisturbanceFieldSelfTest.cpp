@@ -578,7 +578,7 @@ void RunDisturbanceAbiTests(const std::function<void(bool, const char*)>& check)
         const float outside = std::fabs(sc.flowX[rigC->Index(16, 22)]);
         check(inside > 0.0f && outside < inside * 0.5f, "abi: a cone pushes along its axis and leaves the far side nearly alone");
 
-        // Point の dir は正規化しない: 長さ 2 の dir は長さ 1 の dir の 2 倍の流れ
+        // Point の dir は正規化しない: 長さ 2 の dir は長さ 1 の dir のほぼ 2 倍の流れ (移流・投影があるので厳密な 2 倍ではない)
         auto rigA = std::make_unique<Rig>();
         rigA->Init();
         auto rigB = std::make_unique<Rig>();
@@ -592,7 +592,7 @@ void RunDisturbanceAbiTests(const std::function<void(bool, const char*)>& check)
         rigB->sim.Step();
         const float fa = rigA->sim.D().Slots()[0].flowX[rigA->Index(16, 16)];
         const float fb = rigB->sim.D().Slots()[0].flowX[rigB->Index(16, 16)];
-        check(fa > 0.0f && std::fabs(fb - 2.0f * fa) <= 1.0e-4f * fb,
+        check(fa > 0.0f && std::fabs(fb - 2.0f * fa) <= 0.1f * fb,
               "abi: a point impulse is not normalized (dir length scales the speed)");
     }
 
@@ -676,7 +676,15 @@ bool RunDisturbanceWaterRippleTests()
     (void)pond;
     s->Step(2);
     TransformOf(*s, walker)->position.x = 9.5f;
-    s->Step(8);
+    // 源が半径の中にとどまり続けても、h は目標の高さ ripple (0.08) を超えて伸びない
+    float stayMax = 0.0f;
+    for (int t = 0; t < 8; ++t) {
+        s->Step(1);
+        for (float v : s->D().Slots()[0].ripple) {
+            stayMax = std::max(stayMax, std::fabs(v));
+        }
+    }
+    check(stayMax <= 0.08f + 1.0e-3f && stayMax > 1.0e-4f, "water ripple: a source that stays inside never raises h above its ripple height");
 
     DisturbanceFieldUpload up;
     check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && up.layers[0].hasState && !up.layers[0].hasDensity,
@@ -691,6 +699,15 @@ bool RunDisturbanceWaterRippleTests()
         }
     }
     check(maxH > 1e-4f && maxH < kMaxRippleHeight, "water ripple: a moving source raises a finite ripple inside the limit");
+    // 源が抜けた後も、波は広がりつつ有限
+    SourceOf(*s, walker)->ripple = 0.0f;
+    s->Step(60);
+    float afterMax = 0.0f;
+    for (float v : s->D().Slots()[0].ripple) {
+        check(std::isfinite(v), "water ripple: every h stays finite after the source leaves");
+        afterMax = std::max(afterMax, std::fabs(v));
+    }
+    check(afterMax < kMaxRippleHeight, "water ripple: the wave stays inside the limit after the source leaves");
     return ok;
 }
 
@@ -1485,7 +1502,8 @@ bool RunDisturbanceFieldImpl(bool heavy)
         sim->Flush();
         FieldOf(*sim, v)->shape = kDisturbanceVolume;
         sim->Step(3);
-        check(sim->D().Slots().empty() && sim->D().OverflowWarnCount() == 1, "life: a volume field creates no state and warns once");
+        check(sim->D().Slots().size() == 1 && sim->D().Slots()[0].shape == kDisturbanceVolume && sim->D().OverflowWarnCount() == 0,
+              "life: a volume field creates a 3D state and does not warn");
     }
 
     // ---- キュー ----
@@ -1609,7 +1627,8 @@ bool RunDisturbanceFieldImpl(bool heavy)
             // M96d: 流れのソルバ (移流・投影・Radial の発散源)、欄 2 つ、場の畳み方 (HashStateBytes) で変わった。
             // M96g: DisturbanceFieldComponent の末尾に buoyancy (4 バイト) を足したので、World のカラムの生バイトが伸びて変わった
             // (0x674FE5CFD80F29A9 → 下の値。2D の sim は 1 ビットも変えていない)。--field-bench が同じ値を出す)
-            constexpr uint64_t kBakedFinalHash = 0x2D2D2A180F889F62ull;
+            // M96g round 3: 波紋の注入を「h と hPrev を目標の高さ ripple へ寄せる」式に変えた (spec §4.1 C)。0x2D2D2A180F889F62 → 下の値
+            constexpr uint64_t kBakedFinalHash = 0x851C4663912825C1ull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
