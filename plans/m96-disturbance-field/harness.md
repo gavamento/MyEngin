@@ -51,10 +51,10 @@
 | sub-07 | OK | 3 | 59704c5 (統合 946bb49、追補 94239a1) | 3D ボリューム (4 個まで描画)。後で中間のまとめ実行 |
 | sub-08 | OK | 1 | 5351b0c (統合 23e7fd4) | Volume のフロクセル自動有効と太陽光の bool |
 | sub-09 | OK | 2 | 11d8a29 (統合 fed6402) | 追従モード |
-| sub-10 | OK (統合待ち) | 2 | 7eb4db5 (ブランチ m96-w4-sub10) | 地形の起伏に沿う 2D 層 |
+| sub-10 | OK | 2 | 7eb4db5 (統合 d269a34) | 地形の起伏に沿う 2D 層 |
 | sub-11 | OK | 1 | 5134dad (統合 1209684) | 粒子 (CPU / GPU) |
 | sub-12 | OK | 1 | 4e871bb | 水面の波紋 |
-| sub-13 | OK (統合待ち) | 1 | 356a32c (ブランチ m96-w4-sub13) | 跡 (地形) |
+| sub-13 | OK | 1 | 356a32c (統合 b4100a1) | 跡 (地形) |
 | sub-14 | OK | 1 | 7b99fba (統合 44c80d4) | 草 |
 | sub-15 | OK | 1 | 332ccd0 (統合 be28b81) | 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし) |
 | sub-16 | OK | 1 | b19e3e9 (統合 256f582) | Forward のスカイ無し背景に地面の霧とフロクセル (全画面パス、golden 更新) |
@@ -91,6 +91,7 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 
 ## W4 (2026-11-09 開始)
 - 10 / 13 を master から切った worktree で並列実装。統合順 10 → 13
+- W4 統合完了 (10 d269a34 → 13 b4100a1)。競合は SimSnapshot.h (v76)、AcousticAudioSelfTest (76)、DemoContentField.cpp / DisturbanceFieldSelfTest.cpp (共有の閉じ括弧・末尾の呼び出し Hill → Snow・戻り値の式) を手で解いた。Debug / Release ビルド OK、check_rules 0 error、fxc 5 本 OK、--field-bench all checks passed (kBakedFinalHash 0x0D0CBC4DCBEE185E)。統合後の --field-demo f300 に白飛びした矩形あり (scratchpad\m96-shots\w4_integrated_f300.png) → planner へ
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)
