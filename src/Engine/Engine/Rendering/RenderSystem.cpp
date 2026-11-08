@@ -719,6 +719,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     PrepareEnvironment(world, device, shaders, resources, target, cameraOverride, f);
     UpdateRtScene(device, shaders, resources, target, f);
     UpdateDisturbanceField(world, device, f); // フロクセルの注入が読むので UpdateFroxel の前
+    UpdateDisturbanceVolumes(world, device, f);
     UpdateFroxel(device, shaders, target, f);
     UpdateAcousticVolume(device, target, f);
 
@@ -2185,6 +2186,24 @@ void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, 
     groundFogBound_ = disturbancePass_.BindGroundFog(device, f.view.disturbance, gf);
 }
 
+// かき乱しフィールドの Volume (M96g、3D) を Texture3D へ上げ、view へ配線する。読むのはフロクセルの注入だけなので
+// フロクセルの on / off に依らず転送するが、霧を出す Volume が無ければ view.disturbanceVolumes は null のまま = 従来と同じ絵
+void RenderSystem::UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, FrameContext& f)
+{
+    f.view.disturbanceVolumes = nullptr;
+    if (disturbanceWorld == nullptr) {
+        return;
+    }
+    const DisturbanceState* state = (&world == disturbanceWorld) ? disturbance : nullptr;
+    DisturbanceVolumeUpload up;
+    if (BuildDisturbanceVolumeUpload(world, state, up) <= 0) {
+        return;
+    }
+    if (disturbanceVolumePass_.Upload(device, up)) {
+        f.view.disturbanceVolumes = &disturbanceVolumePass_.Gpu();
+    }
+}
+
 // 音響の残光ボリューム (M65d) と解析的な波面: CPU の値を 3D テクスチャへ上げて view へ配線する
 // (読むのは M65e の光パス。転送の正しさは `--acoustic-dump` の読み戻しで数値として確かめる)
 void RenderSystem::UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f)
@@ -2625,6 +2644,7 @@ void RenderSystem::ReleaseGpu()
     froxelPass_ = FroxelPass();
     acousticPass_ = AcousticVolumePass();
     disturbancePass_ = DisturbanceFieldPass();
+    disturbanceVolumePass_ = DisturbanceVolumePass();
     linePass_ = EditorLinePass();
     navFillPass_ = NavFillPass();
     sprite2dPass_ = Sprite2DPass();

@@ -20,12 +20,18 @@
 // かき乱しフィールド (M96)。CB (b1)・t1 / t2・s1 はこのヘッダが宣言する。
 // 2D 層 (地面の霧) は ground_fog.hlsli が各ピクセルで描くので、ここは立体 (Volume) だけを読む
 #include "disturbance_common.hlsli"
+// 立体 (Volume) 最大 4 個: CB (b2) と Texture3D (t3〜t6)
+#include "disturbance_volume.hlsli"
 
-// 立体 (Volume) の霧。Volume が入る sub-07 までは何も足さない (sigma = 0・emit = 0 ちょうど)
+// 立体 (Volume) の霧。4 個を順に足す。無い / 外のセルは sigma = 0・emit = 0 ちょうど (従来の絵とビット一致)
 void DisturbanceVolumeFogAt(float3 posW, out float sigma, out float3 emit)
 {
     sigma = 0.0f;
     emit = 0.0f;
+    DfldVolumeAccumulate(0, gDfldVol0, posW, sigma, emit);
+    DfldVolumeAccumulate(1, gDfldVol1, posW, sigma, emit);
+    DfldVolumeAccumulate(2, gDfldVol2, posW, sigma, emit);
+    DfldVolumeAccumulate(3, gDfldVol3, posW, sigma, emit);
 }
 
 // C++ の FroxelInjectCB (src\Engine\Renderer\FroxelPass.cpp) とレイアウト一致 (2720 バイト)

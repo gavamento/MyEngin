@@ -294,7 +294,7 @@ void BuildTwoDShowcaseScene(EngineContext& ctx, bool night, bool stress);
 void BuildFeelShowcaseScene(EngineContext& ctx);
 // M96b: かき乱しフィールドのデモ (--field-demo、霧の広場)。平らな地面に 2D 層の場 (濃さ + 跡) を 1 個置き、DisturbanceSource 付きの
 // 球 3 個を物理の初速で霧の中へ転がす。カメラは CameraPostFx の froxelOn (froxelDensity = 0 = 場の霧だけ)。replay_verify の field ジョブの入力。
-// 後のサブで人・爆発・3D の煙などを足す (関数の末尾へ。CPU 粒子の乱数ストリームは生成順に依存する)
+// 3D の煙の柱 (Volume) を足してある。後のサブで足すもの (関数の末尾へ。CPU 粒子の乱数ストリームは生成順に依存する)
 void BuildFieldShowcaseScene(EngineContext& ctx);
 
 } // namespace mye

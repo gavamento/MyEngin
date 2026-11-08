@@ -402,6 +402,9 @@ struct RenderView {
     //   フロクセルの注入が霧の密度に足す。RenderSystem が DisturbanceFieldPass の束を指すだけの非所有ポインタ。
     //   ★AssetPreviewCache の別 RenderSystem と手組みの RenderView は null のまま
     const struct DisturbanceFieldGpu* disturbance = nullptr;
+    // ---- M96g: かき乱しフィールドの Volume (3D。末尾 append。**null = Volume が無い = 従来と 1 ビットも同じ**) ----
+    //   フロクセルの注入が最大 4 個を順に足す。RenderSystem が DisturbanceVolumePass の束を指すだけの非所有ポインタ
+    const struct DisturbanceVolumeGpu* disturbanceVolumes = nullptr;
     // ---- M63d: パーティクルのライティング (末尾 append。**null = 従来と 1 ビットも同じ**) ----
     //      RenderSystem が光パスへ渡すのと同じ SceneLightData を指すだけの非所有ポインタ
     //      (terrain / decals / probes と同じ流儀)。**メッシュのライティングは今までどおり

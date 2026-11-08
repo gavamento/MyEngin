@@ -1,8 +1,8 @@
 # sub-07: 3D ボリューム (浮力・3D テクスチャ・フロクセル)
 
 - 依存: sub-04 (波 W2。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W2 の統合待ち)
+- 往復: 1
 
 
 ## 並列の注意 (波 W2)
@@ -55,4 +55,13 @@ spec §5 の 12, 20, 30。
 
 ## 実装メモ (coder が追記)
 
+### round 1 (coder、2026-11-09、worktree w2-sub07)
+
+- 実装: Volume の 3D sim (注入・移流・投影・浮力・風 xyz)。DFLD に flowY (Volume のみ、2D は空でハッシュ列も不変)。snapshot v72。`DisturbanceFieldComponent` 末尾に `buoyancy` (sizeof 84 → 88)。描画は新規 `DisturbanceVolumePass` (Texture3D RGBA16F × 最大 4、幅 = cellsX / 高さ = cellsZ / 奥行き = cellsY) と `disturbance_volume.hlsli` (b2 / t3〜t6)。フロクセル注入で 4 個を順に足す (縁 2 マス、格子 AABB の外は読まない)。デモ `AddFieldDemoSmoke`
+- 2D の関数は触らず 3D 専用関数 (`Inject3D` / `AdvectVelocity3D` / `ProjectVelocity3D` / `AdvectDensity3D` / `Trilinear`) を足した。2D の結果は 1 ビットも変えない
+- 計測 (Release、`--field-bench`、machine が空いている時): 2D 128x128 全チャネル 20 反復 jobs なし 最良窓 1.106 ms。**Volume 32x16x32・20 反復 jobs なし 最良窓 1.99〜2.04 ms (平均 2.06〜2.10) = 1.67 ms 超過**、jobs あり 0.59 ms、0 反復 1.25 ms。snapshot 1 枚 277,277 B (2D 128x128 は 408,645 B)
+- 焼き込み値 `kBakedFinalHash`: 0x674FE5CFD80F29A9 → **0x2D2D2A180F889F62**。理由 = `DisturbanceFieldComponent` が 4 バイト伸びて World のカラムの生バイトが変わった (2D の sim 自体は不変)。Debug / Release の `--field-bench` で同値
+- selftest と replay_verify は未実行 (W2 の統合後にまとめて)。コードは書いた (`RunDisturbanceVolumeTests`、`TestFieldVolume`)。`--field-bench` 経由で Volume の確認項目 (120 tick 版) と jobs あり / なしの最終ハッシュ一致を実行して PASS
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。3D の注入・移流・浮力・7 点の投影・三線形の読み取り・flowY の DFLD / ハッシュ (非空のときだけ)・Texture3D 4 本・froxel の t3〜t6 / b2・デモ・v72 を確認。bench で Debug == Release、jobs あり / なし一致、Volume 4 個の描画を確認。性能は jobs なし約 2.0 ms で、受け入れ 20 の線を jobs ありに変更 (spec §2 #27、[ユーザーに聞ける])。風の xyz、(y, z) 行の並列、新規 DisturbanceVolumePass、kBakedFinalHash の差し替え、sub-15 のサイズ表明の修正を受理

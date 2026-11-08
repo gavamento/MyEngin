@@ -2058,15 +2058,15 @@ void RegisterBuiltinComponents()
 
     // M96: かき乱しフィールド (TypeId=96、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
     // 範囲外の値は sim が切った値で動く (Inspector のレンジはスライダの目安)
-    static_assert(sizeof(DisturbanceFieldComponent) == 84, "DisturbanceFieldComponent: no implicit padding");
+    static_assert(sizeof(DisturbanceFieldComponent) == 88, "DisturbanceFieldComponent: no implicit padding");
     RegisterComponent<DisturbanceFieldComponent>("DisturbanceField", {
-        MYE_JP("形", MYE_FIELD_TIP(DisturbanceFieldComponent, shape, Int32, "0 = ground layer (a thin layer that creeps along the floor) / 1 = volume (3D, not simulated yet)")),
+        MYE_JP("形", MYE_FIELD_TIP(DisturbanceFieldComponent, shape, Int32, "0 = ground layer (a thin layer that creeps along the floor) / 1 = volume (3D smoke / fog; only the density channel is used, trail and ripple are ignored)")),
         MYE_JP("マス数 X", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsX, Int32, "cells along X (2 to 512; at most 262144 cells in total). Changing it rebuilds the field at rest")),
         MYE_JP("マス数 Y", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsY, Int32, "cells along Y (volume only; the ground layer is always 1). Suggested volume: 32 x 16 x 32 with 0.5 m cells")),
         MYE_JP("マス数 Z", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsZ, Int32, "cells along Z (2 to 512)")),
         MYE_JP("マスの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, cellSize, Float, 0.05f, 8.0f)),
         MYE_JP("層の厚さ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, thickness, Float, 0.05f, 20.0f)),
-        MYE_JP("チャネル", MYE_FIELD_TIP(DisturbanceFieldComponent, channels, UInt32, "bit flags: 1 = density (fog) / 2 = trail (snow, sand) / 4 = ripple (water). The flow is always on")),
+        MYE_JP("チャネル", MYE_FIELD_TIP(DisturbanceFieldComponent, channels, UInt32, "bit flags: 1 = density (fog) / 2 = trail (snow, sand) / 4 = ripple (water). The flow is always on. A volume uses the density bit only")),
         MYE_JP("静止時の濃さ", MYE_FIELD_RANGE(DisturbanceFieldComponent, restDensity, Float, 0.0f, 1.0f)),
         MYE_JP("濃さの残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, densityKeep, Float, 0.0f, 1.0f)),
         MYE_JP("流れの残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, velocityKeep, Float, 0.0f, 1.0f)),
@@ -2082,6 +2082,7 @@ void RegisterBuiltinComponents()
         MYE_JP("デバッグ描画", MYE_FIELD_TIP(DisturbanceFieldComponent, drawDebug, Bool, "draw the flow as arrows (every 4 cells) and the density as gray crosses while playing")),
         MYE_JP("圧力の反復回数", ::mye::FieldDesc{ .name = "pressureIterations", .type = ::mye::FieldType::Int32, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, pressureIterations)), .minVal = 0.0f, .maxVal = 64.0f, .tooltip = "Jacobi iterations that make the flow swirl instead of piling up (0 = off, more = more exact and slower). Changing it changes the result" }),
         MYE_JP("風の倍率", ::mye::FieldDesc{ .name = "windScale", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, windScale)), .minVal = 0.0f, .maxVal = 10.0f, .tooltip = "how strongly the PhysicsEnvironment wind (x, z) blows this field (0 = unaffected)" }),
+        MYE_JP("浮力", MYE_FIELD_TIP(DisturbanceFieldComponent, buoyancy, Float, "volume only: upward acceleration [m/s^2] per unit of density above the rest density (dense smoke rises). 0 = no buoyancy")),
     });
 
     // M96: かき乱しの源 (TypeId=97、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変

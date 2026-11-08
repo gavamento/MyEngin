@@ -38,12 +38,16 @@ DisturbanceSlot MakeRestSlot(const FieldParams& p)
     s.channels = p.channels;
     s.cellSize = p.cellSize;
     s.originCell[0] = OriginCellOf(p.pos[0], p.cellSize, p.cellsX);
-    s.originCell[1] = 0;
+    // Volume は y も中心に置く (GroundLayer の y は使わない)
+    s.originCell[1] = p.shape == kDisturbanceVolume ? OriginCellOf(p.pos[1], p.cellSize, p.cellsY) : 0;
     s.originCell[2] = OriginCellOf(p.pos[2], p.cellSize, p.cellsZ);
     s.baseY = p.pos[1];
     const size_t n = s.CellCount();
     s.flowX.assign(n, 0.0f);
     s.flowZ.assign(n, 0.0f);
+    if (p.shape == kDisturbanceVolume) {
+        s.flowY.assign(n, 0.0f);
+    }
     if ((p.channels & kDisturbanceChannelDensity) != 0) {
         s.density.assign(n, p.restDensity);
     }
@@ -129,9 +133,11 @@ struct Injection {
     FlowKind flow = FlowKind::Uniform;
     float flowX = 0.0f;       // Uniform / Cone: 目標速度 (xz)
     float flowZ = 0.0f;
+    float flowY = 0.0f;       // Volume だけ
     float radialSpeed = 0.0f; // Radial: 外向きの速さ
-    float coneAxisX = 0.0f;   // Cone: 軸 (xz、正規化済み。長さ 0 なら何も起きない)
+    float coneAxisX = 0.0f;   // Cone: 軸 (2D は xz、Volume は xyz。正規化済み。長さ 0 なら何も起きない)
     float coneAxisZ = 0.0f;
+    float coneAxisY = 0.0f;   // Volume だけ
     float coneCos = 0.0f;
     float mix = 1.0f;         // 流れの混ぜ率の係数 (源 = strength、インパルス = 1)
     float speedFactor = 1.0f; // 速さ係数 s
@@ -234,6 +240,76 @@ void Inject(DisturbanceSlot& s, float thickness, const Injection& in, std::vecto
     }
 }
 
+// Inject の 3D 版 (Volume)。距離は 3D のユークリッド距離で、濃さだけを持つ (跡・波紋は無い)。
+// radialDx / Dy / Dz が非 null なら流れに足した差分をそこへ加算する (Radial の発散源)
+void Inject3D(DisturbanceSlot& s, const Injection& in, std::vector<float>* radialDx, std::vector<float>* radialDy,
+              std::vector<float>* radialDz)
+{
+    if (!(in.radius > 0.0f) || !std::isfinite(in.radius) || !std::isfinite(in.pos[0]) || !std::isfinite(in.pos[1])
+        || !std::isfinite(in.pos[2])) {
+        return;
+    }
+    int32_t x0 = 0, x1 = 0, y0 = 0, y1 = 0, z0 = 0, z1 = 0;
+    if (!CellRange(in.pos[0], in.radius, s.cellSize, s.originCell[0], s.cellsX, x0, x1)
+        || !CellRange(in.pos[1], in.radius, s.cellSize, s.originCell[1], s.cellsY, y0, y1)
+        || !CellRange(in.pos[2], in.radius, s.cellSize, s.originCell[2], s.cellsZ, z0, z1)) {
+        return;
+    }
+    const bool hasDensity = (s.channels & kDisturbanceChannelDensity) != 0;
+    for (int32_t y = y0; y <= y1; ++y) {
+        const float ey = (static_cast<float>(s.originCell[1] + y) + 0.5f) * s.cellSize - in.pos[1];
+        for (int32_t z = z0; z <= z1; ++z) {
+            const float ez = (static_cast<float>(s.originCell[2] + z) + 0.5f) * s.cellSize - in.pos[2];
+            for (int32_t x = x0; x <= x1; ++x) {
+                const float ex = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize - in.pos[0];
+                const float d = std::sqrt(ex * ex + ey * ey + ez * ez);
+                if (!(d < in.radius)) {
+                    continue;
+                }
+                const float t = 1.0f - d / in.radius;
+                float w = t * t;
+                float ux = in.flowX;
+                float uy = in.flowY;
+                float uz = in.flowZ;
+                if (in.flow == FlowKind::Radial) {
+                    // 中心 (d < 1e-6) は向きが定まらないので 0
+                    ux = d < 1.0e-6f ? 0.0f : ex / d * in.radialSpeed;
+                    uy = d < 1.0e-6f ? 0.0f : ey / d * in.radialSpeed;
+                    uz = d < 1.0e-6f ? 0.0f : ez / d * in.radialSpeed;
+                } else if (in.flow == FlowKind::Cone) {
+                    const float axisLen = (in.coneAxisX * in.coneAxisX + in.coneAxisY * in.coneAxisY) + in.coneAxisZ * in.coneAxisZ;
+                    float factor = 0.0f;
+                    if (axisLen > 0.0f && in.coneCos < 1.0f) {
+                        const float cosTheta =
+                            d < 1.0e-6f ? 1.0f : ((in.coneAxisX * ex + in.coneAxisY * ey) + in.coneAxisZ * ez) / d;
+                        factor = Saturate((cosTheta - in.coneCos) / (1.0f - in.coneCos));
+                    }
+                    w *= factor;
+                }
+                const size_t i = static_cast<size_t>(x)
+                                 + static_cast<size_t>(s.cellsX) * (static_cast<size_t>(z) + static_cast<size_t>(s.cellsZ) * static_cast<size_t>(y));
+                const float a = Saturate(w * in.mix);
+                const float oldX = s.flowX[i];
+                const float oldY = s.flowY[i];
+                const float oldZ = s.flowZ[i];
+                s.flowX[i] += a * (ux - oldX);
+                s.flowY[i] += a * (uy - oldY);
+                s.flowZ[i] += a * (uz - oldZ);
+                if (radialDx != nullptr) {
+                    (*radialDx)[i] += s.flowX[i] - oldX;
+                    (*radialDy)[i] += s.flowY[i] - oldY;
+                    (*radialDz)[i] += s.flowZ[i] - oldZ;
+                }
+                if (hasDensity) {
+                    const float delta = w * in.speedFactor * in.densityDelta;
+                    const float rho = s.density[i];
+                    s.density[i] = delta < 0.0f ? rho + delta * rho : rho + delta * (1.0f - rho);
+                }
+            }
+        }
+    }
+}
+
 // 源 1 件の位置と速度 (全ての場に共通)
 struct SourceNow {
     bool valid = false;
@@ -308,11 +384,21 @@ void InjectSource(DisturbanceSlot& s, float thickness, const SourceRow& r, const
         const float speed = std::sqrt(n.vel[0] * n.vel[0] + n.vel[2] * n.vel[2]);
         in.speedFactor = c.fullSpeed > 0.0f ? std::min(speed / c.fullSpeed, 1.0f) : 1.0f;
     }
+    if (s.shape == kDisturbanceVolume) {
+        // Volume は 3D の速さ・向きで注入する (2D の経路は上のまま)
+        in.flowY = c.mode == 1 ? n.constant[1] : n.vel[1];
+        if (c.mode != 1) {
+            const float speed = std::sqrt((n.vel[0] * n.vel[0] + n.vel[1] * n.vel[1]) + n.vel[2] * n.vel[2]);
+            in.speedFactor = c.fullSpeed > 0.0f ? std::min(speed / c.fullSpeed, 1.0f) : 1.0f;
+        }
+        Inject3D(s, in, nullptr, nullptr, nullptr);
+        return;
+    }
     Inject(s, thickness, in);
 }
 
 void InjectImpulse(DisturbanceSlot& s, float thickness, const FieldImpulse& imp, std::vector<float>* radialDx,
-                   std::vector<float>* radialDz)
+                   std::vector<float>* radialDz, std::vector<float>* radialDy)
 {
     Injection in;
     std::copy(imp.pos, imp.pos + 3, in.pos);
@@ -337,6 +423,22 @@ void InjectImpulse(DisturbanceSlot& s, float thickness, const FieldImpulse& imp,
             }
             in.coneCos = imp.coneCos;
         }
+    }
+    if (s.shape == kDisturbanceVolume) {
+        in.flowY = imp.dir[1] * imp.speed;
+        if (imp.shape == kFieldImpulseCone) {
+            // 3D の軸 (長さ 0 の向きは何も起きない)
+            const float len = std::sqrt((imp.dir[0] * imp.dir[0] + imp.dir[1] * imp.dir[1]) + imp.dir[2] * imp.dir[2]);
+            if (len > 1.0e-6f) {
+                in.coneAxisX = imp.dir[0] / len;
+                in.coneAxisY = imp.dir[1] / len;
+                in.coneAxisZ = imp.dir[2] / len;
+            }
+        }
+        // 発散源に積むのは Radial だけ (2D と同じ)
+        const bool radial = imp.shape == kFieldImpulseRadial;
+        Inject3D(s, in, radial ? radialDx : nullptr, radial ? radialDy : nullptr, radial ? radialDz : nullptr);
+        return;
     }
     if (imp.shape == kFieldImpulseRadial) {
         Inject(s, thickness, in, radialDx, radialDz);
@@ -378,6 +480,63 @@ float Bilinear(const std::vector<float>& a, int32_t nx, int32_t nz, float fx, fl
         return a[static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z)];
     };
     return Lerp(Lerp(at(x0, z0), at(x0 + 1, z0), tx), Lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
+}
+
+// 三線形の参照位置 (マス座標 fx, fy, fz。マス中心が整数)。同じ位置で複数の配列を引くとき (流れの 3 成分) に
+// floor と重みを 1 回で済ませるため、位置の計算と配列の参照を分けてある
+struct TriCoord {
+    int32_t x0 = 0;
+    int32_t y0 = 0;
+    int32_t z0 = 0;
+    float tx = 0.0f;
+    float ty = 0.0f;
+    float tz = 0.0f;
+    bool interior = false; // 8 隅が全て格子の内側
+};
+
+TriCoord MakeTriCoord(int32_t nx, int32_t ny, int32_t nz, float fx, float fy, float fz)
+{
+    TriCoord c;
+    c.x0 = FloorToInt(fx);
+    c.y0 = FloorToInt(fy);
+    c.z0 = FloorToInt(fz);
+    c.tx = fx - static_cast<float>(c.x0);
+    c.ty = fy - static_cast<float>(c.y0);
+    c.tz = fz - static_cast<float>(c.z0);
+    c.interior = c.x0 >= 0 && c.x0 + 1 < nx && c.y0 >= 0 && c.y0 + 1 < ny && c.z0 >= 0 && c.z0 + 1 < nz;
+    return c;
+}
+
+// a は index = x + nx * (z + nz * y)。格子の外のマスは outside
+float TriSample(const float* a, int32_t nx, int32_t ny, int32_t nz, const TriCoord& c, float outside)
+{
+    const size_t rowStride = static_cast<size_t>(nx);
+    const size_t sliceStride = rowStride * static_cast<size_t>(nz);
+    if (c.interior) {
+        const float* p0 = a + static_cast<size_t>(c.x0) + rowStride * static_cast<size_t>(c.z0)
+                          + sliceStride * static_cast<size_t>(c.y0);
+        const float* p1 = p0 + sliceStride;
+        const float lower = Lerp(Lerp(p0[0], p0[1], c.tx), Lerp(p0[rowStride], p0[rowStride + 1], c.tx), c.tz);
+        const float upper = Lerp(Lerp(p1[0], p1[1], c.tx), Lerp(p1[rowStride], p1[rowStride + 1], c.tx), c.tz);
+        return Lerp(lower, upper, c.ty);
+    }
+    const auto at = [&](int32_t x, int32_t y, int32_t z) {
+        if (x < 0 || x >= nx || y < 0 || y >= ny || z < 0 || z >= nz) {
+            return outside;
+        }
+        return a[static_cast<size_t>(x) + rowStride * static_cast<size_t>(z) + sliceStride * static_cast<size_t>(y)];
+    };
+    const float lower = Lerp(Lerp(at(c.x0, c.y0, c.z0), at(c.x0 + 1, c.y0, c.z0), c.tx),
+                             Lerp(at(c.x0, c.y0, c.z0 + 1), at(c.x0 + 1, c.y0, c.z0 + 1), c.tx), c.tz);
+    const float upper = Lerp(Lerp(at(c.x0, c.y0 + 1, c.z0), at(c.x0 + 1, c.y0 + 1, c.z0), c.tx),
+                             Lerp(at(c.x0, c.y0 + 1, c.z0 + 1), at(c.x0 + 1, c.y0 + 1, c.z0 + 1), c.tx), c.tz);
+    return Lerp(lower, upper, c.ty);
+}
+
+float Trilinear(const std::vector<float>& a, int32_t nx, int32_t ny, int32_t nz, float fx, float fy, float fz,
+                float outside)
+{
+    return TriSample(a.data(), nx, ny, nz, MakeTriCoord(nx, ny, nz, fx, fy, fz), outside);
 }
 
 // ---- 流れのソルバ (spec §4.1 B の 5〜7、§4.1 J) ----
@@ -609,7 +768,8 @@ bool RelaxScalars(DisturbanceSlot& s, const FieldParams& p)
     }
     const size_t rowCells = static_cast<size_t>(s.cellsX);
     std::atomic<bool> repaired{ false };
-    ForRows(s.cellsZ, [&](int32_t z0, int32_t z1) {
+    // Volume は (y, z) の行 = cellsZ * cellsY 本 (GroundLayer は cellsY = 1 なので従来と同じ分割)
+    ForRows(s.cellsZ * s.cellsY, [&](int32_t z0, int32_t z1) {
         bool bad = false;
         for (size_t i = static_cast<size_t>(z0) * rowCells; i < static_cast<size_t>(z1) * rowCells; ++i) {
             if (hasDensity) {
@@ -693,6 +853,243 @@ bool StepRipple(DisturbanceSlot& s, const FieldParams& p, std::vector<float>& sc
     return repaired.load(std::memory_order_relaxed);
 }
 
+// ---- Volume (3D) のソルバ ----
+// 2D の関数と同じ式を y 方向込みに広げたもの。2D の関数には手を入れない (2D のハッシュ列を 1 ビットも変えないため)。
+// 並列の単位は (y, z) の行 r = y * cellsZ + z で、マスの添字は x + cellsX * r。行ごとに自分のマスだけを書く
+
+// 風の目標速度 (xyz)。長さの上限は 2D と同じ cellSize * 60
+void WindTarget3D(World& world, const FieldParams& p, float out[3])
+{
+    out[0] = out[1] = out[2] = 0.0f;
+    const PhysicsEnvironmentComponent* env = ResolvePhysicsEnvironment(world);
+    if (env == nullptr) {
+        return;
+    }
+    float t[3] = { FiniteOr(env->windVelocity.x, 0.0f) * p.windScale, FiniteOr(env->windVelocity.y, 0.0f) * p.windScale,
+                   FiniteOr(env->windVelocity.z, 0.0f) * p.windScale };
+    const float maxSpeed = p.cellSize * kDisturbanceTickRate;
+    const float len = std::sqrt((t[0] * t[0] + t[1] * t[1]) + t[2] * t[2]);
+    if (len > maxSpeed) {
+        const float k = maxSpeed / len;
+        t[0] *= k;
+        t[1] *= k;
+        t[2] *= k;
+    }
+    out[0] = t[0];
+    out[1] = t[1];
+    out[2] = t[2];
+}
+
+// 速度の半ラグランジュ移流 → 目標速度への減衰 → 浮力 → 速さの上限。非有限の値が出たら 0 に戻して true を返す。
+// 浮力: vy += buoyancy * (ρ - restDensity) / 60 (濃い煙が昇る。濃さチャネルが無い場では 0)
+bool AdvectVelocity3D(DisturbanceSlot& s, const FieldParams& p, const float target[3], DisturbanceState::SolverScratch& sc)
+{
+    const int32_t nx = s.cellsX;
+    const int32_t ny = s.cellsY;
+    const int32_t nz = s.cellsZ;
+    const float maxSpeed = s.cellSize * kDisturbanceTickRate;
+    const float toCells = 1.0f / maxSpeed;
+    const bool hasDensity = (s.channels & kDisturbanceChannelDensity) != 0;
+    const float lift = hasDensity ? p.buoyancy / kDisturbanceTickRate : 0.0f;
+    sc.flowX.resize(s.CellCount());
+    sc.flowY.resize(s.CellCount());
+    sc.flowZ.resize(s.CellCount());
+    std::atomic<bool> repaired{ false };
+    ForRows(ny * nz, [&](int32_t r0, int32_t r1) {
+        bool bad = false;
+        for (int32_t r = r0; r < r1; ++r) {
+            const int32_t y = r / nz;
+            const int32_t z = r - y * nz;
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(r);
+                const float fx = static_cast<float>(x) - s.flowX[i] * toCells;
+                const float fy = static_cast<float>(y) - s.flowY[i] * toCells;
+                const float fz = static_cast<float>(z) - s.flowZ[i] * toCells;
+                const TriCoord coord = MakeTriCoord(nx, ny, nz, fx, fy, fz);
+                float vx = TriSample(s.flowX.data(), nx, ny, nz, coord, target[0]);
+                float vy = TriSample(s.flowY.data(), nx, ny, nz, coord, target[1]);
+                float vz = TriSample(s.flowZ.data(), nx, ny, nz, coord, target[2]);
+                vx = target[0] + (vx - target[0]) * p.velocityKeep;
+                vy = target[1] + (vy - target[1]) * p.velocityKeep;
+                vz = target[2] + (vz - target[2]) * p.velocityKeep;
+                if (hasDensity) {
+                    vy += lift * (s.density[i] - p.restDensity);
+                }
+                if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) {
+                    vx = 0.0f;
+                    vy = 0.0f;
+                    vz = 0.0f;
+                    bad = true;
+                }
+                const float len = std::sqrt((vx * vx + vy * vy) + vz * vz);
+                if (len > maxSpeed) {
+                    const float k = maxSpeed / len;
+                    vx *= k;
+                    vy *= k;
+                    vz *= k;
+                }
+                sc.flowX[i] = vx;
+                sc.flowY[i] = vy;
+                sc.flowZ[i] = vz;
+            }
+        }
+        if (bad) {
+            repaired.store(true, std::memory_order_relaxed);
+        }
+    });
+    s.flowX.swap(sc.flowX);
+    s.flowY.swap(sc.flowY);
+    s.flowZ.swap(sc.flowZ);
+    return repaired.load(std::memory_order_relaxed);
+}
+
+// 圧力投影の 3D 版。発散・勾配は中心差分、Jacobi は幅 2 の 7 点 (q = (Σ6 近傍 - 4 * 発散) / 6)。
+// 圧力は q = p / cellSize で持つ作業領域 (状態ではない)。格子外は発散が目標速度、圧力が 0。Radial の差分は発散源として右辺から引く
+void ProjectVelocity3D(DisturbanceSlot& s, const FieldParams& p, const float target[3],
+                       DisturbanceState::SolverScratch& sc, size_t slotIndex)
+{
+    if (p.pressureIterations <= 0) {
+        return;
+    }
+    const int32_t nx = s.cellsX;
+    const int32_t ny = s.cellsY;
+    const int32_t nz = s.cellsZ;
+    const size_t stride = static_cast<size_t>(nx);
+    const size_t slice = stride * static_cast<size_t>(nz);
+    const size_t n = s.CellCount();
+    sc.divergence.resize(n);
+    sc.pressureA.assign(n, 0.0f);
+    sc.pressureB.resize(n);
+    sc.zeroRow.assign(stride, 0.0f);
+    sc.targetRowZ.assign(stride, target[2]);
+    sc.targetRowY.assign(stride, target[1]);
+    const bool radial = sc.radialActive[slotIndex];
+    const float* radialX = radial ? sc.radialX[slotIndex].data() : nullptr;
+    const float* radialY = radial ? sc.radialY[slotIndex].data() : nullptr;
+    const float* radialZ = radial ? sc.radialZ[slotIndex].data() : nullptr;
+
+    ForRows(ny * nz, [&](int32_t r0, int32_t r1) {
+        for (int32_t r = r0; r < r1; ++r) {
+            const int32_t y = r / nz;
+            const int32_t z = r - y * nz;
+            const size_t row = stride * static_cast<size_t>(r);
+            const float* __restrict ux = s.flowX.data() + row;
+            const float* __restrict wN = z + 1 < nz ? s.flowZ.data() + row + stride : sc.targetRowZ.data();
+            const float* __restrict wS = z > 0 ? s.flowZ.data() + row - stride : sc.targetRowZ.data();
+            const float* __restrict vU = y + 1 < ny ? s.flowY.data() + row + slice : sc.targetRowY.data();
+            const float* __restrict vD = y > 0 ? s.flowY.data() + row - slice : sc.targetRowY.data();
+            float* __restrict dv = sc.divergence.data() + row;
+            dv[0] = (((ux[1] - target[0]) + (wN[0] - wS[0])) + (vU[0] - vD[0])) * 0.5f;
+            for (int32_t x = 1; x < nx - 1; ++x) {
+                dv[x] = (((ux[x + 1] - ux[x - 1]) + (wN[x] - wS[x])) + (vU[x] - vD[x])) * 0.5f;
+            }
+            dv[nx - 1] = (((target[0] - ux[nx - 2]) + (wN[nx - 1] - wS[nx - 1])) + (vU[nx - 1] - vD[nx - 1])) * 0.5f;
+            if (radial) {
+                // 発散源の差分の発散 (格子外の差分は 0)
+                const float* rx = radialX + row;
+                const float* rzN = z + 1 < nz ? radialZ + row + stride : sc.zeroRow.data();
+                const float* rzS = z > 0 ? radialZ + row - stride : sc.zeroRow.data();
+                const float* ryU = y + 1 < ny ? radialY + row + slice : sc.zeroRow.data();
+                const float* ryD = y > 0 ? radialY + row - slice : sc.zeroRow.data();
+                for (int32_t x = 0; x < nx; ++x) {
+                    const float rE = x + 1 < nx ? rx[x + 1] : 0.0f;
+                    const float rW = x > 0 ? rx[x - 1] : 0.0f;
+                    dv[x] -= (((rE - rW) + (rzN[x] - rzS[x])) + (ryU[x] - ryD[x])) * 0.5f;
+                }
+            }
+        }
+    });
+
+    std::vector<float>* src = &sc.pressureA;
+    std::vector<float>* dst = &sc.pressureB;
+    for (int32_t iter = 0; iter < p.pressureIterations; ++iter) {
+        const std::vector<float>& q = *src;
+        std::vector<float>& out = *dst;
+        ForRows(ny * nz, [&](int32_t r0, int32_t r1) {
+            for (int32_t r = r0; r < r1; ++r) {
+                const int32_t y = r / nz;
+                const int32_t z = r - y * nz;
+                const size_t row = stride * static_cast<size_t>(r);
+                const float* __restrict mid = q.data() + row;
+                const float* __restrict north = z + 2 < nz ? q.data() + row + 2 * stride : sc.zeroRow.data();
+                const float* __restrict south = z > 1 ? q.data() + row - 2 * stride : sc.zeroRow.data();
+                const float* __restrict up = y + 2 < ny ? q.data() + row + 2 * slice : sc.zeroRow.data();
+                const float* __restrict down = y > 1 ? q.data() + row - 2 * slice : sc.zeroRow.data();
+                const float* __restrict dv = sc.divergence.data() + row;
+                float* __restrict dstRow = out.data() + row;
+                const auto edge = [&](int32_t x) {
+                    const float qE = x + 2 < nx ? mid[x + 2] : 0.0f;
+                    const float qW = x > 1 ? mid[x - 2] : 0.0f;
+                    dstRow[x] = ((((qE + qW) + (north[x] + south[x])) + (up[x] + down[x])) - 4.0f * dv[x]) / 6.0f;
+                };
+                for (int32_t x = 0; x < std::min(nx, 2); ++x) {
+                    edge(x);
+                }
+                for (int32_t x = std::max(nx - 2, 2); x < nx; ++x) {
+                    edge(x);
+                }
+                for (int32_t x = 2; x < nx - 2; ++x) {
+                    dstRow[x] = ((((mid[x + 2] + mid[x - 2]) + (north[x] + south[x])) + (up[x] + down[x])) - 4.0f * dv[x]) / 6.0f;
+                }
+            }
+        });
+        std::swap(src, dst);
+    }
+
+    // 勾配を引く (中心差分。格子外の圧力は 0)
+    const std::vector<float>& q = *src;
+    ForRows(ny * nz, [&](int32_t r0, int32_t r1) {
+        for (int32_t r = r0; r < r1; ++r) {
+            const int32_t y = r / nz;
+            const int32_t z = r - y * nz;
+            const size_t row = stride * static_cast<size_t>(r);
+            const float* __restrict mid = q.data() + row;
+            const float* __restrict north = z + 1 < nz ? q.data() + row + stride : sc.zeroRow.data();
+            const float* __restrict south = z > 0 ? q.data() + row - stride : sc.zeroRow.data();
+            const float* __restrict up = y + 1 < ny ? q.data() + row + slice : sc.zeroRow.data();
+            const float* __restrict down = y > 0 ? q.data() + row - slice : sc.zeroRow.data();
+            float* __restrict fx = s.flowX.data() + row;
+            float* __restrict fy = s.flowY.data() + row;
+            float* __restrict fz = s.flowZ.data() + row;
+            fx[0] -= (mid[1] - 0.0f) * 0.5f;
+            fy[0] -= (up[0] - down[0]) * 0.5f;
+            fz[0] -= (north[0] - south[0]) * 0.5f;
+            for (int32_t x = 1; x < nx - 1; ++x) {
+                fx[x] -= (mid[x + 1] - mid[x - 1]) * 0.5f;
+                fy[x] -= (up[x] - down[x]) * 0.5f;
+                fz[x] -= (north[x] - south[x]) * 0.5f;
+            }
+            fx[nx - 1] -= (0.0f - mid[nx - 2]) * 0.5f;
+            fy[nx - 1] -= (up[nx - 1] - down[nx - 1]) * 0.5f;
+            fz[nx - 1] -= (north[nx - 1] - south[nx - 1]) * 0.5f;
+        }
+    });
+}
+
+// 濃さの移流の 3D 版。格子外は restDensity (開いた境界)
+void AdvectDensity3D(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::SolverScratch& sc)
+{
+    const int32_t nx = s.cellsX;
+    const int32_t ny = s.cellsY;
+    const int32_t nz = s.cellsZ;
+    const float toCells = 1.0f / (s.cellSize * kDisturbanceTickRate);
+    sc.density.resize(s.CellCount());
+    ForRows(ny * nz, [&](int32_t r0, int32_t r1) {
+        for (int32_t r = r0; r < r1; ++r) {
+            const int32_t y = r / nz;
+            const int32_t z = r - y * nz;
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(r);
+                const float fx = static_cast<float>(x) - s.flowX[i] * toCells;
+                const float fy = static_cast<float>(y) - s.flowY[i] * toCells;
+                const float fz = static_cast<float>(z) - s.flowZ[i] * toCells;
+                sc.density[i] = Trilinear(s.density, nx, ny, nz, fx, fy, fz, p.restDensity);
+            }
+        }
+    });
+    s.density.swap(sc.density);
+}
+
 void WarnOnce(std::vector<EntityID>& warned, uint32_t& counter, EntityID e, const char* why)
 {
     if (std::find(warned.begin(), warned.end(), e) != warned.end()) {
@@ -712,7 +1109,7 @@ void DisturbanceStep(World& world, DisturbanceState& state)
     std::vector<SourceRow> sourceRows;
     CollectSources(world, sourceRows);
 
-    // 1. 掃除と初期化。先頭 4 個だけが有効 (Volume は状態を作らない)
+    // 1. 掃除と初期化。先頭 4 個だけが有効
     std::vector<FieldParams> active;
     std::vector<EntityID> present;
     for (size_t i = 0; i < fieldRows.size(); ++i) {
@@ -723,13 +1120,7 @@ void DisturbanceStep(World& world, DisturbanceState& state)
                      "more than 4 fields exist; this one is not simulated");
             continue;
         }
-        const FieldParams p = SanitizeField(r.entity, r.comp, r.pos);
-        if (p.shape == kDisturbanceVolume) {
-            WarnOnce(state.warnedFields_, state.overflowWarnCount_, r.entity,
-                     "volume fields are not simulated yet");
-            continue;
-        }
-        active.push_back(p);
+        active.push_back(SanitizeField(r.entity, r.comp, r.pos));
     }
     // 警告済みの記録から、もう無い場を外す (同じ番号の再利用で警告が出なくなるのを防ぐ。世代つきで比べる)
     state.warnedFields_.erase(std::remove_if(state.warnedFields_.begin(), state.warnedFields_.end(),
@@ -773,9 +1164,13 @@ void DisturbanceStep(World& world, DisturbanceState& state)
                 sc.radialActive[f] = true;
                 sc.radialX[f].assign(s.CellCount(), 0.0f);
                 sc.radialZ[f].assign(s.CellCount(), 0.0f);
+                if (s.shape == kDisturbanceVolume) {
+                    sc.radialY[f].assign(s.CellCount(), 0.0f);
+                }
             }
             InjectImpulse(s, thickness, imp, sc.radialActive[f] ? &sc.radialX[f] : nullptr,
-                          sc.radialActive[f] ? &sc.radialZ[f] : nullptr);
+                          sc.radialActive[f] ? &sc.radialZ[f] : nullptr,
+                          sc.radialActive[f] ? &sc.radialY[f] : nullptr);
         }
     }
     // 場が無いシーンで積まれたものもここで捨てる
@@ -786,6 +1181,21 @@ void DisturbanceStep(World& world, DisturbanceState& state)
     for (size_t f = 0; f < state.slots_.size(); ++f) {
         DisturbanceSlot& s = state.slots_[f];
         const FieldParams& p = active[f];
+        if (s.shape == kDisturbanceVolume) {
+            // 3D: 風 (xyz) → 移流・減衰・浮力 → 投影 → 濃さの移流 → 復元。跡・波紋は持たない
+            float target[3];
+            WindTarget3D(world, p, target);
+            bool repaired3 = AdvectVelocity3D(s, p, target, state.solver_);
+            ProjectVelocity3D(s, p, target, state.solver_, f);
+            if ((s.channels & kDisturbanceChannelDensity) != 0) {
+                AdvectDensity3D(s, p, state.solver_);
+            }
+            repaired3 = RelaxScalars(s, p) || repaired3;
+            if (repaired3) {
+                MYE_LOG_WARN("[disturbance] field entity %u: a non-finite value was reset to the rest state", s.entity.index);
+            }
+            continue;
+        }
         float targetX = 0.0f;
         float targetZ = 0.0f;
         WindTarget(world, p, targetX, targetZ);
@@ -845,6 +1255,27 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
         }
         const float thickness = ClampOr(comp->thickness, 0.05f, 20.0f, 1.0f);
         const float rest = ClampOr(comp->restDensity, 0.0f, 1.0f, 1.0f);
+        if (s.shape == kDisturbanceVolume) {
+            // 3D: 格子の中 (3 軸とも [0, cells)) の三線形。高さの形 p(y) は無く、濃さはそのまま
+            const float gx = pos.x / s.cellSize - static_cast<float>(s.originCell[0]);
+            const float gy = pos.y / s.cellSize - static_cast<float>(s.originCell[1]);
+            const float gz = pos.z / s.cellSize - static_cast<float>(s.originCell[2]);
+            if (!(gx >= 0.0f && gx < static_cast<float>(s.cellsX) && gy >= 0.0f && gy < static_cast<float>(s.cellsY)
+                  && gz >= 0.0f && gz < static_cast<float>(s.cellsZ))) {
+                continue;
+            }
+            const float fx = gx - 0.5f;
+            const float fy = gy - 0.5f;
+            const float fz = gz - 0.5f;
+            out.field = s.entity;
+            out.flow[0] = Trilinear(s.flowX, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
+            out.flow[1] = Trilinear(s.flowY, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
+            out.flow[2] = Trilinear(s.flowZ, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
+            if ((s.channels & kDisturbanceChannelDensity) != 0) {
+                out.density = Trilinear(s.density, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, rest);
+            }
+            return true;
+        }
         // 格子の中 (マス座標が [0, cells)) かつ層の帯の中
         const float gx = pos.x / s.cellSize - static_cast<float>(s.originCell[0]);
         const float gz = pos.z / s.cellSize - static_cast<float>(s.originCell[2]);

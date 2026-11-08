@@ -41,37 +41,50 @@ void DisturbanceAppendDebugLines(World& world, const DisturbanceState& state, st
             continue;
         }
         const bool hasDensity = (s.channels & kDisturbanceChannelDensity) != 0;
-        const float y = s.baseY + kDrawHeightAboveBase;
-        for (int32_t z = kDebugCellStride / 2; z < s.cellsZ; z += kDebugCellStride) {
-            for (int32_t x = kDebugCellStride / 2; x < s.cellsX; x += kDebugCellStride) {
-                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(z);
-                const float cx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
-                const float cz = (static_cast<float>(s.originCell[2] + z) + 0.5f) * s.cellSize;
-                if (hasDensity) {
-                    const uint32_t c = GrayColor(s.density[i]);
-                    out.push_back({ cx - kCrossHalfSize, y, cz, cx + kCrossHalfSize, y, cz, c });
-                    out.push_back({ cx, y, cz - kCrossHalfSize, cx, y, cz + kCrossHalfSize, c });
+        // GroundLayer は板の下端の少し上の 1 段、Volume は y も数マスおきに描く
+        const bool volume = s.shape == kDisturbanceVolume;
+        const int32_t yBegin = volume ? kDebugCellStride / 2 : 0;
+        const int32_t yEnd = volume ? s.cellsY : 1;
+        const int32_t yStep = volume ? kDebugCellStride : 1;
+        for (int32_t gy = yBegin; gy < yEnd; gy += yStep) {
+            const float y = volume ? (static_cast<float>(s.originCell[1] + gy) + 0.5f) * s.cellSize
+                                   : s.baseY + kDrawHeightAboveBase;
+            for (int32_t z = kDebugCellStride / 2; z < s.cellsZ; z += kDebugCellStride) {
+                for (int32_t x = kDebugCellStride / 2; x < s.cellsX; x += kDebugCellStride) {
+                    const size_t i = static_cast<size_t>(x)
+                                     + static_cast<size_t>(s.cellsX) * (static_cast<size_t>(z) + static_cast<size_t>(s.cellsZ) * static_cast<size_t>(gy));
+                    const float cx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
+                    const float cz = (static_cast<float>(s.originCell[2] + z) + 0.5f) * s.cellSize;
+                    if (hasDensity) {
+                        const uint32_t c = GrayColor(s.density[i]);
+                        out.push_back({ cx - kCrossHalfSize, y, cz, cx + kCrossHalfSize, y, cz, c });
+                        out.push_back({ cx, y, cz - kCrossHalfSize, cx, y, cz + kCrossHalfSize, c });
+                    }
+                    const float vx = s.flowX[i];
+                    const float vy = volume ? s.flowY[i] : 0.0f;
+                    const float vz = s.flowZ[i];
+                    const float speed = std::sqrt((vx * vx + vy * vy) + vz * vz);
+                    if (!(speed >= kMinDrawnSpeed)) {
+                        continue;
+                    }
+                    const float len = speed * kArrowSecondsPerMeter;
+                    const float dx = vx / speed;
+                    const float dy = vy / speed;
+                    const float dz = vz / speed;
+                    const float tipX = cx + dx * len;
+                    const float tipY = y + dy * len;
+                    const float tipZ = cz + dz * len;
+                    // 矢じりは先端から後ろへ、軸に垂直な方向 (水平面内) へ開く
+                    const float head = std::min(len * 0.35f, 0.15f);
+                    const float backX = tipX - dx * head;
+                    const float backY = tipY - dy * head;
+                    const float backZ = tipZ - dz * head;
+                    const float sideX = -dz * head * 0.5f;
+                    const float sideZ = dx * head * 0.5f;
+                    out.push_back({ cx, y, cz, tipX, tipY, tipZ, kArrowColor });
+                    out.push_back({ tipX, tipY, tipZ, backX + sideX, backY, backZ + sideZ, kArrowColor });
+                    out.push_back({ tipX, tipY, tipZ, backX - sideX, backY, backZ - sideZ, kArrowColor });
                 }
-                const float vx = s.flowX[i];
-                const float vz = s.flowZ[i];
-                const float speed = std::sqrt(vx * vx + vz * vz);
-                if (!(speed >= kMinDrawnSpeed)) {
-                    continue;
-                }
-                const float len = speed * kArrowSecondsPerMeter;
-                const float dx = vx / speed;
-                const float dz = vz / speed;
-                const float tipX = cx + dx * len;
-                const float tipZ = cz + dz * len;
-                // 矢じりは先端から後ろへ、軸に垂直な方向へ開く
-                const float head = std::min(len * 0.35f, 0.15f);
-                const float backX = tipX - dx * head;
-                const float backZ = tipZ - dz * head;
-                const float sideX = -dz * head * 0.5f;
-                const float sideZ = dx * head * 0.5f;
-                out.push_back({ cx, y, cz, tipX, y, tipZ, kArrowColor });
-                out.push_back({ tipX, y, tipZ, backX + sideX, y, backZ + sideZ, kArrowColor });
-                out.push_back({ tipX, y, tipZ, backX - sideX, y, backZ - sideZ, kArrowColor });
             }
         }
     }

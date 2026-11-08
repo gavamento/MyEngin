@@ -32,14 +32,21 @@ size_t ExpectedLength(const DisturbanceSlot& s, uint32_t channelBit)
 
 bool SlotShapeValid(const DisturbanceSlot& s)
 {
-    if (s.shape != kDisturbanceGroundLayer || s.cellsY != 1) {
+    if (s.shape != kDisturbanceGroundLayer && s.shape != kDisturbanceVolume) {
+        return false;
+    }
+    // GroundLayer は y = 1 固定、Volume は他の辺と同じ範囲
+    if (s.shape == kDisturbanceGroundLayer ? s.cellsY != 1
+                                           : (s.cellsY < kMinDisturbanceSide || s.cellsY > kMaxDisturbanceSide)) {
         return false;
     }
     if (s.cellsX < kMinDisturbanceSide || s.cellsX > kMaxDisturbanceSide || s.cellsZ < kMinDisturbanceSide
         || s.cellsZ > kMaxDisturbanceSide) {
         return false;
     }
-    if (static_cast<int64_t>(s.cellsX) * s.cellsZ > kMaxDisturbanceCells || (s.channels & ~kDisturbanceChannelMask) != 0) {
+    // Volume のチャネルは濃さだけ (跡・波紋は持たない)
+    const uint32_t allowed = s.shape == kDisturbanceVolume ? kDisturbanceChannelDensity : kDisturbanceChannelMask;
+    if (static_cast<int64_t>(s.cellsX) * s.cellsY * s.cellsZ > kMaxDisturbanceCells || (s.channels & ~allowed) != 0) {
         return false;
     }
     return std::isfinite(s.cellSize) && s.cellSize > 0.0f && std::isfinite(s.baseY);
@@ -96,6 +103,7 @@ void DisturbanceState::Write(ByteWriter& w) const
         w.F32(s.baseY);
         w.PodVector(s.flowX);
         w.PodVector(s.flowZ);
+        w.PodVector(s.flowY);
         w.PodVector(s.density);
         w.PodVector(s.trail);
         w.PodVector(s.ripple);
@@ -131,12 +139,14 @@ bool DisturbanceState::Read(ByteReader& r, DisturbanceState& out)
         }
         s.flowX = r.PodVector<float>();
         s.flowZ = r.PodVector<float>();
+        s.flowY = r.PodVector<float>();
         s.density = r.PodVector<float>();
         s.trail = r.PodVector<float>();
         s.ripple = r.PodVector<float>();
         s.ripplePrev = r.PodVector<float>();
         const size_t n = s.CellCount();
         if (!r.Ok() || s.flowX.size() != n || s.flowZ.size() != n
+            || s.flowY.size() != (s.shape == kDisturbanceVolume ? n : 0)
             || s.density.size() != ExpectedLength(s, kDisturbanceChannelDensity)
             || s.trail.size() != ExpectedLength(s, kDisturbanceChannelTrail)
             || s.ripple.size() != ExpectedLength(s, kDisturbanceChannelRipple)

@@ -2636,7 +2636,7 @@ struct SpringFollowComponent {
 // 状態 (格子の中身) は Scene の DisturbanceState が持ち、ここは設定だけ。hash 対象。
 // sim が読むのは「見た目」の節より上の欄だけ (fog* と drawDebug は描画レーンが読む)
 struct DisturbanceFieldComponent {
-    int32_t shape = 0;          // 0 = GroundLayer (地面を這う薄い層) / 1 = Volume (立体。まだ sim しない)
+    int32_t shape = 0;          // 0 = GroundLayer (地面を這う薄い層) / 1 = Volume (立体。濃さと流れだけ。跡・波紋は無視)
     int32_t cellsX = 128;
     int32_t cellsY = 1;         // GroundLayer では 1 に固定される
     int32_t cellsZ = 128;
@@ -2660,6 +2660,7 @@ struct DisturbanceFieldComponent {
     // ---- 流れのソルバ (sim が読む。見た目の欄の後ろに足してある) ----
     int32_t pressureIterations = 20; // 圧力投影の Jacobi 反復回数 [0,64] (0 = 投影しない)
     float windScale = 1.0f;          // PhysicsEnvironment の風 (xz) に掛ける倍率。0 = 風の影響なし
+    float buoyancy = 0.0f;           // Volume のみ: 静止濃度より濃いぶんだけ上へ加速する [m/s^2 / 濃さ]。0 = 浮力なし
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

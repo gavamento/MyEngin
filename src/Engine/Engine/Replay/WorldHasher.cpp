@@ -543,6 +543,10 @@ uint64_t HashDisturbanceState(const DisturbanceState& state, DumpCtx* d)
         EmitArray(d, "Disturbance", "flowX", s.flowX.data(), static_cast<uint32_t>(s.flowX.size()), h);
         h = HashStateBytes(s.flowZ.data(), s.flowZ.size() * sizeof(float), h);
         EmitArray(d, "Disturbance", "flowZ", s.flowZ.data(), static_cast<uint32_t>(s.flowZ.size()), h);
+        if (!s.flowY.empty()) { // Volume だけ。GroundLayer のハッシュ列は増えない
+            h = HashStateBytes(s.flowY.data(), s.flowY.size() * sizeof(float), h);
+            EmitArray(d, "Disturbance", "flowY", s.flowY.data(), static_cast<uint32_t>(s.flowY.size()), h);
+        }
         h = HashStateBytes(s.density.data(), s.density.size() * sizeof(float), h);
         EmitArray(d, "Disturbance", "density", s.density.data(), static_cast<uint32_t>(s.density.size()), h);
         h = HashStateBytes(s.trail.data(), s.trail.size() * sizeof(float), h);

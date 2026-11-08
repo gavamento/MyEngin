@@ -209,6 +209,52 @@ void AddFieldDemoPond(Scene& s, const AssetID sphere)
     }
 }
 
+// 煙の柱 (M96g): Volume 32 x 16 x 32 (0.5 m) と、下から上向きに煙を吹き出す Constant の源。浮力で昇る。
+// 広場の爆発 (ZZFieldDemoDriver の Radial、(-7, 0.3, 1) 半径 4 m) の真上に噴き出し口を置き、爆発の瞬間に煙の根元が千切れて吹き飛ぶ。
+// Volume のフロクセルの霧はカメラの froxelOn が要る (自動で回すのは M96h)。froxelDensity = 0 で場の霧だけを描く
+void AddFieldDemoSmoke(Scene& s)
+{
+    constexpr float kVolumeX = -7.0f;
+    constexpr float kVolumeY = 4.0f; // 格子は y = 0〜8 m
+    constexpr float kVolumeZ = 2.0f;
+
+    GameObject volume = s.CreateGameObject("SmokeVolume");
+    volume.SetLocalPosition(kVolumeX, kVolumeY, kVolumeZ);
+    auto* f = volume.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 1;
+    f->cellsX = 32;
+    f->cellsY = 16;
+    f->cellsZ = 32;
+    f->cellSize = 0.5f;
+    f->channels = kDisturbanceChannelDensity;
+    f->restDensity = 0.0f;   // 何も無い空気。源が足した分だけ煙になる
+    f->densityKeep = 0.997f; // 煙が十数秒かけて薄れる
+    f->velocityKeep = 0.97f;
+    f->buoyancy = 8.0f;
+    f->fogDensity = 3.0f;
+    f->fogColor = { 0.3f, 0.3f, 0.34f }; // 白い地面の霧に対して読める暗い煙
+    f->fogBrightness = 0.5f;
+
+    GameObject vent = s.CreateGameObject("SmokeVent");
+    vent.SetLocalPosition(kVolumeX, 0.5f, 1.0f);
+    auto* src = vent.AddComponent<DisturbanceSourceComponent>();
+    src->mode = 1;
+    src->radius = 1.3f;
+    src->strength = 0.4f;
+    src->densityDelta = 0.5f;
+    src->constantVelocity = { 0.0f, 2.0f, 0.0f };
+
+    GameObject camera = s.Find("Main Camera");
+    if (camera) {
+        auto* fx = camera.GetComponent<CameraPostFxComponent>();
+        if (fx == nullptr) {
+            fx = camera.AddComponent<CameraPostFxComponent>();
+        }
+        fx->froxelOn = true;
+        fx->froxelDensity = 0.0f;
+    }
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -232,6 +278,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoPerson(s, ctx.resources->meshes.Capsule());
     AddFieldDemoLanterns(s);
     AddFieldDemoPond(s, sphere);
+    AddFieldDemoSmoke(s);
     s.GetWorld().ApplyStructuralChanges();
 }
 
