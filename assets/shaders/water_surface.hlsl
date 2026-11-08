@@ -189,9 +189,52 @@ VSOut VSMain(VSIn v)
     return o;
 }
 
+// M96: かき乱しフィールド 2D 層の波紋チャネル (gDfldAux の R、メートル) の水平勾配 (dh/dx, dh/dz) を返す。
+// 層の格子の中で、水面の高さが層の baseY ± thickness にあるときだけ効く (別の高さの水面は乱さない)。
+// 層が 0 枚 / 状態が無い / 波紋チャネルが無い (R = 0) なら 0 = 法線は動かない。見た目だけで浮力には関与しない
+float2 WaterRippleGradient(float3 posW)
+{
+    float2 grad = float2(0.0f, 0.0f);
+    const uint count = min(gDfldHeader.x, (uint)MYE_DFLD_MAX_LAYERS);
+    [loop] for (uint li = 0; li < count; ++li) {
+        const DisturbanceLayer L = gDfldLayers[li];
+        if (L.extent.w < 0.5f || abs(posW.y - L.originSize.w) > L.extent.z) {
+            continue;
+        }
+        const float cellSize = L.originSize.z;
+        const float gx = posW.x / cellSize - L.originSize.x;
+        const float gz = posW.z / cellSize - L.originSize.y;
+        const float nx = L.extent.x;
+        const float nz = L.extent.y;
+        if (!(gx > 0.0f && gz > 0.0f && gx < nx && gz < nz)) {
+            continue;
+        }
+        // 縁では中心差分が片側になって勾配が半端になるので、縁の 2 マスで 0 へ落とす
+        const float edge = min(min(gx, nx - gx), min(gz, nz - gz));
+        const float edgeFade = saturate(edge / MYE_DFLD_EDGE_FADE_CELLS);
+        // 層が配列より小さいときに隣の層の余白を混ぜないよう、層の中のテクセル中心の範囲へ切る
+        const float2 uvLo = float2(0.5f, 0.5f) * L.texScale.xy;
+        const float2 uvHi = float2(nx - 0.5f, nz - 0.5f) * L.texScale.xy;
+        const float2 uv = float2(gx, gz) * L.texScale.xy;
+        const float2 dx = float2(L.texScale.x, 0.0f);
+        const float2 dz = float2(0.0f, L.texScale.y);
+        const float hxp = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv + dx, uvLo, uvHi), (float)li), 0).x;
+        const float hxm = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv - dx, uvLo, uvHi), (float)li), 0).x;
+        const float hzp = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv + dz, uvLo, uvHi), (float)li), 0).x;
+        const float hzm = gDfldAux.SampleLevel(gDfldSampler, float3(clamp(uv - dz, uvLo, uvHi), (float)li), 0).x;
+        grad += edgeFade * float2(hxp - hxm, hzp - hzm) / (2.0f * cellSize);
+    }
+    return grad;
+}
+
 float4 PSMain(VSOut i) : SV_Target
 {
     float3 n = normalize(i.normalW);
+    // 波紋の勾配を法線に足す (高さ h の面の法線は (-dh/dx, 1, -dh/dz))。勾配が 0 のときは n をそのまま使う
+    const float2 rippleGrad = WaterRippleGradient(i.posW);
+    if (any(rippleGrad != 0.0f)) {
+        n = normalize(n + float3(-rippleGrad.x, 0.0f, -rippleGrad.y));
+    }
     float3 v = normalize(gCameraPos - i.posW);
 
     // フレネル反射 (Schlick 近似)

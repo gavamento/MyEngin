@@ -153,6 +153,62 @@ void AddFieldDemoLanterns(Scene& s)
     }
 }
 
+// 浅い池 (M96 sub-12): 水面 (Gerstner を弱めた浅い池) と、波紋チャネルだけの 2D 層を同じ場所に置く。
+// 人 (DisturbanceSource.ripple 付きの球) が池を横切ると波紋が広がる。層の下端 (y) = 水面の高さ
+void AddFieldDemoPond(Scene& s, const AssetID sphere)
+{
+    constexpr float kPondX = 5.0f;
+    constexpr float kPondZ = -2.0f;
+    constexpr float kPondSurfaceY = 0.12f;
+    constexpr float kPondSize = 8.0f; // 水面メッシュ (50 m 四方) を縮めた一辺 [m]。層 (32 マス x 0.25 m) と同じ広さ
+
+    GameObject water = s.CreateGameObject("PondWater");
+    water.SetLocalPosition(kPondX, 0.0f, kPondZ);
+    water.SetLocalScale(kPondSize / 50.0f, 1.0f, kPondSize / 50.0f);
+    auto* wave = water.AddComponent<WaterWaveComponent>();
+    wave->baseHeight = kPondSurfaceY;
+    wave->overallScale = 0.15f; // 浅い池: 解析波は弱くして、波紋を主役にする
+    wave->waveCount = 2;
+    wave->foamStrength = 0.0f;
+    wave->affectBuoyancy = false;
+
+    GameObject field = s.CreateGameObject("PondRippleField");
+    field.SetLocalPosition(kPondX, kPondSurfaceY, kPondZ);
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 0;
+    f->cellsX = 32;
+    f->cellsZ = 32;
+    f->channels = kDisturbanceChannelRipple;
+    f->rippleKeep = 0.995f;
+
+    // 人 2 人が池を +x へ横切る (物理の初速だけ = 決定的)。広場の霧が水面を隠すので、通り道の霧も晴らす
+    const float zs[2] = { -3.5f, -0.5f };
+    const float speeds[2] = { 2.0f, 2.5f };
+    const char* names[2] = { "PondWalker_A", "PondWalker_B" };
+    for (int i = 0; i < 2; ++i) {
+        GameObject walker = s.CreateGameObject(names[i]);
+        walker.SetLocalPosition(0.5f, 0.45f, zs[i]);
+        walker.SetLocalScale(0.8f, 0.8f, 0.8f);
+        auto* mr = walker.AddComponent<MeshRendererComponent>();
+        mr->mesh = sphere;
+        mr->material = AssetID{ HashStr("pdemo_ball") };
+        auto* col = walker.AddComponent<ColliderComponent>();
+        col->shape = collidershape::kSphere;
+        col->radius = 0.5f;
+        col->friction = 0.0f;
+        auto* rb = walker.AddComponent<RigidbodyComponent>();
+        rb->useDensity = true;
+        rb->velocity = { speeds[i], 0.0f, 0.0f };
+        auto* src = walker.AddComponent<DisturbanceSourceComponent>();
+        src->mode = 0;
+        src->radius = 1.6f;
+        src->strength = 0.0f;
+        src->densityDelta = -1.0f; // 池の上の霧 (広場の層) を人の通り道だけ晴らして、水面を見せる
+        src->ripple = 0.3f;
+        src->fullSpeed = 3.0f;
+    }
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -175,6 +231,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddRollingBall(s, sphere, "Ball_C", 3.0f, -9.5f, 3.5f);
     AddFieldDemoPerson(s, ctx.resources->meshes.Capsule());
     AddFieldDemoLanterns(s);
+    AddFieldDemoPond(s, sphere);
     s.GetWorld().ApplyStructuralChanges();
 }
 

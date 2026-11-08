@@ -2146,9 +2146,11 @@ void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, 
     if (BuildDisturbanceFieldUpload(world, state, up) <= 0) {
         return;
     }
+    // 霧のある層、または波紋の配列を持つ層 (水面が読む。water_surface.hlsl) があれば転送する
     bool anyFog = false;
     for (int32_t i = 0; i < up.layerCount; ++i) {
-        anyFog = anyFog || (up.layers[i].hasDensity && up.layers[i].fogDensity > 0.0f);
+        const DisturbanceLayerUpload& l = up.layers[i];
+        anyFog = anyFog || (l.hasDensity && l.fogDensity > 0.0f) || (l.hasState && l.ripple != nullptr);
     }
     if (!anyFog || !disturbancePass_.Upload(device, up)) {
         return;

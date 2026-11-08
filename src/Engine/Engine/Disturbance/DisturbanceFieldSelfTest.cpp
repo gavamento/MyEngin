@@ -650,6 +650,44 @@ void RunDisturbanceAbiTests(const std::function<void(bool, const char*)>& check)
     }
 }
 
+// 水面の波紋 (M96 sub-12) が読む転送指示の検査。波紋チャネルだけの層でも、状態があれば波紋の配列が
+// 転送指示に載り (= RenderSystem が転送して水面が読める)、濃さの配列は載らない。GPU は使わない
+bool RunDisturbanceWaterRippleTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    auto s = std::make_unique<Sim>();
+    const EntityID pond = AddField(*s, 9.0f, 0.12f, 3.0f, 32, 32, kDisturbanceChannelRipple, "Pond");
+    const EntityID walker = AddSource(*s, "Walker", 9.0f, 0.12f, 3.0f);
+    s->Flush();
+    SourceOf(*s, walker)->ripple = 0.08f;
+    SourceOf(*s, walker)->fullSpeed = 0.0f; // 速さに依らず係数 1
+    (void)pond;
+    s->Step(2);
+    TransformOf(*s, walker)->position.x = 9.5f;
+    s->Step(8);
+
+    DisturbanceFieldUpload up;
+    check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1 && up.layers[0].hasState && !up.layers[0].hasDensity,
+          "water ripple: a ripple-only layer with a state is packed without a density channel");
+    check(up.layers[0].ripple != nullptr && up.layers[0].density == nullptr,
+          "water ripple: the ripple array is handed to the renderer, the density array is not");
+    float maxH = 0.0f;
+    if (up.layers[0].ripple != nullptr) {
+        const size_t n = static_cast<size_t>(up.layers[0].cellsX) * static_cast<size_t>(up.layers[0].cellsZ);
+        for (size_t k = 0; k < n; ++k) {
+            maxH = std::max(maxH, std::fabs(up.layers[0].ripple[k]));
+        }
+    }
+    check(maxH > 1e-4f && maxH < kMaxRippleHeight, "water ripple: a moving source raises a finite ripple inside the limit");
+    return ok;
+}
+
 } // namespace
 
 namespace {
@@ -1217,6 +1255,11 @@ bool RunDisturbanceFieldImpl(bool heavy)
         RunDisturbanceAbiTests(check); // M96d (ABI v35)
     }
 
+    // 水面の波紋 (M96 sub-12)
+    if (!RunDisturbanceWaterRippleTests()) {
+        ++failCount;
+    }
+
     return failCount == 0;
 }
 
@@ -1233,7 +1276,7 @@ bool RunDisturbanceLocalLightTests()
         }
     };
     check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
-    check(sizeof(DisturbanceFieldComponent) == 76, "local lights: the component size did not change");
+    check(sizeof(DisturbanceFieldComponent) == 84, "local lights: the component size did not change");
 
     // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
     DisturbanceFieldCB layers;
