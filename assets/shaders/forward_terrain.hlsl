@@ -21,6 +21,7 @@
 #include "froxel_common.hlsli"
 #include "acoustic_common.hlsli" // M65e: 残光の式の正本
 #include "ground_fog.hlsli"       // M96: 地面の霧 (b6 / b7 / t32 / t33 / s8 を宣言する)
+#include "terrain_trail.hlsli"    // M96 sub-13: 跡 (同じ b6 / t32 / t33 / s8 を読む)
 
 cbuffer PerFrame : register(b0)
 {
@@ -130,8 +131,10 @@ float4 PSMain(VSOut i) : SV_Target
     const float3 nGeom = normalize(i.normalW);
     // ★スプラットのサンプルは**分岐の外**で行う (ddx/ddy を使う PerturbNormal が
     //   非一様フローに入らないように)。影の分岐より先に済ませておく
-    const TerrainSurfaceSample surf = SampleTerrainSurface(gLayerSampler, gIblSampler, i.uv);
-    const float3 n = PerturbNormal(nGeom, i.posW, i.uv, normalize(surf.normalTS));
+    TerrainSurfaceSample surf = SampleTerrainSurface(gLayerSampler, gIblSampler, i.uv);
+    float3 n = PerturbNormal(nGeom, i.posW, i.uv, normalize(surf.normalTS));
+    // M96 sub-13: 跡 (強さ 0 = 何もしない)。SampleLevel だけなので上の PerturbNormal の勾配は壊さない
+    ApplyTerrainTrail(i.posW, surf.albedo, n);
 
     float dirShadow = 1.0f;
     if (gShadowEnabled != 0) {

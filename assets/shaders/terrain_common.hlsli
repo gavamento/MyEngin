@@ -27,14 +27,15 @@ Texture2D gTerrainSplat        : register(t20);
 Texture2D gTerrainAlbedo[MYE_TERRAIN_LAYERS] : register(t21);
 Texture2D gTerrainNormal[MYE_TERRAIN_LAYERS] : register(t25);
 
-// TerrainPass.cpp の TerrainObjectCB と同一レイアウト (208 バイト)。
+// TerrainPass.cpp の TerrainObjectCB と同一レイアウト (224 バイト)。
 // **フィールドは末尾 append + 16 バイト境界**。C++ 側の static_assert がサイズを見張る
 cbuffer TerrainObject : register(b4)
 {
     float4x4 gTerrainWorld;
-    float4   gTerrainSurface;                        // x=metallic y=roughness z=RT を受けるか (Deferred のみ) w=予約
+    float4   gTerrainSurface;                        // x=metallic y=roughness z=RT を受けるか (Deferred のみ) w=跡の凹みの深さ [m] (M96)
     float4   gTerrainTint[MYE_TERRAIN_LAYERS];       // rgb=リニア色 a=レイヤ有効フラグ
     float4   gTerrainTiling[MYE_TERRAIN_LAYERS];     // xy=繰り返し回数 zw=予約
+    float4   gTerrainTrail;                          // rgb=跡の色 (リニア) w=跡の強さ (0 = 跡を描かない) (M96 sub-13)
 };
 
 // ブレンド結果。albedo はリニア、normalTS は接空間 (未正規化でよい — 呼び手が

@@ -3,6 +3,8 @@
 //  MyEngin/ 秋田蓮音                                                       11/08/2026
 //                                          かき乱しフィールド (M96) のショーケース (--field-demo、霧の広場)
 //====================================================================================
+#include <cstdio>
+
 #include "Engine/Engine/Demo/DemoContent.h"
 #include "Engine/Engine/Demo/DemoContentInternal.h"
 
@@ -370,6 +372,24 @@ void AddFieldDemoDust(Scene& s)
     }
 }
 
+// 雪の地面 (M96m): 広場の床の上に薄い雪の地形を敷く。同じ範囲の 2D 層 (広場の場) の跡が、球と人の通った筋として雪に残る。
+// 跡は永続 (trailKeep = 1)。雪の地形は床 (y = 0) の少し上に置き、床と重ならないようにする。見た目だけで当たり判定は床のまま
+void AddFieldDemoSnow(Scene& s)
+{
+    constexpr float kSnowY = 0.02f;
+    GameObject snow = s.CreateGameObject("SnowTerrain");
+    snow.SetLocalPosition(0.0f, kSnowY, kFieldCenterZ);
+    auto* t = snow.AddComponent<TerrainComponent>();
+    std::snprintf(t->source, sizeof(t->source), "terrain/snow_patch.terrain.json");
+    t->trailColor = { 0.12f, 0.18f, 0.32f, 1.0f };
+    t->trailStrength = 0.85f;
+    t->trailBendDepth = 0.12f;
+    GameObject field = s.Find("DisturbanceField");
+    if (field) {
+        field.GetComponent<DisturbanceFieldComponent>()->trailKeep = 1.0f;
+    }
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -398,6 +418,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoGrass(ctx, s, cube);
     AddFieldDemoFollow(s, sphere);
     AddFieldDemoDust(s);
+    AddFieldDemoSnow(s);
     s.GetWorld().ApplyStructuralChanges();
 }
 

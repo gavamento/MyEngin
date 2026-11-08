@@ -1208,6 +1208,12 @@ struct TerrainComponent {
     // > 0 で明示指定、**< 0 でスカート無し** (クラックの A/B 用)。
     // lodDistance == 0 のときは無視される (スカートは LOD 有効時にしか出ない)
     float skirtDepth = 0.0f;
+    // ---- 跡の見た目 (M96 sub-13、末尾 append) ----
+    // かき乱しフィールドの 2D 層の跡チャネルを、この地面がどう見せるか (雪か砂か)。描画専用で sim は読まない。
+    // 強さ 0 (既定) = 跡を描かない = 既存の地形と同じ絵。跡の元は同じ高さ・範囲にある 2D 層 (場の側は変えない)
+    DirectX::XMFLOAT4 trailColor = { 0.35f, 0.42f, 0.55f, 1.0f }; // authored sRGB (a は使わない)
+    float trailStrength = 0.0f;  // 跡の色へ寄せる強さ [0,1]。0 = 跡を描かない
+    float trailBendDepth = 0.1f; // 跡の凹みの深さ [m]。法線を曲げるだけで、高さ・当たり判定・影は変えない
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

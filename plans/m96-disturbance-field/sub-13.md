@@ -1,8 +1,8 @@
 # sub-13: 跡 (地形の雪・砂)
 
 - 依存: sub-03 (波 W4。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W4 の統合待ち。順 10 → 13)
+- 往復: 1
 
 
 ## 並列の注意 (波 W4)
@@ -54,4 +54,7 @@ spec §5 の 12, 24, 30。
 
 ## 実装メモ (coder が追記)
 
+round 1 (coder、司会が SELF_EVAL から写した要約): terrain_trail.hlsli (新規) が ground_fog の固定スロット (b6 / t32 / t33 / s8) から跡 τ を読み、色を寄せ (τ × 強さ) 法線を凹みの傾きで曲げる。forward_terrain / deferred_terrain の PerturbNormal 直後に 1 行。TerrainObjectCB (b4) 208 → 224 B。TerrainComponent 末尾に trailColor / trailStrength (既定 0 = 描かない) / trailBendDepth (既定 0.1 m)、NoHash。snapshot v76。デモ AddFieldDemoSnow (24×32 m の平らな雪の地形、広場の場の trailKeep = 1)。selftest RunDisturbanceTerrainTrailTests (未実行)。確認: Debug / Release ビルド、check_rules 0 error、fxc 3 本、--field-bench のハッシュ不変、terrain golden tol 12 内、霧を薄くした変種で前後と trailKeep 0.99 を撮影。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。TerrainComponent の末尾 3 欄 (NoHash、強さ 0 = 描かない、v76)、terrain_trail.hlsli (固定スロットの再利用、色の寄せと凹みの法線)、Forward / Deferred の同じ式、TerrainObjectCB 224 B を確認。bench の焼き込みは不変、terrain golden は tol 内。trailBendDepth の追加、CB の拡張、デモで広場の場の跡を使う (4 枠の上限) を受理

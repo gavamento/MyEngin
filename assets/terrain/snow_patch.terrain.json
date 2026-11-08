@@ -1,0 +1,13 @@
+{
+  "type": "terrain",
+  "version": 1,
+  "worldSize": [ 24.0, 32.0 ],
+  "heightRes": [ 65, 65 ],
+  "splatRes": [ 32, 32 ],
+  "heightBase": 0.0,
+  "heightScale": 0.0,
+  "procedural": { "seed": 96013, "octaves": 1, "frequency": 1.0, "lacunarity": 2.0, "gain": 0.5 },
+  "layers": [
+    { "name": "snow", "tiling": [ 6.0, 8.0 ], "tint": [ 0.50, 0.54, 0.62 ] }
+  ]
+}

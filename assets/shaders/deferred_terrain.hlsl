@@ -20,6 +20,7 @@
 
 #include "common.hlsli"         // EncodeEmissive (gbMaterial.b の符号化規約) / PerturbNormal
 #include "terrain_common.hlsli" // M58d: b4 の TerrainObject + t20.. のレイヤ + ブレンド本体
+#include "terrain_trail.hlsli"  // M96 sub-13: 跡 (地面の霧が全 PS に張る b6 / t32 / t33 / s8 を読む)
 
 cbuffer PerFrame : register(b0)
 {
@@ -81,8 +82,10 @@ PSOut PSMain(VSOut i)
     // (★TBN の基準 UV は**タイリング前の i.uv**。tiling はスケールでしかなく、
     //   PerturbNormal が invmax で規格化するので接空間の向きは変わらない)
     const float3 nGeom = normalize(i.normalW);
-    const TerrainSurfaceSample surf = SampleTerrainSurface(gLayerSampler, gSplatSampler, i.uv);
-    const float3 n = PerturbNormal(nGeom, i.posW, i.uv, normalize(surf.normalTS));
+    TerrainSurfaceSample surf = SampleTerrainSurface(gLayerSampler, gSplatSampler, i.uv);
+    float3 n = PerturbNormal(nGeom, i.posW, i.uv, normalize(surf.normalTS));
+    // M96 sub-13: 跡 (強さ 0 = 何もしない)。Forward と同じ式
+    ApplyTerrainTrail(i.posW, surf.albedo, n);
 
     o.albedo = float4(surf.albedo, 1.0f);
     o.normal = float4(n * 0.5f + 0.5f, 1.0f);

@@ -679,6 +679,12 @@ void RegisterBuiltinComponents()
         MYE_JP("スカート深さ",
                MYE_FIELD_TIP(TerrainComponent, skirtDepth, Float,
                              "0 = auto (measured LOD edge gap), <0 = no skirt")),
+        // M96 sub-13: 跡の見た目 (末尾 append)。既定の強さ 0 = 跡を描かない
+        MYE_JP("跡の色", MYE_FIELD_TIP(TerrainComponent, trailColor, Color,
+                                       "color of the disturbance field trail channel (rgb)")),
+        MYE_JP("跡の強さ", MYE_FIELD_RANGE(TerrainComponent, trailStrength, Float, 0.0f, 1.0f)),
+        MYE_JP("跡の凹みの深さ", MYE_FIELD_TIP(TerrainComponent, trailBendDepth, Float,
+                                               "visual dent depth in meters (normal only)")),
     }, kComponentNoHash);
 
     // M56a/M56b: デカール (投影ボックス)。**kComponentNoHash** — GBuffer の albedo と
