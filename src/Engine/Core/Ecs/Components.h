@@ -2631,6 +2631,53 @@ struct SpringFollowComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- かき乱しフィールド (M96、TypeId=96) ----
+// 歩き・攻撃・風でかき乱され、時間で静止状態へ戻る格子の場。流れ (速度) は常に持ち、濃さ・跡・波紋は channels で選ぶ。
+// 状態 (格子の中身) は Scene の DisturbanceState が持ち、ここは設定だけ。hash 対象。
+// sim が読むのは「見た目」の節より上の欄だけ (fog* と drawDebug は描画レーンが読む)
+struct DisturbanceFieldComponent {
+    int32_t shape = 0;          // 0 = GroundLayer (地面を這う薄い層) / 1 = Volume (立体。まだ sim しない)
+    int32_t cellsX = 128;
+    int32_t cellsY = 1;         // GroundLayer では 1 に固定される
+    int32_t cellsZ = 128;
+    float cellSize = 0.25f;     // [m] 1 マスの辺
+    float thickness = 1.0f;     // [m] GroundLayer の層の厚さ
+    uint32_t channels = 1;      // ビット: 1 = 濃さ / 2 = 跡 / 4 = 波紋
+    float restDensity = 1.0f;   // 静止状態の濃さ [0,1]
+    float densityKeep = 0.99f;  // 1 tick で濃さが静止状態へ戻る残し率 (1 = 戻らない)
+    float velocityKeep = 0.95f; // 流れの残し率
+    float trailKeep = 0.999f;   // 跡の残し率 (1 = 永続)
+    float rippleSpeed = 1.5f;   // [m/s] 波紋の広がる速さ
+    float rippleKeep = 0.995f;  // 波紋の残し率
+    // ---- 見た目 (sim は読まない) ----
+    float fogDensity = 2.0f;    // 濃さ 1 の消散係数 [1/m]
+    DirectX::XMFLOAT3 fogColor = { 1.0f, 1.0f, 1.0f };
+    float fogBrightness = 1.0f; // 自己照明の強さ
+    bool fogSunLight = false;   // true: 平行光 (太陽) を霧に当てる (影なし)
+    bool autoFroxel = true;     // true: フロクセルが off でもこの場の霧のために自動で回す
+    bool drawDebug = false;     // 速度の矢印と濃さを debugLines に描く
+    uint8_t pad0 = 0;           // 明示パディング (スナップショットの生バイトに未初期化を残さない)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- かき乱しの源 (M96、TypeId=97) ----
+// このエンティティの動き (Moving) か定常の吹き出し (Constant) で、全ての有効な場を毎 tick かき乱す。
+// Moving の速度は CharacterController → 非 kinematic Rigidbody → 位置の差分の順に自動で取る。hash 対象
+struct DisturbanceSourceComponent {
+    int32_t mode = 0;                    // 0 = Moving / 1 = Constant
+    DirectX::XMFLOAT3 offset = { 0.0f, 0.0f, 0.0f }; // エンティティのローカル空間での位置のずらし
+    float radius = 0.75f;                // [m] 影響半径
+    float strength = 0.5f;               // 流れの混ぜ率 (1 tick あたり)
+    float fullSpeed = 3.0f;              // [m/s] この速さで濃さ・波紋の係数が 1 (<= 0 なら常に 1)
+    float densityDelta = -0.3f;          // [-1,1] 負 = 晴らす / 正 = 足す (煙)
+    float trailDepth = 0.0f;             // 跡の深さ [0,1] (速さに依らない)
+    float ripple = 0.0f;                 // [m] 波紋の高さ
+    DirectX::XMFLOAT3 constantVelocity = { 0.0f, 0.0f, 0.0f }; // Constant の流れ (エンティティのローカル空間)
+    DirectX::XMFLOAT3 prevPos = { 0.0f, 0.0f, 0.0f };          // 前 tick の位置 (エンジンが書く)
+    uint32_t prevValid = 0;              // prevPos が有効か (エンジンが書く)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

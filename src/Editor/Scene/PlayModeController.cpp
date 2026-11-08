@@ -25,6 +25,7 @@ void PlayModeController::Play(Scene& scene)
     SceneSerializer::LoadFromJson(scene, snapshot_);
     scene.Feel().Clear(); // M94c: 再生中の手触りは Play の外に持ち出さない (編集中は進まないので残すと止まって見える)
     scene.InputBuffer().Clear(); // M94f
+    scene.Disturbance().Clear(); // M96
     state_ = PlayState::Playing;
     MYE_LOG_INFO("[play] started (snapshot: %zu entities, reloaded)", snapshot_["entities"].size());
 }
@@ -39,6 +40,7 @@ void PlayModeController::Stop(Scene& scene)
     scene.Persist() = persistSnapshot_;
     scene.Feel().Clear(); // M94c
     scene.InputBuffer().Clear(); // M94f
+    scene.Disturbance().Clear(); // M96
     timeSnapshot_ = TimeControl{};
     persistSnapshot_.Clear();
     snapshot_.clear();

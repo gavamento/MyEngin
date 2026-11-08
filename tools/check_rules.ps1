@@ -1227,6 +1227,34 @@ foreach ($r in $docRoots) {
     }
 }
 
+# 規則 18: かき乱しフィールド (M96) の sim は CRT の超越関数を使わない
+# sim の結果は Debug / Release / WARP でビット一致が要る (AGENTS 4.3、engine_spec §11.3)。CRT の exp / pow / log / sin / cos 等は
+# 実装ごとに最後の 1 ビットが違いうるので、src\Engine\Engine\Disturbance\ の計算は + - * / sqrt floor min max だけで書く。
+# 指数的な減衰は「残し率 (keep / tick)」の乗算で表す。許可リストは描画への詰め替えのファイル (sim の値を読んで GPU 用に並べ替えるだけ)
+# と selftest (期待値の計算に何を使ってもよい)。-SourceRoot でフィクスチャを差し替えて自己検査できる
+$simMathRx = '\b(?:std::)?(?:exp|expf|exp2|expm1|pow|powf|log|logf|log2|log10|log1p|sin|sinf|cos|cosf|tan|tanf|atan|atanf|atan2|atan2f|asin|asinf|acos|acosf|sinh|cosh|tanh|cbrt|hypot)\s*\(|\bXM\w*(?:Sin|Cos|Tan|Exp|Log|Pow)\w*\s*\('
+$simMathAllow = @(
+    @{ Suffix = 'SelfTest.cpp'; Reason = 'selftest: 期待値の計算は sim ではない' },
+    @{ Suffix = 'SelfTest.h'; Reason = 'selftest' }
+)
+foreach ($f in Get-Sources) {
+    if ($f.FullName -notmatch '[\\/]Engine[\\/]Engine[\\/]Disturbance[\\/]') { continue }
+    $skip = $false
+    foreach ($a in $simMathAllow) {
+        if ($f.Name.EndsWith($a.Suffix, [System.StringComparison]::OrdinalIgnoreCase)) { $skip = $true; break }
+    }
+    if ($skip) { continue }
+    $lineNo = 0
+    foreach ($line in [System.IO.File]::ReadLines($f.FullName)) {
+        $lineNo++
+        $code = ($line -split '//', 2)[0]
+        if ($code -cmatch $simMathRx) {
+            Write-Host "ERROR [rule 18] $($f.FullName):${lineNo}: transcendental math in the disturbance sim (use only + - * / sqrt floor min max; express decay as a keep rate)"
+            $errors++
+        }
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

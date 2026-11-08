@@ -611,6 +611,11 @@ void RunOneTick(TickServices& ts)
             fractureSystem.Update(scene.GetWorld(), ctx.fixedDt, fractureShapeImpulses, &scriptHost,
                                   runManaged ? &managedHost : nullptr);
         }
+        // M96: かき乱しフィールド。Transform 確定後の位置と物理が書いた速度を読む。存在ゲート (場も配送待ちも無ければ走査だけ)
+        {
+            MYE_PROFILE_SCOPE("disturbance");
+            DisturbanceStep(scene.GetWorld(), scene.Disturbance());
+        }
         {
             MYE_PROFILE_SCOPE("particles");
             particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
@@ -991,6 +996,7 @@ void RunOneTick(TickServices& ts)
             scene.Time().ClearFeelEffects();
             scene.Feel().Clear(); // M94c: 旧シーンで鳴った揺れ・振動も持ち越さない
             scene.InputBuffer().Clear(); // M94f: 旧シーンで押した先行入力を新シーンで発火させない
+            scene.Disturbance().Clear(); // M96: 旧シーンの場と配送待ちのインパルスを持ち越さない
             if (ts.agentSystem) {
                 ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
             }

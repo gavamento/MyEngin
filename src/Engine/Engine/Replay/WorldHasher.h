@@ -24,6 +24,7 @@ class PersistStore;
 struct SessionLanes;
 class FeelState;
 struct InputBufferState;
+class DisturbanceState;
 
 // ワールド状態ハッシュ (engine_spec.md 11.3)。
 // 対象: 全エンティティ (index 昇順) の親リンク + シリアライズ対象コンポーネントの
@@ -77,6 +78,9 @@ struct SimSources {
     const FeelState* feel = nullptr;
     // M94f: 先行入力の窓。★feel と同じ**内容ゲート** (窓の中のものが 1 つも無ければ節ごと畳まない)
     const InputBufferState* inputBuffer = nullptr;
+    // M96: かき乱しフィールド (場のスロットと配送待ちのインパルス)。★feel と同じ**内容ゲート** (スロットが無く
+    // キューも空なら節ごと畳まない) — 場を置かないシーンのハッシュ列を 1 tick も動かさない
+    const DisturbanceState* disturbance = nullptr;
 };
 
 uint64_t HashWorld(World& world, const SimSources& src = {});

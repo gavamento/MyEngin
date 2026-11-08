@@ -58,6 +58,9 @@
     <Filter Include="Engine\Demo">
       <UniqueIdentifier>{7645A0A4-277D-9725-8E8E-E117DE4A378F}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Disturbance">
+      <UniqueIdentifier>{3802EFD6-5BDE-D3B8-E33D-57A80252059C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Feel">
       <UniqueIdentifier>{D7B93601-E4B8-39BD-2A33-AF9C13A27A26}</UniqueIdentifier>
     </Filter>
@@ -596,6 +599,15 @@
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.cpp">
       <Filter>Engine\Demo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.cpp">
+      <Filter>Engine\Disturbance</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceState.cpp">
+      <Filter>Engine\Disturbance</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceStep.cpp">
+      <Filter>Engine\Disturbance</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelLibrary.cpp">
       <Filter>Engine\Feel</Filter>
@@ -1697,6 +1709,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.h">
       <Filter>Engine\Demo</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.h">
+      <Filter>Engine\Disturbance</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceState.h">
+      <Filter>Engine\Disturbance</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelLibrary.h">
       <Filter>Engine\Feel</Filter>

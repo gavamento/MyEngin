@@ -155,6 +155,12 @@ BareSceneResult RunBareScene()
     r.sectionStripped = at < blob.size();
     if (at < blob.size()) {
         blob.erase(blob.begin() + static_cast<std::ptrdiff_t>(at), blob.begin() + static_cast<std::ptrdiff_t>(at + sizeof(section)));
+        // 直後の空の DFLD 節 (M96: magic + 場の件数 0 + 配送待ちの件数 0 = 20 バイト) も除く。これで焼き込みの指紋は据え置き
+        const std::byte dfld[4] = { std::byte{ 'D' }, std::byte{ 'F' }, std::byte{ 'L' }, std::byte{ 'D' } };
+        constexpr size_t kEmptyDfldBytes = 4 + 2 * sizeof(uint64_t);
+        if (at + kEmptyDfldBytes <= blob.size() && std::equal(dfld, dfld + 4, blob.begin() + static_cast<std::ptrdiff_t>(at))) {
+            blob.erase(blob.begin() + static_cast<std::ptrdiff_t>(at), blob.begin() + static_cast<std::ptrdiff_t>(at + kEmptyDfldBytes));
+        }
     }
     r.blobSize = blob.size();
     r.blobDigest = Fnv1a(blob.data(), blob.size(), 0xCBF29CE484222325ull);

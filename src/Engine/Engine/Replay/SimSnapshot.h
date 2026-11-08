@@ -177,7 +177,9 @@ struct SimRefs {
 // v68 (M95e): CharacterController / Rigidbody の末尾に useVerticalInput / verticalInput、SkinnedMesh::PoseLayer の末尾に rootMotionY。World 節のカラム生バイト
 // v69 (合流、GitHub 側の手触りの v51): Scene 節に TimeControl のヒットストップ / 時限スローの 6 語、UI 状態の後ろに
 //            再生中の手触り 16 件 (FeelState) と先行入力の窓 (InputBufferState、4 レーン × 32 本の生バイト)
-inline constexpr uint32_t kSimSnapshotVersion = 69;
+// v70 (M96a): DFLD 節 (かき乱しフィールドのスロットと配送待ちのインパルス) を TM2D 節の後・World 節の前に追加。
+//            DisturbanceFieldComponent / DisturbanceSourceComponent (TypeId 96 / 97、hash 対象)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 70;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

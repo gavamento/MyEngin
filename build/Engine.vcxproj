@@ -140,6 +140,9 @@
     <ClCompile Include="..\src\Engine\Engine\Demo\ShowcaseScenes.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\StartScene.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceState.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Disturbance\DisturbanceStep.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelLibrarySelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Feel\FeelMathSelfTest.cpp" />
@@ -507,6 +510,8 @@
     <ClInclude Include="..\src\Engine\Engine\Demo\ShowcaseScenes.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\StartScene.h" />
     <ClInclude Include="..\src\Engine\Engine\Demo\TwoDDemoSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Disturbance\DisturbanceState.h" />
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelLibrarySelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Feel\FeelMathSelfTest.h" />

@@ -17,6 +17,7 @@
 #include "Engine/Engine/Navigation/NavSystem.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/Compute/ComputeService.h"
+#include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Physics/Xpbd/XpbdBackend.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -32,7 +33,7 @@ SimSources SimSourcesOf(Scene& scene, const CpuParticleBackend* particles, const
     // SessionLanes はシステム入力を持つ記録のときだけ畳む (D10)。持たない記録のハッシュ列を動かさない
     const SessionLanes* lanes = scene.Lanes().systemInput != 0 ? &scene.Lanes() : nullptr;
     return { particles, &scene.Time(), &scene.Persist(), xpbd, acoustic, &scene.UI(), lanes, nav, behaviorTree,
-             computeState, tilemap, &scene.Feel(), &scene.InputBuffer() };
+             computeState, tilemap, &scene.Feel(), &scene.InputBuffer(), &scene.Disturbance() };
 }
 
 const compute::ComputeBufferStore* ComputeGameStoreOf(const compute::ComputeService* service)
@@ -56,6 +57,7 @@ constexpr uint32_t kNavMagic = 0x3156414Eu;      // 'NAV1' (M82c)
 constexpr uint32_t kBtMagic = 0x31305442u;       // 'BT01' (M85a)
 constexpr uint32_t kComputeMagic = 0x31504D43u;  // 'CMP1' (M91d)
 constexpr uint32_t kTilemapMagic = 0x44324D54u;  // 'TM2D' (M94k)
+constexpr uint32_t kDisturbanceMagic = 0x444C4644u; // 'DFLD' (M96)
 
 constexpr size_t kHeaderBytes = 4 * sizeof(uint32_t) + sizeof(uint64_t);
 
@@ -655,6 +657,27 @@ bool ReadTilemap(ByteReader& r, TilemapSnapshot& out)
     return true;
 }
 
+// ---- DFLD 節 (M96) ----
+// 場も配送待ちも無いシーンでは件数 0 の短い節を書く (節は常にある)
+void WriteDisturbance(ByteWriter& w, const DisturbanceState& state)
+{
+    w.U32(kDisturbanceMagic);
+    state.Write(w);
+}
+
+bool ReadDisturbance(ByteReader& r, DisturbanceState& out)
+{
+    if (r.U32() != kDisturbanceMagic) {
+        MYE_LOG_ERROR("[snapshot] disturbance section magic mismatch");
+        return false;
+    }
+    if (!DisturbanceState::Read(r, out)) {
+        MYE_LOG_ERROR("[snapshot] disturbance section is corrupt");
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
@@ -685,6 +708,7 @@ bool CaptureSimSnapshot(const SimRefs& refs, std::vector<std::byte>& out)
     WriteBt(w, refs.behaviorTree); // M85a (v34)
     WriteCompute(w, refs.compute); // M91d (v49)
     WriteTilemap(w, refs.tilemap); // M94k (v57)
+    WriteDisturbance(w, refs.scene->Disturbance()); // M96 (v70)
     // ★World は**最後**に置く。復元は「小さい節を全部一時領域へ読み切ってから
     //   World::SnapshotRead (それ自体が全読み後に一括差し替え) を呼ぶ」順で走るので、
     //   World の差し替え前の失敗では現世界に手が付かない (差し替え後の Nav 節の失敗だけ例外。RestoreSimSnapshot 参照)
@@ -775,6 +799,10 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     if (!ReadTilemap(r, tilemapSnapshot)) { // M94k (v57)。refs.tilemap が無い構成では読み捨てる
         return false;
     }
+    DisturbanceState disturbance;
+    if (!ReadDisturbance(r, disturbance)) { // M96 (v70)
+        return false;
+    }
     if (!r.Ok()) {
         MYE_LOG_ERROR("[snapshot] truncated blob");
         return false;
@@ -789,6 +817,7 @@ bool RestoreSimSnapshot(const SimRefs& refs, const std::byte* data, size_t size)
     refs.scene->UI() = scene.ui; // M70c
     refs.scene->Feel() = scene.feel; // M94c
     refs.scene->InputBuffer() = scene.inputBuffer; // M94f
+    refs.scene->Disturbance() = std::move(disturbance); // M96
     refs.scene->Lanes() = sessionLanes; // M81b
     refs.scene->Persist().Entries() = std::move(scene.persist);
     refs.scene->SetNextFileId(scene.nextFileId);

@@ -39,6 +39,7 @@
 #include "Engine/Engine/Feel/FeelLibrarySelfTest.h"
 #include "Engine/Engine/Feel/FeelMathSelfTest.h"
 #include "Engine/Engine/Feel/FeelSystemSelfTest.h"
+#include "Engine/Engine/Disturbance/DisturbanceFieldSelfTest.h"
 #include "Engine/Engine/Feel/SpringFollowSelfTest.h"
 #include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
@@ -246,6 +247,8 @@ const SelfTestSuite kSuites[] = {
     { "feelsystem", mye::RunFeelSystemSelfTest, SelfTestTier::Fast, "M94c (手触り): 再生中の手触り (経過・置換・評価・内容ゲート)" },
     { "feellibrary", mye::RunFeelLibrarySelfTest, SelfTestTier::Fast, "M94d (手触り): .feel.json の往復・名前の解決・FeelTrigger" },
     { "springfollow", mye::RunSpringFollowSelfTest, SelfTestTier::Fast, "M94g (手触り): ばね追従 (瞬間移動・収束・空間変換・回転)" },
+    { "disturbance", mye::RunDisturbanceFieldSelfTest, SelfTestTier::Fast, "M96: かき乱しフィールド (静止・減衰と復元・注入の境界・源の速度・波紋・寿命・往復・並走)" },
+    { "disturbancelong", mye::RunDisturbanceFieldLongSelfTest, SelfTestTier::Full, "M96: かき乱しフィールドの重い項目 (128x128 を 600 tick・1200 tick の復元・10000 tick の波紋・600 tick 並走と焼き込みハッシュ)" },
 };
 
 const SelfTestAlias kAliases[] = {

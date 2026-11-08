@@ -13,6 +13,7 @@
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Feel/FeelState.h"
 #include "Engine/Engine/Loop/GameFlow.h"
 #include "Engine/Engine/Scene/Tags.h" // 汎用タグ (NoSerialize = 汎用ループ外なので明示的に畳む)
@@ -516,6 +517,47 @@ uint64_t HashFeelState(const FeelState& feel, DumpCtx* d)
     return h;
 }
 
+// M96: かき乱しフィールド。スロット順 (entity index 昇順) に寸法と全配列の生バイトを畳み、最後に配送待ちのインパルスを畳む。
+// ダンプは場ごとに配列ごとのサブハッシュの行と、場の小計の行 (#field) を出す
+uint64_t HashDisturbanceState(const DisturbanceState& state, DumpCtx* d)
+{
+    uint64_t h = kFnvOffset;
+    const std::vector<DisturbanceSlot>& slots = state.Slots();
+    FoldU64(h, d, "Disturbance", "fieldCount", slots.size());
+    for (const DisturbanceSlot& s : slots) {
+        if (d && d->lines) {
+            d->entityCol.clear();
+            AppendDecU64(d->entityCol, s.entity.index);
+            d->entityCol.push_back(':');
+            AppendDecU64(d->entityCol, s.entity.generation);
+        }
+        FoldU64(h, d, "Disturbance", "shape", static_cast<uint32_t>(s.shape));
+        FoldU64(h, d, "Disturbance", "cellsX", static_cast<uint32_t>(s.cellsX));
+        FoldU64(h, d, "Disturbance", "cellsY", static_cast<uint32_t>(s.cellsY));
+        FoldU64(h, d, "Disturbance", "cellsZ", static_cast<uint32_t>(s.cellsZ));
+        FoldU64(h, d, "Disturbance", "channels", s.channels);
+        FoldBytes(h, d, "Disturbance", "cellSize", &s.cellSize, sizeof(s.cellSize));
+        FoldBytes(h, d, "Disturbance", "originCell", s.originCell, sizeof(s.originCell));
+        FoldBytes(h, d, "Disturbance", "baseY", &s.baseY, sizeof(s.baseY));
+        FoldFloats(h, d, "Disturbance", "flowX", s.flowX.data(), static_cast<uint32_t>(s.flowX.size()));
+        FoldFloats(h, d, "Disturbance", "flowZ", s.flowZ.data(), static_cast<uint32_t>(s.flowZ.size()));
+        FoldFloats(h, d, "Disturbance", "density", s.density.data(), static_cast<uint32_t>(s.density.size()));
+        FoldFloats(h, d, "Disturbance", "trail", s.trail.data(), static_cast<uint32_t>(s.trail.size()));
+        FoldFloats(h, d, "Disturbance", "ripple", s.ripple.data(), static_cast<uint32_t>(s.ripple.size()));
+        FoldFloats(h, d, "Disturbance", "ripplePrev", s.ripplePrev.data(), static_cast<uint32_t>(s.ripplePrev.size()));
+        EmitU64(d, "Disturbance", "#field", h, h); // 場の小計 (ここまでの畳み込み)
+    }
+    if (d && d->lines) {
+        d->entityCol = "-";
+    }
+    const std::vector<FieldImpulse>& queue = state.Queue();
+    FoldU64(h, d, "Disturbance", "queueCount", queue.size());
+    if (!queue.empty()) {
+        FoldBytes(h, d, "Disturbance", "queue", queue.data(), queue.size() * sizeof(FieldImpulse));
+    }
+    return h;
+}
+
 // M51g: ゲームフロー状態 (決定台帳 5)。RNG の直後・パーティクルの前に畳み込む。
 // PersistStore は std::map = キー昇順走査 (挿入順に依存しない — selftest が固定)
 uint64_t HashGameFlow(uint64_t h, const TimeControl* time, const PersistStore* persist, DumpCtx* d)
@@ -722,6 +764,12 @@ uint64_t HashWorldImpl(World& world, const SimSources& src,
         const uint64_t fh = HashFeelState(*src.feel, d);
         total = HashCombine(total, fh);
         EmitU64(d, "Feel", "#total", fh, total);
+    }
+    // かき乱しフィールド (M96)。内容ゲート (理由は WorldHasher.h の SimSources::disturbance)
+    if (src.disturbance && src.disturbance->HasHashableState()) {
+        const uint64_t dh = HashDisturbanceState(*src.disturbance, d);
+        total = HashCombine(total, dh);
+        EmitU64(d, "Disturbance", "#total", dh, total);
     }
     return total;
 }

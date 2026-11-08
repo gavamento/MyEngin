@@ -167,6 +167,7 @@ bool RunSimSnapshotSelfTest()
     scene.Time().ClearFeelEffects();
     scene.Feel().Clear();
     scene.InputBuffer().Clear();
+    scene.Disturbance().Clear(); // v70 (M96)
     scene.Persist().Clear();
     scene.SetSourcePath(L"");
     scene.SetName("WrongStage"); // 復元で必ず上書きされること

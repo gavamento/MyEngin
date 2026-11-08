@@ -2055,6 +2055,47 @@ void RegisterBuiltinComponents()
         MYE_JP("速度", MYE_FIELD_FLAGS(SpringFollowComponent, velocity, Float3, kFieldReadOnly)),
         MYE_JP("初期化済み", MYE_FIELD_FLAGS(SpringFollowComponent, initialized, UInt32, kFieldReadOnly)),
     });
+
+    // M96: かき乱しフィールド (TypeId=96、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
+    // 範囲外の値は sim が切った値で動く (Inspector のレンジはスライダの目安)
+    static_assert(sizeof(DisturbanceFieldComponent) == 76, "DisturbanceFieldComponent: no implicit padding");
+    RegisterComponent<DisturbanceFieldComponent>("DisturbanceField", {
+        MYE_JP("形", MYE_FIELD_TIP(DisturbanceFieldComponent, shape, Int32, "0 = ground layer (a thin layer that creeps along the floor) / 1 = volume (3D, not simulated yet)")),
+        MYE_JP("マス数 X", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsX, Int32, "cells along X (2 to 512; at most 262144 cells in total). Changing it rebuilds the field at rest")),
+        MYE_JP("マス数 Y", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsY, Int32, "cells along Y (volume only; the ground layer is always 1). Suggested volume: 32 x 16 x 32 with 0.5 m cells")),
+        MYE_JP("マス数 Z", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsZ, Int32, "cells along Z (2 to 512)")),
+        MYE_JP("マスの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, cellSize, Float, 0.05f, 8.0f)),
+        MYE_JP("層の厚さ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, thickness, Float, 0.05f, 20.0f)),
+        MYE_JP("チャネル", MYE_FIELD_TIP(DisturbanceFieldComponent, channels, UInt32, "bit flags: 1 = density (fog) / 2 = trail (snow, sand) / 4 = ripple (water). The flow is always on")),
+        MYE_JP("静止時の濃さ", MYE_FIELD_RANGE(DisturbanceFieldComponent, restDensity, Float, 0.0f, 1.0f)),
+        MYE_JP("濃さの残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, densityKeep, Float, 0.0f, 1.0f)),
+        MYE_JP("流れの残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, velocityKeep, Float, 0.0f, 1.0f)),
+        MYE_JP("跡の残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, trailKeep, Float, 0.0f, 1.0f)),
+        MYE_JP("波紋の速さ (m/s)", MYE_FIELD_RANGE(DisturbanceFieldComponent, rippleSpeed, Float, 0.0f, 20.0f)),
+        MYE_JP("波紋の残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, rippleKeep, Float, 0.0f, 1.0f)),
+        MYE_JP("霧の消散係数 (1/m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, fogDensity, Float, 0.0f, 20.0f)),
+        MYE_JP("霧の色", MYE_FIELD(DisturbanceFieldComponent, fogColor, Float3)),
+        MYE_JP("霧の明るさ", MYE_FIELD_RANGE(DisturbanceFieldComponent, fogBrightness, Float, 0.0f, 10.0f)),
+        MYE_JP("霧に太陽光を当てる", MYE_FIELD_TIP(DisturbanceFieldComponent, fogSunLight, Bool, "light the fog with the directional light (no shadows: it also shines under trees)")),
+        MYE_JP("フロクセルを自動で回す", MYE_FIELD_TIP(DisturbanceFieldComponent, autoFroxel, Bool, "run the froxel fog for this field even when the camera has it off (about 7 MB of GPU memory and one inject pass)")),
+        MYE_JP("デバッグ描画", MYE_FIELD(DisturbanceFieldComponent, drawDebug, Bool)),
+    });
+
+    // M96: かき乱しの源 (TypeId=97、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    static_assert(sizeof(DisturbanceSourceComponent) == 68, "DisturbanceSourceComponent: no implicit padding");
+    RegisterComponent<DisturbanceSourceComponent>("DisturbanceSource", {
+        MYE_JP("モード", MYE_FIELD_TIP(DisturbanceSourceComponent, mode, Int32, "0 = moving (follows the entity's own motion) / 1 = constant (a fixed blower such as a fan)")),
+        MYE_JP("ずらし", MYE_FIELD(DisturbanceSourceComponent, offset, Float3)),
+        MYE_JP("半径 (m)", MYE_FIELD_RANGE(DisturbanceSourceComponent, radius, Float, 0.0f, 20.0f)),
+        MYE_JP("流れの強さ", MYE_FIELD_RANGE(DisturbanceSourceComponent, strength, Float, 0.0f, 1.0f)),
+        MYE_JP("最大効果の速さ (m/s)", MYE_FIELD_RANGE(DisturbanceSourceComponent, fullSpeed, Float, 0.0f, 50.0f)),
+        MYE_JP("濃さの増減", MYE_FIELD_RANGE(DisturbanceSourceComponent, densityDelta, Float, -1.0f, 1.0f)),
+        MYE_JP("跡の深さ", MYE_FIELD_RANGE(DisturbanceSourceComponent, trailDepth, Float, 0.0f, 1.0f)),
+        MYE_JP("波紋の高さ (m)", MYE_FIELD_RANGE(DisturbanceSourceComponent, ripple, Float, -2.0f, 2.0f)),
+        MYE_JP("定常の流れ", MYE_FIELD(DisturbanceSourceComponent, constantVelocity, Float3)),
+        MYE_JP("前の位置", MYE_FIELD_FLAGS(DisturbanceSourceComponent, prevPos, Float3, kFieldReadOnly)),
+        MYE_JP("前の位置が有効", MYE_FIELD_FLAGS(DisturbanceSourceComponent, prevValid, UInt32, kFieldReadOnly)),
+    });
 }
 
 } // namespace mye

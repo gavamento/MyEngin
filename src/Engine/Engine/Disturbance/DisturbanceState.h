@@ -1,0 +1,160 @@
+//====================================================================================
+//                          DisturbanceState.h
+//  MyEngin/ 秋田蓮音                                                       11/08/2026
+//                                          かき乱しフィールド (M96) の sim 状態と、1 tick の step・読み取りの入口
+//====================================================================================
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include <DirectXMath.h>
+
+#include "Engine/Core/Ecs/EntityID.h"
+
+namespace mye {
+
+class World;
+class Scene;
+class ByteWriter;
+class ByteReader;
+
+// 同時に sim する場の数。entity index の昇順で先頭 4 個だけ (5 個目以降は sim しない)
+inline constexpr uint32_t kMaxDisturbanceFields = 4;
+// 配送待ちインパルスのキューの長さ
+inline constexpr uint32_t kMaxDisturbanceQueue = 256;
+// 1 つの場のマス数の上限
+inline constexpr int32_t kMaxDisturbanceCells = 262144;
+// 1 辺のマス数の範囲
+inline constexpr int32_t kMinDisturbanceSide = 2;
+inline constexpr int32_t kMaxDisturbanceSide = 512;
+// 波紋の高さの上限 [m]
+inline constexpr float kMaxRippleHeight = 2.0f;
+// 波紋のクーラン数の上限 (2D の安定条件 1/sqrt(2) 未満)
+inline constexpr float kMaxRippleCourant = 0.7f;
+// sim の周波数。cellSize × この値が流れの速さの上限 (1 tick に 1 マス)
+inline constexpr float kDisturbanceTickRate = 60.0f;
+
+enum DisturbanceChannel : uint32_t {
+    kDisturbanceChannelDensity = 1u,
+    kDisturbanceChannelTrail = 2u,
+    kDisturbanceChannelRipple = 4u,
+    kDisturbanceChannelMask = 7u,
+};
+
+enum DisturbanceShape : int32_t {
+    kDisturbanceGroundLayer = 0,
+    kDisturbanceVolume = 1,
+};
+
+enum FieldImpulseShape : uint32_t {
+    kFieldImpulsePoint = 0,  // dir 向きの一様な流れ
+    kFieldImpulseRadial = 1, // 点から外向き (中心で 0)
+    kFieldImpulseCone = 2,   // dir を軸とする円錐の中だけの Point
+};
+
+// 配送待ちのインパルス 1 件。全欄 4 バイトで詰め物が無い (ハッシュとスナップショットは生バイトで扱う)
+struct FieldImpulse {
+    float pos[3] = { 0.0f, 0.0f, 0.0f };
+    float dir[3] = { 0.0f, 0.0f, 1.0f };
+    float radius = 1.0f;   // [m]
+    float speed = 0.0f;    // [m/s]
+    uint32_t shape = kFieldImpulsePoint;
+    float coneCos = 0.0f;  // Cone の半角の cos
+    float density = 0.0f;  // [-1,1] 負 = 晴らす / 正 = 足す
+    float trail = 0.0f;    // [0,1]
+    float ripple = 0.0f;   // [m]
+};
+static_assert(sizeof(FieldImpulse) == 52, "FieldImpulse: no implicit padding");
+
+// 場 1 つの状態。配列は index = x + cellsX * (z + cellsZ * y) の並びで、有効なチャネルの分だけ確保する。
+// GroundLayer は y = 0 だけ。セル中心のワールド座標は (originCell + (x, y, z) + 0.5) * cellSize
+struct DisturbanceSlot {
+    EntityID entity = kNullEntity;
+    int32_t shape = kDisturbanceGroundLayer;
+    int32_t cellsX = 0;
+    int32_t cellsY = 0;
+    int32_t cellsZ = 0;
+    uint32_t channels = 0;
+    float cellSize = 0.0f;
+    int32_t originCell[3] = { 0, 0, 0 }; // 格子の最小角のセル番号 (整数。追従で整数セル単位にずらす)
+    float baseY = 0.0f;                  // GroundLayer の層の下端の高さ [m]
+    std::vector<float> flowX;            // 流れ [m/s]
+    std::vector<float> flowZ;
+    std::vector<float> density;          // [0,1]
+    std::vector<float> trail;            // [0,1]
+    std::vector<float> ripple;           // 波紋の高さ h [m]
+    std::vector<float> ripplePrev;       // 1 tick 前の h
+
+    uint32_t CellCount() const
+    {
+        return static_cast<uint32_t>(cellsX) * static_cast<uint32_t>(cellsY) * static_cast<uint32_t>(cellsZ);
+    }
+};
+
+// Scene が持つ sim 状態 (WorldHash 対象の内容ゲート・SimSnapshot の DFLD 節)。
+// 場のコンポーネントを持つエンティティから step が作り、消えたら捨てる。Play の開始 / 終了とシーン切り替えで Clear する
+class DisturbanceState {
+public:
+    // 全消去 (配送待ちも、警告済みの記録も)
+    void Clear();
+
+    // 何か入っている状態か (= ハッシュに節を畳むか)。場のスロットも配送待ちも無ければ偽
+    bool HasHashableState() const { return !slots_.empty() || !queue_.empty(); }
+
+    // 配送待ちに積む。満杯または値が不正なら積まず false (満杯の WARN は step ごとに 1 回)
+    bool QueueImpulse(const FieldImpulse& impulse);
+
+    const std::vector<DisturbanceSlot>& Slots() const { return slots_; }
+    std::vector<DisturbanceSlot>& Slots() { return slots_; }
+    const std::vector<FieldImpulse>& Queue() const { return queue_; }
+    std::vector<FieldImpulse>& Queue() { return queue_; }
+
+    // 描画用の通番 (状態ではない。ハッシュ・スナップショットに入れない)。step のたびに +1
+    uint64_t RenderSerial() const { return renderSerial_; }
+
+    // 5 個目以降の場・Volume の場の警告を出した回数 (selftest 用。状態ではない)
+    uint32_t OverflowWarnCount() const { return overflowWarnCount_; }
+
+    // スナップショットの DFLD 節の中身 (magic は呼び出し側)。Read は検証に失敗したら out を触らず false
+    void Write(ByteWriter& w) const;
+    static bool Read(ByteReader& r, DisturbanceState& out);
+
+private:
+    friend void DisturbanceStep(World& world, DisturbanceState& state);
+
+    std::vector<DisturbanceSlot> slots_; // entity index 昇順
+    std::vector<FieldImpulse> queue_;
+    // ---- 以下は状態ではない (ハッシュ・スナップショットに入れない) ----
+    uint64_t renderSerial_ = 0;
+    uint32_t overflowWarnCount_ = 0;
+    bool queueFullWarned_ = false;           // step ごとに戻す
+    std::vector<EntityID> warnedFields_;     // 警告済みの場 (5 個目以降 / Volume)
+    std::vector<float> rippleScratch_;       // 波紋の次の h の作業領域
+};
+
+// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 減衰と復元 → 波紋 → 範囲の強制。
+// 場が 1 つも無く配送待ちも空なら走査だけで抜ける。World から読むのは Transform 確定後の WorldMatrix、
+// CharacterController.velocity、Rigidbody.velocity と、場・源のコンポーネント
+void DisturbanceStep(World& world, DisturbanceState& state);
+
+// 配送待ちにインパルスを積む (満杯で false + WARN)。積んだ後の最初の step で消費される
+bool DisturbanceQueueImpulse(Scene& scene, const FieldImpulse& impulse);
+
+// 読み取りの結果。無効なチャネルの値は 0
+struct FieldSampleOut {
+    float flow[3] = { 0.0f, 0.0f, 0.0f }; // GroundLayer は y = 0
+    float density = 0.0f;
+    float trail = 0.0f;
+    float ripple = 0.0f;
+    EntityID field = kNullEntity;
+};
+
+// pos での場の値をセル中心の双線形で返す。field が null なら pos を含む場のうち entity index 最小。
+// 返り値は「場の中か」 (外なら out は 0 埋め)。格子の外のマスは静止状態として補間する。
+// 読むのは呼んだ時点の状態 (Update からは前 tick の結果、LateUpdate からはこの tick の結果)。
+// 静止時の濃さと層の厚さはコンポーネントから引くので world が要る
+bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID field,
+                         const DirectX::XMFLOAT3& pos, FieldSampleOut& out);
+
+} // namespace mye
