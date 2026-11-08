@@ -1,14 +1,23 @@
 # sub-10: 地形の起伏に沿う 2D 層 (列ごとの基準高さ)
 
-- 依存: sub-09
+- 依存: sub-09 (波 W4。spec §6)
 - 状態: 未着手
 - 往復: 0
+
+
+## 並列の注意 (波 W4)
+
+- **司会が渡した git worktree の絶対パスでだけ作業する。** メインの作業ツリー (`C:\HAL\MyEngin`) には 1 バイトも書かない (W1 ではそこで sub-04 が動いている)。作業の最初と最後に、worktree と `C:\HAL\MyEngin` の両方で `git status` を取り、SELF_EVAL に貼る
+- このサブが変えてよい共有資源 (spec 付録 A): snapshot **v75**。`DisturbanceFieldComponent` の末尾 (`followTerrain`)、DFLD のレイアウト (columnBaseY)。デモは `AddFieldDemoHill`
+- 付録 A に無い共有資源 (版・スロット・構造体の末尾・規則の番号・golden) を変えたくなったら、実装せずに「不安・質問」で返す
+- テストは `DisturbanceFieldSelfTest.cpp` などの既存の関数に混ぜず、自分の名前の static 関数を足して、スイート関数の末尾から 1 行で呼ぶ。デモも自分の関数を足し、`BuildFieldShowcaseScene` の末尾に 1 行だけ足す
+- 焼き込み値 (`kBakedFinalHash` など) は変えない (付録 A.2)。`build\Engine.vcxproj` は `tools\gen_project_files.ps1` の出力のまま
 
 ## やること
 
 spec §2 #12 (ユーザー回答 2026-11-08: 今回入れる)、§4.1 A / C / G の列ごとの基準高さ。丘の上でも霧が地面を這う。
 
-1. `DisturbanceFieldComponent` の末尾に `followTerrain` (bool、既定 false。GroundLayer だけで有効、Volume では無視して Inspector に注記) を足す。snapshot は着手時の版 + 1。`followTerrain` は「変えたら作り直す」欄に入れる (spec §4.1 A)
+1. `DisturbanceFieldComponent` の末尾に `followTerrain` (bool、既定 false。GroundLayer だけで有効、Volume では無視して Inspector に注記) を足す。snapshot は spec 付録 A.1 の予約の版。`followTerrain` は「変えたら作り直す」欄に入れる (spec §4.1 A)
 2. 状態: `followTerrain` の場のスロットに列ごとの基準高さ `columnBaseY` (float × cellsX × cellsZ、絶対のワールド y) を持つ。ハッシュと DFLD 節に入れる
    - **導出値だが状態に入れる** 理由: 地形のコライダーが実行時に動く・増える場合も「焼いた時点の値」で決定的になり、スナップショットの復元の後に焼き直す順序の誤り (M65a の音響の距離場と同じ型) が起きない。64 KiB / 128² の場
 3. 焼き込み: 作り直しの step で全列、追従のずらし (sub-09) では**入ってきた列だけ**、列の中心で `SampleTerrainHeightWorld(world, x, z, &h, nullptr)` (`PhysicsSystem.h:218-225`。当たる地形を引く、重なりは最も高い面・同値は entity index 小 = 決定的) を呼ぶ。外れ (地形が無い) の列は場のエンティティの y。以後は焼き直さない (地形を実行時に動かしても追わない = spec §7 R8)
@@ -49,7 +58,7 @@ spec §5 の 12, 30, 33。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (W2 の統合後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - `$env:MYE_SELFTEST_ONLY='disturbance,terrain,simsnapshot,acousticaudio'; bin\x64\Debug\Editor.exe --selftest` と Release

@@ -54,6 +54,8 @@
 | 22 | 時間を止める手触り (ヒットストップ・ポーズ) | 場の step は `stepSim` のゲートの中 (粒子と同じ。`TickRunner.cpp:613-616` の直後) | — | ヒットストップ中は霧も止まる (粒子と同じ拍)。キューは止まっている間も積めて、再開後の最初の step で消費 |
 | 23 | 突風 (時間で変わる風)・霧が視界を遮る (知覚) | 依頼の 4 用途 4 源には含まれるが、最小の形は一様風 + 局所の風源 (Constant の源) で満たせる | **後回しでよい** (2026-11-08、裁定どおり。起伏に沿う霧は #12 で今回入れる) | 後回し (§3) |
 | 24 | 地面の霧を局所ライト (点・スポット) で照らすか | sub-03 の専用描画はライト一覧を持たない合成箇所 (粒子・VFX・スカイ) を含む 10 か所で走る。段数 24 × ライト本数 × (影なら) 影サンプルのコスト。フロクセル (Volume) は局所ライトのビームと影を既に持つ (`froxel_inject.cs.hlsl` の LightSample + SampleShadowAtlas) | **照らす / 照らさないを ON/OFF で切り替える** (2026-11-08。planner の推奨「照らさない」に選択肢を足す形。太陽光の bool と同じ扱い) | 場ごとの `fogLocalLights` (既定 **false**。太陽光と同じ理由で、既定は従来の絵とコスト)。GroundLayer だけ (Volume では無視)。ライトは CPU が毎フレーム「影響球が ON の層の板の AABB と交わる局所ライトを、ライト一覧の順に最大 8 本」選び、縮約した写しを場の CB に載せる (各シェーダの既存のライト一覧の並びに依存しない。10 か所に同じ口)。超えた分は落として WARN 1 回。減衰とスポットは `common.hlsli::LightSample` と同じ式。**影なし** (10 か所にシャドウアトラスを束縛するコストと複雑さに見合わない。影つきのビームは Volume で作る)。sub-15 を新設 (sub-03 は 10 か所の合成を作るだけで十分大きいので分けた)。却下: 各シェーダの既存のライト一覧を読む = 一覧を持たない合成箇所がある / 本数無制限 = 段数 × 本数のコストが読めない / 影つき = 上記 |
+| 25 | スカイボックスの無い背景 (clear 色) に Forward でも地面の霧・フロクセルの霧を掛けるか | Forward には背景を描くシェーダが無く、clear 色のまま残る (sub-03 round 2 の実測 sub03r2_03)。Deferred は光パスの背景分岐 (albedo.a < 0.5) で地面の霧とフロクセルを掛けている。golden には Forward + `--froxel` の `fog` (`tools\shot_verify.bat:257`) がある | **Forward でも掛ける** (2026-11-08。R13 の取り消し)。**フロクセルの背景も Deferred に揃える** (2026-11-08。planner の推奨「揃えない」の逆) | Forward の不透明の後・透明の前に、**背景だけを塗る全画面の三角形**を 1 回描く。深度は far で、深度テストは LESS_EQUAL・書き込みなし = clear のままの画素にだけ乗る。色は clear 色に、Deferred の背景分岐と**同じ処理** (地面の霧 `GroundFogCompositeBackground` → フロクセルの合成。フロクセルの部分は Deferred の背景分岐の式を写す) を掛けたもの。解析フォグ (`FogComponent`) の背景の扱いは今の Forward のまま変えない (依頼の外)。**描く条件 = Forward のビュー かつ スカイボックスを描いていない かつ (霧のある GroundLayer が 1 枚以上 または そのビューでフロクセルが走る)**。条件が欠けたらパスそのものが走らず、絵はビット不変。既存の「Forward + フロクセル + スカイ無し」のシーンは**背景の画素だけ**変わる (受け入れ 36 で、変わってよいシーンと差 0 のシーンを分け、golden の更新手順を決める)。sub-15 の後に置き、局所ライトも同じ関数で揃う。sub-16。却下: clear 色を霧の色へ寄せる = 視線ごとの通過長が出ない / 単色のスカイボックスを自動で描く = スカイの設定と見分けが付かない |
+| 26 | 跡 (雪・砂) の見た目の欄 (色・強さ) をどこに置くか | 場の側 (DisturbanceFieldComponent) に置くと、並列の波で同じ struct の末尾を触るサブ (sub-07 / 09 / 10) と重なる。跡の色は「その地面が雪か砂か」で決まるので、意味としても地面の持ち物 | planner 裁定 (並列化のとき、2026-11-08) `[ユーザーに聞ける]` | **TerrainComponent の末尾** (見た目の欄。sim は読まない。snapshot は v76)。1 つの場が雪と砂の両方の地形にまたがっても、それぞれの色で描ける。却下: 場の側 = 1 つの場に色が 1 つしかなく、並列の波でも衝突する |
 
 ## 3. スコープ
 
@@ -233,9 +235,9 @@
 
 ## 5. 受け入れ条件
 
-**selftest と replay_verify の運用 (ユーザー指示 2026-11-08)**: `--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY` と `tools\replay_verify.bat` の実行は M96 全体で 2 回だけ (sub-07 の後の中間と、最後の sub-16。サブの新設で最後が sub-14 → sub-15 → sub-16 と繰り下がった)。各サブの coder はビルドと check_rules (と、描画のサブのスクショなど、selftest と replay_verify 以外の検証) までを行い、selftest と replay_verify で確かめる受け入れ条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。planner はそれを理由に REWORK にしない (検証が未実行で自己採点が 4 以上でも矛盾として扱わない)。まとめて実行して落ちた分は、司会が該当サブへ FIX_REQUEST で回す。selftest のコードを書くこと自体は各サブの受け入れ条件に残る。
+**selftest と replay_verify の運用 (ユーザー指示 2026-11-08)**: `--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY` と `tools\replay_verify.bat` の実行は M96 全体で 2 回だけ (中間 = W2 の統合の後 (sub-07 を含む波。§6)、最後 = sub-17。サブの新設で最後が sub-14 → sub-15 → sub-16 → sub-17 と繰り下がった)。各サブの coder はビルドと check_rules (と、描画のサブのスクショなど、selftest と replay_verify 以外の検証) までを行い、selftest と replay_verify で確かめる受け入れ条件は「未実行 (sub-07 後 / sub-17 でまとめて実行)」と報告する。planner はそれを理由に REWORK にしない (検証が未実行で自己採点が 4 以上でも矛盾として扱わない)。まとめて実行して落ちた分は、司会が該当サブへ FIX_REQUEST で回す。selftest のコードを書くこと自体は各サブの受け入れ条件に残る。
 
-共通 (全サブ): C1 Debug / Release の両構成でビルド成功し、**変更したファイルの警告 0**。`/p:MyeWarnAsError=true` は着手前からある `AnimatorControllerSelfTest.cpp` の警告 (C4456 / C4389) で落ちるので、その失敗は合否に数えない (別件、sub-01 round 1 で判明)。C2 `tools\check_rules.ps1` の error / warning が着手前から増えない。C3 関連スイートが両構成で FAIL 0。C4 `Editor.exe --selftest-full` と `tools\replay_verify.bat` が PASS。C3 / C4 は上の運用により、sub-07 の後と sub-16 でまとめて確認する。
+共通 (全サブ): C1 Debug / Release の両構成でビルド成功し、**変更したファイルの警告 0**。`/p:MyeWarnAsError=true` は着手前からある `AnimatorControllerSelfTest.cpp` の警告 (C4456 / C4389) で落ちるので、その失敗は合否に数えない (別件、sub-01 round 1 で判明)。C2 `tools\check_rules.ps1` の error / warning が着手前から増えない。C3 関連スイートが両構成で FAIL 0。C4 `Editor.exe --selftest-full` と `tools\replay_verify.bat` が PASS。C3 / C4 は上の運用により、sub-07 の後と sub-17 でまとめて確認する。
 
 | # | 条件 | 検証手段 | サブ |
 |---|---|---|---|
@@ -264,9 +266,9 @@
 | 23 | 水面の波紋: 歩くと波紋が広がる (スクショ 2 枚の差)。浮力の selftest と `WaterSurfaceSelfTest` 不変 | スクショ + selftest | 12 |
 | 24 | 跡: 雪の地形に通った筋が残り、`trailKeep < 1` なら消える (スクショ)。地形の当たり判定の selftest 不変 | スクショ + selftest | 13 |
 | 25 | 草: 球・プレイヤーの通り道の草が倒れ、戻る (スクショ 3 枚)。場が無い草のマテリアルは真っ直ぐ立つ | スクショ | 14 |
-| 26 | 物理を押さない: `SampleWind` と空力 3 か所は差分なし。physics / joints / fracture の replay ジョブ PASS | `git diff` で該当関数を確認 + replay_verify | 16 (全サブで維持) |
-| 27 | 文書: ADR-036、engine_spec の新しい節 (§ の番号は coder が既存に合わせる)、engine-feature-guide、test_checklists、dogfooding (該当があれば) | 差分の確認 | 16 |
-| 28 | 全検証: `--selftest-full` Debug / Release、check_rules、replay_verify、三校 `C:\HAL\三校\tools\verify.bat` (既存の FAIL 2 件以外増えない) | コマンド | 16 |
+| 26 | 物理を押さない: `SampleWind` と空力 3 か所は差分なし。physics / joints / fracture の replay ジョブ PASS | `git diff` で該当関数を確認 + replay_verify | 17 (全サブで維持) |
+| 27 | 文書: ADR-036、engine_spec の新しい節 (§ の番号は coder が既存に合わせる)、engine-feature-guide、test_checklists、dogfooding (該当があれば) | 差分の確認 | 17 |
+| 28 | 全検証: `--selftest-full` Debug / Release、check_rules、replay_verify、三校 `C:\HAL\三校\tools\verify.bat` (既存の FAIL 2 件以外増えない) | コマンド | 17 |
 | 29 | 静的規則 18: Disturbance の sim ファイルで CRT の超越関数を使うと error。規則自身の自己検査 (違反を含む一時入力で error になる) | `tools\check_rules.ps1` | 01 |
 | 30 | ローカライズ: 新しい Inspector の欄と UI 文字列が日英とも埋まる (規則 10) | check_rules | 全サブ |
 | 31 | フロクセルの自動有効 (場だけのモード): (a) Volume を視錐台の外に置いた場面 (解析フォグとゴッドレイ on) の絵が `autoFroxel = false` と差 0 (b) カメラの `froxelOn = false` のまま視界の Volume の霧が写る (c) `autoFroxel = false` でフロクセルが走らない (d) `--fog-demo` と、フロクセルを使わない既存デモ 1 本の絵が着手前と差 0 (e) モードの出入りで INFO が 1 行ずつ (f) Scene View (グローバル off) で Play 前の煙が見える (g) GroundLayer だけのシーンではフロクセルが走らない | `--img-diff`、スクショ、ログ | 08 |
@@ -274,10 +276,29 @@
 | 33 | 起伏に沿う層: (a) 斜面の地形で、地形 + 0.5 × thickness の濃さが丘の上と平地で一致 (`followTerrain = false` なら丘の上は層の外) (b) `followTerrain = false` の場の sim の配列が変更前と 600 tick ビット一致 (c) 追従のずらしで残った列の基準高さはビット不変、入ってきた列だけ焼く (d) 2 ワールド一致・snapshot 往復 (e) 128² 列の焼き込みの ms を報告 (f) 丘を覆う霧のスクショ | selftest + スクショ | 10 |
 | 34 | 地面の霧の専用描画: (a) sub-02 と同じカメラ・フレームで、霧の領域の行ごとの平均輝度の 2 階差分の最大値が sub-02 より小さい (横縞が消えた。画像を並べる) (b) フロクセル off で霧が写り、フロクセルのパスが走らない (c) 場の無い既存デモ 2 本の絵が `2687227` のビルドと差 0 (d) 霧の後ろの透明物と霧の中の不透明物が同じように霞む (e) 960×540 / 1920×1080 で層 1 / 4 枚の GPU 時間を報告 | スクショ、`--img-diff`、GpuTimer | 03 |
 | 35 | 地面の霧の局所ライト: (a) `fogLocalLights = false` の絵が切り替え前と差 0 (b) true でランタンの周りの霧が明るい。層から離れたライトは絵を変えない (c) 9 本で 8 本だけ使われ WARN 1 回 (d) ライト 0 / 1 / 8 本の GPU 時間を報告 | `--img-diff`、スクショ、ログ、GpuTimer | 15 |
+| 36 | Forward のスカイ無しの背景: (a) sub-03 round 2 と同じ地平線向きの場面で、Forward の背景に地面の霧が掛かる。Forward と Deferred を並べて背景の領域の平均輝度の差を報告 (目視で同じ霧) (b) **差 0 であるべき絵** (`--img-diff --tol 0`、着手前 = sub-15 のコミットのビルドと比較): Deferred の全部、スカイのある Forward の全部、フロクセルも地面の霧も無い Forward の全部 (golden の `demo_forward` / `demo_forward_fxaa` / `demo_render_forward` / `acoustic_forward` など) (c) **変わってよい絵** = Forward かつスカイ無しかつフロクセルが走るシーン。coder がデモと golden を全部洗って一覧にし、各々について「パスを一時的に止めたビルドの絵が着手前とビット一致」(変化はこのパスだけが原因) と「差分の画素が背景 (深度 far) の画素に限られる」を示す。前後の画像を並べる (d) golden の更新: (c) の 2 点を満たした golden だけを `tools\shot_verify.bat --update` で撮り直し、差分画像を目視してからコミットに含める。(c) を満たさない golden の変化は不具合として直す (memory `golden-diff-triage`: 塗り潰す前に原因を断定する) (e) 霧の後ろの透明物が背景の霧の上に正しく重なる (f) パスの GPU 時間 | スクショ、`--img-diff`、`shot_verify.bat`、GpuTimer | 16 |
 
 ## 6. サブ分割
 
-既定は**直列** (上から順)。selftest と replay_verify のまとめ実行は sub-07 の後と sub-16 (§5 冒頭)。09〜14 は中身では独立に近いが、デモシーン (`DemoContentField.cpp`) と snapshot 版を共有し、10 は 09 (追従のずらし) の上に乗るので、並列にするときは司会が版を着手時の末尾から振り直し、デモへの追記を関数ごとに分けること。
+**並列化 (ユーザー指示 2026-11-08「coder 並列化して 4 つくらい」)**: sub-05〜17 を波 (wave) に分け、1 波あたり coder 最大 4 本 (メインの作業ツリーで動いている分を含む) で進める。並列のサブは各自の git worktree で実装し、司会が波ごとに master へ統合する。共有資源は付録 A の予約表、統合の手順と目視点は付録 B。selftest / replay_verify の**中間のまとめ実行は W2 の統合の後** (sub-07 を含む波。元の「sub-07 の後」と同じ意味)、最後は sub-17。
+
+| 波 | 並列にするサブ | 依存 (波の前に master にあるべきもの) | 予約した資源 (付録 A) | 統合時の確認点 (付録 B) |
+|---|---|---|---|---|
+| W1 | sub-04 (実装中、メインの作業ツリー) / **sub-05** ABI / **sub-12** 水面の波紋 / **sub-15** 地面の霧の局所ライト | sub-03 (`9b16433`) + 計画ファイルのコミット (B.0) | 04: snapshot v71、DisturbanceFieldComponent の末尾。05: ABI v35 = 202 (唯一)。12: PS の固定スロット (t32 / t33 / b6 / b7 / s8) を読むだけ。15: `pad0` を `fogLocalLights` に (サイズ不変、snapshot 版なし)、新しい PS の b スロット 1 本、規則 9 のグループ「地面の霧のライト」 | 統合の順 04 → 05 → 15 → 12。Components.h の `pad0` の行 (15) と末尾の 2 欄 (04) が隣接。DemoContentField.cpp の呼び出し行 (04 / 05 / 12 / 15)。DisturbanceFieldSelfTest.cpp の末尾 (05 / 15)。`ground_fog.hlsli` (15 だけ) |
+| W2 | **sub-06** アニメイベント / **sub-07** 3D / **sub-14** 草 / **sub-16** Forward の背景 | W1 の全部 | 06: `ClipEventKind` の末尾、TickRunner の配送の switch。07: snapshot v72、DisturbanceFieldComponent の末尾 (`buoyancy`)、DFLD のレイアウト (flowY)、froxel CS の t3〜t6 と b2、規則 9 のグループ「Volume」。14: VS の固定スロット (PS と同じ番号を VS にも張る口)、`MyEngineSurface.hlsli` の予約テクスチャ。16: golden PNG の撮り直し (唯一)、新しい PS 1 本 | 統合の順 07 → 06 → 14 → 16。RenderSystem.cpp (07 の CS 束縛 / 14 の VS 束縛 / 16 の条件) の 3 か所。TickRunner.cpp (06)。**統合の後に中間のまとめ実行** (B.3) |
+| W3 | **sub-08** 自動有効と Volume の太陽光 / **sub-09** 追従 / **sub-11** 粒子 | W2 の全部 | 08: 合成箇所のシェーダ (10 本 + sub-16 の背景の PS)、RenderSystem のフロクセル判定とゴッドレイ。09: snapshot v73、DisturbanceFieldComponent の末尾 (`followTarget` / `followMargin`)。11: snapshot v74、ParticleEmitterComponent の末尾、粒子 CS の t3〜t7、規則 9 のグループ「粒子」 | 統合の順 09 → 11 → 08。SimSnapshot.h の版の行 (09 / 11 が両方上げる → 大きい方 v74 に揃え、コメントは両方残す)。`AcousticAudioSelfTest.cpp` の版の表明も v74 |
+| W4 | **sub-10** 起伏に沿う層 / **sub-13** 跡 | W3 の全部 | 10: snapshot v75、DisturbanceFieldComponent の末尾 (`followTerrain`)、DFLD のレイアウト (columnBaseY)。13: snapshot v76、**TerrainComponent** の末尾 (跡の見た目の欄。場のコンポーネントは触らない、§2 #26)、地形のシェーダ | 統合の順 10 → 13。版の行を v76 に揃える |
+| W5 | **sub-17** 仕上げ | W4 の全部 | 文書全部、最後のまとめ実行 | — |
+
+**並列にしない組と理由**:
+- sub-07 → sub-09 → sub-10 は直列 (W2 → W3 → W4)。3 本とも sim の核 (`DisturbanceStep` / `DisturbanceState` / DFLD のレイアウト) と DisturbanceFieldComponent の末尾を触る。git が競合を出さずに欄を別の struct へ混ぜる型の誤マージが起きやすい場所 (memory `parallel-milestone-execution`)。追従のずらしは 3D の配列を、起伏はずらしを前提にする
+- sub-08 は sub-16 の後 (W3)。sub-08 は合成箇所のシェーダを全部触り、sub-16 が足す背景の PS もその 1 本になる
+- sub-13 は W4 (sub-08 と別の波)。sub-08 と sub-13 はどちらも `forward_terrain.hlsl` を触る (08 = フロクセルの合成、13 = 跡)。同じファイルの近い場所で意味の違う変更が重なる
+- sub-14 と sub-08 は別の波。どちらも `MyEngineSurface.hlsli` を触る
+- 1 つの波で DisturbanceFieldComponent を変えるサブは 1 本だけ (W1 の 04 / 15 は `pad0` の改名と末尾の追加で行が分かれる。B.2 の目視点)
+- sub-17 は最後に 1 本だけ
+
+コミットの件名の記号 (M96e〜q) はサブ番号に付けたまま (統合の順と記号の順は一致しなくてよい)。下の表の依存は実際の依存 (波は上の表)。
 
 | サブ | 題名 | 依存 | 受け入れ条件 (5. の番号) | コミット件名候補 |
 |---|---|---|---|---|
@@ -285,18 +306,19 @@
 | sub-02 | 霧の描画 (2D、フロクセルへの注入) と `--field-demo`、replay ジョブ `field` | sub-01 | 10, 11, 12, 30 | (済み `2687227`) `M96b: かき乱しフィールドの霧をフロクセルへ注入する (2D 層、霧の広場デモ、replay ジョブ field)` |
 | sub-03 | 地面の霧の専用描画 (板のレイマーチ、自己照明 + 太陽光の bool) | sub-02 | 12, 30, 32 (2D), 34 | `M96c: 地面の霧を専用に描く (2D 層を板のレイマーチで合成、フロクセルから外す、太陽光の切り替え)` |
 | sub-04 | 流れのソルバ (移流・投影・風・並列・デバッグ描画・計測) | sub-03 | 3, 13, 14, 15, 16, 30 | `M96d: かき乱しフィールドの流れ (半ラグランジュ移流・圧力投影・一様風・行並列、デバッグ線)` |
-| sub-05 | スクリプトの口 (ABI v35 = 202: FieldAddImpulse / FieldSample) とデモの操作役 | sub-04 | 12, 17, 18, 30 | `M96e: かき乱しフィールドのスクリプト API (FieldAddImpulse / FieldSample、ABI v35 = 202)` |
-| sub-06 | アニメイベント `disturb` (斬撃で霧を散らす) | sub-05 | 12, 19, 30 | `M96f: アニメイベント disturb (振りの瞬間にかき乱しフィールドへ注入する)` |
-| sub-07 | 3D ボリューム (浮力・3D テクスチャ 4 本・フロクセル) | sub-06 | 12, 20, 30 | `M96g: かき乱しフィールドの 3D ボリューム (浮力、4 個までフロクセルへ注入)` |
-| sub-08 | フロクセルの自動有効 (場だけのモード) と Volume の太陽光の bool | sub-07 | 12, 30, 31, 32 (3D) | `M96h: Volume の霧でフロクセルを自動で回す (場だけのモード) と、太陽光の切り替え` |
-| sub-09 | 追従モード (整数セルずらし) | sub-08 | 12, 21, 30 | `M96i: かき乱しフィールドの追従 (整数セル単位で格子をずらす)` |
-| sub-10 | 地形の起伏に沿う 2D 層 (列ごとの基準高さ) | sub-09 | 12, 30, 33 | `M96j: かき乱しフィールドの 2D 層を地形の起伏に沿わせる (列ごとの基準高さ)` |
-| sub-11 | 粒子 (CPU / GPU) | sub-10 | 12, 22, 30 | `M96k: パーティクルをかき乱しフィールドの流れに乗せる (CPU / GPU)` |
-| sub-12 | 水面の波紋 | sub-11 | 12, 23, 30 | `M96l: 水面にかき乱しフィールドの波紋を描く` |
-| sub-13 | 跡 (地形の雪・砂) | sub-12 | 12, 24, 30 | `M96m: 地形にかき乱しフィールドの跡を描く (雪・砂の筋)` |
-| sub-14 | 草 (サーフェスシェーダの予約テクスチャ + デモの草束) | sub-13 | 12, 25, 30 | `M96n: 草をかき乱しフィールドで倒す (サーフェスシェーダの予約テクスチャ、デモの草束)` |
-| sub-15 | 地面の霧を局所ライトで照らす (ON/OFF、最大 8 本、影なし) | sub-14 | 12, 30, 35 | `M96o: 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし)` |
-| sub-16 | 仕上げ (ADR-036・文書・カタログ・全検証) | sub-15 | 26, 27, 28, 30 | `M96p: かき乱しフィールドの文書 (ADR-036、engine_spec、機能ガイド、確認項目) と全検証` |
+| sub-05 | スクリプトの口 (ABI v35 = 202: FieldAddImpulse / FieldSample) とデモの操作役 | sub-03 (W1) | 12, 17, 18, 30 | `M96e: かき乱しフィールドのスクリプト API (FieldAddImpulse / FieldSample、ABI v35 = 202)` |
+| sub-06 | アニメイベント `disturb` (斬撃で霧を散らす) | sub-05 (W2) | 12, 19, 30 | `M96f: アニメイベント disturb (振りの瞬間にかき乱しフィールドへ注入する)` |
+| sub-07 | 3D ボリューム (浮力・3D テクスチャ 4 本・フロクセル) | sub-04 (W2) | 12, 20, 30 | `M96g: かき乱しフィールドの 3D ボリューム (浮力、4 個までフロクセルへ注入)` |
+| sub-08 | フロクセルの自動有効 (場だけのモード) と Volume の太陽光の bool | sub-07, sub-16 (W3) | 12, 30, 31, 32 (3D) | `M96h: Volume の霧でフロクセルを自動で回す (場だけのモード) と、太陽光の切り替え` |
+| sub-09 | 追従モード (整数セルずらし) | sub-07 (W3) | 12, 21, 30 | `M96i: かき乱しフィールドの追従 (整数セル単位で格子をずらす)` |
+| sub-10 | 地形の起伏に沿う 2D 層 (列ごとの基準高さ) | sub-09 (W4) | 12, 30, 33 | `M96j: かき乱しフィールドの 2D 層を地形の起伏に沿わせる (列ごとの基準高さ)` |
+| sub-11 | 粒子 (CPU / GPU) | sub-07 (W3) | 12, 22, 30 | `M96k: パーティクルをかき乱しフィールドの流れに乗せる (CPU / GPU)` |
+| sub-12 | 水面の波紋 | sub-03 (W1) | 12, 23, 30 | `M96l: 水面にかき乱しフィールドの波紋を描く` |
+| sub-13 | 跡 (地形の雪・砂) | sub-03 (W4) | 12, 24, 30 | `M96m: 地形にかき乱しフィールドの跡を描く (雪・砂の筋)` |
+| sub-14 | 草 (サーフェスシェーダの予約テクスチャ + デモの草束) | sub-03 (W2) | 12, 25, 30 | `M96n: 草をかき乱しフィールドで倒す (サーフェスシェーダの予約テクスチャ、デモの草束)` |
+| sub-15 | 地面の霧を局所ライトで照らす (ON/OFF、最大 8 本、影なし) | sub-03 (W1) | 12, 30, 35 | `M96o: 地面の霧を局所ライトで照らす切り替え (最大 8 本、影なし)` |
+| sub-16 | Forward のスカイ無しの背景に地面の霧とフロクセルを掛ける (背景だけの全画面パス、golden の更新) | sub-15 (W2) | 12, 30, 36 | `M96p: Forward でもスカイの無い背景に地面の霧とフロクセルを掛ける (背景だけの全画面パス)` |
+| sub-17 | 仕上げ (ADR-036・文書・カタログ・全検証) | 全部 (W5) | 26, 27, 28, 30 | `M96q: かき乱しフィールドの文書 (ADR-036、engine_spec、機能ガイド、確認項目) と全検証` |
 
 荷重のかかる未知の順: (1) 3 点セットと決定論 (sub-01、済み) → (2) フロクセルで霧として見えるか (sub-02、済み。横縞が出たので専用描画へ) → (3) 地面の霧を 10 か所の合成で既存の絵を 1 ビットも変えずに足せるか (sub-03) → (4) 流れのコスト (sub-04)。見た目の他の用途は sub-02 のアップロード経路に乗るだけなので後ろへ回した。
 
@@ -314,7 +336,7 @@
 - R10 (sub-03 / sub-08): `fogSunLight` の散乱は影なし (木陰でも照る)。影は後回し (§3)
 - R11 (sub-15): 地面の霧の局所ライトは最大 8 本・影なし (§2 #24)。影つきのビームは Volume で作る。8 本の既定は sub-15 の GPU 時間で planner が見直す
 - R12 (sub-03): 地面の霧は面ごとに 1 回レイマーチするので、霧の後ろに透明物が重なると透明物のピクセルでも積分する (コストは面の数に比例)。段数の既定は sub-03 の計測で planner が判断する
-- R13 (sub-03、受け入れ済み): スカイボックスの無いシーンの背景 (clear 色) には、Deferred では地面の霧が掛かるが Forward では掛からない (Forward には背景を描くシェーダが無い)。既存のフロクセルの背景処理が Deferred だけなのと同じ構造の制限。霧のデモはスカイボックスを置く。直すなら Forward に背景の全画面パスを足す別の仕事
+- R13 (sub-03 → sub-16): スカイボックスの無い背景に地面の霧が掛かるのが Deferred だけ、という制限は、ユーザー指示 (2026-11-08) で取り消し。sub-16 で Forward にも掛ける (§2 #25)。フロクセルの背景も Forward で Deferred に揃える (ユーザー回答 2026-11-08、§2 #25)
 
 ### ユーザー回答 (2026-11-08、司会の AskUserQuestion)
 
@@ -336,3 +358,58 @@
 - 2026-11-08 (ユーザー回答、sub-02 の横縞): 地面の霧専用の描画を足す。§2 #13 / #14 / #15、§3、§4.3、§5 (31 / 32 の担当、34 を追加)、§6、§7 R1 / R9〜R12 を更新。sub-03 を「地面の霧の専用描画」として新設し、旧 sub-03 (フロクセルの自動有効と太陽光) は対象を Volume だけに絞って sub-07 の後の sub-08 へ移した (GroundLayer がフロクセルを使わなくなったので、自動有効は Volume にしか要らない)。旧 sub-08〜14 を sub-09〜15 へ繰り下げ、件名の記号を M96c〜o に。selftest / replay_verify の最後のまとめ実行は sub-15
 - 2026-11-08 (ユーザー回答、地面の霧の局所ライト): 照らす / 照らさないを ON/OFF で切り替える。§2 #24 を追加、§3 / §4.2 / §4.3 / §5 (35 を追加) / §6 / §7 R11 を更新。sub-15 (局所ライト) を新設し、仕上げを sub-16 (M96p) へ繰り下げた。まとめ実行の最後は sub-16
 - 2026-11-08 (sub-03 round 2): §7 R13 (スカイ無しの背景の Forward / Deferred の食い違い) を制限として追加
+- 2026-11-08 (ユーザー指示「Forward でもスカイなしの時に霧を掛けて」): R13 の制限を取り消し、§2 #25・§5 の 36・§6 の sub-16 (背景だけの全画面パス) を追加。仕上げを sub-17 (M96q) へ繰り下げ、まとめ実行の最後も sub-17。sub-04 (実装中) 以前の番号は動かしていない
+- 2026-11-08 (ユーザー回答、Forward のフロクセルの背景): Deferred に揃える。§2 #25 の描く条件を「地面の霧 または フロクセル」に、§5 の 36 を「差 0 の絵 / 変わってよい絵 / golden の更新手順」に分けた。sub-16 の件名を更新
+- 2026-11-08 (ユーザー指示「coder 並列化して 4 つくらい」): §6 を波 W1〜W5 に分け、依存を実際の依存に直した。付録 A (予約表) と付録 B (統合の手順) を追加。中間のまとめ実行は W2 の統合の後。§2 #26 (跡の見た目の欄の置き場所) を追加
+
+## 付録 A. 並列の予約表 (W1〜W5)
+
+各サブは**自分の行の資源だけ**を変える。表に無い共有資源を変えたくなったら、実装せずに「不安・質問」で返す (planner が予約を足す)。
+
+### A.1 版と番号
+
+| 資源 | 今 | 予約 |
+|---|---|---|
+| `kSimSnapshotVersion` (`SimSnapshot.h`) と `AcousticAudioSelfTest.cpp:129` の表明 | v70 (sub-01) | sub-04 = v71、sub-07 = v72、sub-09 = v73、sub-11 = v74、sub-10 = v75、sub-13 = v76。sub-15 は `pad0` を使うので上げない (詰め物が無いと分かったら実装せず返す)。版は一致しか見ないので、統合で飛び番になってよい。同じ波で 2 本が上げたら、統合で大きい方に揃え、版のコメントは両方残す |
+| ABI (`MYE_API_VERSION` とスロット数) | v34 = 200 | sub-05 = v35 = 202 だけ。他のサブはスロットを足さない |
+| ComponentTypeId | 96 / 97 使用 | 新しい型は予約しない (足したくなったら返す。次は 98) |
+| DFLD 節のレイアウト | sub-01 | sub-07 (flowY) → sub-10 (columnBaseY) の順だけ。sub-04 / 09 / 11 / 13 / 15 は DFLD を変えない (sub-04 が変えたなら W1 の統合で確認する) |
+| check_rules の規則番号 | 18 まで | 新しい規則番号は作らない。規則 9 のグループの追加は sub-07「Volume」/ sub-11「粒子」/ sub-15「地面の霧のライト」(別の波なので順序の衝突は無い) |
+| replay ジョブ / MCP の JOBS | 24 (`field` を含む) | 増やさない (sub-04 が `jobsab` に `--field-demo` を足すのは既定どおり) |
+| golden PNG (`tests\golden\`) | — | sub-16 だけが撮り直してよい (受け入れ 36 の条件つき)。他のサブで golden が動いたら不具合 |
+
+### A.2 構造体・表の末尾 (誤マージが起きやすい所)
+
+| 場所 | 触ってよいサブ (波) |
+|---|---|
+| `DisturbanceFieldComponent` の末尾 (`Components.h`) と反射登録 (`Components.cpp`) | W1: sub-04 (末尾に 2 欄) と sub-15 (`pad0` の改名だけ。末尾は触らない)。W2: sub-07。W3: sub-09。W4: sub-10 |
+| `DisturbanceSourceComponent` | どのサブも触らない |
+| `ParticleEmitterComponent` の末尾と登録 | W3: sub-11 |
+| `TerrainComponent` の末尾と登録 | W4: sub-13 (跡の見た目の欄。§2 #26) |
+| `DisturbanceSlot` / `DisturbanceState` / DFLD の Write・Read・ハッシュ | sub-04 (W1。移流の作業配列は状態にしない)、sub-07 (W2)、sub-09 (W3。ずらしは関数の追加で、スロットの欄は増やさない)、sub-10 (W4) |
+| `ClipEventKind` / `ControllerClipEvent` の末尾 | W2: sub-06 |
+| `EngineAPI.h` / `Interop.cs` / `ScriptAPI.h` | W1: sub-05 |
+| 層の CB (`DisturbanceLayerCB` 336 B) / ビューの CB (`GroundFogViewCB` 128 B) | 誰も変えない。sub-15 はライトを**新しい CB** に載せる (b8 以降の空きを sub-15 が調べて決め、共有ヘッダに書く) |
+| froxel CS の束縛 (今 t1 / t2 / s1 / b1) | W2: sub-07 が t3〜t6 (Texture3D × 4) と b2 (Volume の CB) |
+| 粒子 CS の束縛 (今 t0〜t2) | W3: sub-11 が t3 (2D 配列) と t4〜t7 (3D × 4)。CB が要れば sub-11 が空きを調べて決める |
+| PS の固定スロット (b6 / b7 / t32 / t33 / s8、sub-03) | 読むのは誰でもよい。**VS にも同じ番号で張る口**を足すのは W2 の sub-14 だけ (sub-12 の水面は PS の法線だけで、VS の変位はしない) |
+| `LocalizationTable.inl` の末尾 | 誰でも足してよい (統合の目視点。両言語の対と `###` の識別子を確かめる) |
+| `DisturbanceFieldSelfTest.cpp` | 各サブは**自分の名前の static 関数** (`RunDisturbance<機能>Tests`) をファイル末尾に足し、スイート関数の末尾に呼び出しを 1 行だけ足す。既存の関数の中に断言を混ぜない |
+| selftest の焼き込み値 (`kBakedFinalHash` = 0x92713D47B7CE447A など) | **各サブは変えない** (selftest を走らせないので値を出せない)。まとめ実行 (W2 の後、W5) で落ちたら、統合後の master で 1 本の修正コミット (司会が FIX_REQUEST) で、原因 (どのサブの、どの欄・どの計算か) を断定してから再採取する |
+| `DemoContentField.cpp` | 各サブは**自分の関数** (`AddFieldDemo<機能>`) を足し、`BuildFieldShowcaseScene` の**末尾**に呼び出しを 1 行だけ足す。既存の関数の中身は変えない (sub-08 / sub-16 がカメラ・フロクセルの設定を変える分は除く)。呼び出しの順は統合の順 = 波の順 (後から足した物は末尾。memory `demo-entity-order-is-rng-stream`) |
+| `build\Engine.vcxproj` / `.filters` | 競合したら手で直さず、統合後に `tools\gen_project_files.ps1` を回し直す |
+
+## 付録 B. 統合の手順
+
+- **B.0 (W1 の前に 1 回)**: 計画ファイル (`plans\m96-disturbance-field\` の spec / sub / 台帳) を、sub-04 のコードと分けて先に master へコミットする (件名例 `M96: 並列の予約表と波の計画`)。W1 の worktree はこのコミットから切る。sub-04 はそのコミットの上で、メインの作業ツリーのまま続ける
+- **B.1 (各波)**: 波の中のサブは、それぞれ自分の worktree で VERDICT OK まで進める。統合は §6 の表の「統合の順」に、1 本ずつ master へマージする。マージごとにビルド (Debug / Release) と `tools\check_rules.ps1` を通す
+- **B.2 (目視点)**: マージのたびに次を `git diff` で目で見る。競合が出なくても見る
+  - A.2 の構造体の末尾の欄が正しい struct の中にあるか (`static inline ComponentTypeId sTypeId` の前か、別の struct へ入っていないか)。`static_assert(sizeof(...))` の値が欄の合計と合うか
+  - 反射登録の表の欄が、正しいコンポーネントの登録の中にあるか
+  - `SimSnapshot.h` の版の行とコメント、`AcousticAudioSelfTest.cpp` の版の表明が、波の最大値か
+  - `DemoContentField.cpp` の `BuildFieldShowcaseScene` の末尾の呼び出しが、統合の順に並んでいるか
+  - `DisturbanceFieldSelfTest.cpp` の新しい関数の括弧が閉じていて、スイート関数の末尾から呼ばれているか
+  - `LocalizationTable.inl` の両言語の対
+  - `tools\check_rules.ps1` 規則 9 のグループの追加が、別の規則の中へ入っていないか
+- **B.3 (W2 の統合の後 = 中間のまとめ実行)**: master で `Editor.exe --selftest-full` (Debug / Release) と `tools\replay_verify.bat` を回す。落ちたら原因のサブを断定して FIX_REQUEST を回す (焼き込み値は A.2 の規則)
+- **B.4 (W5)**: sub-17 が最後のまとめ実行を行う (受け入れ 28)

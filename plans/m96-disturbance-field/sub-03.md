@@ -1,7 +1,7 @@
 # sub-03: 地面の霧の専用描画 (2D 層を板のレイマーチで描く、自己照明 + 太陽光の bool)
 
 - 依存: sub-02
-- 状態: OK (commit は司会が記入)
+- 状態: OK (commit 9b16433)
 - 往復: 2
 
 ## やること
@@ -54,7 +54,7 @@ spec §5 の 12, 30, 32 (2D 層の分), 34。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - スクショ一式 (Runtime.exe、Forward と Deferred)、`Editor.exe --img-diff`
@@ -105,7 +105,7 @@ SELF_EVAL: sub-03 (round 1)
   - Deferred 1920x1080: 層 0 = 1.002 / 1.030、層 1 = 1.572 / 1.924、層 4 = 3.210 / 3.216
   - 増分 (最小値どうし): 層 1 枚で +0.1〜0.6 ms、4 枚で +0.5〜2.2 ms。4 層は全部がカメラ線分と交わる最悪形 (同位置に 4 枚重ね)。光パスだけの GpuTimer は取っていない (frame 全体の差分)
 - 32 (2D 層の分) fogSunLight false / true、霧の領域の平均輝度 (0..255): カメラが太陽の進行方向を向く (太陽が背後) = off 224.625 / on 225.601。カメラが太陽のほうを向く (太陽の逆向き) = off 224.804 / on 226.748。on が常に明るい。差が小さいのは霧が濃く (σ = 1.6) ほぼ飽和しているため
-- 12 replay_verify `field` / selftest → 未実行 (指示どおり、sub-07 後 / sub-16 でまとめて実行)
+- 12 replay_verify `field` / selftest → 未実行 (指示どおり、sub-07 後 / sub-17 でまとめて実行)
 
 自己採点 (1-5):
   仕様適合: 4 — 受け入れ 34(a)(b)(c)(d)(e)・32 は画像と数値で確認。背景 (ジオメトリ無し) の Deferred と GPU 粒子の絵が未確認・未実装
@@ -126,7 +126,7 @@ SELF_EVAL: sub-03 (round 1)
 - src\Engine\Core\Ecs\Components.cpp
 - src\Engine\Engine\Demo\DemoContentField.cpp
 - tools\check_rules.ps1
-- plans\m96-disturbance-field\ 配下 (spec / sub-*.md / harness.md / 新規 sub-15, sub-16 = planner と司会の未コミット変更、本サブのコミットへ同梱)
+- plans\m96-disturbance-field\ 配下 (spec / sub-*.md / harness.md / 新規 sub-15, sub-17 = planner と司会の未コミット変更、本サブのコミットへ同梱)
 
 申し送り:
 - スクショ (全部 C:\Users\akita\AppData\Local\Temp\claude\58c0e4c841a0685f\14d68bbd-02de-486d-b73d-7903e06a5ea3\scratchpad\m96-shots\ 配下):
@@ -182,4 +182,4 @@ SELF_EVAL: sub-03 (round 2)
 
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner、2026-11-08)。横縞は 34(a) の数値と司会の目視で消えた。34(c) の 8 組差 0、32、34(e) の計測を確認。must 1 件: 赤い球が霞まなく見える件 (司会の目視) と 34(d) の整合の証拠。仮説 = 球は自分の源 (半径 1.5 m・densityDelta −0.3) で周りの霧を晴らしており、sub-02 ではフロクセルの粗さ (奥行き 1〜2 m / スライス) とテンポラルがその穴をぼかしていた。should 2 件: Deferred の背景 (ジオメトリ無し) にも掛ける / Editor の実画面で束縛が漏れないことのスクショ
-- round 2: VERDICT OK (planner、2026-11-08)。#1 は (a) 源の無い箱が霞む・(b) densityDelta 0 で球も霞む・(c) 解析値で、球が自分の源の穴の中にいるためと確定 (積分の誤りなし)。#2 Deferred の背景に掛けた (層 0 枚でビット恒等、8 組差 0 を撮り直し)。スカイ無しの背景の Forward / Deferred の食い違いは既存のフロクセルと同じ構造の制限として受け入れ (spec §7 R13)。#3 Scene / Game View の漏れなしを確認、サムネイルは sub-16 の手動確認へ
+- round 2: VERDICT OK (planner、2026-11-08)。#1 は (a) 源の無い箱が霞む・(b) densityDelta 0 で球も霞む・(c) 解析値で、球が自分の源の穴の中にいるためと確定 (積分の誤りなし)。#2 Deferred の背景に掛けた (層 0 枚でビット恒等、8 組差 0 を撮り直し)。スカイ無しの背景の Forward / Deferred の食い違いは既存のフロクセルと同じ構造の制限として受け入れ (spec §7 R13)。#3 Scene / Game View の漏れなしを確認、サムネイルは sub-17 の手動確認へ

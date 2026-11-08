@@ -1,14 +1,23 @@
 # sub-12: 水面の波紋
 
-- 依存: sub-11
+- 依存: sub-03 (波 W1。spec §6)
 - 状態: 未着手
 - 往復: 0
+
+
+## 並列の注意 (波 W1)
+
+- **司会が渡した git worktree の絶対パスでだけ作業する。** メインの作業ツリー (`C:\HAL\MyEngin`) には 1 バイトも書かない (W1 ではそこで sub-04 が動いている)。作業の最初と最後に、worktree と `C:\HAL\MyEngin` の両方で `git status` を取り、SELF_EVAL に貼る
+- このサブが変えてよい共有資源 (spec 付録 A): PS の固定スロット (t32 / t33 / b6 / b7 / s8) を**読むだけ**。VS の変位はしない (VS の束縛の口は W2 の sub-14 が作る)。snapshot・コンポーネントは変えない。デモは `AddFieldDemoPond`
+- 付録 A に無い共有資源 (版・スロット・構造体の末尾・規則の番号・golden) を変えたくなったら、実装せずに「不安・質問」で返す
+- テストは `DisturbanceFieldSelfTest.cpp` などの既存の関数に混ぜず、自分の名前の static 関数を足して、スイート関数の末尾から 1 行で呼ぶ。デモも自分の関数を足し、`BuildFieldShowcaseScene` の末尾に 1 行だけ足す
+- 焼き込み値 (`kBakedFinalHash` など) は変えない (付録 A.2)。`build\Engine.vcxproj` は `tools\gen_project_files.ps1` の出力のまま
 
 ## やること
 
 spec §4.3 の水面、§2 #18。歩く・斬る・物が落ちると水面に波紋が広がる (見た目だけ)。
 
-1. 水面のシェーダ (`water_surface.hlsl`。Gerstner の M79 サーフェス `WaterGerstner.surface.hlsl` も対象にするかは coder が経路を確認して判断し、SELF_EVAL に書く) で、波紋チャネルを持つ 2D 層の `h` を引き、中心差分の勾配を法線に足す。VS に SRV を束縛できるなら変位も足す (できなければ法線だけ。理由を書く)
+1. 水面のシェーダ (`water_surface.hlsl`。Gerstner の M79 サーフェス `WaterGerstner.surface.hlsl` も対象にするかは coder が経路を確認して判断し、SELF_EVAL に書く) で、波紋チャネルを持つ 2D 層の `h` を引き、中心差分の勾配を法線に足す。VS の変位はしない (VS の束縛の口は W2 の sub-14 が作る。spec 付録 A.2)
 2. 束縛: sub-02 の RG16F の配列 (R = 波紋) を、`water_surface.hlsl` の空いた t スロット (t0〜t8 が使用中、`:82-90`) に。番号は共有ヘッダへ
 3. 浮力 (`WaterWaveComponent` の CPU 側) は**変えない**
 4. デモ: `--field-demo` の末尾に浅い池 (水面 + 波紋チャネルの 2D 層、`baseY` を水面の高さに) を足し、デモの人の経路が池を横切るようにする
@@ -34,7 +43,7 @@ spec §5 の 12, 23, 30。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (W2 の統合後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - `$env:MYE_SELFTEST_ONLY='watersurface,waterwave,disturbance,render'; bin\x64\Debug\Editor.exe --selftest`

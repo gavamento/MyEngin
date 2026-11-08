@@ -52,7 +52,7 @@ spec §5 の 10, 11, 12, 30。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - `$env:MYE_SELFTEST_ONLY='disturbance,render,enginecli'; bin\x64\Debug\Editor.exe --selftest`
@@ -68,4 +68,4 @@ spec §5 の 10, 11, 12, 30。
 - 検証: Debug / Release ビルド警告 0、check_rules (増えた error なし。既存の harness.md CRLF 1 件は司会の編集物)、cargo test 49 PASS。selftest と replay_verify は運用指示で未実行
 
 ## フィードバック履歴
-- round 1: VERDICT OK (planner、2026-11-08)。R1 = 霧は見える・尾は理論 22 フレーム → 専用描画なし。横縞は許容の裁定 ([ユーザーに聞ける])。ノイズは同フレーム内の領域差で測る (19.6 / 0.03)。Play / Stop の Editor 操作確認は sub-16 の手動確認項目へ。selftest / replay_verify は運用どおり sub-07 後
+- round 1: VERDICT OK (planner、2026-11-08)。R1 = 霧は見える・尾は理論 22 フレーム → 専用描画なし。横縞は許容の裁定 ([ユーザーに聞ける])。ノイズは同フレーム内の領域差で測る (19.6 / 0.03)。Play / Stop の Editor 操作確認は sub-17 の手動確認項目へ。selftest / replay_verify は運用どおり sub-07 後

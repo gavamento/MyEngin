@@ -1,8 +1,17 @@
 # sub-08: フロクセルの自動有効 (場だけのモード) と、Volume の霧に太陽光を当てる bool
 
-- 依存: sub-07
+- 依存: sub-07, sub-16 (波 W3。spec §6)
 - 状態: 未着手
 - 往復: 0
+
+
+## 並列の注意 (波 W3)
+
+- **司会が渡した git worktree の絶対パスでだけ作業する。** メインの作業ツリー (`C:\HAL\MyEngin`) には 1 バイトも書かない (W1 ではそこで sub-04 が動いている)。作業の最初と最後に、worktree と `C:\HAL\MyEngin` の両方で `git status` を取り、SELF_EVAL に貼る
+- このサブが変えてよい共有資源 (spec 付録 A): 合成箇所のシェーダ全部 (10 本 + **sub-16 の背景の PS**)、RenderSystem のフロクセル判定とゴッドレイ。コンポーネントの欄は変えない (sub-01 の `autoFroxel` / `fogSunLight` を使う)
+- 付録 A に無い共有資源 (版・スロット・構造体の末尾・規則の番号・golden) を変えたくなったら、実装せずに「不安・質問」で返す
+- テストは `DisturbanceFieldSelfTest.cpp` などの既存の関数に混ぜず、自分の名前の static 関数を足して、スイート関数の末尾から 1 行で呼ぶ。デモも自分の関数を足し、`BuildFieldShowcaseScene` の末尾に 1 行だけ足す
+- 焼き込み値 (`kBakedFinalHash` など) は変えない (付録 A.2)。`build\Engine.vcxproj` は `tools\gen_project_files.ps1` の出力のまま
 
 ## やること
 
@@ -39,7 +48,7 @@ spec §2 #14 / #15、§4.3 のフロクセルのモード。ユーザー回答 (
 
 - `assets\shaders\froxel_inject.cs.hlsl:88-120`、`disturbance_common.hlsli`
 - `src\Engine\Engine\Rendering\RenderSystem.cpp:935-949` (有効判定)、`:2364-2374` (ゴッドレイ)
-- フロクセルを合成するシェーダ 10 本 (`froxel_common.hlsli:106-140` の `FroxelFogOrigin` / `FroxelComposite` など)
+- フロクセルを合成するシェーダ 10 本と、sub-16 が足した Forward の背景の PS (`froxel_common.hlsli:106-140` の `FroxelFogOrigin` / `FroxelComposite` など)
 - Inspector の説明 (`Components.cpp` の `MYE_FIELD_TIP`)、`LocalizationTable.inl`
 - `src\Engine\Engine\Demo\DemoContentField.cpp`
 
@@ -60,7 +69,7 @@ spec §5 の 12, 30, 31, 32 (Volume の分)。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を**実行しない**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (W2 の統合後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - スクショ一式 (Runtime.exe / Editor.exe の Scene View)、`--img-diff`

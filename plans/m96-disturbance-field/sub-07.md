@@ -1,8 +1,17 @@
 # sub-07: 3D ボリューム (浮力・3D テクスチャ・フロクセル)
 
-- 依存: sub-06
+- 依存: sub-04 (波 W2。spec §6)
 - 状態: 未着手
 - 往復: 0
+
+
+## 並列の注意 (波 W2)
+
+- **司会が渡した git worktree の絶対パスでだけ作業する。** メインの作業ツリー (`C:\HAL\MyEngin`) には 1 バイトも書かない (W1 ではそこで sub-04 が動いている)。作業の最初と最後に、worktree と `C:\HAL\MyEngin` の両方で `git status` を取り、SELF_EVAL に貼る
+- このサブが変えてよい共有資源 (spec 付録 A): snapshot **v72**。`DisturbanceFieldComponent` の末尾 (`buoyancy`)、DFLD のレイアウト (flowY)。froxel CS の **t3〜t6** (Texture3D × 4) と **b2** (Volume の CB)。規則 9 のグループ「Volume」。デモは `AddFieldDemoSmoke`
+- 付録 A に無い共有資源 (版・スロット・構造体の末尾・規則の番号・golden) を変えたくなったら、実装せずに「不安・質問」で返す
+- テストは `DisturbanceFieldSelfTest.cpp` などの既存の関数に混ぜず、自分の名前の static 関数を足して、スイート関数の末尾から 1 行で呼ぶ。デモも自分の関数を足し、`BuildFieldShowcaseScene` の末尾に 1 行だけ足す
+- 焼き込み値 (`kBakedFinalHash` など) は変えない (付録 A.2)。`build\Engine.vcxproj` は `tools\gen_project_files.ps1` の出力のまま
 
 ## やること
 
@@ -10,7 +19,7 @@ spec §4.1 A (Volume)・J の浮力、§4.3 の 3D、§2 #16。立体の煙・�
 
 1. `shape = Volume` の場を sim する (sub-01 で「状態を作らず WARN」にしていた分岐を外す)。流れは 3 成分、チャネルは濃さだけ (跡・波紋のビットは Volume では無視し、Inspector に注記)。注入の距離は 3D のユークリッド距離 (spec §4.1 C)
 2. 移流・投影・発散・勾配を y 方向込みに (sub-04 の関数を広げる。2D の結果は 1 ビットも変えない — 2D のハッシュの焼き込み値が不動であることで確かめる)。並列は y スライスで割る
-3. `DisturbanceFieldComponent` の末尾に `buoyancy` (既定 0) を足す (`vy += buoyancy × (ρ − restDensity) / 60`)。snapshot は着手時の版 + 1
+3. `DisturbanceFieldComponent` の末尾に `buoyancy` (既定 0) を足す (`vy += buoyancy × (ρ − restDensity) / 60`)。snapshot は spec 付録 A.1 の予約の版
 4. 描画: 有効な Volume を**全部 (最大 4 個、entity index 昇順)** それぞれの Texture3D `RGBA16F` (vx, vy, vz, ρ) へ転送する (sub-02 のパスに追加。3D は配列にできないので SRV 4 本、寸法は各自)。CB に 4 個ぶんの原点・寸法・cellSize・見た目の欄と有効数。フロクセルの注入で 4 個を順に足す `σ += fogDensity × ρ(posW) × edgeFade` (3D の縁 2 マス)。格子の AABB の外では読まない (分岐で抜ける)。自己照明は sub-02 と同じ式。太陽光の bool と自動有効 (場だけのモード) は次の sub-08 — このサブのデモはカメラの `froxelOn = true`・`froxelDensity = 0` で描く (spec §2 #15、§2 #16)
 5. デモ: `--field-demo` の末尾に煙の柱 (Volume 32×16×32、Constant の源で `densityDelta > 0`・上向き `constantVelocity`、`buoyancy > 0`) を足す。爆発 (sub-05 の Radial) が煙も吹き飛ばす配置
 6. 計測: 32×16×32・20 反復で Release・jobs なし / あり の step + ハッシュ、スナップショット 1 枚のバイト数
@@ -38,7 +47,7 @@ spec §5 の 12, 20, 30。
 
 ## 検証コマンド
 
-> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を実行しない。**ただしこのサブの VERDICT の後に、司会が中間のまとめ実行 (`--selftest-full` Debug / Release と `tools\replay_verify.bat`) を行う**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest と replay_verify の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) と `tools\replay_verify.bat` を実行しない。**ただしこのサブの VERDICT の後に、司会が中間のまとめ実行 (W2 の統合の後) (`--selftest-full` Debug / Release と `tools\replay_verify.bat`) を行う**。ビルドと check_rules (と、スクショなど selftest / replay_verify 以外の検証) までを行い、selftest / replay_verify で確かめる条件は「未実行 (W2 の統合後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release
 - `$env:MYE_SELFTEST_ONLY='disturbance,simparallel,simsnapshot,acousticaudio'; bin\x64\Debug\Editor.exe --selftest` と Release

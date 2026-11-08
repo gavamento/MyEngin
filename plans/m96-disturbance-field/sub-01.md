@@ -60,7 +60,7 @@ spec §5 の 1〜9, 29, 30。
 
 ## 検証コマンド
 
-> selftest の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) を**実行しない**。ビルドと check_rules (と、selftest 以外の検証) までを行い、selftest で確かめる条件は「未実行 (sub-07 後 / sub-16 でまとめて実行)」と報告する。selftest のコードは書く。
+> selftest の運用 (spec §5 冒頭、ユーザー指示 2026-11-08): このサブでは selftest (`--selftest` / `--selftest-full` / `MYE_SELFTEST_ONLY`) を**実行しない**。ビルドと check_rules (と、selftest 以外の検証) までを行い、selftest で確かめる条件は「未実行 (sub-07 後 / sub-17 でまとめて実行)」と報告する。selftest のコードは書く。
 
 - ビルド: Debug / Release の両構成 (`/p:MyeWarnAsError=true`)
 - 往復中: `$env:MYE_SELFTEST_ONLY='disturbance,simsnapshot,acousticaudio'; bin\x64\Debug\Editor.exe --selftest` と Release 同じ
@@ -76,4 +76,4 @@ SELF_EVAL: sub-01 (round 1) の要約 (全文は司会への返信)
 
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner、2026-11-08)。実装は 3 点セットの様式 (内容ゲート、DFLD 節を TM2D の後に、Clear 3 か所、SimSourcesOf の引数は増やさない) どおりで、仕様との差分 9 件は全て受け入れた (cellSize の作り直し、場が無い tick の prevPos、TilemapSelfTest の空の DFLD 節の除外、カタログ登録、SampleAt の World& など。spec §4.1 A / D に反映)。must 1 件: 受け入れ 1 の replay_verify.bat 未実行 (selftest のまとめ実行の対象外、司会の確認)。selftest (Release の焼き込み一致・--selftest-full) の未実行と計測の未実施は運用どおりで REWORK の理由にしない
-- round 2: VERDICT OK (planner、2026-11-08)。replay_verify 全 23 ジョブ PASS (269.5 秒)、焼き込みの再採取なしで既存のハッシュ列が一致 = 受け入れ 1 を確認。受け入れ 9 の Release 側と --selftest-full は sub-07 後のまとめ実行。nit #2 は sub-16、#3 は sub-05 へ申し送った
+- round 2: VERDICT OK (planner、2026-11-08)。replay_verify 全 23 ジョブ PASS (269.5 秒)、焼き込みの再採取なしで既存のハッシュ列が一致 = 受け入れ 1 を確認。受け入れ 9 の Release 側と --selftest-full は sub-07 後のまとめ実行。nit #2 は sub-17、#3 は sub-05 へ申し送った
