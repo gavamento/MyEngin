@@ -20,7 +20,8 @@ spec §4.3 の草、§7 R6。通った所の草が倒れ、戻る。草の描画
 1. `MyEngineSurface.hlsli` に予約テクスチャ (sub-02 の 2D 配列) と CB、`MyeFieldSample(posW)` (流れと濃さを返す HLSL 関数) を足す。予約の束縛は既存の予約 (`gFroxelVolume` 等、`:127-131`) と同じ自動割り当ての規約に従う。プロジェクトのサーフェスシェーダから使えることを `docs\surface-shaders-deferred-limits.md` 等の既存の作者向け文書に 1 段落
 2. `assets\shaders\GrassField.surface.hlsl`: VS で、オブジェクト空間の高さに比例して流れの向きへ倒す (根元は動かない)。場が無い・流れ 0 なら真っ直ぐ。風の揺れ (時間の sin) は描画レーンなので使ってよい
 3. デモ: `--field-demo` の末尾に草束 (細い箱のエンティティ数百。数は描画の実測で決める) を霧の広場に並べる
-4. インスタンシング経路でサーフェスシェーダが使えるかを確認し (spec §7 R6)、使えなければ個別描画のまま描画時間を `--render-stats-dump` で測って報告
+4. (sub-12 からの申し送り) `WaterGerstner.surface.hlsl` にも、1 の予約テクスチャで波紋の勾配を法線へ足す (sub-12 の `water_surface.hlsl::WaterRippleGradient` と同じ式。縁 2 マスで 0)。波紋の層が無ければビット不変
+5. インスタンシング経路でサーフェスシェーダが使えるかを確認し (spec §7 R6)、使えなければ個別描画のまま描画時間を `--render-stats-dump` で測って報告
 
 ## やらないこと (このサブでは)
 
@@ -36,7 +37,7 @@ spec §4.3 の草、§7 R6。通った所の草が倒れ、戻る。草の描画
 
 ## 受け入れ条件 (このサブ)
 
-spec §5 の 12, 25, 30。
+spec §5 の 12, 23 (Gerstner サーフェスの分), 25, 30。
 
 - 25: 球・人が通る前 / 直後 / 戻った後の 3 枚で、通り道の草が倒れて戻る (`--img-diff`)。場の無いシーンに置いた草のマテリアルが真っ直ぐ立つ 1 枚
 - `surfaceshader` / `surfacematerial` / `surfacedeferred` の selftest 不変
