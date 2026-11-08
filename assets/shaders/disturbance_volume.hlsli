@@ -16,8 +16,17 @@
 // CB 全体のバイト数 (C++ の kDisturbanceVolumeCbBytes)
 #define MYE_DFLD_VOL_CB_BYTES 272
 // 先頭の SRV の番号 (C++ の kDisturbanceVolumeSrvSlot。続く 3 本が連番) と CB の番号 (kDisturbanceVolumeCbSlot)
-#define MYE_DFLD_VOL_SRV 3
+// 別の段 (粒子の sim CS) が読むときは、先に MYE_DFLD_VOL_T0〜T3 と MYE_DFLD_VOL_CB を #define して空きスロットへ張る
+#ifndef MYE_DFLD_VOL_CB
 #define MYE_DFLD_VOL_CB 2
+#endif
+#define MYE_DFLD_VOL_SRV 3
+#ifndef MYE_DFLD_VOL_T0
+#define MYE_DFLD_VOL_T0 3
+#define MYE_DFLD_VOL_T1 4
+#define MYE_DFLD_VOL_T2 5
+#define MYE_DFLD_VOL_T3 6
+#endif
 
 // Volume 1 個の設定。C++ の DisturbanceVolumeEntryCB と同じ並び (全て float4 = 64 バイト)
 struct DisturbanceVolume
@@ -35,10 +44,10 @@ cbuffer DisturbanceVolumeCB : MYE_DFLD_REG(b, MYE_DFLD_VOL_CB)
 };
 
 // (vx, vy, vz, 濃さ ρ)
-Texture3D<float4> gDfldVol0 : MYE_DFLD_REG(t, 3);
-Texture3D<float4> gDfldVol1 : MYE_DFLD_REG(t, 4);
-Texture3D<float4> gDfldVol2 : MYE_DFLD_REG(t, 5);
-Texture3D<float4> gDfldVol3 : MYE_DFLD_REG(t, 6);
+Texture3D<float4> gDfldVol0 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T0);
+Texture3D<float4> gDfldVol1 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T1);
+Texture3D<float4> gDfldVol2 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T2);
+Texture3D<float4> gDfldVol3 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T3);
 
 // Volume i の位置 posW での消散係数 σ [1/m] = fogDensity × ρ × 縁の立ち上げ (3D の縁 2 マス) を sigma へ、
 // 自己照明 σ × fogColor × fogBrightness を emit へ足す。格子の AABB の外は読まずに抜ける (分岐)

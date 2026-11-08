@@ -1354,6 +1354,7 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
             const float fy = gy - 0.5f;
             const float fz = gz - 0.5f;
             out.field = s.entity;
+            out.vertical = true;
             out.flow[0] = Trilinear(s.flowX, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
             out.flow[1] = Trilinear(s.flowY, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);
             out.flow[2] = Trilinear(s.flowZ, s.cellsX, s.cellsY, s.cellsZ, fx, fy, fz, 0.0f);

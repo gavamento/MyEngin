@@ -20,6 +20,7 @@
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Animation/AnimatorController.h"
 #include "Engine/Engine/Loop/TickRunner.h"
+#include "Engine/Engine/Particles/CpuParticleBackend.h"
 #include "nlohmann/json.hpp"
 #include "Engine/Engine/Disturbance/DisturbanceRender.h"
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
@@ -2268,6 +2269,172 @@ bool RunDisturbanceFollowTests()
     return ok;
 }
 
+// 粒子 (M96k) の sim ハッシュ代わり: 全プールの生存粒子の位置・速度・寿命を生バイトで並べる
+std::vector<uint8_t> PoolBytes(const CpuParticleBackend& cpu)
+{
+    std::vector<uint8_t> out;
+    auto push = [&](const std::vector<float>& v, uint32_t n) {
+        const auto* b = reinterpret_cast<const uint8_t*>(v.data());
+        out.insert(out.end(), b, b + static_cast<size_t>(n) * sizeof(float));
+    };
+    for (const CpuParticleBackend::EmitterPool& pool : cpu.Pools()) {
+        const uint32_t n = pool.alive;
+        const auto* nb = reinterpret_cast<const uint8_t*>(&n);
+        out.insert(out.end(), nb, nb + sizeof(n));
+        push(pool.px, n);
+        push(pool.py, n);
+        push(pool.pz, n);
+        push(pool.vx, n);
+        push(pool.vy, n);
+        push(pool.vz, n);
+        push(pool.life, n);
+    }
+    return out;
+}
+
+// 風 (2, 0, 0) の 2D 層に、重力 0・初速 0 の粒子エミッタを emitters 個置いた sim。粒子は CPU バックエンドで回す。
+// 場は粒子を置く前に 120 tick 進めて風の流れを定常にする (粒子の理論値を一定の流れで書くため)
+struct DustRig {
+    Sim sim;
+    CpuParticleBackend cpu;
+    bool feedField = true; // false: 粒子へ場を渡さない (従来の経路)
+
+    DustRig(float influence, int emitters, bool feed = true) : feedField(feed)
+    {
+        GameObject envGo = sim.scene.CreateGameObjectTracked("Environment");
+        envGo.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 2.0f, 0.0f, 0.0f };
+        AddField(sim, 0.0f, 0.0f, 0.0f, 64, 64, kDisturbanceChannelDensity);
+        for (int i = 0; i < emitters; ++i) {
+            GameObject go = sim.scene.CreateGameObjectTracked("Dust");
+            go.SetLocalPosition(-1.0f + 0.5f * static_cast<float>(i), 0.3f, 0.0f);
+            auto* e = go.AddComponent<ParticleEmitterComponent>();
+            e->rate = 200.0f;
+            e->shape = 3;
+            e->boxExtents = { 0.3f, 0.1f, 0.3f };
+            e->speedMin = 0.0f;
+            e->speedMax = 0.0f;
+            e->lifetimeMin = 6.0f;
+            e->lifetimeMax = 6.0f;
+            e->gravity = { 0.0f, 0.0f, 0.0f };
+            e->seed = 4000u + static_cast<uint32_t>(i);
+            e->fieldInfluence = influence;
+        }
+        sim.Flush();
+        sim.Step(120);
+    }
+    void Tick()
+    {
+        sim.Step(1);
+        cpu.SetFieldSource(feedField ? &sim.D() : nullptr);
+        cpu.Update(sim.W(), kDt);
+    }
+};
+
+// 粒子 (M96k): fieldInfluence > 0 の CPU 粒子が一様な流れへ寄る / 0 は従来とビット同一 / 2 ワールド・jobs・スナップショットで一致
+bool RunDisturbanceParticleTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    constexpr float kInfluence = 3.0f;
+    constexpr int kTicks = 90;
+
+    // (a) 理論値: 加速度 k (flow - v) の陽的オイラーなので、n tick 経った粒子の速度は flow * (1 - (1 - k dt)^n)
+    {
+        DustRig rig(kInfluence, 1);
+        for (int t = 0; t < kTicks; ++t) {
+            rig.Tick();
+        }
+        FieldSampleOut flow;
+        check(DisturbanceSampleAt(rig.sim.D(), rig.sim.W(), kNullEntity, { 0.0f, 0.3f, 0.0f }, flow) && flow.flow[0] > 1.0f,
+              "particles: the wind has built a steady flow to chase");
+        const auto& pool = rig.cpu.Pools()[0];
+        int judged = 0;
+        float worst = 0.0f;
+        bool verticalFree = true;
+        for (uint32_t i = 0; i < pool.alive; ++i) {
+            const float lifetime = 1.0f / pool.invLife[i];
+            const int n = static_cast<int>(std::lround((lifetime - pool.life[i]) / kDt));
+            verticalFree = verticalFree && pool.vy[i] == 0.0f; // 2D 層は y の流れを持たないので引かない
+            if (n < 30) {
+                continue; // 時定数 1/k = 0.33 s の 1.5 倍以上経った粒子だけを見る
+            }
+            const float theory = flow.flow[0] * (1.0f - std::pow(1.0f - kInfluence * kDt, static_cast<float>(n)));
+            worst = std::max(worst, std::fabs(pool.vx[i] - theory) / theory);
+            ++judged;
+        }
+        MYE_LOG_INFO("  [disturbance] particles: %d aged particles, worst relative error vs theory = %.4g (flow %.3f m/s)",
+                     judged, worst, flow.flow[0]);
+        check(judged >= 20, "particles: enough aged particles to judge");
+        check(worst <= 0.1f, "particles: fieldInfluence pulls a particle to the flow velocity (theory within 10%)");
+        check(verticalFree, "particles: a 2D layer does not pull the vertical velocity");
+    }
+
+    // (b) 0 は従来とビット同一 (場を渡しても渡さなくても同じ)。0 より大きいと結果が変わる
+    {
+        DustRig withField(0.0f, 2, true);
+        DustRig without(0.0f, 2, false);
+        DustRig pulled(kInfluence, 2, true);
+        for (int t = 0; t < kTicks; ++t) {
+            withField.Tick();
+            without.Tick();
+            pulled.Tick();
+        }
+        check(PoolBytes(withField.cpu) == PoolBytes(without.cpu), "particles: fieldInfluence = 0 is bit-identical to not feeding the field");
+        check(PoolBytes(pulled.cpu) != PoolBytes(without.cpu), "particles: fieldInfluence > 0 changes the result");
+    }
+
+    // (c) 2 ワールド一致、jobs あり / なし一致 (プールが並列に回る数: 6 本)
+    {
+        const bool jobsWas = jobs::System().Enabled();
+        std::vector<uint8_t> bytes[3];
+        for (int run = 0; run < 3; ++run) {
+            jobs::System().SetEnabled(run == 1); // 0: jobs なし 1: jobs あり 2: jobs なし (2 ワールド目)
+            DustRig rig(kInfluence, 6);
+            for (int t = 0; t < kTicks; ++t) {
+                rig.Tick();
+            }
+            bytes[run] = PoolBytes(rig.cpu);
+        }
+        jobs::System().SetEnabled(jobsWas);
+        check(!bytes[0].empty() && bytes[0] == bytes[2], "particles: two worlds run to the same pool bytes");
+        check(bytes[0] == bytes[1], "particles: jobs on and off give the same pool bytes");
+    }
+
+    // (d) スナップショットの往復: 撮って別の Sim へ復元し、続きが一致する (欄 fieldInfluence が blob に載る)
+    {
+        DustRig a(kInfluence, 2);
+        for (int t = 0; t < 60; ++t) {
+            a.Tick();
+        }
+        SimRefs refsA;
+        refsA.scene = &a.sim.scene;
+        refsA.particles = &a.cpu;
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refsA, blob), "particles snapshot: capture succeeds");
+        DustRig b(kInfluence, 2);
+        SimRefs refsB;
+        refsB.scene = &b.sim.scene;
+        refsB.particles = &b.cpu;
+        check(RestoreSimSnapshot(refsB, blob.data(), blob.size()), "particles snapshot: restore succeeds");
+        const auto* restored = b.sim.W().GetComponent<ParticleEmitterComponent>(b.sim.scene.Find("Dust").Id());
+        check(restored != nullptr && restored->fieldInfluence == kInfluence, "particles snapshot: fieldInfluence survives the round trip");
+        check(PoolBytes(a.cpu) == PoolBytes(b.cpu), "particles snapshot: the restored pools match");
+        bool same = true;
+        for (int t = 0; t < 60 && same; ++t) {
+            a.Tick();
+            b.Tick();
+            same = PoolBytes(a.cpu) == PoolBytes(b.cpu);
+        }
+        check(same, "particles snapshot: the restored scene continues bit-identically");
+    }
+    return ok;
+}
+
 } // namespace
 
 bool RunDisturbanceFieldSelfTest()
@@ -2277,7 +2444,8 @@ bool RunDisturbanceFieldSelfTest()
     const bool grassOk = RunDisturbanceGrassTests();
     const bool backgroundFogOk = RunBackgroundFogConditionTests();
     const bool followOk = RunDisturbanceFollowTests();
-    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && followOk;
+    const bool particleOk = RunDisturbanceParticleTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk && animEventOk && grassOk && backgroundFogOk && followOk && particleOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()

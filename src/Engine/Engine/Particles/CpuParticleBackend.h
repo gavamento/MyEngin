@@ -10,6 +10,7 @@
 namespace mye {
 
 struct ParticleEmitBasis; // M61b: エミッタの上 3x3 基底 (ParticleCurves.h)
+class DisturbanceState;   // M96k: かき乱しフィールドの状態 (粒子は読むだけ)
 
 // CPU パーティクル (engine_spec.md 7.3)。
 // - SoA レイアウト + SSE 4-wide 更新 (スカラー参照実装を常備 — 端数レーンと検証用)
@@ -28,6 +29,10 @@ public:
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
                 RenderResources& resources, float renderOffsetX) override;
     ParticleStats Stats() const override { return stats_; }
+
+    // かき乱しフィールドの状態を張る (M96k)。ParticleSystem が Update の直前に毎 tick 渡す。
+    // null = 場なし (fieldInfluence は無視)。保持は次の SetFieldSource までで、所有しない
+    void SetFieldSource(const DisturbanceState* state) { fieldState_ = state; }
 
     void SetSimdEnabled(bool enabled) { simd_ = enabled; }
     bool SimdEnabled() const { return simd_; }
@@ -100,17 +105,25 @@ private:
         float noiseSpeed = 0.5f;
         float noiseTime = 0.0f;
     };
+    // 場の流れに乗せる入力 (M96k)。fieldInfluence > 0 のプールだけ Simulate が作り、SimulateScalar が読む。
+    // 場は読むだけ (World も状態も書かない) なので、プール並列のワーカーから引いてよい
+    struct FieldPull {
+        const DisturbanceState* state = nullptr;
+        World* world = nullptr;
+        float influence = 0.0f; // 1/s
+    };
     // 1 プールぶんの 1 tick (プリウォーム + 放出 + 積分 + 消滅 + バウンズ + 履歴)。
     // 自分のプールと不変の入力だけを読み書きする = プール間で並列に呼べる
     void StepPool(EmitterPool& pool, const ParticleEmitterComponent& desc,
-                  const DirectX::XMFLOAT4X4& worldMatrix, float dt) const;
-    void Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt) const;
+                  const DirectX::XMFLOAT4X4& worldMatrix, float dt, World* world) const;
+    void Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc, float dt, World* world) const;
     void SimulateScalar(EmitterPool& pool, const DirectX::XMFLOAT3& accel, float dt,
-                        const TurbulenceParams& tp, uint32_t begin, uint32_t end) const;
+                        const TurbulenceParams& tp, const FieldPull* field, uint32_t begin, uint32_t end) const;
     void KillDead(EmitterPool& pool) const;
 
     std::vector<EmitterPool> pools_; // owner.index 昇順 (決定論)
     bool simd_ = true;
+    const DisturbanceState* fieldState_ = nullptr; // M96k: 非所有。SetFieldSource が毎 tick 張り直す
     ParticleStats stats_;
     std::vector<uint32_t> orderScratch_; // 描画順ソート用 (描画専用)
     std::vector<uint8_t> visScratch_;    // プール毎の可視フラグ (Render 内のみ有効、描画専用)

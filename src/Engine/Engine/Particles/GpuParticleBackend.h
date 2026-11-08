@@ -8,8 +8,18 @@
 #include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/IParticleBackend.h"
 #include "Engine/Renderer/Device/GpuTimer.h"
+#include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Passes/DisturbanceVolumePass.h"
 
 namespace mye {
+
+// 粒子の sim CS (particle_sim.cs.hlsl) が場を読む束縛番号。HLSL の MYE_PFLD_* と一致 (規則 9)。
+// 2D 層の配列は 1 本、Volume の Texture3D は 4 本が連番 (t4〜t7)。t0〜t2 は粒子自身と深度、b0 は粒子の CB
+constexpr int kParticleFieldFlowSrvSlot = 3;
+constexpr int kParticleFieldVolumeSrvSlot = 4;
+constexpr int kParticleFieldLayerCbSlot = 3;
+constexpr int kParticleFieldVolumeCbSlot = 4;
+constexpr int kParticleFieldSamplerSlot = 1;
 
 // GPU パーティクル (engine_spec.md 7.3)。
 // - プール + dead list (append/consume) + alive list A/B ピンポン (圧縮)
@@ -38,7 +48,13 @@ public:
                        const DirectX::XMFLOAT4X4& proj, int width, int height, float nearZ,
                        float farZ);
 
+    // M96k: かき乱しフィールドの GPU テクスチャを渡す (RenderSystem が描画のたびに呼ぶ)。null / 空なら場なし。
+    // sim は tick で走り、読むのは直近の描画が上げたテクスチャ (深度衝突と同じ 1 フレーム遅延。見た目だけのレーン)
+    void SetFieldGpu(const DisturbanceFieldGpu* layers, const DisturbanceVolumeGpu* volumes);
+
 private:
+    void BindFieldInputs(ID3D11DeviceContext* dc);
+    void UnbindFieldInputs(ID3D11DeviceContext* dc);
     struct EmitData { // particle_emit.cs.hlsl の EmitData と一致
         DirectX::XMFLOAT3 pos;
         float life;
@@ -161,6 +177,16 @@ private:
     DirectX::XMFLOAT4X4 collInvViewProj_ = {}; // transpose 済み
     float collScreen_[4] = { 0, 0, 0.1f, 1000.0f }; // w, h, nearZ, farZ
     bool collValid_ = false;
+
+    // M96k: 場の入力 (SetFieldGpu で更新)。CB は fieldInfluence > 0 のエミッタがあるときだけ上げる
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> fieldFlowSrv_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> fieldVolumeSrv_[kDisturbanceMaxVolumes];
+    DisturbanceFieldCB fieldLayerData_;
+    DisturbanceVolumeCB fieldVolumeData_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> fieldLayerCb_;
+    Microsoft::WRL::ComPtr<ID3D11Buffer> fieldVolumeCb_;
+    bool fieldAvailable_ = false; // 読める層か Volume が 1 つでもあるか
+    bool fieldCbDirty_ = false;
 };
 
 } // namespace mye

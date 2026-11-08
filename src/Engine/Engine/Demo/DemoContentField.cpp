@@ -341,6 +341,44 @@ void AddFieldDemoFollow(Scene& s, const AssetID sphere)
     f->followMargin = 4;
 }
 
+// 砂ぼこりの粒子 (M96k、fieldInfluence > 0)。1 つは広場の地面の層 (2D) の上、もう 1 つは煙の柱の根元 (3D) に置く。
+// 重力は 0 の浮遊粒子で、球が通った後の流れと煙の上昇流に乗って運ばれる。CPU / GPU のどちらのバックエンドでも同じ定義
+void AddFieldDemoDust(Scene& s)
+{
+    struct DustSpec {
+        const char* name;
+        float x, y, z;
+        DirectX::XMFLOAT3 extents;
+        uint32_t seed;
+    };
+    const DustSpec specs[] = {
+        { "DustPlaza", 0.0f, 0.4f, 6.0f, { 3.0f, 0.3f, 3.0f }, 9601u },
+        { "DustSmoke", -7.0f, 1.0f, 1.0f, { 1.5f, 0.5f, 1.5f }, 9602u },
+    };
+    for (const DustSpec& spec : specs) {
+        GameObject dust = s.CreateGameObject(spec.name);
+        dust.SetLocalPosition(spec.x, spec.y, spec.z);
+        auto* e = dust.AddComponent<ParticleEmitterComponent>();
+        e->rate = 40.0f;
+        e->shape = 3; // box (層の厚みの中に収める)
+        e->boxExtents = spec.extents;
+        e->lifetimeMin = 5.0f;
+        e->lifetimeMax = 8.0f;
+        e->speedMin = 0.0f;
+        e->speedMax = 0.2f;
+        e->sizeMin = 0.12f;
+        e->sizeMax = 0.25f;
+        e->colorBegin = { 0.78f, 0.68f, 0.5f, 0.55f };
+        e->colorEnd = { 0.78f, 0.68f, 0.5f, 0.0f };
+        e->sizeEndScale = 1.5f;
+        e->gravity = { 0.0f, 0.0f, 0.0f };
+        e->blendMode = 1; // alpha
+        e->seed = spec.seed;
+        e->maxParticles = 2000;
+        e->fieldInfluence = 2.0f;
+    }
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -368,6 +406,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoSwing(ctx);
     AddFieldDemoGrass(ctx, s, cube);
     AddFieldDemoFollow(s, sphere);
+    AddFieldDemoDust(s);
     s.GetWorld().ApplyStructuralChanges();
 }
 

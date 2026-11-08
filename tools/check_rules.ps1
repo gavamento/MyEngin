@@ -344,6 +344,42 @@ $constGroups = @(
             'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_MAX_LIGHTS\s+(\d+)'
         }
     },
+    # M96k: 粒子の sim CS が場を読む束縛番号。食い違うと別のテクスチャ / CB を読む (粒子は動くが流れに乗らない)
+    @{
+        label = 'kParticleFieldFlowSrvSlot / MYE_PFLD_FLOW_SRV'
+        sites = @{
+            'src\Engine\Engine\Particles\GpuParticleBackend.h' = 'constexpr\s+int\s+kParticleFieldFlowSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_PFLD_FLOW_SRV\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kParticleFieldVolumeSrvSlot / MYE_PFLD_VOL_SRV'
+        sites = @{
+            'src\Engine\Engine\Particles\GpuParticleBackend.h' = 'constexpr\s+int\s+kParticleFieldVolumeSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_PFLD_VOL_SRV\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kParticleFieldLayerCbSlot / MYE_PFLD_LAYER_CB'
+        sites = @{
+            'src\Engine\Engine\Particles\GpuParticleBackend.h' = 'constexpr\s+int\s+kParticleFieldLayerCbSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_PFLD_LAYER_CB\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kParticleFieldVolumeCbSlot / MYE_PFLD_VOLUME_CB'
+        sites = @{
+            'src\Engine\Engine\Particles\GpuParticleBackend.h' = 'constexpr\s+int\s+kParticleFieldVolumeCbSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_PFLD_VOLUME_CB\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kParticleFieldSamplerSlot / MYE_PFLD_SAMPLER'
+        sites = @{
+            'src\Engine\Engine\Particles\GpuParticleBackend.h' = 'constexpr\s+int\s+kParticleFieldSamplerSlot\s*=\s*(\d+)'
+            'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_PFLD_SAMPLER\s+(\d+)'
+        }
+    },
     # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{

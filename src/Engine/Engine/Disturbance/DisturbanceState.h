@@ -182,6 +182,7 @@ struct FieldSampleOut {
     float trail = 0.0f;
     float ripple = 0.0f;
     EntityID field = kNullEntity;
+    bool vertical = false; // flow[1] が実測値か (Volume のみ。GroundLayer は y の流れを持たない)
 };
 
 // pos での場の値をセル中心の双線形で返す。field が null なら pos を含む場のうち entity index 最小。

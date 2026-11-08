@@ -63,8 +63,9 @@ bool ParticleSystem::RecreateGpu(GraphicsDevice& device, ShaderManager& shaders)
     return cpuOk && gpuOk;
 }
 
-void ParticleSystem::Update(World& world, float dt)
+void ParticleSystem::Update(World& world, float dt, const DisturbanceState* disturbance)
 {
+    cpu_.SetFieldSource(disturbance);
     if (compareMode_) {
         // 比較モード: 同一定義・同一シードで両バックエンドを並走 (spec 7.4)
         cpu_.Update(world, dt);

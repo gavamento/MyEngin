@@ -121,7 +121,9 @@ bool GpuParticleBackend::Init(GraphicsDevice& device, ShaderManager& shaders)
     ID3D11Device* dev = device.Device();
     if (!CreateConstant(dev, sizeof(GpuParticleCB), simCB_)
         || !CreateConstant(dev, sizeof(GpuRenderCB), renderCB_)
-        || !CreateConstant(dev, sizeof(ParticleSortCB), sortCB_)) {
+        || !CreateConstant(dev, sizeof(ParticleSortCB), sortCB_)
+        || !CreateConstant(dev, sizeof(DisturbanceFieldCB), fieldLayerCb_)
+        || !CreateConstant(dev, sizeof(DisturbanceVolumeCB), fieldVolumeCb_)) {
         return false;
     }
 
@@ -193,6 +195,13 @@ void GpuParticleBackend::Shutdown()
     lightCB_.Reset();       // M63d
     shadowSampler_.Reset(); // M63d
     collDepthSRV_.Reset();
+    fieldFlowSrv_.Reset();
+    for (auto& srv : fieldVolumeSrv_) {
+        srv.Reset();
+    }
+    fieldLayerCb_.Reset();
+    fieldVolumeCb_.Reset();
+    fieldAvailable_ = false;
     timer_.Release();
 }
 
@@ -667,8 +676,10 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     cb.collParams = { collide ? 1.0f : 0.0f, desc->collisionBounce,
                       desc->collisionThickness, desc->collisionFriction };
     cb.collScreen = { collScreen_[0], collScreen_[1], collScreen_[2], collScreen_[3] };
-    cb.collParams2 = { desc->collisionLifeLoss, 0.0f, floorCollide ? 1.0f : 0.0f,
-                       desc->collisionFloorY };
+    // M96k: y = fieldInfluence (場を読むエミッタだけ > 0)。ローカル空間は座標がワールドでないので引かない
+    const bool fieldPull = desc->fieldInfluence > 0.0f && !ParticleIsLocalSpace(*desc) && fieldAvailable_;
+    cb.collParams2 = { desc->collisionLifeLoss, fieldPull ? std::min(desc->fieldInfluence, 10.0f) : 0.0f,
+                       floorCollide ? 1.0f : 0.0f, desc->collisionFloorY };
     // M61d: カールノイズ乱流。時間は em.ageTicks (PlanParticleEmission が進めた後の値) 由来
     // — CPU 側 Simulate が見る pool.ageTicks と同じ位相 = パリティ一致。実時間は使わない
     // M42追補: mode は「== 1 のときだけカールノイズ」へ正規化してから渡す。
@@ -720,7 +731,14 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
         ID3D11ShaderResourceView* srvs[2] = { em.aliveSRV[aliveIn].Get(), em.countsSRV.Get() };
         dc->CSSetShaderResources(0, 2, srvs);
         dc->CSSetShader(simShader, nullptr, 0);
+        // M96k: 場のテクスチャと CB (t3 / t4〜t7 / b3 / b4 / s1)。読むエミッタのときだけ張る
+        if (fieldPull) {
+            BindFieldInputs(dc);
+        }
         dc->Dispatch((em.capacity + 255) / 256, 1, 1);
+        if (fieldPull) {
+            UnbindFieldInputs(dc);
+        }
     }
 
     // ---- 描画用: InstanceCount を GPU 上で確定 (リードバックなし) ----
@@ -736,6 +754,58 @@ bool GpuParticleBackend::RunEmitterTick(EmitterTickCtx& t, bool allowIdleSkip)
     // 死因は寿命だけなので readback なしでほぼ一致する。飽和時のみ capacity で頭打ち)
     em.aliveEst.EndTick();
     return true;
+}
+
+void GpuParticleBackend::SetFieldGpu(const DisturbanceFieldGpu* layers, const DisturbanceVolumeGpu* volumes)
+{
+    fieldAvailable_ = false;
+    fieldLayerData_ = DisturbanceFieldCB();
+    fieldVolumeData_ = DisturbanceVolumeCB();
+    fieldFlowSrv_.Reset();
+    for (auto& srv : fieldVolumeSrv_) {
+        srv.Reset();
+    }
+    if (layers != nullptr && layers->flowSRV != nullptr && layers->cb.header[0] > 0) {
+        fieldFlowSrv_ = layers->flowSRV;
+        fieldLayerData_ = layers->cb;
+        fieldAvailable_ = true;
+    }
+    if (volumes != nullptr && volumes->cb.header[0] > 0) {
+        fieldVolumeData_ = volumes->cb;
+        for (int i = 0; i < kDisturbanceMaxVolumes; ++i) {
+            fieldVolumeSrv_[i] = volumes->srv[i];
+        }
+        fieldAvailable_ = true;
+    }
+    fieldCbDirty_ = true;
+}
+
+void GpuParticleBackend::BindFieldInputs(ID3D11DeviceContext* dc)
+{
+    if (fieldCbDirty_) {
+        UploadCB(dc, fieldLayerCb_.Get(), fieldLayerData_);
+        UploadCB(dc, fieldVolumeCb_.Get(), fieldVolumeData_);
+        fieldCbDirty_ = false;
+    }
+    ID3D11ShaderResourceView* flow = fieldFlowSrv_.Get();
+    dc->CSSetShaderResources(kParticleFieldFlowSrvSlot, 1, &flow);
+    ID3D11ShaderResourceView* vols[kDisturbanceMaxVolumes] = {};
+    for (int i = 0; i < kDisturbanceMaxVolumes; ++i) {
+        vols[i] = fieldVolumeSrv_[i].Get();
+    }
+    dc->CSSetShaderResources(kParticleFieldVolumeSrvSlot, kDisturbanceMaxVolumes, vols);
+    ID3D11Buffer* cbs[2] = { fieldLayerCb_.Get(), fieldVolumeCb_.Get() };
+    dc->CSSetConstantBuffers(kParticleFieldLayerCbSlot, 2, cbs);
+    ID3D11SamplerState* smp = sampler_.Get();
+    dc->CSSetSamplers(kParticleFieldSamplerSlot, 1, &smp);
+}
+
+void GpuParticleBackend::UnbindFieldInputs(ID3D11DeviceContext* dc)
+{
+    ID3D11ShaderResourceView* nullSrv[1 + kDisturbanceMaxVolumes] = {};
+    dc->CSSetShaderResources(kParticleFieldFlowSrvSlot, 1 + kDisturbanceMaxVolumes, nullSrv);
+    ID3D11Buffer* nullCb[2] = {};
+    dc->CSSetConstantBuffers(kParticleFieldLayerCbSlot, 2, nullCb);
 }
 
 void GpuParticleBackend::SetSceneDepth(ID3D11ShaderResourceView* depthSRV,
