@@ -44,14 +44,34 @@ const char* ClipEventKindToStr(ClipEventKind kind)
     case ClipEventKind::Sound: return "sound";
     case ClipEventKind::Effect: return "effect";
     case ClipEventKind::Noise: return "noise";
+    case ClipEventKind::Disturb: return "disturb";
     }
     return "script";
+}
+
+// disturb の shape の綴り (FieldImpulse の kFieldImpulse* と同じ並び)
+const char* const kDisturbShapeNames[] = { "point", "radial", "cone" };
+
+const char* DisturbShapeToStr(int32_t shape)
+{
+    return (shape >= 0 && shape < 3) ? kDisturbShapeNames[shape] : kDisturbShapeNames[0];
+}
+
+bool DisturbShapeFromStr(const std::string& s, int32_t& out)
+{
+    for (int32_t i = 0; i < 3; ++i) {
+        if (s == kDisturbShapeNames[i]) {
+            out = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ClipEventKindFromStr(const std::string& s, ClipEventKind& out)
 {
     const ClipEventKind kinds[] = { ClipEventKind::Script, ClipEventKind::Sound, ClipEventKind::Effect,
-                                    ClipEventKind::Noise };
+                                    ClipEventKind::Noise, ClipEventKind::Disturb };
     for (ClipEventKind k : kinds) {
         if (s == ClipEventKindToStr(k)) {
             out = k;
@@ -1068,6 +1088,16 @@ json ControllerLibrary::ToJson(const ControllerAsset& c)
                     e["loudness"] = ev.loudness;
                     e["range"] = ev.range;
                     break;
+                case ClipEventKind::Disturb:
+                    e["radius"] = ev.disturbRadius;
+                    e["speed"] = ev.disturbSpeed;
+                    e["shape"] = DisturbShapeToStr(ev.disturbShape);
+                    e["dir"] = { ev.disturbDir[0], ev.disturbDir[1], ev.disturbDir[2] };
+                    e["coneDeg"] = ev.disturbConeDeg;
+                    e["density"] = ev.disturbDensity;
+                    e["trail"] = ev.disturbTrail;
+                    e["ripple"] = ev.disturbRipple;
+                    break;
                 }
                 if (!ev.joint.empty()) {
                     e["joint"] = ev.joint;
@@ -1302,6 +1332,30 @@ bool ControllerLibrary::FromJson(const json& j, ControllerAsset& out)
                 ev.pitch = e.value("pitch", 1.0f);
                 ev.loudness = e.value("loudness", 1.0f);
                 ev.range = e.value("range", 10.0f);
+                if (ev.kind == ClipEventKind::Disturb) {
+                    // 不正な shape・半径 0 以下は他の不正値と同じくイベントごと捨てる (半径 0 以下はインパルスが何も起こさない)
+                    const std::string shape = e.value("shape", std::string("point"));
+                    if (!DisturbShapeFromStr(shape, ev.disturbShape)) {
+                        MYE_LOG_WARN("[controller] disturb event shape '%s' is not supported; skipped", shape.c_str());
+                        continue;
+                    }
+                    ev.disturbRadius = e.value("radius", 1.0f);
+                    if (!(ev.disturbRadius > 0.0f)) {
+                        MYE_LOG_WARN("[controller] disturb event radius must be > 0; skipped");
+                        continue;
+                    }
+                    ev.disturbSpeed = e.value("speed", 0.0f);
+                    ev.disturbConeDeg = e.value("coneDeg", 45.0f);
+                    ev.disturbDensity = e.value("density", 0.0f);
+                    ev.disturbTrail = e.value("trail", 0.0f);
+                    ev.disturbRipple = e.value("ripple", 0.0f);
+                    const auto dirIt = e.find("dir");
+                    if (dirIt != e.end() && dirIt->is_array() && dirIt->size() == 3) {
+                        for (size_t i = 0; i < 3; ++i) {
+                            ev.disturbDir[i] = (*dirIt)[i].is_number() ? (*dirIt)[i].get<float>() : ev.disturbDir[i];
+                        }
+                    }
+                }
                 ce.events.push_back(std::move(ev));
             }
             out.clipEvents.push_back(std::move(ce));

@@ -1113,6 +1113,14 @@ MYE_STR(AnimPrev_EvPitch,     "Pitch###animprev_ev_pitch", "ピッチ###animprev
 MYE_STR(AnimPrev_EvPrefab,    "Prefab###animprev_ev_prefab", "プレハブ###animprev_ev_prefab")
 MYE_STR(AnimPrev_EvLoudness,  "Loudness###animprev_ev_loudness", "音の大きさ###animprev_ev_loudness")
 MYE_STR(AnimPrev_EvRange,     "Range (m)###animprev_ev_range", "届く距離 (m)###animprev_ev_range")
+MYE_STR(AnimPrev_EvDisturbRadius,  "Radius (m)###animprev_ev_dradius", "半径 (m)###animprev_ev_dradius")
+MYE_STR(AnimPrev_EvDisturbSpeed,   "Speed (m/s)###animprev_ev_dspeed", "速さ (m/s)###animprev_ev_dspeed")
+MYE_STR(AnimPrev_EvDisturbShape,   "Shape###animprev_ev_dshape", "形###animprev_ev_dshape")
+MYE_STR(AnimPrev_EvDisturbDir,     "Direction###animprev_ev_ddir", "向き###animprev_ev_ddir")
+MYE_STR(AnimPrev_EvDisturbCone,    "Cone half angle (deg)###animprev_ev_dcone", "円錐の半角 (度)###animprev_ev_dcone")
+MYE_STR(AnimPrev_EvDisturbDensity, "Density delta###animprev_ev_ddensity", "密度の増減###animprev_ev_ddensity")
+MYE_STR(AnimPrev_EvDisturbTrail,   "Trail depth###animprev_ev_dtrail", "跡の深さ###animprev_ev_dtrail")
+MYE_STR(AnimPrev_EvDisturbRipple,  "Ripple (m)###animprev_ev_dripple", "波紋 (m)###animprev_ev_dripple")
 
 // ---- アニメーション: 補足 (M47b) ----
 MYE_STR(Clip_TipPreview,      "Preview: scrub to see the pose (restored on exit).\n"

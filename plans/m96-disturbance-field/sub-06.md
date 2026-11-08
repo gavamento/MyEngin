@@ -1,8 +1,8 @@
 # sub-06: アニメイベント `disturb` (斬撃で霧を散らす)
 
 - 依存: sub-05 (波 W2。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W2 の統合待ち)
+- 往復: 1
 
 
 ## 並列の注意 (波 W2)
@@ -53,4 +53,13 @@ spec §5 の 12, 19, 30。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-06 (round 1)
+- ClipEventKind::Disturb と ControllerClipEvent の末尾 8 欄 (disturb*) を追加。JSON は radius / speed / shape / dir / coneDeg / density / trail / ripple。不正な shape と半径 0 以下はイベントごと捨てる。
+- 配送は TickRunner.cpp の BuildClipEventImpulse (新規) → DisturbanceQueueImpulse。向きは WorldMatrix の回転で回して正規化。
+- エディタ (AnimationPreviewWindow) に disturb の kind と欄、Tr() 両言語 8 件。
+- デモ: --field-demo に anim_test.glb + assetsnimsield_swing.controller.json (Attack の 22 tick、Hand.R、cone) を AddFieldDemoSwing で追加。
+- selftest (RunDisturbanceAnimEventTests) は書いたが未実行。replay_verify も未実行 (運用)。
+- 検証: Debug / Release ビルド OK、check_rules 0 error、スクショ撮影済み。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。ClipEventKind::Disturb と欄・JSON の読み書き・エディタ欄・両言語の文字列・配送 (向きはコントローラの WorldMatrix の回転)・デモ (anim_test.glb の Attack、tick 21 に Hand.R から +X の Cone) を確認。radius <= 0 も捨てる追加、BuildClipEventImpulse の公開、専用の controller アセットを受理。switch の配送の経路そのものは replay `field` (W2 後のまとめ実行) が被覆する。帯が薄い件は sub-17 の目視へ

@@ -7,11 +7,14 @@
 #include "Engine/Engine/Demo/DemoContentInternal.h"
 
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Util/Hash.h"
+#include "Engine/Engine/Asset/ModelLoader.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 namespace mye {
 
@@ -209,6 +212,22 @@ void AddFieldDemoPond(Scene& s, const AssetID sphere)
     }
 }
 
+// M96f: 骨アニメの人が剣を振る瞬間に、アニメイベント disturb で霧を斬る (field_swing.controller.json の
+// Attack の 22 tick、右手から前方の円錐)。人は +X を向く = イベントの dir (モデルの前方 -Z) がエンティティの回転で回る
+void AddFieldDemoSwing(EngineContext& ctx)
+{
+    // .meta の GUID (assets\anims\field_swing.controller.json.meta)
+    constexpr uint64_t kFieldSwingControllerGuid = 0xc96f5a2e8d1b4073ull;
+    GameObject actor = ModelLoader::Load(*ctx.scene, *ctx.resources, *ctx.shaders, ctx.assetsRoot + L"\\models\\anim_test.glb");
+    if (!actor) {
+        MYE_LOG_ERROR("[field-demo] anim_test.glb could not be loaded (run tools\\gen_anim_test_gltf.ps1)");
+        return;
+    }
+    actor.SetLocalPosition(-4.0f, 0.0f, -3.0f);
+    actor.SetLocalRotationEuler(0.0f, -90.0f, 0.0f);
+    actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kFieldSwingControllerGuid };
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -232,6 +251,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddFieldDemoPerson(s, ctx.resources->meshes.Capsule());
     AddFieldDemoLanterns(s);
     AddFieldDemoPond(s, sphere);
+    AddFieldDemoSwing(ctx);
     s.GetWorld().ApplyStructuralChanges();
 }
 

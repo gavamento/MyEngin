@@ -3,6 +3,7 @@
 #include "Engine/Engine/Feel/SpringFollowSystem.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio> // M93e: --debug-draw-log の行の整形
 #include <filesystem>
 #include <fstream>
@@ -249,6 +250,40 @@ static void DeliverScriptMessages(std::vector<ScriptMessage>* queue, std::vector
 
 // 固定 tick 1 回分 (engine_spec.md 5.3 のフェーズ 3/3.5/3.6/4/5/7 + tick 末の出力レーン)。
 // (契約は TickRunner.h の TickServices)
+void BuildClipEventImpulse(World& world, const AnimEventFired& ev, FieldImpulse& out)
+{
+    const ControllerClipEvent& def = *ev.def;
+    out.pos[0] = ev.pos[0];
+    out.pos[1] = ev.pos[1];
+    out.pos[2] = ev.pos[2];
+    float d[3] = { def.disturbDir[0], def.disturbDir[1], def.disturbDir[2] };
+    // 行ベクトル規約なので dir に回転の 3 行を掛ける
+    if (const WorldMatrixComponent* wm = world.GetComponent<WorldMatrixComponent>(ev.entity)) {
+        const DirectX::XMFLOAT4X4& m = wm->value;
+        d[0] = def.disturbDir[0] * m._11 + def.disturbDir[1] * m._21 + def.disturbDir[2] * m._31;
+        d[1] = def.disturbDir[0] * m._12 + def.disturbDir[1] * m._22 + def.disturbDir[2] * m._32;
+        d[2] = def.disturbDir[0] * m._13 + def.disturbDir[1] * m._23 + def.disturbDir[2] * m._33;
+    }
+    const float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (len > 1e-6f) {
+        d[0] /= len;
+        d[1] /= len;
+        d[2] /= len;
+    }
+    out.dir[0] = d[0];
+    out.dir[1] = d[1];
+    out.dir[2] = d[2];
+    out.radius = def.disturbRadius;
+    out.speed = def.disturbSpeed;
+    out.shape = static_cast<uint32_t>(def.disturbShape);
+    // 半角 [度] → cos (ABI の FieldAddImpulse と同じ式)
+    const float coneDeg = def.disturbConeDeg < 0.0f ? 0.0f : (def.disturbConeDeg > 180.0f ? 180.0f : def.disturbConeDeg);
+    out.coneCos = std::cos(coneDeg * (3.14159265358979f / 180.0f));
+    out.density = def.disturbDensity;
+    out.trail = def.disturbTrail;
+    out.ripple = def.disturbRipple;
+}
+
 void RunOneTick(TickServices& ts)
 {
     EngineContext& ctx = *ts.ctx;
@@ -542,6 +577,13 @@ void RunOneTick(TickServices& ts)
                 // 聞き手の保留欄に書かれ、次の tick の知覚のフェーズで消費される
                 PerceptionReportNoise(scene.GetWorld(), ev.pos, def.loudness, def.range, ev.entity);
                 break;
+            case ClipEventKind::Disturb: {
+                // 場の step (フェーズ 4) が同じ tick に消費する
+                FieldImpulse f;
+                BuildClipEventImpulse(scene.GetWorld(), ev, f);
+                DisturbanceQueueImpulse(scene, f);
+                break;
+            }
             }
         }
         // スケルタルアニメの時刻を進める (M18)。ポーズは非ハッシュなのでリプレイ不変
