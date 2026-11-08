@@ -175,8 +175,8 @@ bool RunPartSelfTest()
         };
         const MyeEntityId root = toShared(enemy.Id());
 
-        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 34u,
-              "abi: the table reports v34");
+        check(api.version == MYE_API_VERSION && MYE_API_VERSION == 35u,
+              "abi: the table reports v35");
         // v34 (M94 手触り h): 手触り。鳴らした結果は FeelSystemSelfTest / replay の feel ジョブが見る (ここは充填のみ)
         check(api.PlayFeel != nullptr && api.PlayFeelDesc != nullptr && api.StopFeel != nullptr
                   && api.ConsumeAction != nullptr && api.IsSimStepping != nullptr && api.SetFeelOutputScale != nullptr,
@@ -1031,7 +1031,7 @@ bool RunPartSelfTest()
         w.ApplyStructuralChanges();
         const MyeEntityId a = toShared(anim.Id());
         const MyeEntityId p = toShared(plain.Id());
-        check(MYE_API_VERSION == 34u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 34");
+        check(MYE_API_VERSION == 35u && api.version == MYE_API_VERSION, "abi: MYE_API_VERSION is 35");
         check(api.AnimatorGetPause(api.engine, a) == 0, "abi: AnimatorGetPause starts at 0");
         check(api.AnimatorSetPause(api.engine, a, 5) == 1 && api.AnimatorGetPause(api.engine, a) == 5,
               "abi: AnimatorSetPause sets the remaining ticks");

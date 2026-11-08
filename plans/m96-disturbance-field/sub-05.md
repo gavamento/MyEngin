@@ -63,6 +63,23 @@ spec §5 の 12, 17, 18, 30。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-05 (round 1) — 全文は司会への返答を参照。要点: ABI v35 = 202、RunDisturbanceAbiTests (未実行)、デモ ZZFieldDemoDriver、Debug / Release ビルド・check_rules 0 error。C# 実走プローブ・selftest・replay_verify は未実行。スクショ: scratchpad\m96-shots\sub05_t400.png
+
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner、2026-11-08)。ABI・ミラー・糖衣・拒否・デモの実装と規則 11 PASS を確認。ZZ 命名は受け入れ (spec 側を直した)。must: C# の一時プローブの実走 (受け入れ 17。selftest / replay_verify ではないので、まとめ実行の対象外)。should: メインの作業ツリーの git status、斬撃の扇が写る絵
 - round 2: VERDICT OK (planner、2026-11-08)。C# の一時プローブ実走で (a) AddImpulse = 0 (b) Sample の全欄が C++ と一致 (2 位置 × 2 tick) (c) ABI v35 の照合を確認、プローブは撤去済み。メインの git status にこのサブのファイルなし。斬撃の扇が絵で断定しづらい件は minor (形は受け入れ 18 の selftest が受け持つ。絵は sub-17 の手動確認へ)
+
+## 中断メモ (2026-11-08)
+
+司会の指示 (ユーザーの一時停止) で中断。worktree = C:\HAL\MyEngin\.claude\worktrees\agent-adc78e94e6a5e1d68、ブランチ = worktree-agent-adc78e94e6a5e1d68。コミットなし。
+
+- 前提の修正: worktree は古い aa3288e から切られていたため、作業の最初に `git reset --hard master` (b7cb1fa、clean だったので失うものなし) で master に合わせた
+- 終わったこと (やること 1〜4・7):
+  - EngineAPI.h (MyeFieldImpulse 52 B / MyeFieldSample 32 B、スロット 2 本、v35、注記)、EngineApiTable.cpp (FillDisturbanceSlots。C# レーンは積めず 0)、Interop.cs (ミラー + kExpectedApiVersion = 35 + FieldSample)、MyeScript.cs (FieldSample 糖衣)、ScriptAPI.h (MyeFieldPoint / Radial / Cone / MyeFieldSampleAt)、check_rules.ps1 の版表 (35 = 202)、PartSelfTest.cpp の版の表明 34 → 35、docs\history\api-scripting-tools.md の v35 行
+  - selftest コード: DisturbanceFieldSelfTest.cpp に `RunDisturbanceAbiTests` (Fast 層の末尾から 1 行で呼ぶ。未実行)
+  - デモ: src\GameLogic\Scripts\ZZFieldDemoDriver.cpp (新規。TypeId を動かさないため 'ZZ' 始まり。sub 記載の FieldDemoDriver から逸脱)、DemoContentField.cpp に AddFieldDemoPerson + 末尾 1 行
+  - gen_project_files 実行済み (build\GameLogic.vcxproj / .filters が変わった)
+- 検証済み: Debug / Release の MyEngine.sln ビルド成功 (デモ位置調整前の版)、MyeScripting Debug / Release 成功、check_rules 0 error、Runtime `--field-demo` のスクショ撮影 (cache\field_t300.png, cache\field_r400.png。球の筋は見えるが人の筋・爆発の穴は遠くて薄い)
+- 途中のこと: デモの人と爆発を手前へ寄せる調整 (人 (5, 0.9, -1)、爆発 (-7, 0.3, 1)、半径 4 / 斬撃 3) の後の Release 再ビルドが背景で走っていた (結果未確認)。調整後のスクショは未撮影
+- 次にやること: Release 再ビルドの成否確認 → `--field-demo --screenshot cache\field_r400.png --shot-frame 400` を撮り直して人の筋・斬撃・爆発の穴を確認 → Debug 再ビルド → C# 一時プローブ (FieldAddImpulse = 0 / FieldSample = 値) は未実施 → selftest / replay_verify は W2 後にまとめて (未実行) → SELF_EVAL を返す
+- 触ったファイル: src\Shared\EngineAPI.h、src\Shared\ScriptAPI.h、src\Engine\Engine\Script\EngineApiTable.cpp、src\Scripting\Interop.cs、src\Scripting\MyeScript.cs、tools\check_rules.ps1、src\Editor\SelfTest\PartSelfTest.cpp、src\Engine\Engine\Disturbance\DisturbanceFieldSelfTest.cpp、src\Engine\Engine\Demo\DemoContentField.cpp、src\GameLogic\Scripts\ZZFieldDemoDriver.cpp (新規)、docs\history\api-scripting-tools.md、build\GameLogic.vcxproj(.filters) (生成物)

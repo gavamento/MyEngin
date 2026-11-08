@@ -62,7 +62,8 @@
 //             MyeScriptDesc 末尾の onMessage イベント (dogfooding #20)。元は v30 として作られ、手元の v30〜v32 と合流するときに v33 へ移した
 // v34 (M94h、GitHub 側の手触り): PlayFeel / PlayFeelDesc / StopFeel / ConsumeAction / IsSimStepping / SetFeelOutputScale
 //             (SendScriptMessage の次の 6 本、ADR-035)。GitHub 側では v31 = 181 として作られ、2026-11-05 の合流で末尾へ移した
-#define MYE_API_VERSION 34u
+// v35 (M96d): かき乱しフィールド — FieldAddImpulse / FieldSample (SetFeelOutputScale の次の 2 本 = 202)
+#define MYE_API_VERSION 35u
 
 // v30 (M93) OnlineMemberFlags のビット
 #define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
@@ -111,6 +112,30 @@ enum MyeWindowMode {
 };
 
 // Raycast のヒット結果 (M19 で予約、M20 の物理で実装)
+// v35 (M96d): かき乱しフィールドへ積む明示のインパルス 1 件 (FieldAddImpulse)。shape: 0 = Point / 1 = Radial / 2 = Cone
+struct MyeFieldImpulse {
+    MyeVec3 pos;          // ワールド座標 [m]
+    MyeVec3 dir;          // Point / Cone の向き。正規化しない (流れ = dir × speed)。Radial では使わない
+    float radius;         // [m]。0 以下は拒否
+    float speed;          // [m/s]
+    float coneDeg;        // Cone の半角 [度]。Cone 以外では無視
+    float densityDelta;   // [-1,1] 負 = 霧を晴らす / 正 = 足す
+    float trailDepth;     // [0,1] 跡チャネルの深さ
+    float ripple;         // [m] 波紋チャネルの押し込み
+    int32_t shape;
+};
+static_assert(sizeof(MyeFieldImpulse) == 52, "MyeFieldImpulse: ABI layout (Interop.cs と同じ並び)");
+
+// v35 (M96d): FieldSample の結果。無効なチャネルの値は 0
+struct MyeFieldSample {
+    MyeVec3 velocity;     // 流れ [m/s] (2D 層は y = 0)
+    float density;        // 濃さ (2D 層は高さの形を掛けた値)
+    float trail;
+    float ripple;         // 波紋の高さ [m]
+    MyeEntityId field;    // 値を返した場
+};
+static_assert(sizeof(MyeFieldSample) == 32, "MyeFieldSample: ABI layout (Interop.cs と同じ並び)");
+
 struct MyeRaycastHit {
     MyeEntityId entity;
     MyeVec3 point;
@@ -1133,6 +1158,21 @@ struct MyeEngineApi {
     //   **出力レーン** (SetPadVibration と同格): 書くだけで sim からは読めず、ハッシュにも入らない。
     //   設定画面の「画面の揺れ」「振動」の強さ (酔いやすい人のため) に使う
     void (*SetFeelOutputScale)(void* engine, uint32_t channel, float scale);
+
+    // ---- v35 (M96d): かき乱しフィールド (ADR-036) ----
+    // FieldAddImpulse: 爆発・攻撃などの明示のインパルスを配送待ちキュー (長さ 256) に積む。積んだ後の最初の場の step
+    //   (フェーズ 4) で消費される: Update (フェーズ 3) から積めば同じ tick、LateUpdate (フェーズ 5) から積めば次の tick。
+    //   場が 1 つも無いシーンで積んだ分はその step で捨てる。
+    //   Point / Cone の dir は正規化しない (流れ = dir × speed なので dir の長さが速さに掛かる)。Cone は xz の向きで扇を決める。
+    //   戻り値 1 = 積んだ、0 = null / キューが満杯 / shape が不正 / 非有限値 / radius <= 0 / C# レーンからの呼び出し
+    //   (hash 対象の状態を NoHash レーンから動かさない、v30 と同じ規則)
+    int32_t (*FieldAddImpulse)(void* engine, const MyeFieldImpulse* impulse);
+    // FieldSample: field の pos での値を out へ。field が null なら pos を含む有効な場のうち entity index 最小。
+    //   「含む」は xz が格子内、かつ (2D 層は) y が [baseY - thickness, baseY + 2 * thickness]。値はセル中心の双線形補間。
+    //   2D 層の濃さは高さの形 (層の下端より上へ thickness かけて 0) を掛けた値 (描画と同じ式)。
+    //   読むのは呼んだ時点の状態: Update からは前 tick の結果、LateUpdate からはこの tick の結果。
+    //   戻り値 1 = 場の中、0 = 外 (out は 0 埋め)。C# から呼べる
+    int32_t (*FieldSample)(void* engine, MyeEntityId field, MyeVec3 pos, MyeFieldSample* out);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

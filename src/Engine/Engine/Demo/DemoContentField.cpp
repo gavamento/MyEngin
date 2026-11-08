@@ -4,6 +4,7 @@
 //                                          かき乱しフィールド (M96) のショーケース (--field-demo、霧の広場)
 //====================================================================================
 #include "Engine/Engine/Demo/DemoContent.h"
+#include "Engine/Engine/Demo/DemoContentInternal.h"
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
@@ -104,6 +105,30 @@ void AddRollingBall(Scene& s, const AssetID sphere, const char* name, float x, f
     src->trailDepth = 0.5f;
 }
 
+// 霧の中を歩く人 (M96d)。ZZFieldDemoDriver が決まった経路で歩き、斬撃 (Cone) と爆発 (Radial) を明示のインパルスで積み、
+// 足元の濃さを FieldSample で読む。歩いた筋は Moving の源が残す。GameLogic.dll が無い構成では動かない
+void AddFieldDemoPerson(Scene& s, const AssetID capsule)
+{
+    GameObject person = s.CreateGameObject("FieldWalker");
+    person.SetLocalPosition(5.0f, 0.9f, -6.0f); // CC の中心は足元から 0.9 m 上 (既定の高さ 1.8)
+    person.AddComponent<CharacterControllerComponent>();
+    auto* src = person.AddComponent<DisturbanceSourceComponent>();
+    src->mode = 0;
+    src->radius = 1.0f;
+    src->strength = 0.5f;
+    src->fullSpeed = 3.0f;
+    src->densityDelta = -0.3f;
+    src->trailDepth = 0.5f;
+    AttachScriptIfRegistered(s.GetWorld(), person.Id(), "ZZFieldDemoDriver");
+    // 見た目は子へ逃がす (CC のカプセルは本体の scale を拾うので本体は無スケール)
+    GameObject body = s.CreateGameObject("Body");
+    body.SetParent(person);
+    body.SetLocalScale(0.6f, 0.9f, 0.6f);
+    auto* mr = body.AddComponent<MeshRendererComponent>();
+    mr->mesh = capsule;
+    mr->material = AssetID{ HashStr("pdemo_ball") };
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -124,6 +149,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddRollingBall(s, sphere, "Ball_A", -3.0f, -10.5f, 4.0f);
     AddRollingBall(s, sphere, "Ball_B", 0.0f, -10.0f, 5.0f);
     AddRollingBall(s, sphere, "Ball_C", 3.0f, -9.5f, 3.5f);
+    AddFieldDemoPerson(s, ctx.resources->meshes.Capsule());
     s.GetWorld().ApplyStructuralChanges();
 }
 
