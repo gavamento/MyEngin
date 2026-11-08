@@ -29,6 +29,7 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Shared/EngineAPI.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Passes/DisturbanceVolumePass.h"
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 namespace mye {
@@ -130,6 +131,7 @@ bool SameSlot(const DisturbanceSlot& a, const DisturbanceSlot& b)
 {
     return a.entity == b.entity && a.cellsX == b.cellsX && a.cellsZ == b.cellsZ && a.channels == b.channels
            && std::memcmp(a.originCell, b.originCell, sizeof(a.originCell)) == 0 && a.baseY == b.baseY
+           && a.shape == b.shape && a.cellsY == b.cellsY && SameBits(a.flowY, b.flowY)
            && SameBits(a.flowX, b.flowX) && SameBits(a.flowZ, b.flowZ) && SameBits(a.density, b.density)
            && SameBits(a.trail, b.trail) && SameBits(a.ripple, b.ripple) && SameBits(a.ripplePrev, b.ripplePrev);
 }
@@ -688,6 +690,400 @@ bool RunDisturbanceWaterRippleTests()
     return ok;
 }
 
+// ---- Volume (3D、M96g) ----
+
+EntityID AddVolume(Sim& s, float x, float y, float z, int cx, int cy, int cz, const char* name = "Volume")
+{
+    GameObject go = s.scene.CreateGameObjectTracked(name);
+    go.SetLocalPosition(x, y, z);
+    auto* f = go.AddComponent<DisturbanceFieldComponent>();
+    f->shape = kDisturbanceVolume;
+    f->cellsX = cx;
+    f->cellsY = cy;
+    f->cellsZ = cz;
+    f->cellSize = 0.5f;
+    f->channels = kDisturbanceChannelDensity;
+    f->restDensity = 0.0f; // 何も無い空気。源が足した分だけ煙になる
+    return go.Id();
+}
+
+// 濃さの重心の高さ (ワールド y)。質量 0 なら NaN にならないよう 0
+float DensityCentroidY(const DisturbanceSlot& s)
+{
+    double mass = 0.0;
+    double moment = 0.0;
+    for (int y = 0; y < s.cellsY; ++y) {
+        const double wy = (static_cast<double>(s.originCell[1] + y) + 0.5) * static_cast<double>(s.cellSize);
+        for (int k = 0; k < s.cellsX * s.cellsZ; ++k) {
+            const double rho = s.density[static_cast<size_t>(k) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(s.cellsZ) * static_cast<size_t>(y)];
+            mass += rho;
+            moment += rho * wy;
+        }
+    }
+    return mass > 0.0 ? static_cast<float>(moment / mass) : 0.0f;
+}
+
+size_t VolumeIndex(const DisturbanceSlot& s, int x, int y, int z)
+{
+    return static_cast<size_t>(x) + static_cast<size_t>(s.cellsX) * (static_cast<size_t>(z) + static_cast<size_t>(s.cellsZ) * static_cast<size_t>(y));
+}
+
+// 静止状態 (流れ 3 成分 0、濃さ rest) をビットで比べる
+bool IsRestVolume(const DisturbanceSlot& s, float rest)
+{
+    const std::vector<float> zero(s.CellCount(), 0.0f);
+    const std::vector<float> dense(s.CellCount(), rest);
+    return SameBits(s.flowX, zero) && SameBits(s.flowY, zero) && SameBits(s.flowZ, zero) && SameBits(s.density, dense);
+}
+
+// 2 ワールド並走・往復が使う場面: 風、Volume 2 個 (寸法と浮力が違う) + 2D 層 1 個、動く源・上向きの噴き出し
+struct VolumeScenario {
+    EntityID walker = kNullEntity;
+};
+
+VolumeScenario BuildVolumeScenario(Sim& s)
+{
+    VolumeScenario sc;
+    GameObject env = s.scene.CreateGameObjectTracked("Environment");
+    env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 0.8f, 0.2f, -0.4f };
+    const EntityID a = AddVolume(s, 0.0f, 2.0f, 0.0f, 24, 12, 24, "VolumeA");
+    const EntityID b = AddVolume(s, 20.0f, 2.0f, 0.0f, 16, 16, 16, "VolumeB");
+    AddField(s, 0.0f, 0.0f, 12.0f, 32, 32, 3, "Layer");
+    sc.walker = AddSource(s, "Walker", -3.0f, 1.0f, 0.0f);
+    const EntityID vent = AddSource(s, "Vent", 0.0f, 0.0f, 0.0f);
+    s.Flush();
+    FieldOf(s, a)->buoyancy = 6.0f;
+    FieldOf(s, b)->restDensity = 1.0f;
+    auto* w = SourceOf(s, sc.walker);
+    w->radius = 1.5f;
+    w->densityDelta = -0.4f;
+    auto* v = SourceOf(s, vent);
+    v->mode = 1;
+    v->constantVelocity = { 0.0f, 1.0f, 0.0f };
+    v->densityDelta = 0.4f;
+    v->radius = 1.2f;
+    return sc;
+}
+
+void DriveVolumeScenario(Sim& s, const VolumeScenario& sc, int tick)
+{
+    TransformOf(s, sc.walker)->position.x = -3.0f + 0.05f * static_cast<float>(tick % 120);
+    TransformOf(s, sc.walker)->position.y = 1.0f + 0.02f * static_cast<float>(tick % 50);
+    TransformOf(s, sc.walker)->position.z = 0.03f * static_cast<float>(tick % 60);
+}
+
+void LateVolumeInputs(Sim& s, int tick)
+{
+    if (tick % 70 == 30) {
+        FieldImpulse imp = MakeImpulse(0.0f, 1.0f, 0.0f, 2.5f, 0.0f, 0.0f, 5.0f);
+        imp.shape = kFieldImpulseRadial;
+        DisturbanceQueueImpulse(s.scene, imp);
+    }
+    if (tick % 70 == 50) {
+        FieldImpulse imp = MakeImpulse(20.0f, 2.0f, 0.0f, 3.0f, 1.0f, 0.0f, 4.0f);
+        imp.dir[1] = 0.5f; // 3D の向き
+        imp.shape = kFieldImpulseCone;
+        imp.coneCos = 0.7f;
+        imp.density = -0.5f;
+        DisturbanceQueueImpulse(s.scene, imp);
+    }
+}
+
+// Volume の確認項目 (受け入れ 20)。GPU は使わない。--field-bench でも走らせて、selftest を回さずに実行できる
+bool RunDisturbanceVolumeTests(bool heavy)
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+    RegisterBuiltinComponents();
+
+    // ---- 既定値と状態の形 ----
+    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 88,
+          "volume: buoyancy defaults to 0 and is the last field");
+    {
+        auto s = std::make_unique<Sim>();
+        const EntityID v = AddVolume(*s, 3.0f, 2.0f, -1.0f, 32, 16, 32);
+        s->Flush();
+        FieldOf(*s, v)->channels = 7; // 跡・波紋のビットは Volume では無視される
+        s->Step(2);
+        check(s->D().Slots().size() == 1 && s->D().OverflowWarnCount() == 0, "volume: a Volume field creates a state and does not warn");
+        const DisturbanceSlot& slot = s->D().Slots()[0];
+        const size_t n = 32u * 16u * 32u;
+        check(slot.shape == kDisturbanceVolume && slot.cellsY == 16 && slot.flowX.size() == n && slot.flowY.size() == n
+                  && slot.flowZ.size() == n && slot.channels == kDisturbanceChannelDensity && slot.trail.empty()
+                  && slot.ripple.empty() && slot.density.size() == n,
+              "volume: 3 flow components and a density array only (trail / ripple bits are ignored)");
+        check(slot.originCell[0] == 6 - 16 && slot.originCell[1] == 4 - 8 && slot.originCell[2] == -2 - 16,
+              "volume: the origin is centered on the entity on every axis");
+        check(IsRestVolume(slot, 0.0f), "volume: with no source the field stays at the rest state");
+        s->Step(58);
+        check(IsRestVolume(s->D().Slots()[0], 0.0f), "volume: the rest state holds for 60 ticks bit for bit");
+        // 2D の場は flowY を持たない (ハッシュ列を増やさない)
+        const EntityID layer = AddField(*s, 0.0f, 0.0f, 20.0f, 16, 16, 1, "Layer");
+        (void)layer;
+        s->Flush();
+        s->Step(1);
+        check(s->D().Slots().size() == 2 && s->D().Slots()[1].flowY.empty(), "volume: a ground layer keeps an empty flowY");
+    }
+
+    // ---- 注入は 3D のユークリッド距離 ----
+    {
+        auto s = std::make_unique<Sim>();
+        const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
+        s->Flush();
+        FieldOf(*s, v)->pressureIterations = 0;
+        FieldOf(*s, v)->velocityKeep = 1.0f;
+        s->Step();
+        FieldImpulse imp = MakeImpulse(0.25f, 0.25f, 0.25f, 1.6f, 1.0f, 0.0f, 3.0f); // セル中心 (x,y,z = 8,8,8 のセルの中心)
+        imp.density = 0.5f;
+        DisturbanceQueueImpulse(s->scene, imp);
+        s->Step();
+        const DisturbanceSlot& d = s->D().Slots()[0];
+        check(d.flowX[VolumeIndex(d, 8, 8, 8)] > 0.0f && d.density[VolumeIndex(d, 8, 8, 8)] > 0.0f,
+              "volume impulse: the center cell is pushed and filled");
+    }
+    {
+        // 半径 1.0 の球の外 (y 方向 1.5 m) は触らない。球の内 (y 方向 0.5 m) は触る
+        auto s = std::make_unique<Sim>();
+        const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
+        s->Flush();
+        FieldOf(*s, v)->pressureIterations = 0;
+        s->Step();
+        FieldImpulse imp = MakeImpulse(0.25f, 0.25f, 0.25f, 1.0f, 1.0f, 0.0f, 3.0f);
+        imp.density = 0.5f;
+        DisturbanceQueueImpulse(s->scene, imp);
+        s->Step();
+        const DisturbanceSlot& d = s->D().Slots()[0];
+        check(d.density[VolumeIndex(d, 8, 9, 8)] > 0.0f && d.density[VolumeIndex(d, 8, 11, 8)] == 0.0f
+                  && d.density[VolumeIndex(d, 8, 8, 11)] == 0.0f,
+              "volume impulse: the radius is a 3D ball (0.5 m up is inside, 1.5 m up and 1.5 m aside are outside)");
+        // 球の外の角 (x,y,z すべて 1.0 m ずれ → 距離 1.73 m > 1.0 m) は、立方体の範囲には入るが触らない
+        check(d.density[VolumeIndex(d, 10, 10, 10)] == 0.0f, "volume impulse: a corner of the bounding box outside the ball is untouched");
+    }
+    {
+        // Radial: 上のマスは +y、下のマスは -y へ。中心は 0
+        auto s = std::make_unique<Sim>();
+        const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
+        s->Flush();
+        FieldOf(*s, v)->pressureIterations = 0;
+        s->Step();
+        FieldImpulse imp = MakeImpulse(0.25f, 0.25f, 0.25f, 2.0f, 0.0f, 0.0f, 4.0f);
+        imp.shape = kFieldImpulseRadial;
+        DisturbanceQueueImpulse(s->scene, imp);
+        s->Step();
+        const DisturbanceSlot& d = s->D().Slots()[0];
+        check(d.flowY[VolumeIndex(d, 8, 10, 8)] > 0.0f && d.flowY[VolumeIndex(d, 8, 6, 8)] < 0.0f
+                  && d.flowY[VolumeIndex(d, 8, 8, 8)] == 0.0f && d.flowX[VolumeIndex(d, 8, 8, 8)] == 0.0f,
+              "volume impulse: Radial pushes away from the point in 3D (zero at the exact center)");
+        FieldImpulse cone = MakeImpulse(0.25f, 0.25f, 0.25f, 2.0f, 0.0f, 0.0f, 4.0f);
+        cone.dir[1] = 1.0f;
+        cone.shape = kFieldImpulseCone;
+        cone.coneCos = 0.9f;
+        s->D().Clear();
+        s->Step();
+        DisturbanceQueueImpulse(s->scene, cone);
+        s->Step();
+        const DisturbanceSlot& c = s->D().Slots()[0];
+        check(c.flowY[VolumeIndex(c, 8, 10, 8)] > 0.0f && c.flowY[VolumeIndex(c, 12, 8, 8)] == 0.0f
+                  && c.flowY[VolumeIndex(c, 8, 6, 8)] == 0.0f,
+              "volume impulse: an upward Cone pushes inside the cone only");
+    }
+
+    // ---- 浮力 (受け入れ 20) ----
+    {
+        const auto run = [&](float buoyancy, std::vector<float>& centroids) {
+            auto s = std::make_unique<Sim>();
+            const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
+            const EntityID vent = AddSource(*s, "Vent", 0.0f, -1.5f, 0.0f);
+            s->Flush();
+            FieldOf(*s, v)->buoyancy = buoyancy;
+            auto* src = SourceOf(*s, vent);
+            src->mode = 1;
+            src->strength = 0.0f;
+            src->densityDelta = 0.5f;
+            src->radius = 1.2f;
+            s->Step(30);
+            SourceOf(*s, vent)->densityDelta = 0.0f; // 源を止める
+            for (int t = 0; t < 40; ++t) {
+                s->Step();
+                centroids.push_back(DensityCentroidY(s->D().Slots()[0]));
+            }
+            return s->D().Slots()[0].density.size() == 16u * 16u * 16u;
+        };
+        std::vector<float> rising;
+        std::vector<float> still;
+        check(run(8.0f, rising) && run(0.0f, still), "volume buoyancy: both runs completed");
+        bool everyTick = rising.size() == 40;
+        for (size_t i = 1; everyTick && i < rising.size(); ++i) {
+            everyTick = rising[i] > rising[i - 1];
+        }
+        check(everyTick && rising.back() - rising.front() > 0.1f,
+              "volume buoyancy: with buoyancy the density centroid rises on every tick, also after the source is stopped");
+        check(still.size() == 40 && std::fabs(still.back() - still.front()) < 1.0e-3f && still.front() < -0.5f,
+              "volume buoyancy: with buoyancy = 0 the smoke does not rise (the centroid stays at the vent)");
+    }
+
+    // ---- 風は 3 成分に効く ----
+    {
+        auto s = std::make_unique<Sim>();
+        GameObject env = s->scene.CreateGameObjectTracked("Environment");
+        env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 0.0f, 1.0f, 0.0f };
+        const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
+        s->Flush();
+        s->Step(120);
+        const DisturbanceSlot& d = s->D().Slots()[0];
+        const float centerY = d.flowY[VolumeIndex(d, 8, 8, 8)];
+        const float centerX = d.flowX[VolumeIndex(d, 8, 8, 8)];
+        MYE_LOG_INFO("  [disturbance] volume wind: center flow (%g, %g)", centerX, centerY);
+        // 上向きの風が格子の縁から入って満ちる。投影が起こす横向きの流れは上向きに比べて小さい
+        check(centerY > 0.5f && std::fabs(centerX) < 0.1f * centerY, "volume wind: a vertical wind fills the volume with an upward flow");
+        (void)v;
+    }
+
+    // ---- 読み取り ----
+    {
+        auto s = std::make_unique<Sim>();
+        const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 16, 16, 16);
+        s->Flush();
+        FieldOf(*s, v)->pressureIterations = 0;
+        FieldOf(*s, v)->velocityKeep = 1.0f;
+        s->Step();
+        FieldImpulse imp = MakeImpulse(0.25f, 0.25f, 0.25f, 1.5f, 0.0f, 0.0f, 3.0f);
+        imp.dir[1] = 1.0f;
+        imp.density = 0.6f;
+        DisturbanceQueueImpulse(s->scene, imp);
+        s->Step();
+        FieldSampleOut out;
+        check(DisturbanceSampleAt(s->D(), s->W(), kNullEntity, { 0.25f, 0.25f, 0.25f }, out) && out.flow[1] > 0.0f
+                  && out.density > 0.0f && out.field == v,
+              "volume sample: inside the grid it returns the 3-component flow and the density");
+        check(!DisturbanceSampleAt(s->D(), s->W(), kNullEntity, { 0.25f, 40.0f, 0.25f }, out) && out.flow[1] == 0.0f,
+              "volume sample: above the grid is outside (no height shape for a Volume)");
+        check(DisturbanceSampleAt(s->D(), s->W(), kNullEntity, { 0.25f, 3.5f, 0.25f }, out), "volume sample: the top of the grid is inside");
+    }
+
+    // ---- ハッシュは流れ Y を含む / 描画への詰め替え ----
+    {
+        auto s = std::make_unique<Sim>();
+        const EntityID v = AddVolume(*s, 0.0f, 0.0f, 0.0f, 8, 8, 8);
+        s->Flush();
+        s->Step();
+        const uint64_t before = s->Hash();
+        s->D().Slots()[0].flowY[5] = 0.25f;
+        check(s->Hash() != before, "volume hash: flowY is folded into the world hash");
+        (void)v;
+    }
+    {
+        auto s = std::make_unique<Sim>();
+        DisturbanceVolumeUpload up;
+        check(BuildDisturbanceVolumeUpload(s->W(), nullptr, up) == 0, "volume render: a scene without fields packs no volume");
+        const EntityID v0 = AddVolume(*s, 0.0f, 2.0f, 0.0f, 8, 8, 8, "V0");
+        AddField(*s, 0.0f, 0.0f, 9.0f, 16, 16, 1, "Layer");
+        const EntityID v1 = AddVolume(*s, 10.0f, 2.0f, 0.0f, 12, 6, 10, "V1");
+        const EntityID v2 = AddVolume(*s, 20.0f, 2.0f, 0.0f, 8, 8, 8, "V2");
+        const EntityID v3 = AddVolume(*s, 30.0f, 2.0f, 0.0f, 8, 8, 8, "V3");
+        const EntityID v4 = AddVolume(*s, 40.0f, 2.0f, 0.0f, 8, 8, 8, "V4");
+        s->Flush();
+        // 先頭 4 個 (entity index 昇順) = V0, Layer, V1, V2。2D 層は Volume の数に入らず、V3 / V4 は sim も描画もされない
+        check(BuildDisturbanceVolumeUpload(s->W(), &s->D(), up) == 3 && up.volumes[0].entityIndex == v0.index
+                  && up.volumes[1].entityIndex == v1.index && up.volumes[2].entityIndex == v2.index && !up.volumes[0].hasState
+                  && up.volumes[1].cellsX == 12 && up.volumes[1].cellsY == 6 && up.volumes[1].cellsZ == 10,
+              "volume render: the first four fields by entity index are considered, volumes keep their own sizes, the layer is not counted");
+        check(up.volumes[0].originCell[1] == 4 - 4, "volume render: before the first step the origin is the one the step will build");
+        s->Step(2);
+        check(BuildDisturbanceVolumeUpload(s->W(), &s->D(), up) == 3 && up.volumes[0].hasState && up.volumes[0].flowY != nullptr
+                  && up.volumes[0].density == s->D().Slots()[0].density.data() && up.serial == s->D().RenderSerial(),
+              "volume render: with a state the volume points at the slot's arrays and carries the serial");
+        (void)v3;
+        (void)v4;
+        // 4 個とも Volume の場面 (描画は最大 4 個)
+        auto q = std::make_unique<Sim>();
+        for (int i = 0; i < 6; ++i) {
+            AddVolume(*q, static_cast<float>(i) * 10.0f, 2.0f, 0.0f, 8, 8, 8, "Q");
+        }
+        q->Flush();
+        q->Step();
+        check(BuildDisturbanceVolumeUpload(q->W(), &q->D(), up) == 4 && q->D().Slots().size() == 4,
+              "volume render: four volumes are simulated and packed, the fifth and sixth are not");
+    }
+
+    // ---- 決定論: 2 ワールド並走 (acc 20) ----
+    {
+        const int ticks = heavy ? 600 : 120;
+        auto a = std::make_unique<Sim>();
+        auto b = std::make_unique<Sim>();
+        const VolumeScenario sa = BuildVolumeScenario(*a);
+        const VolumeScenario sb = BuildVolumeScenario(*b);
+        a->Flush();
+        b->Flush();
+        bool same = true;
+        uint64_t last = 0;
+        for (int t = 0; t < ticks; ++t) {
+            DriveVolumeScenario(*a, sa, t);
+            DriveVolumeScenario(*b, sb, t);
+            a->Step();
+            b->Step();
+            LateVolumeInputs(*a, t);
+            LateVolumeInputs(*b, t);
+            last = a->Hash();
+            same = same && last == b->Hash();
+        }
+        MYE_LOG_INFO("  [disturbance] volume two-world scenario final hash @%d = %016llX", ticks, static_cast<unsigned long long>(last));
+        check(same, "volume determinism: two worlds hash-match on every tick");
+        check(a->D().Slots().size() == 3 && MaxAbsDev(a->D().Slots()[0].flowY, 0.0f) > 0.0f
+                  && MaxAbsDev(a->D().Slots()[0].density, 0.0f) > 0.0f,
+              "volume determinism: the compared scene has moving 3D state");
+    }
+
+    // ---- スナップショット往復 (acc 20) ----
+    if (!heavy) {
+        auto a = std::make_unique<Sim>();
+        const VolumeScenario sc = BuildVolumeScenario(*a);
+        a->Flush();
+        for (int t = 0; t < 100; ++t) {
+            DriveVolumeScenario(*a, sc, t);
+            a->Step();
+            LateVolumeInputs(*a, t);
+        }
+        DisturbanceQueueImpulse(a->scene, MakeImpulse(0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 2.0f));
+        SimRefs refsA;
+        refsA.scene = &a->scene;
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refsA, blob), "volume snapshot: capture succeeds");
+        const uint64_t hashA = a->Hash();
+        auto b = std::make_unique<Sim>();
+        SimRefs refsB;
+        refsB.scene = &b->scene;
+        check(RestoreSimSnapshot(refsB, blob.data(), blob.size()), "volume snapshot: restore into a fresh scene succeeds");
+        bool slotsSame = a->D().Slots().size() == b->D().Slots().size();
+        for (size_t i = 0; slotsSame && i < a->D().Slots().size(); ++i) {
+            slotsSame = SameSlot(a->D().Slots()[i], b->D().Slots()[i]);
+        }
+        check(slotsSame && b->Hash() == hashA, "volume snapshot: the restored scene has the same 3D arrays (flowY included) and world hash");
+        a->transforms.Update(a->W());
+        b->transforms.Update(b->W());
+        const VolumeScenario scB{ b->scene.Find("Walker").Id() };
+        bool same = true;
+        for (int t = 100; t < 200 && same; ++t) {
+            DriveVolumeScenario(*a, sc, t);
+            DriveVolumeScenario(*b, scB, t);
+            a->Step();
+            b->Step();
+            LateVolumeInputs(*a, t);
+            LateVolumeInputs(*b, t);
+            same = same && a->Hash() == b->Hash();
+        }
+        check(same, "volume snapshot: 100 ticks after the round trip every tick hash matches");
+    }
+    return ok;
+}
+
 } // namespace
 
 namespace {
@@ -1206,8 +1602,10 @@ bool RunDisturbanceFieldImpl(bool heavy)
         check(same, "determinism: two worlds hash-match on every tick");
         if (heavy) {
             // 600 tick 後の最終ハッシュ。Debug == Release (欄や計算を変えたら理由を添えて再採取する。
-            // M96d: 流れのソルバ (移流・投影・Radial の発散源)、欄 2 つ、場の畳み方 (HashStateBytes) で変わった。--field-bench が同じ値を出す)
-            constexpr uint64_t kBakedFinalHash = 0x674FE5CFD80F29A9ull;
+            // M96d: 流れのソルバ (移流・投影・Radial の発散源)、欄 2 つ、場の畳み方 (HashStateBytes) で変わった。
+            // M96g: DisturbanceFieldComponent の末尾に buoyancy (4 バイト) を足したので、World のカラムの生バイトが伸びて変わった
+            // (0x674FE5CFD80F29A9 → 下の値。2D の sim は 1 ビットも変えていない)。--field-bench が同じ値を出す)
+            constexpr uint64_t kBakedFinalHash = 0x2D2D2A180F889F62ull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
@@ -1260,6 +1658,11 @@ bool RunDisturbanceFieldImpl(bool heavy)
         ++failCount;
     }
 
+    // Volume (3D、M96g)
+    if (!RunDisturbanceVolumeTests(heavy)) {
+        ++failCount;
+    }
+
     return failCount == 0;
 }
 
@@ -1276,7 +1679,7 @@ bool RunDisturbanceLocalLightTests()
         }
     };
     check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
-    check(sizeof(DisturbanceFieldComponent) == 84, "local lights: the component size did not change");
+    check(sizeof(DisturbanceFieldComponent) == 88, "local lights: the component size is only the 4 bytes of buoyancy more (M96g)");
 
     // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
     DisturbanceFieldCB layers;
@@ -1368,6 +1771,8 @@ int RunDisturbanceFieldBenchmark()
                  static_cast<unsigned long long>(finalHash));
 
     SolverChecks(check);
+    // Volume の確認項目 (selftest を回さずに、この経路で実行して確かめる)
+    check(RunDisturbanceVolumeTests(false), "volume checks (the same ones the disturbance suite runs)");
 
     // 性能: 128 x 128、動く源 3 + 定常の源 1 + 風。step と HashWorld を別々に測る。
     // jobs なし / あり、反復回数とチャネルを変えた内訳 (どこが重いか) を並べる
@@ -1448,6 +1853,89 @@ int RunDisturbanceFieldBenchmark()
     measure(true, 20, 7);
     measure(false, 0, 7);
     measure(false, 20, 1);
+
+    // Volume (M96g): 32 x 16 x 32 (16384 マス)・20 反復・風・動く源 2 + 上向きの噴き出し 1 + 浮力。窓の測り方は上と同じ
+    uint64_t volumeFinalHash[2] = {}; // [jobs なし, jobs あり] の 20 反復の最終ハッシュ (同じ入力なので一致するはず)
+    const auto measureVolume = [&](bool jobsOn, int iterations) {
+        jobs::System().SetEnabled(jobsOn);
+        auto sim = std::make_unique<Sim>();
+        GameObject envGo = sim->scene.CreateGameObjectTracked("Environment");
+        envGo.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 1.0f, 0.2f, 0.5f };
+        const EntityID vol = AddVolume(*sim, 0.0f, 4.0f, 0.0f, 32, 16, 32);
+        EntityID movers[2];
+        for (int i = 0; i < 2; ++i) {
+            movers[i] = AddSource(*sim, "Mover", -6.0f, 1.0f, static_cast<float>(i) * 4.0f - 2.0f);
+            SourceOf(*sim, movers[i])->radius = 1.5f;
+        }
+        const EntityID vent = AddSource(*sim, "Vent", 0.0f, 0.5f, 0.0f);
+        sim->Flush();
+        FieldOf(*sim, vol)->pressureIterations = iterations;
+        FieldOf(*sim, vol)->buoyancy = 5.0f;
+        auto* ventSrc = SourceOf(*sim, vent);
+        ventSrc->mode = 1;
+        ventSrc->constantVelocity = { 0.0f, 1.5f, 0.0f };
+        ventSrc->densityDelta = 0.3f;
+        constexpr int kWarm = 60;
+        constexpr int kMeasured = 400;
+        constexpr int kWindow = 10;
+        double stepMs = 0.0;
+        double hashMs = 0.0;
+        double windowStep = 0.0;
+        double windowHash = 0.0;
+        double bestStep = 1.0e9;
+        double bestHash = 1.0e9;
+        double bestTotal = 1.0e9;
+        double worstTotal = 0.0;
+        for (int t = 0; t < kWarm + kMeasured; ++t) {
+            for (int i = 0; i < 2; ++i) {
+                TransformOf(*sim, movers[i])->position.x = -6.0f + 0.04f * static_cast<float>(t % 300);
+            }
+            const auto t0 = std::chrono::steady_clock::now();
+            sim->Step();
+            const auto t1 = std::chrono::steady_clock::now();
+            const uint64_t h = sim->Hash();
+            const auto t2 = std::chrono::steady_clock::now();
+            if (iterations == 20) {
+                volumeFinalHash[jobsOn ? 1 : 0] = h;
+            }
+            if (t >= kWarm) {
+                const double st = std::chrono::duration<double, std::milli>(t1 - t0).count();
+                const double hs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+                stepMs += st;
+                hashMs += hs;
+                windowStep += st;
+                windowHash += hs;
+                if ((t - kWarm + 1) % kWindow == 0) {
+                    const double total = (windowStep + windowHash) / kWindow;
+                    if (total < bestTotal) {
+                        bestTotal = total;
+                        bestStep = windowStep / kWindow;
+                        bestHash = windowHash / kWindow;
+                    }
+                    worstTotal = std::max(worstTotal, total);
+                    windowStep = 0.0;
+                    windowHash = 0.0;
+                }
+            }
+        }
+        MYE_LOG_INFO("  [bench] volume 32x16x32, jobs %s, %2d iterations: mean step %.3f + hash %.3f = %.3f ms/tick; "
+                     "best %d-tick window step %.3f + hash %.3f = %.3f, worst window %.3f ms/tick",
+                     jobsOn ? "on " : "off", iterations, stepMs / kMeasured, hashMs / kMeasured, (stepMs + hashMs) / kMeasured,
+                     kWindow, bestStep, bestHash, bestTotal, worstTotal);
+        if (!jobsOn && iterations == 20) {
+            SimRefs refs;
+            refs.scene = &sim->scene;
+            std::vector<std::byte> blob;
+            const bool ok = CaptureSimSnapshot(refs, blob);
+            MYE_LOG_INFO("  [bench] volume snapshot: capture=%d, %zu bytes (1 volume 32x16x32)", ok ? 1 : 0, blob.size());
+        }
+    };
+    measureVolume(false, 20);
+    measureVolume(true, 20);
+    measureVolume(false, 0);
+    MYE_LOG_INFO("  [bench] volume final hash @460: jobs off = %016llX, jobs on = %016llX",
+                 static_cast<unsigned long long>(volumeFinalHash[0]), static_cast<unsigned long long>(volumeFinalHash[1]));
+    check(volumeFinalHash[0] != 0 && volumeFinalHash[0] == volumeFinalHash[1], "volume: jobs on / off final hashes match");
     jobs::System().SetEnabled(true);
     if (startedHere) {
         jobs::System().Shutdown();

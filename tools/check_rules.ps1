@@ -257,6 +257,35 @@ $constGroups = @(
             'assets\shaders\disturbance_common.hlsli' = '#\s*define\s+MYE_DFLD_CB\s+(\d+)'
         }
     },
+    # M96g: Volume (3D) の描画の共有定義 (個数・CB の大きさ・束縛番号)。食い違うと Volume の霧が出ない / 別の Volume を読む (絵は出る)
+    @{
+        label = 'kDisturbanceMaxVolumes / MYE_DFLD_VOL_MAX'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceVolumePass.h' = 'constexpr\s+int\s+kDisturbanceMaxVolumes\s*=\s*(\d+)'
+            'assets\shaders\disturbance_volume.hlsli' = '#\s*define\s+MYE_DFLD_VOL_MAX\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceVolumeCbBytes / MYE_DFLD_VOL_CB_BYTES'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceVolumePass.h' = 'constexpr\s+int\s+kDisturbanceVolumeCbBytes\s*=\s*(\d+)'
+            'assets\shaders\disturbance_volume.hlsli' = '#\s*define\s+MYE_DFLD_VOL_CB_BYTES\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceVolumeSrvSlot / MYE_DFLD_VOL_SRV'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceVolumePass.h' = 'constexpr\s+int\s+kDisturbanceVolumeSrvSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_volume.hlsli' = '#\s*define\s+MYE_DFLD_VOL_SRV\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceVolumeCbSlot / MYE_DFLD_VOL_CB'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceVolumePass.h' = 'constexpr\s+int\s+kDisturbanceVolumeCbSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_volume.hlsli' = '#\s*define\s+MYE_DFLD_VOL_CB\s+(\d+)'
+        }
+    },
     # M96c: 地面の霧 (ground_fog.hlsli) の PS 用の束縛番号と板の積分の段数。食い違うと別のリソースを読む / 段数が合わない (絵は出る)
     @{
         label = 'kGroundFogSrvFlowSlot / MYE_GFOG_SRV_FLOW'

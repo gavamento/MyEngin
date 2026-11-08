@@ -16,6 +16,7 @@
 #include "Engine/Engine/Rendering/TerrainSystem.h"
 #include "Engine/Renderer/Passes/AcousticVolumePass.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Passes/DisturbanceVolumePass.h"
 #include "Engine/Renderer/Passes/EditorLinePass.h"
 #include "Engine/Renderer/Passes/EnvMapBaker.h"
 #include "Engine/Renderer/Passes/FroxelPass.h"
@@ -413,6 +414,7 @@ private:
     void UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target, FrameContext& f);
     void UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f);
     void UpdateDisturbanceField(World& world, GraphicsDevice& device, FrameContext& f);
+    void UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, FrameContext& f); // M96g: Volume (3D)
     void DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
                                RenderResources& resources, const FrameTarget& target,
                                const CameraOverride* cameraOverride, ParticleSystem* particles, VfxRenderer* vfx,
@@ -463,6 +465,7 @@ private:
     AcousticVolumePass acousticPass_;
     // M96: かき乱しフィールドの 2D 層のテクスチャ配列。場が現れるまで 1 バイトも確保しない
     DisturbanceFieldPass disturbancePass_;
+    DisturbanceVolumePass disturbanceVolumePass_; // M96g
     bool groundFogBound_ = false; // 今の描画で地面の霧を PS へ張ったか (描画の最後に剥がす)
     bool acousticSupplied_ = false; // 直近フレームで SRV を供給できたか (統計表示用)
     EditorLinePass linePass_; // DebugDrawLine 用 (v7、遅延 Init)

@@ -180,7 +180,8 @@ struct SimRefs {
 // v70 (M96a): DFLD 節 (かき乱しフィールドのスロットと配送待ちのインパルス) を TM2D 節の後・World 節の前に追加。
 //            DisturbanceFieldComponent / DisturbanceSourceComponent (TypeId 96 / 97、hash 対象)。World 節のカラム生バイト
 // v71 (M96d): DisturbanceFieldComponent の末尾に pressureIterations / windScale。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 71;
+// v72 (M96g): DFLD 節のスロットに流れ Y (Volume のみ) を追加、DisturbanceFieldComponent の末尾に buoyancy。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 72;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

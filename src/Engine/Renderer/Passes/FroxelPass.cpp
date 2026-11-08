@@ -9,6 +9,7 @@
 #include "Engine/Renderer/Device/GpuBufferUtil.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Passes/DisturbanceVolumePass.h"
 #include "Engine/Renderer/Shader/ShaderManager.h"
 
 using namespace DirectX;
@@ -86,7 +87,8 @@ bool FroxelPass::Init(GraphicsDevice& device, ShaderManager& shaders)
     }
     if (!gpubuf::CreateConstant(device.Device(), sizeof(FroxelInjectCB), cb_)
         || !gpubuf::CreateConstant(device.Device(), sizeof(FroxelPostCB), postCb_)
-        || !gpubuf::CreateConstant(device.Device(), sizeof(DisturbanceFieldCB), dfldCb_)) {
+        || !gpubuf::CreateConstant(device.Device(), sizeof(DisturbanceFieldCB), dfldCb_)
+        || !gpubuf::CreateConstant(device.Device(), sizeof(DisturbanceVolumeCB), dfldVolumeCb_)) {
         return false;
     }
     // SampleShadowAtlas 用の比較サンプラ。DeferredPath の shadowSampler_ と同じ設定
@@ -134,6 +136,7 @@ void FroxelPass::Shutdown()
     linearClamp_.Reset();
     postCb_.Reset();
     dfldCb_.Reset();
+    dfldVolumeCb_.Reset();
     cb_.Reset();
     inited_ = false;
     orthoWarned_ = false;
@@ -226,20 +229,31 @@ bool FroxelPass::Inject(GraphicsDevice& device, ShaderManager& shaders, const Re
     const DisturbanceFieldGpu* field = view.disturbance;
     const DisturbanceFieldCB noField;
     gpubuf::UploadCB(dc, dfldCb_.Get(), field != nullptr ? field->cb : noField);
+    // Volume (M96g、最大 4 個)。無いときは個数 0 の CB を張る = 足し込みがちょうど 0 になり、従来の絵とビット一致する
+    const DisturbanceVolumeGpu* volumes = view.disturbanceVolumes;
+    const DisturbanceVolumeCB noVolumes;
+    gpubuf::UploadCB(dc, dfldVolumeCb_.Get(), volumes != nullptr ? volumes->cb : noVolumes);
 
     timer_.Begin(device);
-    ID3D11Buffer* cbs[kDisturbanceCbSlot + 1] = { cb_.Get(), dfldCb_.Get() };
-    ID3D11ShaderResourceView* srvs[kDisturbanceSrvAuxSlot + 1] = {};
+    constexpr int kCsCbCount = kDisturbanceVolumeCbSlot + 1;
+    constexpr int kCsSrvCount = kDisturbanceVolumeSrvSlot + kDisturbanceMaxVolumes;
+    static_assert(kDisturbanceVolumeCbSlot > kDisturbanceCbSlot && kDisturbanceVolumeSrvSlot > kDisturbanceSrvAuxSlot,
+                  "Volume の束縛は 2D 層の束縛の後ろ");
+    ID3D11Buffer* cbs[kCsCbCount] = { cb_.Get(), dfldCb_.Get(), dfldVolumeCb_.Get() };
+    ID3D11ShaderResourceView* srvs[kCsSrvCount] = {};
     srvs[0] = useAtlas ? view.shadowAtlasSRV : nullptr;
     srvs[kDisturbanceSrvFlowSlot] = field != nullptr ? field->flowSRV : nullptr;
     srvs[kDisturbanceSrvAuxSlot] = field != nullptr ? field->auxSRV : nullptr;
+    for (int i = 0; i < kDisturbanceMaxVolumes; ++i) {
+        srvs[kDisturbanceVolumeSrvSlot + i] = volumes != nullptr ? volumes->srv[i] : nullptr;
+    }
     ID3D11SamplerState* samps[kDisturbanceSamplerSlot + 1] = {};
     samps[0] = shadowSampler_.Get();
     samps[kDisturbanceSamplerSlot] = linearClamp_.Get();
     ID3D11UnorderedAccessView* uavs[1] = { scatter_.UAV() };
     dc->CSSetShader(prog->cs.Get(), nullptr, 0);
-    dc->CSSetConstantBuffers(0, kDisturbanceCbSlot + 1, cbs);
-    dc->CSSetShaderResources(0, kDisturbanceSrvAuxSlot + 1, srvs);
+    dc->CSSetConstantBuffers(0, kCsCbCount, cbs);
+    dc->CSSetShaderResources(0, kCsSrvCount, srvs);
     dc->CSSetSamplers(0, kDisturbanceSamplerSlot + 1, samps);
     dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
     dc->Dispatch(
@@ -250,9 +264,9 @@ bool FroxelPass::Inject(GraphicsDevice& device, ShaderManager& shaders, const Re
     // ★RtPasses::UnbindCompute と同じ理由で必ず剥がす。ここを省くと、この後の
     //   描画パスが同じシャドウアトラスを PS の SRV として張った瞬間に D3D が
     //   「CS の SRV に居るぞ」と警告を出して片方を黙って外す
-    ID3D11ShaderResourceView* nullSrvs[kDisturbanceSrvAuxSlot + 1] = {};
+    ID3D11ShaderResourceView* nullSrvs[kCsSrvCount] = {};
     ID3D11UnorderedAccessView* nullUavs[1] = {};
-    dc->CSSetShaderResources(0, kDisturbanceSrvAuxSlot + 1, nullSrvs);
+    dc->CSSetShaderResources(0, kCsSrvCount, nullSrvs);
     dc->CSSetUnorderedAccessViews(0, 1, nullUavs, nullptr);
     dc->CSSetShader(nullptr, nullptr, 0);
     timer_.End(device);

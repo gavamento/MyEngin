@@ -354,6 +354,87 @@ void TestField(Checker& ck)
     ck.Check(jobs::System().WorkerCount() == 0 || delta.batches > 0, "Disturbance: 移流・投影の行がワーカーへ配られる");
 }
 
+// ---- かき乱しフィールドの Volume (M96g) ----
+constexpr int kFieldVolumeTicks = 300;
+
+// 風 (3 成分)・浮力・32 x 16 x 32 マスの Volume に、動く源 2 個と上向きの噴き出し 1 個。行 (y x z) 512 本は最小単位 (8 行) の 64 倍
+void BuildFieldVolume(FieldRig& rig)
+{
+    GameObject env = rig.scene.CreateGameObjectTracked("Environment");
+    env.AddComponent<PhysicsEnvironmentComponent>()->windVelocity = { 1.0f, 0.3f, -0.5f };
+    GameObject field = rig.scene.CreateGameObjectTracked("Volume");
+    field.SetLocalPosition(0.0f, 4.0f, 0.0f);
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 1;
+    f->cellsX = 32;
+    f->cellsY = 16;
+    f->cellsZ = 32;
+    f->cellSize = 0.5f;
+    f->restDensity = 0.0f;
+    f->buoyancy = 5.0f;
+    for (int i = 0; i < 2; ++i) {
+        GameObject mover = rig.scene.CreateGameObjectTracked("Mover");
+        mover.SetLocalPosition(-6.0f, 2.0f, static_cast<float>(i) * 3.0f - 1.5f);
+        auto* src = mover.AddComponent<DisturbanceSourceComponent>();
+        src->radius = 1.4f;
+        rig.movers.push_back(mover.Id());
+    }
+    GameObject vent = rig.scene.CreateGameObjectTracked("Vent");
+    vent.SetLocalPosition(0.0f, 0.5f, 0.0f);
+    auto* ventSrc = vent.AddComponent<DisturbanceSourceComponent>();
+    ventSrc->mode = 1;
+    ventSrc->constantVelocity = { 0.0f, 1.5f, 0.0f };
+    ventSrc->densityDelta = 0.3f;
+    World& world = rig.scene.GetWorld();
+    world.ApplyStructuralChanges();
+    rig.transforms.Update(world);
+}
+
+uint64_t StepFieldVolume(FieldRig& rig, int tick, double& acc)
+{
+    World& world = rig.scene.GetWorld();
+    for (size_t i = 0; i < rig.movers.size(); ++i) {
+        auto* t = world.GetComponent<LocalTransform>(rig.movers[i]);
+        t->position.x = -6.0f + 0.05f * static_cast<float>(tick % 240);
+        t->position.y = 2.0f + 0.01f * static_cast<float>(tick % 100);
+    }
+    TimeInto(acc, [&] { DisturbanceStep(world, rig.scene.Disturbance()); });
+    if (tick % 89 == 30) {
+        FieldImpulse imp;
+        imp.pos[0] = -1.0f;
+        imp.pos[1] = 1.0f;
+        imp.pos[2] = 0.0f;
+        imp.radius = 2.0f;
+        imp.speed = 5.0f;
+        imp.shape = kFieldImpulseRadial;
+        DisturbanceQueueImpulse(rig.scene, imp);
+    }
+    world.ApplyStructuralChanges();
+    rig.transforms.Update(world);
+    SimRefs refs;
+    refs.scene = &rig.scene;
+    return HashWorld(world, refs.HashSources());
+}
+
+void TestFieldVolume(Checker& ck)
+{
+    FieldRig a, b;
+    BuildFieldVolume(a);
+    BuildFieldVolume(b);
+    JobDelta delta;
+    uint64_t lastHash = 0;
+    UpdateTimes times;
+    const bool same = RunAB([&](int t) { return StepFieldVolume(a, t, times.jobsOnMs); },
+                            [&](int t) { return StepFieldVolume(b, t, times.jobsOffMs); }, delta, lastHash, kFieldVolumeTicks);
+    MYE_LOG_INFO("  [time] disturbance volume: step %.3f ms/tick with jobs, %.3f ms/tick serial (reference only)",
+                 times.jobsOnMs / kFieldVolumeTicks, times.jobsOffMs / kFieldVolumeTicks);
+    ck.Check(same, "DisturbanceVolume: jobs あり / なしで 300 tick 毎 tick のワールドハッシュ (3D の状態込み) が一致する");
+    ck.Check(!a.scene.Disturbance().Slots().empty() && a.scene.Disturbance().Slots()[0].shape == 1
+                 && !a.scene.Disturbance().Slots()[0].flowY.empty() && lastHash != 0,
+             "DisturbanceVolume: 比べた場面で 3D の状態がハッシュに畳まれている");
+    ck.Check(jobs::System().WorkerCount() == 0 || delta.batches > 0, "DisturbanceVolume: 移流・投影の行がワーカーへ配られる");
+}
+
 // ---- TwoBoneIk + PartFollow ----
 struct BodyRig {
     Scene scene;
@@ -470,6 +551,7 @@ bool RunSimParallelSelfTest()
     TestPerception(ck);
     TestBodies(ck);
     TestField(ck);
+    TestFieldVolume(ck);
 
     if (startedHere) {
         jobs::System().Shutdown();

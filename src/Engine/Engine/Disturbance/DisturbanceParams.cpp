@@ -32,7 +32,8 @@ FieldParams SanitizeField(EntityID e, const DisturbanceFieldComponent& c, const 
     }
     p.cellSize = ClampOr(c.cellSize, 0.05f, 8.0f, 0.25f);
     p.thickness = ClampOr(c.thickness, 0.05f, 20.0f, 1.0f);
-    p.channels = c.channels & kDisturbanceChannelMask;
+    // Volume は濃さだけ (跡・波紋のビットは無視する)
+    p.channels = c.channels & (p.shape == kDisturbanceVolume ? kDisturbanceChannelDensity : kDisturbanceChannelMask);
     p.restDensity = ClampOr(c.restDensity, 0.0f, 1.0f, 1.0f);
     p.densityKeep = ClampOr(c.densityKeep, 0.0f, 1.0f, 1.0f);
     p.velocityKeep = ClampOr(c.velocityKeep, 0.0f, 1.0f, 1.0f);
@@ -41,6 +42,7 @@ FieldParams SanitizeField(EntityID e, const DisturbanceFieldComponent& c, const 
     p.rippleKeep = ClampOr(c.rippleKeep, 0.0f, 1.0f, 1.0f);
     p.pressureIterations = std::clamp(c.pressureIterations, 0, kMaxPressureIterations);
     p.windScale = ClampOr(c.windScale, 0.0f, kMaxWindScale, 1.0f);
+    p.buoyancy = ClampOr(c.buoyancy, 0.0f, kMaxBuoyancy, 0.0f);
     for (int i = 0; i < 3; ++i) {
         p.pos[i] = FiniteOr(pos[i], 0.0f);
     }

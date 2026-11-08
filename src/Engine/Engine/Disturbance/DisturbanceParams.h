@@ -45,6 +45,7 @@ struct FieldParams {
     float rippleKeep = 1.0f;
     int32_t pressureIterations = 0; // [0, kMaxPressureIterations]
     float windScale = 0.0f;         // [0, kMaxWindScale]
+    float buoyancy = 0.0f;          // Volume だけ。[0, kMaxBuoyancy] [m/s^2 / 濃さ]
     float pos[3] = { 0.0f, 0.0f, 0.0f }; // 場のエンティティのワールド位置
 };
 

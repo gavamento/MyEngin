@@ -36,6 +36,8 @@ inline constexpr float kMaxRippleCourant = 0.7f;
 // 圧力投影の反復回数の上限と、風の倍率の上限
 inline constexpr int32_t kMaxPressureIterations = 64;
 inline constexpr float kMaxWindScale = 10.0f;
+// 浮力の上限 [m/s^2 / 濃さ]
+inline constexpr float kMaxBuoyancy = 20.0f;
 // sim の周波数。cellSize × この値が流れの速さの上限 (1 tick に 1 マス)
 inline constexpr float kDisturbanceTickRate = 60.0f;
 
@@ -85,6 +87,7 @@ struct DisturbanceSlot {
     float baseY = 0.0f;                  // GroundLayer の層の下端の高さ [m]
     std::vector<float> flowX;            // 流れ [m/s]
     std::vector<float> flowZ;
+    std::vector<float> flowY;            // Volume だけ (GroundLayer は空)。y 方向の流れ [m/s]
     std::vector<float> density;          // [0,1]
     std::vector<float> trail;            // [0,1]
     std::vector<float> ripple;           // 波紋の高さ h [m]
@@ -121,6 +124,9 @@ public:
         // radialActive が偽の場は使わない (配列は触らない)
         std::vector<float> radialX[kMaxDisturbanceFields];
         std::vector<float> radialZ[kMaxDisturbanceFields];
+        std::vector<float> radialY[kMaxDisturbanceFields]; // Volume だけ
+        std::vector<float> flowY;                          // Volume の移流の書き込み先
+        std::vector<float> targetRowY;                     // 格子外の流れ (目標速度の y) を行として渡すための行
         bool radialActive[kMaxDisturbanceFields] = {};
         std::vector<float> targetRowZ; // 格子外の流れ (目標速度の z) を行として渡すための行
         std::vector<float> density;
@@ -134,7 +140,7 @@ public:
     // 描画用の通番 (状態ではない。ハッシュ・スナップショットに入れない)。step のたびに +1
     uint64_t RenderSerial() const { return renderSerial_; }
 
-    // 5 個目以降の場・Volume の場の警告を出した回数 (selftest 用。状態ではない)
+    // 5 個目以降の場の警告を出した回数 (selftest 用。状態ではない)
     uint32_t OverflowWarnCount() const { return overflowWarnCount_; }
 
     // スナップショットの DFLD 節の中身 (magic は呼び出し側)。Read は検証に失敗したら out を触らず false
@@ -150,13 +156,13 @@ private:
     uint64_t renderSerial_ = 0;
     uint32_t overflowWarnCount_ = 0;
     bool queueFullWarned_ = false;           // step ごとに戻す
-    std::vector<EntityID> warnedFields_;     // 警告済みの場 (5 個目以降 / Volume)
+    std::vector<EntityID> warnedFields_;     // 警告済みの場 (5 個目以降)
     std::vector<float> rippleScratch_;       // 波紋の次の h の作業領域
     SolverScratch solver_; // 流れのソルバの作業領域
 };
 
-// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 流れの移流・減衰・投影 → 濃さの移流 → 復元 → 波紋 → 範囲の強制。
-// 移流・投影・復元・波紋は z 行で jobs::ParallelRanges に割る (注入は直列)。
+// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 流れの移流・減衰・(Volume は浮力)・投影 → 濃さの移流 → 復元 → 波紋 → 範囲の強制。
+// 移流・投影・復元・波紋は z 行 (Volume は y × z 行) で jobs::ParallelRanges に割る (注入は直列)。
 // 場が 1 つも無く配送待ちも空なら走査だけで抜ける。World から読むのは Transform 確定後の WorldMatrix、
 // CharacterController.velocity、Rigidbody.velocity と、場・源のコンポーネント、PhysicsEnvironment の風
 void DisturbanceStep(World& world, DisturbanceState& state);
@@ -170,7 +176,7 @@ bool DisturbanceQueueImpulse(Scene& scene, const FieldImpulse& impulse);
 
 // 読み取りの結果。無効なチャネルの値は 0
 struct FieldSampleOut {
-    float flow[3] = { 0.0f, 0.0f, 0.0f }; // GroundLayer は y = 0
+    float flow[3] = { 0.0f, 0.0f, 0.0f }; // GroundLayer は y = 0。Volume は 3 成分
     float density = 0.0f;
     float trail = 0.0f;
     float ripple = 0.0f;
