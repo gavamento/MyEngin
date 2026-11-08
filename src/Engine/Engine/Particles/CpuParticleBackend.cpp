@@ -8,6 +8,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Jobs/JobSystem.h"
+#include "Engine/Engine/Disturbance/DisturbanceState.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Platform/Clock.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -21,6 +22,9 @@ namespace {
 
 // 並列化するプール数の下限の単位 (これ以下は直列と同じ経路)
 constexpr size_t kPoolGrain = 2;
+
+// fieldInfluence の上限 [1/s] (Components.cpp の登録範囲と一致)。範囲外の値が来ても陽的オイラーが発散しない
+constexpr float kFieldInfluenceMax = 10.0f;
 
 struct ParticleInstance {
     XMFLOAT3 pos;
@@ -391,8 +395,28 @@ void CpuParticleBackend::EmitParticles(EmitterPool& pool, const ParticleEmitterC
     }
 }
 
+namespace {
+
+// 粒子位置の場の流れへ速度を寄せる加速度を (ax, ay, az) に足す。場の外なら何もしない。
+// 2D 層 (GroundLayer) は y の流れを持たないので、y 成分は Volume のときだけ寄せる (上昇する煙を 0 へ潰さない)
+void AddFieldPull(const DisturbanceState& state, World& world, float influence, float px, float py, float pz,
+                  float vx, float vy, float vz, float& ax, float& ay, float& az)
+{
+    FieldSampleOut out;
+    if (!DisturbanceSampleAt(state, world, kNullEntity, { px, py, pz }, out)) {
+        return;
+    }
+    ax += influence * (out.flow[0] - vx);
+    if (out.vertical) {
+        ay += influence * (out.flow[1] - vy);
+    }
+    az += influence * (out.flow[2] - vz);
+}
+
+} // namespace
+
 void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel, float dt,
-                                        const TurbulenceParams& tp, uint32_t begin,
+                                        const TurbulenceParams& tp, const FieldPull* field, uint32_t begin,
                                         uint32_t end) const
 {
     // SIMD 本体とレーン毎に同一の演算列 (mul→add の順) — 結果はビット一致する
@@ -407,9 +431,13 @@ void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel
         for (uint32_t i = begin; i < end; ++i) {
             const DirectX::XMFLOAT3 curl = EvalCurlNoise(
                 { pool.px[i] * freq, pool.py[i] * freq, pool.pz[i] * freq }, t);
-            const float ax = accel.x + turb * curl.x;
-            const float ay = accel.y + turb * curl.y;
-            const float az = accel.z + turb * curl.z;
+            float ax = accel.x + turb * curl.x;
+            float ay = accel.y + turb * curl.y;
+            float az = accel.z + turb * curl.z;
+            if (field != nullptr) {
+                AddFieldPull(*field->state, *field->world, field->influence, pool.px[i], pool.py[i], pool.pz[i],
+                             pool.vx[i], pool.vy[i], pool.vz[i], ax, ay, az);
+            }
             pool.vx[i] += ax * dt;
             pool.vy[i] += ay * dt;
             pool.vz[i] += az * dt;
@@ -421,9 +449,13 @@ void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel
         return;
     }
     for (uint32_t i = begin; i < end; ++i) {
-        const float ax = accel.x + turb * (-pool.vz[i]);
-        const float ay = accel.y;
-        const float az = accel.z + turb * pool.vx[i];
+        float ax = accel.x + turb * (-pool.vz[i]);
+        float ay = accel.y;
+        float az = accel.z + turb * pool.vx[i];
+        if (field != nullptr) {
+            AddFieldPull(*field->state, *field->world, field->influence, pool.px[i], pool.py[i], pool.pz[i],
+                         pool.vx[i], pool.vy[i], pool.vz[i], ax, ay, az);
+        }
         pool.vx[i] += ax * dt;
         pool.vy[i] += ay * dt;
         pool.vz[i] += az * dt;
@@ -435,7 +467,7 @@ void CpuParticleBackend::SimulateScalar(EmitterPool& pool, const XMFLOAT3& accel
 }
 
 void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterComponent& desc,
-                                  float dt) const
+                                  float dt, World* world) const
 {
     // M61g: simulationSpace=1 (ローカル) でも力場は一切変換しない — gravity/wind も
     // 渦/カールノイズも**ローカル系のベクトル/場として解釈する** (v1 仕様。エミッタが
@@ -454,11 +486,23 @@ void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterCompon
     tp.noiseSpeed = desc.noiseSpeed;
     tp.noiseTime = static_cast<float>(pool.ageTicks) * dt;
 
+    // M96k: fieldInfluence > 0 のプールは場を粒子ごとに引くので、プール単位でスカラー経路へ落とす
+    // (desc と sim 状態だけで決まる分岐 = 全構成で同一判定)。0 のプールは従来の演算列のまま。
+    // ローカル空間は粒子の座標がワールドではないので引かない
+    FieldPull pull;
+    const FieldPull* pullPtr = nullptr;
+    if (desc.fieldInfluence > 0.0f && fieldState_ != nullptr && world != nullptr && !ParticleIsLocalSpace(desc)) {
+        pull.state = fieldState_;
+        pull.world = world;
+        pull.influence = std::min(desc.fieldInfluence, kFieldInfluenceMax);
+        pullPtr = &pull;
+    }
+
     // M61d: mode=1 はノイズ評価が粒子ごとの散在格子参照になり 4-wide 化しないため、プール単位で
     // スカラー経路へ落とす。desc 由来の分岐 = 全ビルド/全機種で同一判定 = 決定論 OK。
     // mode=0 は従来どおり SIMD (ビット不変)
-    if (!simd_ || pool.alive < 8 || desc.turbulenceMode == 1) {
-        SimulateScalar(pool, accel, dt, tp, 0, pool.alive);
+    if (!simd_ || pool.alive < 8 || desc.turbulenceMode == 1 || pullPtr != nullptr) {
+        SimulateScalar(pool, accel, dt, tp, pullPtr, 0, pool.alive);
         return;
     }
 
@@ -499,7 +543,7 @@ void CpuParticleBackend::Simulate(EmitterPool& pool, const ParticleEmitterCompon
         __m128 life4 = _mm_loadu_ps(&pool.life[i]);
         _mm_storeu_ps(&pool.life[i], _mm_sub_ps(life4, dt4));
     }
-    SimulateScalar(pool, accel, dt, tp, simdCount, pool.alive); // 端数レーン
+    SimulateScalar(pool, accel, dt, tp, nullptr, simdCount, pool.alive); // 端数レーン
 }
 
 void CpuParticleBackend::KillDead(EmitterPool& pool) const
@@ -531,7 +575,7 @@ void CpuParticleBackend::KillDead(EmitterPool& pool) const
 }
 
 void CpuParticleBackend::StepPool(EmitterPool& pool, const ParticleEmitterComponent& desc,
-                                  const XMFLOAT4X4& worldMatrix, float dt) const
+                                  const XMFLOAT4X4& worldMatrix, float dt, World* world) const
 {
     pool.descCache = desc; // 描画時に World を引かないためのコピー
     // M61g: renderWorld は descCache と同じ「Render で World を引かないためのキャッシュ」
@@ -566,13 +610,13 @@ void CpuParticleBackend::StepPool(EmitterPool& pool, const ParticleEmitterCompon
         const int prewarmTicks = std::min(600, static_cast<int>(desc.prewarmTime / dt));
         for (int step = 0; step < prewarmTicks; ++step) {
             EmitParticles(pool, desc, origin, basis, dt);
-            Simulate(pool, desc, dt);
+            Simulate(pool, desc, dt, world);
             KillDead(pool);
         }
     }
 
     EmitParticles(pool, desc, origin, basis, dt);
-    Simulate(pool, desc, dt);
+    Simulate(pool, desc, dt, world);
     KillDead(pool);
 
     // 描画専用バウンズ (ハッシュ非対象)。シム更新自体は可視性でスキップしない —
@@ -643,7 +687,7 @@ void CpuParticleBackend::Update(World& world, float dt)
     // プールは互いに独立 (RNG もプールごと、書くのは自分の SoA だけ)。結果はワーカー数に依存しない
     jobs::System().ParallelRanges(steps.size(), kPoolGrain, [&](size_t begin, size_t end) {
         for (size_t i = begin; i < end; ++i) {
-            StepPool(*steps[i].pool, *steps[i].desc, *steps[i].worldMatrix, dt);
+            StepPool(*steps[i].pool, *steps[i].desc, *steps[i].worldMatrix, dt, &world);
         }
     });
     // 合算は pools_ (owner.index 昇順) の順

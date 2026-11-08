@@ -2,6 +2,25 @@
 
 #include "particle_gpu_common.hlsli"
 
+// ---- M96k: かき乱しフィールドの流れに乗る (fieldInfluence > 0 のエミッタだけ) ----
+// 束縛番号は C++ の kParticleField* (GpuParticleBackend.h) と一致させる (規則 9)。
+// disturbance_common / _volume の既定の番号はフロクセル CS 用なので、粒子 CS の空きへ付け替えてから include する
+#define MYE_PFLD_FLOW_SRV 3
+#define MYE_PFLD_VOL_SRV 4
+#define MYE_PFLD_LAYER_CB 3
+#define MYE_PFLD_VOLUME_CB 4
+#define MYE_PFLD_SAMPLER 1
+#define MYE_DFLD_SRV_FLOW 3
+#define MYE_DFLD_SRV_AUX 8 // 粒子は読まない (宣言だけ。C++ も張らない)
+#define MYE_DFLD_SAMPLER 1
+#define MYE_DFLD_CB 3
+#define MYE_DFLD_VOL_CB 4
+#define MYE_DFLD_VOL_T0 4
+#define MYE_DFLD_VOL_T1 5
+#define MYE_DFLD_VOL_T2 6
+#define MYE_DFLD_VOL_T3 7
+#include "disturbance_volume.hlsli"
+
 RWStructuredBuffer<GpuParticle> gPool : register(u0);
 AppendStructuredBuffer<uint> gDeadList : register(u1);
 RWStructuredBuffer<uint> gAliveOut : register(u2); // カウンタ付き
@@ -84,6 +103,59 @@ float3 EvalCurlNoise(float3 p, float t)
     return float3(dFzDy - dFyDz, dFxDz - dFzDx, dFyDx - dFxDy);
 }
 
+// Volume i の位置 pos での流れを flow へ。格子の外・状態なしなら false。範囲と補間は C++ の DisturbanceSampleAt と同じ
+bool ParticleVolumeFlow(uint i, Texture3D<float4> tex, float3 pos, inout float3 flow)
+{
+    if (i >= gDfldVolHeader.x) {
+        return false;
+    }
+    const DisturbanceVolume V = gDfldVolumes[i];
+    if (V.extent.w < 0.5f) {
+        return false;
+    }
+    const float3 g = pos / V.originSize.w - V.originSize.xyz;
+    const float3 n = V.extent.xyz;
+    if (!(all(g >= 0.0f) && all(g < n))) {
+        return false;
+    }
+    flow = tex.SampleLevel(gDfldSampler, float3(g.x / n.x, g.z / n.z, g.y / n.y), 0).xyz;
+    return true;
+}
+
+// 粒子位置 pos での場の流れ。2D 層 (index 順) → Volume (index 順) で最初に含む物。
+// vertical = y の流れが実測値か (2D 層は y を持たない)。場の外は false
+bool ParticleFieldFlow(float3 pos, out float3 flow, out bool vertical)
+{
+    flow = float3(0.0f, 0.0f, 0.0f);
+    vertical = false;
+    for (uint i = 0; i < gDfldHeader.x && i < MYE_DFLD_MAX_LAYERS; ++i) {
+        const DisturbanceLayer L = gDfldLayers[i];
+        if (L.extent.w < 0.5f) {
+            continue;
+        }
+        const float gx = pos.x / L.originSize.z - L.originSize.x;
+        const float gz = pos.z / L.originSize.z - L.originSize.y;
+        if (!(gx >= 0.0f && gz >= 0.0f && gx < L.extent.x && gz < L.extent.y)) {
+            continue;
+        }
+        if (!(pos.y >= L.originSize.w - L.extent.z && pos.y <= L.originSize.w + 2.0f * L.extent.z)) {
+            continue;
+        }
+        const float2 uvLo = float2(0.5f, 0.5f) * L.texScale.xy;
+        const float2 uvHi = float2(L.extent.x - 0.5f, L.extent.y - 0.5f) * L.texScale.xy;
+        const float2 uv = clamp(float2(gx, gz) * L.texScale.xy, uvLo, uvHi);
+        const float2 v = gDfldFlow.SampleLevel(gDfldSampler, float3(uv, (float)i), 0).xy;
+        flow = float3(v.x, 0.0f, v.y);
+        return true;
+    }
+    if (ParticleVolumeFlow(0, gDfldVol0, pos, flow) || ParticleVolumeFlow(1, gDfldVol1, pos, flow)
+        || ParticleVolumeFlow(2, gDfldVol2, pos, flow) || ParticleVolumeFlow(3, gDfldVol3, pos, flow)) {
+        vertical = true;
+        return true;
+    }
+    return false;
+}
+
 [numthreads(256, 1, 1)]
 void CSMain(uint3 tid : SV_DispatchThreadID)
 {
@@ -104,6 +176,16 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
               + turb * EvalCurlNoise(p.pos * gParams4.y, gParams4.w * gParams4.z);
     } else {
         accel = gGravityWind.xyz + turb * float3(-p.vel.z, 0.0f, p.vel.x);
+    }
+    // M96k: fieldInfluence (gCollParams2.y) * (場の流れ - 粒子の速度)。CPU の AddFieldPull と同じ式
+    if (gCollParams2.y > 0.0f) {
+        float3 flow;
+        bool vertical;
+        if (ParticleFieldFlow(p.pos, flow, vertical)) {
+            float3 pull = gCollParams2.y * (flow - p.vel);
+            pull.y = vertical ? pull.y : 0.0f;
+            accel += pull;
+        }
     }
     p.vel += accel * dt;
     p.pos += p.vel * dt;

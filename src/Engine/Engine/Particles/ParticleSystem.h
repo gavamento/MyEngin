@@ -7,6 +7,8 @@
 
 namespace mye {
 
+class DisturbanceState;
+
 enum class ParticleBackendKind { Cpu = 0, Gpu = 1 };
 
 // パーティクルシステムの司令塔 (engine_spec.md 7 章)。
@@ -35,7 +37,9 @@ public:
     void ReleaseGpu();
     bool RecreateGpu(GraphicsDevice& device, ShaderManager& shaders);
 
-    void Update(World& world, float dt);                       // tick フェーズ 4
+    // tick フェーズ 4。disturbance = この tick の step 後のかき乱しフィールドの状態 (null = 場なし)。
+    // CPU 粒子は fieldInfluence > 0 のエミッタだけが読む (読むだけで書かない)
+    void Update(World& world, float dt, const DisturbanceState* disturbance = nullptr);
     void Render(GraphicsDevice& device, const RenderView& view, ShaderManager& shaders,
                 RenderResources& resources);
 

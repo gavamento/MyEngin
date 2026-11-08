@@ -661,7 +661,7 @@ void RunOneTick(TickServices& ts)
         }
         {
             MYE_PROFILE_SCOPE("particles");
-            particleSystem.Update(scene.GetWorld(), ctx.fixedDt);
+            particleSystem.Update(scene.GetWorld(), ctx.fixedDt, &scene.Disturbance());
         }
         // トレイル点列の蓄積 (M29c)。WorldMatrix 確定後の tick 側で 1 回だけ —
         // Render 側だと SceneView/GameView の多重描画で多重サンプルされる

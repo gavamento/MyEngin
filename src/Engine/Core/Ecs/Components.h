@@ -181,6 +181,9 @@ struct ParticleEmitterComponent {
     float collisionLifeLoss = 0.0f;   // C5 1 回の衝突で失う寿命の割合。1.0 = kill-on-collide
     bool collisionFloor = false;       // C5 true=解析床とも衝突する (画面外でも効く proxy。任意形状は不可)
     float collisionFloorY = 0.0f;     // C5 解析床の高さ
+    // ---- M96k: かき乱しフィールドの流れに乗る (末尾 append。0 = 場を引かない = 従来とビット同一) ----
+    // 加速度に fieldInfluence * (場の流れ - 粒子の速度) を足す。単位 1/s (場の流れへ寄せる速さ)。ローカル空間では無効
+    float fieldInfluence = 0.0f;
     // ---- 実行時 (非登録=非ハッシュ・非シリアライズ。スクリプト/エディタが即時バーストを積む) ----
     int32_t pendingBurst = 0; // 次の Update で消費され 0 に戻る (常に tick 末ハッシュ前に 0)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;

@@ -1,8 +1,8 @@
 # sub-11: 粒子 (CPU / GPU)
 
 - 依存: sub-07 (波 W3。spec §6)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (W3 の統合待ち。順 09 → 11 → 08)
+- 往復: 1
 
 
 ## 並列の注意 (波 W3)
@@ -51,4 +51,11 @@ spec §5 の 12, 22, 30。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-11 (round 1) の要約 (全文は司会への返答)
+
+- `ParticleEmitterComponent.fieldInfluence` (0〜10、既定 0)、snapshot v74、CPU は `AddFieldPull` (DisturbanceSampleAt) を SimulateScalar に追加、GPU は `particle_sim.cs.hlsl` の t3 / t4〜t7 / b3 / b4 / s1。
+- 追加した範囲外の変更: `FieldSampleOut::vertical` (2D 層は y を引かない)、`disturbance_volume.hlsli` の束縛番号を上書き可能に。
+- 検証: Debug / Release ビルド OK、check_rules 0 error、fxc で particle_sim / froxel_inject コンパイル OK、`--field-demo` の A/B スクショ (fieldInfluence on / off で絵が変わる、CPU / GPU とも)。selftest / replay_verify は未実行 (運用指示)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-09)。fieldInfluence (v74)、CPU はスカラー経路で DisturbanceSampleAt、k = 0 は従来の演算列、GPU は t3 / t4〜t7 / b3 / b4 / s1 を sim のときだけ張る、規則 9 の粒子 5 グループ、デモを確認。FieldSampleOut::vertical (y は Volume だけ)、disturbance_volume.hlsli の番号の上書き口、ローカル空間の無視を受理 (spec §4.3)。ワーカーからの GetComponent の読み取りは ADR-028 の許可の範囲

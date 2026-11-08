@@ -2361,6 +2361,11 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
             particles->Gpu().SetSceneDepth(view.depthSRV, view.view, view.proj, view.width,
                                            view.height, view.nearZ, view.farZ);
         }
+        // M96k: GPU 粒子が読むかき乱しフィールドのテクスチャ。深度と同じく、エディタカメラの描画では更新しない
+        // (別の World を描くビューで場が null になり、ゲームビューの値を消すのを避ける)
+        if (!cameraOverride) {
+            particles->Gpu().SetFieldGpu(view.disturbance, view.disturbanceVolumes);
+        }
     }
 
     // ナビメッシュの半透明の塗り (M82e)。線より先 (塗りの上に輪郭と経路線が乗る)。

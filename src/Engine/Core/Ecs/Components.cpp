@@ -214,6 +214,7 @@ void RegisterBuiltinComponents()
         MYE_JP("衝突時の寿命損失", MYE_FIELD_RANGE(ParticleEmitterComponent, collisionLifeLoss, Float, 0.0f, 1.0f)),
         MYE_JP("解析床と衝突", MYE_FIELD(ParticleEmitterComponent, collisionFloor, Bool)),
         MYE_JP("解析床の高さ", MYE_FIELD(ParticleEmitterComponent, collisionFloorY, Float)),
+        MYE_JP("場の流れへの追従", MYE_FIELD_RANGE(ParticleEmitterComponent, fieldInfluence, Float, 0.0f, 10.0f)),
     });
 
     // M28a: height / friction、M36a: layer / mask / meshAsset を末尾 append
