@@ -92,6 +92,7 @@ W1 の 4 本を止めた。全部未コミット。再開時は各 sub-NN.md 末
 ## W4 (2026-11-09 開始)
 - 10 / 13 を master から切った worktree で並列実装。統合順 10 → 13
 - W4 統合完了 (10 d269a34 → 13 b4100a1)。競合は SimSnapshot.h (v76)、AcousticAudioSelfTest (76)、DemoContentField.cpp / DisturbanceFieldSelfTest.cpp (共有の閉じ括弧・末尾の呼び出し Hill → Snow・戻り値の式) を手で解いた。Debug / Release ビルド OK、check_rules 0 error、fxc 5 本 OK、--field-bench all checks passed (kBakedFinalHash 0x0D0CBC4DCBEE185E)。統合後の --field-demo f300 に白飛びした矩形あり (scratchpad\m96-shots\w4_integrated_f300.png) → planner へ
+- 池の白飛びの修正 (W4 追補): 原因は water_surface.hlsl の ApplyFog の引数の並びが M77b (746775c) 以来宣言と違っていたこと (M96 の回帰ではなく潜在バグの露見)。3 行の修正で Forward / Deferred とも池が霧に霞む。水面を使わない 4 デモ × 2 は tol 0 で差 0。planner OK。次は sub-17 (W5)
 
 ## 申し送り (セッション跨ぎ)
 - design-draft.md と本台帳は sub-01 のコミットに同梱する (基点時点で未追跡)

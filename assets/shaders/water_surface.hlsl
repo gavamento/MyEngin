@@ -328,9 +328,9 @@ float4 PSMain(VSOut i) : SV_Target
 
     // M96: 地面の霧。外側の大気 (下のフォグ) より先に掛ける
     litColor = GroundFogComposite(litColor, i.posW, i.pos.xy);
-    // フォグ
-    litColor = ApplyFog(litColor, viewDist, i.posW.y, gFogMode, gFogColor, gFogStart, gFogEnd,
-                        gFogDensity, gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
+    // フォグ。引数の並びは common.hlsli の ApplyFog に合わせる (並びを誤ると、フォグ無効のシーンでも白飛びする)
+    litColor = ApplyFog(litColor, gFogColor, gFogMode, gFogDensity, gFogStart, gFogEnd, gCameraPos, i.posW,
+                        gFogHeightFalloff, gFogBaseHeight, gSunDirection, gSunColor,
                         gFogInscatterIntensity, gFogInscatterPower);
 
     // メッシュ外周のソフトエッジ (正方形プレーンの境界が空中に露出するのを防ぐ)
