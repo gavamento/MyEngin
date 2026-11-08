@@ -64,5 +64,31 @@ spec §5 の 12, 30, 35。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL sub-15 (round 1) は司会への返信に記載 (実装・差分・検証・採点)。中断メモは下の通り。
+
 ## フィードバック履歴
 - round 1: VERDICT OK (planner、2026-11-08)。pad0 → fogLocalLights (サイズ 76 不変、版なし)、b8 のライト CB (528 B)、8 本の選択と WARN、LightSample と同じ式、規則 9 の 2 エントリを確認。35(a) はシェーダの比較だけ (C++ は flag off でマスク 0 = 経路が変わらない) で受け入れ。35(d) のノイズは sub-17 の静かな再計測へ。式の二重管理は nit (sub-17 で共有ヘッダ化を検討)
+
+## 中断メモ (2026-11-08)
+
+worktree: C:\HAL\MyEngin\.claude\worktrees\agent-ad788ccedd6a6eede / ブランチ: worktree-agent-ad788ccedd6a6eede (起動時 aa3288e だったため、クリーンな状態で `git reset --hard b7cb1fa` して master 先頭に合わせた。変更は全て未コミット)
+
+終わったこと:
+- Components.h/.cpp: pad0 -> fogLocalLights (bool、サイズ 76 不変)、反射登録、tooltip (fogSunLight の「局所ライト未対応」を削除)
+- DisturbanceFieldPass.h/.cpp: kGroundFogLightCbSlot = 8、kGroundFogMaxLights = 8、GroundFogLightCB (64 B) / GroundFogLightsCB (528 B)、SelectGroundFogLights (純粋関数)、DisturbanceFieldGpu.localLightMask、BindGroundFog は b6-b8 の 3 本を張る / Unbind、超過 WARN (超過が続く間 1 回)
+- DisturbanceRender.cpp (fogLocalLights を upload へ)、RenderSystem.cpp (gf.lights = &f.lights)
+- ground_fog.hlsli: b8 cbuffer、GfogLightMask、GfogLocalLightRadiance (LightSample と同式)、GfogStepRadiance に局所ライト項 (firstbitlow ループ)
+- tools\check_rules.ps1 規則 9 に 2 エントリ (スロットと最大本数。1 グループに 2 整数は入らないため 2 つ)
+- DisturbanceFieldSelfTest.cpp: RunDisturbanceLocalLightTests (未実行)
+- DemoContentField.cpp: AddFieldDemoLanterns + 末尾に呼び出し 1 行
+- Release ビルド OK。スクショ (OFF / ON) 撮影済み: scratchpad\m96-shots\sub15_01_off_t100.png、sub15_02_on_i30_t100.png、sub15_03_on_i120_t100.png (ON でランタン周りが明るくなることを確認)
+
+途中のこと:
+- DemoContentField.cpp に一時の環境変数改造 (`// S15TEMP`、MYE_S15_N / _FLAG / _INT と #include <cstdlib>) が入ったまま。正規版は scratchpad\sub15\DemoContentField.final.cpp に退避済み (これで上書きして戻し、ランタン強度は 30 -> 80 前後に上げる予定)
+- (a) の比較: main の旧 Release Runtime のコピー (scratchpad\sub15\Runtime_baseline.exe) は DLL 不足で起動せず (0xC0000135)。新 exe のランタン無し・flag off の絵 (sub15_04_*) は撮れている。比較対象の旧絵は別の手段が要る (旧 exe を worktree の bin\x64\Release へ一時的に置く、など)
+- 未実施: (c) 9 本で WARN 1 回の確認、(d) ライト 0 / 1 / 8 本の GPU 時間 (--render-stats-dump、実 GPU、1080p。デモには既存の Lamp が 1 本あるので本数は Lamp + N)、Forward / Deferred 両方、Debug 再ビルド (最後のビルドは firstbitlow 書き換え・デモ改造より前)、check_rules、SELF_EVAL
+- selftest / replay_verify は運用により未実行
+
+次にやること: 上の途中を片付け -> 一時改造を戻す -> Release / Debug 再ビルド -> check_rules -> SELF_EVAL
+
+触ったファイル (worktree 内、絶対パスの基点は上): src\Engine\Core\Ecs\Components.h / Components.cpp、src\Engine\Renderer\Passes\DisturbanceFieldPass.h / .cpp、src\Engine\Engine\Disturbance\DisturbanceRender.cpp / DisturbanceFieldSelfTest.cpp、src\Engine\Engine\Rendering\RenderSystem.cpp、src\Engine\Engine\Demo\DemoContentField.cpp、assets\shaders\ground_fog.hlsli、tools\check_rules.ps1、plans\m96-disturbance-field\sub-15.md

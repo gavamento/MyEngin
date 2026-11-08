@@ -300,6 +300,21 @@ $constGroups = @(
             'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_STEPS\s+(\d+)'
         }
     },
+    # M96o: 地面の霧を照らす局所ライトの CB スロットと最大本数 (CB の大きさそのもの。食い違うと光が静かにずれる)
+    @{
+        label = 'kGroundFogLightCbSlot / MYE_GFOG_LIGHT_CB'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogLightCbSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_LIGHT_CB\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogMaxLights / MYE_GFOG_MAX_LIGHTS'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogMaxLights\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_MAX_LIGHTS\s+(\d+)'
+        }
+    },
     # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{

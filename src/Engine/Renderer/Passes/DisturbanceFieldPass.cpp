@@ -15,6 +15,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Renderer/Device/GpuBufferUtil.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 namespace mye {
 
@@ -31,6 +32,78 @@ float At(const float* a, size_t i)
 }
 
 } // namespace
+
+int SelectGroundFogLights(const SceneLightData& lights, const DisturbanceFieldCB& layers, uint32_t localLightMask,
+                          GroundFogLightsCB& out)
+{
+    out = GroundFogLightsCB{};
+    const uint32_t layerCount = (std::min)(layers.header[0], static_cast<uint32_t>(kDisturbanceMaxLayers));
+    // 照らす層の板 (AABB)。ground_fog.hlsli の交差判定と同じ範囲
+    float boxLo[kDisturbanceMaxLayers][3] = {};
+    float boxHi[kDisturbanceMaxLayers][3] = {};
+    uint32_t mask = 0;
+    for (uint32_t i = 0; i < layerCount; ++i) {
+        const DisturbanceLayerCB& l = layers.layers[i];
+        if ((localLightMask & (1u << i)) == 0 || l.look[3] < 0.5f || l.look[0] <= 0.0f) {
+            continue;
+        }
+        mask |= 1u << i;
+        const float cs = l.originSize[2];
+        boxLo[i][0] = l.originSize[0] * cs;
+        boxHi[i][0] = (l.originSize[0] + l.extent[0]) * cs;
+        boxLo[i][1] = l.originSize[3] + l.texScale[2];
+        boxHi[i][1] = l.originSize[3] + l.texScale[3] + l.extent[2];
+        boxLo[i][2] = l.originSize[1] * cs;
+        boxHi[i][2] = (l.originSize[1] + l.extent[1]) * cs;
+    }
+    if (mask == 0) {
+        return 0;
+    }
+    out.header[1] = mask;
+    int total = 0;
+    const int count = (std::min)(lights.count, static_cast<int>(kMaxLights));
+    for (int n = 0; n < count; ++n) {
+        const GpuLight& g = lights.lights[n];
+        if (g.type == 0 || !(g.range > 0.0f)) {
+            continue; // 平行光は fogSunLight の担当
+        }
+        const float c[3] = { g.position.x, g.position.y, g.position.z };
+        bool reaches = false;
+        for (uint32_t i = 0; i < layerCount && !reaches; ++i) {
+            if ((mask & (1u << i)) == 0) {
+                continue;
+            }
+            float d2 = 0.0f;
+            for (int a = 0; a < 3; ++a) {
+                const float q = (std::max)(boxLo[i][a], (std::min)(c[a], boxHi[i][a]));
+                d2 += (c[a] - q) * (c[a] - q);
+            }
+            reaches = d2 <= g.range * g.range;
+        }
+        if (!reaches) {
+            continue;
+        }
+        if (total < kGroundFogMaxLights) {
+            GroundFogLightCB& o = out.lights[total];
+            o.posRange[0] = g.position.x;
+            o.posRange[1] = g.position.y;
+            o.posRange[2] = g.position.z;
+            o.posRange[3] = g.range;
+            o.colorKind[0] = g.color.x * g.intensity;
+            o.colorKind[1] = g.color.y * g.intensity;
+            o.colorKind[2] = g.color.z * g.intensity;
+            o.colorKind[3] = g.type == 2 ? 2.0f : 1.0f;
+            o.dirInner[0] = g.direction.x;
+            o.dirInner[1] = g.direction.y;
+            o.dirInner[2] = g.direction.z;
+            o.dirInner[3] = g.cosInner;
+            o.outerPad[0] = g.cosOuter;
+        }
+        ++total;
+    }
+    out.header[0] = static_cast<uint32_t>((std::min)(total, static_cast<int>(kGroundFogMaxLights)));
+    return total;
+}
 
 bool DisturbanceFieldPass::EnsureArrays(GraphicsDevice& device, int32_t width, int32_t height)
 {
@@ -129,6 +202,7 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
     // ---- CB は毎回組み直す (数十バイトで、編集中の設定変更をすぐ反映するため) ----
     DisturbanceFieldCB cb;
     cb.header[0] = static_cast<uint32_t>(count);
+    uint32_t localLightMask = 0;
     for (int32_t i = 0; i < count; ++i) {
         const DisturbanceLayerUpload& l = src.layers[i];
         DisturbanceLayerCB& c = cb.layers[i];
@@ -149,6 +223,9 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         c.fogColor[1] = l.fogColor[1];
         c.fogColor[2] = l.fogColor[2];
         c.fogColor[3] = l.fogSunLight ? 1.0f : 0.0f;
+        if (l.fogLocalLights) {
+            localLightMask |= 1u << i;
+        }
         c.texScale[0] = texWidth_ > 0 ? 1.0f / static_cast<float>(texWidth_) : 0.0f;
         c.texScale[1] = texHeight_ > 0 ? 1.0f / static_cast<float>(texHeight_) : 0.0f;
         if (!same) {
@@ -170,6 +247,7 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         c.texScale[3] = offsetRange_[i][1];
     }
     gpu_.cb = cb;
+    gpu_.localLightMask = localLightMask;
     if (anyState) {
         gpu_.flowSRV = flowSrv_.Get();
         gpu_.auxSRV = auxSrv_.Get();
@@ -225,7 +303,7 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
 
 bool DisturbanceFieldPass::CreateGroundFogResources(GraphicsDevice& device)
 {
-    if (groundFogLayersCb_ && groundFogViewCb_ && groundFogSampler_) {
+    if (groundFogLayersCb_ && groundFogViewCb_ && groundFogLightsCb_ && groundFogSampler_) {
         return true;
     }
     ID3D11Device* dev = device.Device();
@@ -237,10 +315,12 @@ bool DisturbanceFieldPass::CreateGroundFogResources(GraphicsDevice& device)
     sd.MaxLOD = D3D11_FLOAT32_MAX;
     if (!gpubuf::CreateConstant(dev, sizeof(DisturbanceFieldCB), groundFogLayersCb_)
         || !gpubuf::CreateConstant(dev, sizeof(GroundFogViewCB), groundFogViewCb_)
+        || !gpubuf::CreateConstant(dev, sizeof(GroundFogLightsCB), groundFogLightsCb_)
         || FAILED(dev->CreateSamplerState(&sd, groundFogSampler_.ReleaseAndGetAddressOf()))) {
         MYE_LOG_ERROR("DisturbanceFieldPass: 地面の霧の CB / サンプラを作れなかった (地面の霧は描かれない)");
         groundFogLayersCb_.Reset();
         groundFogViewCb_.Reset();
+        groundFogLightsCb_.Reset();
         groundFogSampler_.Reset();
         return false;
     }
@@ -271,9 +351,25 @@ bool DisturbanceFieldPass::BindGroundFog(GraphicsDevice& device, const Disturban
     ID3D11DeviceContext* dc = device.Context();
     gpubuf::UploadCB(dc, groundFogLayersCb_.Get(), field->cb);
     gpubuf::UploadCB(dc, groundFogViewCb_.Get(), v);
-    ID3D11Buffer* cbs[2] = { groundFogLayersCb_.Get(), groundFogViewCb_.Get() };
-    static_assert(kGroundFogViewCbSlot == kGroundFogCbSlot + 1, "2 本まとめて張る");
-    dc->PSSetConstantBuffers(kGroundFogCbSlot, 2, cbs);
+    // 局所ライト。照らす層が無ければ本数 0 の CB を張る (シェーダは未束縛を読まない)
+    GroundFogLightsCB lightsCb;
+    if (view.lights != nullptr && field->localLightMask != 0) {
+        const int total = SelectGroundFogLights(*view.lights, field->cb, field->localLightMask, lightsCb);
+        if (total > kGroundFogMaxLights) {
+            if (!lightOverflowWarned_) {
+                MYE_LOG_WARN("DisturbanceFieldPass: 地面の霧を照らす局所ライトが %d 本ある (最大 %d 本。超えた %d 本は使われない)",
+                             total, kGroundFogMaxLights, total - kGroundFogMaxLights);
+                lightOverflowWarned_ = true;
+            }
+        } else {
+            lightOverflowWarned_ = false;
+        }
+    }
+    gpubuf::UploadCB(dc, groundFogLightsCb_.Get(), lightsCb);
+    ID3D11Buffer* cbs[3] = { groundFogLayersCb_.Get(), groundFogViewCb_.Get(), groundFogLightsCb_.Get() };
+    static_assert(kGroundFogViewCbSlot == kGroundFogCbSlot + 1 && kGroundFogLightCbSlot == kGroundFogViewCbSlot + 1,
+                  "3 本まとめて張る");
+    dc->PSSetConstantBuffers(kGroundFogCbSlot, 3, cbs);
     ID3D11ShaderResourceView* srvs[2] = { field->flowSRV, field->auxSRV };
     static_assert(kGroundFogSrvAuxSlot == kGroundFogSrvFlowSlot + 1, "2 本まとめて張る");
     dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
@@ -285,8 +381,8 @@ bool DisturbanceFieldPass::BindGroundFog(GraphicsDevice& device, const Disturban
 void DisturbanceFieldPass::UnbindGroundFog(GraphicsDevice& device)
 {
     ID3D11DeviceContext* dc = device.Context();
-    ID3D11Buffer* cbs[2] = {};
-    dc->PSSetConstantBuffers(kGroundFogCbSlot, 2, cbs);
+    ID3D11Buffer* cbs[3] = {};
+    dc->PSSetConstantBuffers(kGroundFogCbSlot, 3, cbs);
     ID3D11ShaderResourceView* srvs[2] = {};
     dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
     ID3D11SamplerState* samp[1] = {};
@@ -297,6 +393,7 @@ void DisturbanceFieldPass::Release()
 {
     groundFogLayersCb_.Reset();
     groundFogViewCb_.Reset();
+    groundFogLightsCb_.Reset();
     groundFogSampler_.Reset();
     flowSrv_.Reset();
     auxSrv_.Reset();

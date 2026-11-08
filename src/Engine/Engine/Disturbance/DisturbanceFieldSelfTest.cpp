@@ -29,6 +29,7 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Shared/EngineAPI.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Pipeline/RenderTypes.h"
 
 namespace mye {
 
@@ -1219,11 +1220,83 @@ bool RunDisturbanceFieldImpl(bool heavy)
     return failCount == 0;
 }
 
+// M96o: 地面の霧を照らす局所ライトの選び方 (GPU を使わない純粋関数) と欄の既定値
+bool RunDisturbanceLocalLightTests()
+{
+    int failCount = 0;
+    auto check = [&](bool cond, const char* what) {
+        if (cond) {
+            MYE_LOG_INFO("  PASS: %s", what);
+        } else {
+            MYE_LOG_ERROR("  FAIL: %s", what);
+            ++failCount;
+        }
+    };
+    check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
+    check(sizeof(DisturbanceFieldComponent) == 76, "local lights: the component size did not change");
+
+    // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
+    DisturbanceFieldCB layers;
+    layers.header[0] = 1;
+    DisturbanceLayerCB& l = layers.layers[0];
+    l.originSize[2] = 1.0f;
+    l.extent[0] = 8.0f;
+    l.extent[1] = 8.0f;
+    l.extent[2] = 1.0f;
+    l.look[0] = 1.0f;
+    l.look[3] = 1.0f;
+
+    SceneLightData lights;
+    const auto addPoint = [&](float x, float y, float z, float range) {
+        GpuLight& g = lights.lights[lights.count++];
+        g.type = 1;
+        g.position = { x, y, z };
+        g.range = range;
+        g.color = { 1.0f, 0.5f, 0.25f };
+        g.intensity = 2.0f;
+    };
+    GroundFogLightsCB out;
+
+    check(SelectGroundFogLights(lights, layers, 1u, out) == 0 && out.header[0] == 0, "local lights: no lights selects none");
+    addPoint(4.0f, 0.5f, 4.0f, 3.0f);      // 板の中
+    addPoint(30.0f, 0.5f, 4.0f, 3.0f);     // 板から遠い (影響球が交わらない)
+    addPoint(8.0f + 2.0f, 0.5f, 4.0f, 3.0f); // 板の縁から 2 m、range 3 で届く
+    lights.lights[lights.count++].type = 0;  // 平行光は選ばれない
+    check(SelectGroundFogLights(lights, layers, 1u, out) == 2 && out.header[0] == 2 && out.header[1] == 1u,
+          "local lights: only point / spot lights whose sphere reaches the slab are selected");
+    check(out.lights[0].posRange[0] == 4.0f && out.lights[1].posRange[0] == 10.0f,
+          "local lights: the selection keeps the light list order");
+    check(out.lights[0].colorKind[0] == 2.0f && out.lights[0].colorKind[1] == 1.0f && out.lights[0].colorKind[3] == 1.0f,
+          "local lights: the color is premultiplied by the intensity and the kind is carried");
+    check(SelectGroundFogLights(lights, layers, 0u, out) == 0 && out.header[0] == 0 && out.header[1] == 0,
+          "local lights: a layer with fogLocalLights off selects nothing");
+
+    // 9 本置く: 8 本だけ詰め、戻り値は条件を満たした総数 (超過の本数を呼び出し側が数えられる)
+    lights = SceneLightData{};
+    for (int i = 0; i < 9; ++i) {
+        addPoint(1.0f + static_cast<float>(i) * 0.5f, 0.5f, 4.0f, 2.0f);
+    }
+    check(SelectGroundFogLights(lights, layers, 1u, out) == 9 && out.header[0] == kGroundFogMaxLights
+              && out.lights[kGroundFogMaxLights - 1].posRange[0] == 1.0f + 7.0f * 0.5f,
+          "local lights: 9 lights keep the first 8 and report 9");
+
+    // 板の高さ: baseY を上げると真下の低いライトも、高さ方向の距離が range 以内なら届く
+    lights = SceneLightData{};
+    addPoint(4.0f, 5.0f, 4.0f, 3.0f); // 板の上端 (y = 1) から 4 m 上: 届かない
+    check(SelectGroundFogLights(lights, layers, 1u, out) == 0, "local lights: a light above the slab out of range is dropped");
+    lights.lights[0].range = 4.5f;
+    check(SelectGroundFogLights(lights, layers, 1u, out) == 1, "local lights: a light above the slab within range is kept");
+
+    MYE_LOG_INFO("  local lights: %s", failCount == 0 ? "OK" : "FAILED");
+    return failCount == 0;
+}
+
 } // namespace
 
 bool RunDisturbanceFieldSelfTest()
 {
-    return RunDisturbanceFieldImpl(false);
+    const bool localLightsOk = RunDisturbanceLocalLightTests();
+    return RunDisturbanceFieldImpl(false) && localLightsOk;
 }
 
 bool RunDisturbanceFieldLongSelfTest()

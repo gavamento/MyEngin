@@ -129,6 +129,30 @@ void AddFieldDemoPerson(Scene& s, const AssetID capsule)
     mr->material = AssetID{ HashStr("pdemo_ball") };
 }
 
+// M96o: 霧の中のランタン 3 個 (点光源)。場の fogLocalLights を true にして、地面の霧が光ることを見せる
+void AddFieldDemoLanterns(Scene& s)
+{
+    struct Lantern {
+        const char* name;
+        float x;
+        float z;
+    };
+    const Lantern lanterns[] = { { "Lantern_A", -5.0f, 5.0f }, { "Lantern_B", 4.0f, 8.0f }, { "Lantern_C", -1.0f, 13.0f } };
+    for (const Lantern& l : lanterns) {
+        GameObject go = s.CreateGameObject(l.name);
+        go.SetLocalPosition(l.x, 0.7f, l.z);
+        auto* light = go.AddComponent<LightComponent>();
+        light->type = lighttype::kPoint;
+        light->color = { 1.0f, 0.7f, 0.35f };
+        light->intensity = 80.0f;
+        light->range = 6.0f;
+    }
+    GameObject field = s.Find("DisturbanceField");
+    if (field) {
+        field.GetComponent<DisturbanceFieldComponent>()->fogLocalLights = true;
+    }
+}
+
 } // namespace
 
 // M96b: --field-demo。霧の広場: 平らな地面に 2D 層の場を 1 個置き、DisturbanceSource 付きの球 3 個を霧の中へ転がす。
@@ -150,6 +174,7 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     AddRollingBall(s, sphere, "Ball_B", 0.0f, -10.0f, 5.0f);
     AddRollingBall(s, sphere, "Ball_C", 3.0f, -9.5f, 3.5f);
     AddFieldDemoPerson(s, ctx.resources->meshes.Capsule());
+    AddFieldDemoLanterns(s);
     s.GetWorld().ApplyStructuralChanges();
 }
 

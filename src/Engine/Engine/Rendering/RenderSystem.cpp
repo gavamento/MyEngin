@@ -2159,6 +2159,7 @@ void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, 
     gf.camPos[0] = f.view.cameraPos.x;
     gf.camPos[1] = f.view.cameraPos.y;
     gf.camPos[2] = f.view.cameraPos.z;
+    gf.lights = &f.lights;
     gf.ambient[0] = f.lights.ambient.x;
     gf.ambient[1] = f.lights.ambient.y;
     gf.ambient[2] = f.lights.ambient.z;
