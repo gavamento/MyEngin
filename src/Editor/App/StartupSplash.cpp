@@ -13,9 +13,11 @@
 #include <Windows.h>
 #include <d2d1.h>
 #include <dwrite.h>
+#include <shellscalingapi.h>
 #include <wincodec.h>
 
 #include "Editor/App/StartupMoebius.h"
+#include "Engine/Platform/Win32Window.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Platform/PathUtil.h"
@@ -24,6 +26,7 @@
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "shcore.lib")
 #pragma comment(lib, "windowscodecs.lib")
 
 namespace mye {
@@ -180,6 +183,61 @@ void DrawCoverImage(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, const D2D1_RECT_F& 
 
 } // namespace
 
+SplashWindowLayout ComputeSplashWindowLayout(int monitorDpi, int workAreaW, int workAreaH, int layoutW,
+                                             int layoutH)
+{
+    if (monitorDpi <= 0) {
+        monitorDpi = 96;
+    }
+    SplashWindowLayout out;
+    int clientW = MulDiv(layoutW, monitorDpi, 96);
+    int clientH = MulDiv(layoutH, monitorDpi, 96);
+    if (clientW < 1) {
+        clientW = 1;
+    }
+    if (clientH < 1) {
+        clientH = 1;
+    }
+    if (workAreaW > 0 && workAreaH > 0 && (clientW > workAreaW || clientH > workAreaH)) {
+        const float scaleX = static_cast<float>(workAreaW) / static_cast<float>(clientW);
+        const float scaleY = static_cast<float>(workAreaH) / static_cast<float>(clientH);
+        const float scale = (std::min)(scaleX, scaleY);
+        clientW = (std::max)(1, static_cast<int>(static_cast<float>(clientW) * scale));
+        clientH = (std::max)(1, static_cast<int>(static_cast<float>(clientH) * scale));
+    }
+    out.clientWidth = clientW;
+    out.clientHeight = clientH;
+    out.renderTargetDpiX = static_cast<float>(clientW) * 96.0f / static_cast<float>(layoutW);
+    out.renderTargetDpiY = static_cast<float>(clientH) * 96.0f / static_cast<float>(layoutH);
+    if (workAreaW > clientW) {
+        out.originX = (workAreaW - clientW) / 2;
+    }
+    if (workAreaH > clientH) {
+        out.originY = (workAreaH - clientH) / 2;
+    }
+    return out;
+}
+
+namespace {
+
+D2D1_RENDER_TARGET_PROPERTIES SplashRenderTargetProps(float dpiX, float dpiY)
+{
+    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
+    props.dpiX = dpiX;
+    props.dpiY = dpiY;
+    return props;
+}
+
+void SyncSplashDpiFromClient(SplashWindowLayout& layout, int clientW, int clientH)
+{
+    layout.clientWidth = clientW;
+    layout.clientHeight = clientH;
+    layout.renderTargetDpiX = static_cast<float>(clientW) * 96.0f / static_cast<float>(kSplashW);
+    layout.renderTargetDpiY = static_cast<float>(clientH) * 96.0f / static_cast<float>(kSplashH);
+}
+
+} // namespace
+
 StartupSplash::StartupSplash() = default;
 
 StartupSplash::~StartupSplash()
@@ -236,13 +294,24 @@ void StartupSplash::RunThread()
     const HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool coInit = SUCCEEDED(coHr);
 
+    EnsureProcessDpiAwareness();
     RegisterSplashClass();
-    const int screenW = GetSystemMetrics(SM_CXSCREEN);
-    const int screenH = GetSystemMetrics(SM_CYSCREEN);
-    const int posX = (screenW - kSplashW) / 2;
-    const int posY = (screenH - kSplashH) / 2;
+    MONITORINFO monitorInfo = {};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    const HMONITOR primaryMonitor = MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    GetMonitorInfoW(primaryMonitor, &monitorInfo);
+    UINT monitorDpiX = 96;
+    UINT monitorDpiY = 96;
+    GetDpiForMonitor(primaryMonitor, MDT_EFFECTIVE_DPI, &monitorDpiX, &monitorDpiY);
+    const int workW = monitorInfo.rcWork.right - monitorInfo.rcWork.left;
+    const int workH = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
+    SplashWindowLayout frameLayout =
+        ComputeSplashWindowLayout(static_cast<int>(monitorDpiX), workW, workH, kSplashW, kSplashH);
+    const int posX = monitorInfo.rcWork.left + frameLayout.originX;
+    const int posY = monitorInfo.rcWork.top + frameLayout.originY;
     HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW, kSplashClass, L"MyEngine Editor", WS_POPUP | WS_VISIBLE, posX,
-                                posY, kSplashW, kSplashH, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+                                posY, frameLayout.clientWidth, frameLayout.clientHeight, nullptr, nullptr,
+                                GetModuleHandleW(nullptr), nullptr);
     if (!hwnd) {
         MYE_LOG_WARN("[splash] CreateWindowExW failed");
         running_.store(false, std::memory_order_release);
@@ -285,9 +354,14 @@ void StartupSplash::RunThread()
         return;
     }
 
-    const D2D1_RENDER_TARGET_PROPERTIES rtProps = D2D1::RenderTargetProperties();
-    const D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps =
-        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(kSplashW, kSplashH));
+    RECT clientRect = {};
+    GetClientRect(hwnd, &clientRect);
+    SyncSplashDpiFromClient(frameLayout, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
+    D2D1_RENDER_TARGET_PROPERTIES rtProps =
+        SplashRenderTargetProps(frameLayout.renderTargetDpiX, frameLayout.renderTargetDpiY);
+    D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps =
+        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(static_cast<UINT32>(frameLayout.clientWidth),
+                                                           static_cast<UINT32>(frameLayout.clientHeight)));
     if (FAILED(d2dFactory->CreateHwndRenderTarget(rtProps, hwndProps, &rt))) {
         MYE_LOG_WARN("[splash] CreateHwndRenderTarget failed");
         SafeRelease(dwriteFactory);
@@ -476,6 +550,11 @@ void StartupSplash::RunThread()
         const HRESULT endHr = rt->EndDraw();
         if (endHr == D2DERR_RECREATE_TARGET) {
             SafeRelease(rt);
+            GetClientRect(hwnd, &clientRect);
+            SyncSplashDpiFromClient(frameLayout, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
+            rtProps = SplashRenderTargetProps(frameLayout.renderTargetDpiX, frameLayout.renderTargetDpiY);
+            hwndProps.pixelSize =
+                D2D1::SizeU(static_cast<UINT32>(frameLayout.clientWidth), static_cast<UINT32>(frameLayout.clientHeight));
             d2dFactory->CreateHwndRenderTarget(rtProps, hwndProps, &rt);
             SafeRelease(splashImage);
             if (rt) {

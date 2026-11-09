@@ -254,6 +254,27 @@ void GenerateHeights(TerrainData& d)
 
 // 高さ帯からレイヤ重みを作る (手続きスプラットの既定)。M58d の本番ブレンドはシェーダ側だが、
 // アセット側の不変量「1 テクセルの重み合計 = kSplatWeightSum」はここで必ず成立させる
+void GenerateFlatHeights(TerrainData& d, float flatNorm)
+{
+    const uint16_t h = ToU16(flatNorm);
+    d.heights.assign(static_cast<size_t>(d.heightW) * d.heightH, h);
+}
+
+// flatHeight 指定時のスプラット: レイヤ 0 のみ (画像なしの平坦テンプレート用)
+void GenerateFlatSplat(TerrainData& d)
+{
+    d.splat.assign(static_cast<size_t>(d.splatW) * d.splatH * 4, 0);
+    for (uint32_t z = 0; z < d.splatH; ++z) {
+        for (uint32_t x = 0; x < d.splatW; ++x) {
+            uint8_t* px = &d.splat[(static_cast<size_t>(z) * d.splatW + x) * 4];
+            px[0] = static_cast<uint8_t>(kSplatWeightSum);
+            px[1] = 0;
+            px[2] = 0;
+            px[3] = 0;
+        }
+    }
+}
+
 void GenerateSplat(TerrainData& d)
 {
     d.splat.assign(static_cast<size_t>(d.splatW) * d.splatH * 4, 0);
@@ -685,6 +706,9 @@ bool CookFromSource(const std::wstring& srcPath, TerrainData& out)
         }
     }
 
+    const bool hasFlatHeight = j.contains("flatHeight") && j["flatHeight"].is_number();
+    const float flatHeightNorm = hasFlatHeight ? ReadFloat(j, "flatHeight", 0.0f) : 0.0f;
+
     const std::string heightRel = ReadStr(j, "heightmap");
     if (!heightRel.empty()) {
         const std::wstring abs = ResolveRel(srcPath, heightRel);
@@ -692,6 +716,8 @@ bool CookFromSource(const std::wstring& srcPath, TerrainData& out)
             || !StampSource(abs, heightRel, d.heightSrc)) {
             return false;
         }
+    } else if (hasFlatHeight) {
+        GenerateFlatHeights(d, flatHeightNorm);
     } else {
         GenerateHeights(d);
     }
@@ -703,6 +729,8 @@ bool CookFromSource(const std::wstring& srcPath, TerrainData& out)
             || !StampSource(abs, splatRel, d.splatSrc)) {
             return false;
         }
+    } else if (hasFlatHeight && heightRel.empty()) {
+        GenerateFlatSplat(d);
     } else {
         GenerateSplat(d);
     }

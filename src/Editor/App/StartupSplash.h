@@ -19,6 +19,21 @@ struct SplashDesc {
     std::wstring buildCaption;
 };
 
+// レイアウト座標 (DIP) と実クライアントピクセル・D2D DPI の対応 (高 DPI / 作業領域に収める)
+struct SplashWindowLayout {
+    int clientWidth = 640;
+    int clientHeight = 360;
+    float renderTargetDpiX = 96.0f;
+    float renderTargetDpiY = 96.0f;
+    // 作業領域左上を (0,0) としたときの窓左上 (中央寄せ)
+    int originX = 0;
+    int originY = 0;
+};
+
+// monitorDpi の物理寸法へ拡大し、workAreaW×workAreaH に収める (0 なら収めない)。
+SplashWindowLayout ComputeSplashWindowLayout(int monitorDpi, int workAreaW, int workAreaH, int layoutW = 640,
+                                             int layoutH = 360);
+
 class StartupSplash : public IStartupObserver {
 public:
     StartupSplash();

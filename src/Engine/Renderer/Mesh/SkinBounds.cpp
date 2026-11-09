@@ -106,7 +106,81 @@ void CollectSampleTimes(const SkeletalClip& clip, std::vector<float>& times)
     }
 }
 
+// ボーンごとの頂点の箱 (バインド空間) と、どのボーンにも結ばれない頂点の箱 (恒等で描かれる)。
+// 入力の検査 (空・属性の数) は呼び出し側
+void BuildEnvelopes(size_t jointCount, const std::vector<XMFLOAT3>& positions, const std::vector<MeshSkinVertex>& skin,
+                    std::vector<Box>& envelope, Box& rigid)
+{
+    envelope.assign(jointCount, Box{});
+    rigid = Box{};
+    if (skin.empty()) {
+        for (const XMFLOAT3& p : positions) {
+            rigid.Extend(p);
+        }
+        return;
+    }
+    for (size_t i = 0; i < positions.size(); ++i) {
+        const MeshSkinVertex& sv = skin[i];
+        const float w[4] = { sv.boneWeights.x, sv.boneWeights.y, sv.boneWeights.z, sv.boneWeights.w };
+        if (w[0] + w[1] + w[2] + w[3] <= kWeightSum) {
+            rigid.Extend(positions[i]);
+            continue;
+        }
+        for (int k = 0; k < 4; ++k) {
+            // 存在しないボーンの影響はパレットに無いので境界に入れられない (描画側の上限切り捨てと同じ扱い)
+            if (w[k] > 0.0f && sv.boneIndices[k] < jointCount) {
+                envelope[sv.boneIndices[k]].Extend(positions[i]);
+            }
+        }
+    }
+}
+
+// 1 姿勢 (globals) で各ボーンの箱を動かし、その像を total に足す
+void ExtendPosedEnvelopes(const SkinnedModel& model, const std::vector<Box>& envelope,
+                          const std::vector<XMMATRIX>& globals, Box& total)
+{
+    for (size_t b = 0; b < envelope.size(); ++b) {
+        if (envelope[b].Empty()) {
+            continue;
+        }
+        // 頂点 * inverseBind * jointGlobal = パレット (転置前) の行列。箱の 8 隅を送れば箱の像を包める
+        const XMMATRIX m = XMMatrixMultiply(XMLoadFloat4x4(&model.joints[b].inverseBind), globals[b]);
+        for (int c = 0; c < 8; ++c) {
+            const XMVECTOR corner = XMVectorSet((c & 1) ? envelope[b].hi.x : envelope[b].lo.x,
+                                                (c & 2) ? envelope[b].hi.y : envelope[b].lo.y,
+                                                (c & 4) ? envelope[b].hi.z : envelope[b].lo.z, 1.0f);
+            XMFLOAT3 moved;
+            XMStoreFloat3(&moved, XMVector3TransformCoord(corner, m));
+            total.Extend(moved);
+        }
+    }
+}
+
 } // namespace
+
+bool ComputeSkinnedPoseAabb(const SkinnedModel& model, const std::vector<XMFLOAT3>& positions,
+                            const std::vector<MeshSkinVertex>& skin, const std::vector<XMMATRIX>& locals,
+                            SkinnedLocalAabb& out)
+{
+    if (positions.empty() || (!skin.empty() && skin.size() != positions.size())
+        || locals.size() != model.joints.size()) {
+        return false;
+    }
+    std::vector<Box> envelope;
+    Box total;
+    BuildEnvelopes(model.joints.size(), positions, skin, envelope, total);
+    std::vector<XMMATRIX> globals;
+    std::vector<uint8_t> done;
+    std::vector<size_t> chain;
+    ComputeGlobals(model, locals, globals, done, chain);
+    ExtendPosedEnvelopes(model, envelope, globals, total);
+    if (total.Empty() || !IsFinite(total.lo) || !IsFinite(total.hi)) {
+        return false;
+    }
+    out.min = total.lo;
+    out.max = total.hi;
+    return true;
+}
 
 bool ComputeSkinnedLocalAabb(const SkinnedModel& model, const std::vector<XMFLOAT3>& positions,
                              const std::vector<MeshSkinVertex>& skin, SkinnedLocalAabb& out)
@@ -118,29 +192,9 @@ bool ComputeSkinnedLocalAabb(const SkinnedModel& model, const std::vector<XMFLOA
         return false;
     }
 
-    const size_t jointCount = model.joints.size();
-    std::vector<Box> envelope(jointCount); // ボーンごとの頂点の箱 (バインド空間)
-    Box rigid;                             // どのボーンにも結ばれない頂点 (恒等で描かれる)
-    if (skin.empty()) {
-        for (const XMFLOAT3& p : positions) {
-            rigid.Extend(p);
-        }
-    } else {
-        for (size_t i = 0; i < positions.size(); ++i) {
-            const MeshSkinVertex& sv = skin[i];
-            const float w[4] = { sv.boneWeights.x, sv.boneWeights.y, sv.boneWeights.z, sv.boneWeights.w };
-            if (w[0] + w[1] + w[2] + w[3] <= kWeightSum) {
-                rigid.Extend(positions[i]);
-                continue;
-            }
-            for (int k = 0; k < 4; ++k) {
-                // 存在しないボーンの影響はパレットに無いので境界に入れられない (描画側の上限切り捨てと同じ扱い)
-                if (w[k] > 0.0f && sv.boneIndices[k] < jointCount) {
-                    envelope[sv.boneIndices[k]].Extend(positions[i]);
-                }
-            }
-        }
-    }
+    std::vector<Box> envelope; // ボーンごとの頂点の箱 (バインド空間)
+    Box rigid;                 // どのボーンにも結ばれない頂点 (恒等で描かれる)
+    BuildEnvelopes(model.joints.size(), positions, skin, envelope, rigid);
 
     Box total = rigid;
     bool anyBone = false;
@@ -156,21 +210,7 @@ bool ComputeSkinnedLocalAabb(const SkinnedModel& model, const std::vector<XMFLOA
         const auto samplePose = [&](int32_t clip, float timeSec) {
             ComputeJointLocals(model, clip, timeSec, locals);
             ComputeGlobals(model, locals, globals, done, chain);
-            for (size_t b = 0; b < jointCount; ++b) {
-                if (envelope[b].Empty()) {
-                    continue;
-                }
-                // 頂点 * inverseBind * jointGlobal = パレット (転置前) の行列。箱の 8 隅を送れば箱の像を包める
-                const XMMATRIX m = XMMatrixMultiply(XMLoadFloat4x4(&model.joints[b].inverseBind), globals[b]);
-                for (int c = 0; c < 8; ++c) {
-                    const XMVECTOR corner = XMVectorSet((c & 1) ? envelope[b].hi.x : envelope[b].lo.x,
-                                                        (c & 2) ? envelope[b].hi.y : envelope[b].lo.y,
-                                                        (c & 4) ? envelope[b].hi.z : envelope[b].lo.z, 1.0f);
-                    XMFLOAT3 moved;
-                    XMStoreFloat3(&moved, XMVector3TransformCoord(corner, m));
-                    total.Extend(moved);
-                }
-            }
+            ExtendPosedEnvelopes(model, envelope, globals, total);
         };
         samplePose(-1, 0.0f); // クリップ無し = バインドポーズ
         for (size_t c = 0; c < model.clips.size(); ++c) {

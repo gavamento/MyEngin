@@ -32,6 +32,15 @@ struct SkinnedLocalAabb {
 bool ComputeSkinnedLocalAabb(const SkinnedModel& model, const std::vector<DirectX::XMFLOAT3>& positions,
                              const std::vector<MeshSkinVertex>& skin, SkinnedLocalAabb& out);
 
+// 1 つの姿勢 (locals = ComputeJointLocals / SampleSkinnedLocals の出力) の AABB。空間は上と同じで、余白は付けない。
+// 上と同じく骨ごとの頂点の箱を動かした和集合なので、頂点そのものの AABB より少し大きくなりうるが、必ず包む。
+// エディタの選択枠・Focus 用 (FBX のスキンはエンティティが恒等で cm→m の 0.01 がパレット側にあり、
+// バインドポーズの頂点の箱 Mesh::aabbMin/Max をそのまま使うと 100 倍に見える)。
+// 属性の数・locals の数が合わない / 結果が非有限は false
+bool ComputeSkinnedPoseAabb(const SkinnedModel& model, const std::vector<DirectX::XMFLOAT3>& positions,
+                            const std::vector<MeshSkinVertex>& skin, const std::vector<DirectX::XMMATRIX>& locals,
+                            SkinnedLocalAabb& out);
+
 // (SkinnedModel, Mesh) の組ごとの保守的 AABB のキャッシュ。メッシュとスケルトンは別々に登録され
 // 組はエンティティでしか決まらないので、登録時ではなく最初に描くときに計算する。
 // 登録の通番 (revision) が変わったら計算し直す (ホットリロード)。描画スレッドの直列部でだけ呼ぶ。

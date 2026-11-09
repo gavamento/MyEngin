@@ -1,15 +1,23 @@
 #include "Editor/Widgets/CreateMenu.h"
 
 #include <cstdio>
+#include <filesystem>
 #include <iterator>
 #include <string>
+#include <system_error>
 
+#include "Editor/Asset/AssetOps.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Localization/Localization.h"
+#include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Rendering/RenderSystem.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Engine/Scene/EntityNaming.h"
 #include "Engine/Engine/Physics/Ragdoll/RagdollBuilder.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -64,6 +72,38 @@ GameObject CreateCylinder(EngineContext& ctx, const char* name)
 GameObject CreateCapsule(EngineContext& ctx, const char* name)
 {
     return CreateMeshObject(ctx, name, ctx.resources->meshes.Capsule());
+}
+
+namespace {
+
+std::string TerrainSourceRelUtf8(const std::wstring& absPath, const std::wstring& assetsRoot)
+{
+    std::error_code ec;
+    std::wstring rel = std::filesystem::relative(absPath, assetsRoot, ec).wstring();
+    for (wchar_t& c : rel) {
+        if (c == L'\\') {
+            c = L'/';
+        }
+    }
+    return WideToUtf8(rel);
+}
+
+} // namespace
+
+GameObject CreateTerrainEntity(EngineContext& ctx, const char* name, const std::wstring& terrainJsonAbs)
+{
+    GameObject obj = ctx.scene->CreateGameObjectTracked(name);
+    const std::string relUtf8 = TerrainSourceRelUtf8(terrainJsonAbs, ctx.assetsRoot);
+    auto* terrain = obj.AddComponent<TerrainComponent>();
+    std::snprintf(terrain->source, sizeof(terrain->source), "%s", relUtf8.c_str());
+    terrain->chunkTiles = 32;
+    auto* col = obj.AddComponent<ColliderComponent>();
+    col->shape = collidershape::kTerrain;
+    const uint64_t guid = ctx.assetDb != nullptr ? ctx.assetDb->GuidForPath(terrainJsonAbs, true)
+                                                 : AssetDatabase::EnsureMeta(terrainJsonAbs);
+    col->meshAsset = AssetID{ guid };
+    InvalidateTerrainCaches(ctx.renderSystem);
+    return obj;
 }
 
 GameObject CreateNavMeshSurface(EngineContext& ctx, const char* name)
@@ -452,6 +492,39 @@ void DrawCreateMenuItems(EngineContext& ctx, Selection& selection, UndoStack& un
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Quad), "Quad", &CreateQuad);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Cylinder), "Cylinder", &CreateCylinder);
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_Capsule), "Capsule", &CreateCapsule);
+        if (ImGui::MenuItem(Tr(StrId::Create_Terrain))) {
+            if (ctx.assetsRoot.empty()) {
+                MYE_LOG_ERROR("[terrain] assets root is empty; cannot create terrain asset");
+            } else {
+                std::error_code ec;
+                const std::wstring terrainDir = ctx.assetsRoot + L"\\terrain";
+                std::filesystem::create_directories(terrainDir, ec);
+                const std::wstring assetPath = CreateTerrainAsset(ctx, terrainDir, "Terrain");
+                if (assetPath.empty()) {
+                    MYE_LOG_ERROR("[terrain] failed to create terrain asset under %s",
+                                  WideToUtf8(terrainDir).c_str());
+                } else {
+                    const std::string relUtf8 = TerrainSourceRelUtf8(assetPath, ctx.assetsRoot);
+                    if (relUtf8.size() > 63) {
+                        MYE_LOG_ERROR(Tr(StrId::Log_TerrainSourceTooLong), relUtf8.c_str());
+                    } else {
+                        RecordCreate(ctx, selection, undo, "Create Terrain", [&] {
+                            World& world = ctx.scene->GetWorld();
+                            const std::string unique =
+                                MakeUniqueSiblingName(world, parent, "Terrain", kNullEntity);
+                            GameObject obj = CreateTerrainEntity(ctx, unique.c_str(), assetPath);
+                            if (!parent.IsNull()) {
+                                world.SetParent(obj.Id(), parent);
+                            }
+                            if (spawnPos != nullptr) {
+                                obj.SetLocalPosition(spawnPos->x, spawnPos->y, spawnPos->z);
+                            }
+                            return obj;
+                        });
+                    }
+                }
+            }
+        }
         ImGui::Separator();
         CreateItem(ctx, selection, undo, parent, spawnPos, Tr(StrId::Create_NavMeshSurface), "NavMesh Surface",
                    &CreateNavMeshSurface); // M82b

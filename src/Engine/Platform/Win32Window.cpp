@@ -4,6 +4,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 
 #include <algorithm>
+#include <mutex>
 
 #include <Windows.h>
 
@@ -41,14 +42,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 } // namespace
 
+void EnsureProcessDpiAwareness()
+{
+    static std::once_flag once;
+    std::call_once(once, []() {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    });
+}
+
 bool Win32Window::Create(const WindowDesc& desc)
 {
-    // Per-Monitor V2 DPI 対応 (マニフェスト不要の実行時指定)。ウィンドウ作成前に 1 回だけ
-    static bool dpiSet = false;
-    if (!dpiSet) {
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        dpiSet = true;
-    }
+    EnsureProcessDpiAwareness();
 
     const HINSTANCE instance = GetModuleHandleW(nullptr);
 

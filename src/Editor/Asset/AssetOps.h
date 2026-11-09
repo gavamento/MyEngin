@@ -10,6 +10,7 @@
 
 namespace mye {
 
+class RenderSystem;
 struct EngineContext;
 struct Selection;
 class UndoStack;
@@ -58,6 +59,8 @@ std::wstring CreateTilePaletteAsset(EngineContext& ctx, const std::wstring& dir,
                                     const std::string& name);                      // .tilepalette.json (M94j)
 std::wstring CreateTilemapAsset(EngineContext& ctx, const std::wstring& dir,
                                 const std::string& name);                          // .tilemap.json (M94j)
+std::wstring CreateTerrainAsset(EngineContext& ctx, const std::wstring& dir,
+                                const std::string& name);                          // .terrain.json (平坦テンプレ)
 // M78: プロジェクトポスト／コンピュート／fxstack (HLSL は assetsRoot\shaders 固定)
 std::wstring CreatePostShaderAsset(EngineContext& ctx, const std::wstring& dir,
                                  const std::string& name);   // *.post.hlsl (dir = Browser カレント)
@@ -234,5 +237,13 @@ struct BuildErrorLine {
 //   - MSBuild は同じエラーを要約でもう 1 度出すので**完全一致で重複を落とす**
 //   - 入力は UTF-8 (ログはコンソール ANSI なので呼ぶ前に変換すること)
 std::vector<BuildErrorLine> ParseBuildErrorLines(const std::string& logUtf8);
+
+// 地形の画素をディスク上で書き換えた直後に呼ぶ (ブラシ / Undo・Redo / Git 操作 / 地形の新規作成)。
+// 描画のチャンク (renderSystem。null 可) と sim の地形コライダー (terraincol::Library()) の
+// **両方の**キャッシュを捨て、次の参照でサイドカーから読み直させる。
+// ★描画だけ捨てると、絵は掘れているのに物理の当たりとナビメッシュのベイクが
+//   掘る前の高さを読み続ける (TerrainColliderLibrary は初回ロードを持ち続けるため)。
+//   メインスレッドの tick 外で呼ぶこと (コライダーのポインタは pose 構築ごとに引き直される)
+void InvalidateTerrainCaches(RenderSystem* renderSystem);
 
 } // namespace mye

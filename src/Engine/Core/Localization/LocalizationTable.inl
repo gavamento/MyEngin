@@ -960,6 +960,7 @@ MYE_STR(Create_Plane,         "Plane",             "平面")
 MYE_STR(Create_Quad,          "Quad",              "クアッド")
 MYE_STR(Create_Cylinder,      "Cylinder",          "シリンダー")
 MYE_STR(Create_Capsule,       "Capsule",           "カプセル")
+MYE_STR(Create_Terrain,       "Terrain",           "地形")
 MYE_STR(Create_NavMeshSurface, "NavMesh Surface",  "ナビメッシュサーフェス") // M82b
 MYE_STR(Create_NavMeshObstacle, "NavMesh Obstacle", "ナビメッシュ障害物") // M82f
 MYE_STR(Create_NavMeshModifier, "NavMesh Modifier", "ナビメッシュモディファイア") // M82g
@@ -1393,13 +1394,23 @@ MYE_STR(Terrain_Brush,        "Terrain Brush###Terrain_Brush", "地形ブラシ#
 MYE_STR(Terrain_ModeRaise,    "Raise###Terrain_ModeRaise",     "上げ下げ###Terrain_ModeRaise")
 MYE_STR(Terrain_ModeSmooth,   "Smooth###Terrain_ModeSmooth",   "平滑化###Terrain_ModeSmooth")
 MYE_STR(Terrain_ModePaint,    "Paint###Terrain_ModePaint",     "塗り###Terrain_ModePaint")
+MYE_STR(Terrain_ModeLower,    "Dig###Terrain_ModeLower",       "掘る###Terrain_ModeLower")
+MYE_STR(Terrain_ModeFlatten,  "Flatten###Terrain_ModeFlatten", "平坦化###Terrain_ModeFlatten")
+MYE_STR(Terrain_ModeNoise,    "Noise###Terrain_ModeNoise",     "ノイズ###Terrain_ModeNoise")
+MYE_STR(Terrain_ModeTerrace,  "Terrace###Terrain_ModeTerrace", "段々###Terrain_ModeTerrace")
+MYE_STR(Terrain_NoiseScale,   "Noise size###Terrain_NoiseScale", "ノイズの大きさ###Terrain_NoiseScale")
+MYE_STR(Terrain_TerraceStep,  "Step height###Terrain_TerraceStep", "段の高さ###Terrain_TerraceStep")
 MYE_STR(Terrain_Radius,       "Radius###Terrain_Radius",       "半径###Terrain_Radius")
 MYE_STR(Terrain_Strength,     "Strength###Terrain_Strength",   "強さ###Terrain_Strength")
 MYE_STR(Terrain_Layer,        "Layer###Terrain_Layer",         "レイヤ###Terrain_Layer")
 MYE_STR(Terrain_NoTarget,     "No terrain in the scene - add a Terrain component first.",
                               "シーンに地形がありません。先に Terrain コンポーネントを追加してください。")
-MYE_STR(Terrain_Hint,         "drag: paint   Ctrl: invert (dig)   Shift: smooth",
-                              "ドラッグ: 塗る   Ctrl: 反転 (掘る)   Shift: 平滑化")
+MYE_STR(Terrain_Hint,         "drag: paint   Ctrl: swap raise/dig   Shift: smooth",
+                              "ドラッグ: 塗る   Ctrl: 上げ/掘り反転   Shift: 平滑化")
+MYE_STR(Insp_TerrainSourceMissing, "Missing terrain asset: %s",
+                                    "地形アセットが見つかりません: %s")
+MYE_STR(Insp_TerrainSourceTooLong, "Path too long (max 63 bytes): %s",
+                                    "パスが長すぎます (最大 63 バイト): %s")
 MYE_STR(Terrain_SaveFail,     "Could not write the terrain edit sidecar: %s",
                               "地形の編集サイドカーを書き出せませんでした: %s")
 MYE_STR(Terrain_UndoStale,    "The terrain changed since this stroke was recorded - undo skipped: %s",
@@ -2557,6 +2568,10 @@ MYE_STR(Log_WriteTilePaletteFail, "could not write tile palette: %s",  "タイ�
 MYE_STR(Log_CreatedTilePalette, "created tile palette: %s",            "タイルパレットを作成しました: %s")
 MYE_STR(Log_WriteTilemapFail,  "could not write tilemap: %s",          "タイルマップを書き出せません: %s")
 MYE_STR(Log_CreatedTilemap,    "created tilemap: %s",                  "タイルマップを作成しました: %s")
+MYE_STR(Log_WriteTerrainFail,  "could not write terrain: %s",            "地形アセットを書き出せません: %s")
+MYE_STR(Log_CreatedTerrain,    "created terrain: %s",                  "地形アセットを作成しました: %s")
+MYE_STR(Log_TerrainSourceTooLong, "terrain source path exceeds 63 bytes: %s",
+                                   "地形 source のパスが 63 バイトを超えています: %s")
 MYE_STR(Tilemap_Failed,        "(tile asset not loaded)",              "(タイルアセットを読めません)")
 MYE_STR(Tilemap_Summary,       "Layers: %d / Chunks: %d / Extent: %d x %d cells / Cell size: %.2f x %.2f",
                                "レイヤー: %d / チャンク: %d / 範囲: %d x %d セル / セル寸法: %.2f x %.2f")
@@ -2716,3 +2731,18 @@ MYE_STR(FeelMon_BufOpen,      "open",                "受付中")
 MYE_STR(FeelMon_BufClosed,    "closed, window",      "閉、窓")
 MYE_STR(FeelMon_NoBuffer,     "No action has bufferTicks (Project Settings > Input).",
                               "bufferTicks を持つアクションが無い (Project Settings > 入力)。")
+
+// ---- TwoBoneIK の自動設定 ----
+MYE_STR(Insp_IkJointNone,     "(none)",                "(未設定)")
+MYE_STR(Insp_IkPelvisAuto,    "(first joint without a parent)", "(親の無い最初のジョイント)")
+MYE_STR(Insp_IkNoSkin,        "No skinned model on this entity: joints are typed by name and auto setup is unavailable.",
+                              "このエンティティの SkinnedMesh のモデルが引けません (ジョイントは名前の手入力、自動設定は使えません)")
+MYE_STR(Insp_IkAutoSetup,     "Auto Setup",            "自動設定")
+MYE_STR(Insp_IkAutoSetupHint, "Fills empty chains: feet = ground, hands = position with weight 0 and a target child.",
+                              "空いている鎖を埋めます (足 = 接地、手 = 位置・重み 0 と目標の子)")
+MYE_STR(Insp_IkLimbHandL,     "left hand",             "左手")
+MYE_STR(Insp_IkLimbHandR,     "right hand",            "右手")
+MYE_STR(Insp_IkLimbFootL,     "left foot",             "左足")
+MYE_STR(Insp_IkLimbFootR,     "right foot",            "右足")
+MYE_STR(Insp_IkLimbMissing,   "Not found by joint name: %s (pick the end joint by hand).",
+                              "骨名から見つからない手足: %s (先端ジョイントを手で選んでください)")

@@ -51,6 +51,7 @@
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // M58f: 地形ブラシ Undo 後のチャンク再構築
+#include "Engine/Engine/Physics/Collider/TerrainColliderLibrary.h" // InvalidateTerrainCaches
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Engine/Compute/KernelCppCodegen.h"
 #include "Engine/Engine/Schema/SchemaCodegen.h"
@@ -358,6 +359,53 @@ std::wstring CreateTilemapAsset(EngineContext& ctx, const std::wstring& dir, con
     return path;
 }
 
+std::wstring CreateTerrainAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
+{
+    (void)ctx;
+    const std::string safe = SanitizeFileName(name, "New Terrain");
+    const std::wstring filename = Utf8ToWide(safe) + L".terrain.json";
+    const std::wstring path = MakeUniqueAssetPath(dir, filename);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+
+    using json = nlohmann::json;
+    json j;
+    j["type"] = "terrain";
+    j["version"] = 1;
+    j["worldSize"] = { 128.0, 128.0 };
+    j["heightRes"] = { 129, 129 };
+    j["splatRes"] = { 128, 128 };
+    j["heightBase"] = -16.0;
+    j["heightScale"] = 64.0;
+    j["flatHeight"] = 0.25;
+    j["layers"] = json::array({
+        json{ { "name", "grass" }, { "tiling", json::array({ 8.0, 8.0 }) },
+              { "tint", json::array({ 0.45f, 0.72f, 0.38f }) } },
+        json{ { "name", "dirt" }, { "tiling", json::array({ 8.0, 8.0 }) },
+              { "tint", json::array({ 0.55f, 0.42f, 0.28f }) } },
+        json{ { "name", "rock" }, { "tiling", json::array({ 6.0, 6.0 }) },
+              { "tint", json::array({ 0.52f, 0.50f, 0.48f }) } },
+        json{ { "name", "sand" }, { "tiling", json::array({ 10.0, 10.0 }) },
+              { "tint", json::array({ 0.86f, 0.78f, 0.52f }) } },
+    });
+
+    if (!WriteNewAssetFile(path, j.dump(2))) {
+        MYE_LOG_ERROR(Tr(StrId::Log_WriteTerrainFail), WideToUtf8(path).c_str());
+        return {};
+    }
+    TerrainAsset::TerrainData warmed;
+    if (!TerrainAsset::Load(path, warmed)) {
+        MYE_LOG_WARN("[terrain] created asset failed to load: %s", WideToUtf8(path).c_str());
+    }
+    if (ctx.assetDb != nullptr) {
+        ctx.assetDb->GuidForPath(path, true);
+    } else {
+        AssetDatabase::EnsureMeta(path);
+    }
+    MYE_LOG_INFO(Tr(StrId::Log_CreatedTerrain), WideToUtf8(path).c_str());
+    return path;
+}
+
 std::wstring CreateSpriteShapeAsset(EngineContext& ctx, const std::wstring& dir, const std::string& name)
 {
     (void)ctx; // 署名は他の Create* と揃える。登録は spriteshape:: 経由
@@ -389,7 +437,7 @@ void SplitAssetName(const std::wstring& filename, std::wstring& stem, std::wstri
                                              L".fxstack.json", L".post.hlsl",  L".cs.hlsl",
                                              L".navfilter.json", L".bt.json",  L".bb.json",
                                              L".spriteanim.json", L".shape2d.json", L".spriteshape.json",
-                                             L".tilepalette.json", L".tilemap.json"};
+                                             L".tilepalette.json", L".tilemap.json", L".terrain.json"};
     for (const std::wstring& c : kCompound) {
         if (filename.size() > c.size() &&
             filename.compare(filename.size() - c.size(), c.size(), c) == 0) {
@@ -1552,13 +1600,23 @@ bool ApplyTerrainPaintOp(EngineContext& ctx, const UndoFileOp& op, bool redo)
     if (!TerrainEdit::SaveEdits(op.pathA, data)) {
         return false;
     }
-    if (ctx.renderSystem != nullptr) {
-        ctx.renderSystem->InvalidateTerrain(); // 次フレームでチャンクを焼き直す
-    }
+    InvalidateTerrainCaches(ctx.renderSystem); // 次フレームでチャンクを焼き直し、当たりも読み直す
     return true;
 }
 
 } // namespace
+
+void InvalidateTerrainCaches(RenderSystem* renderSystem)
+{
+    if (renderSystem != nullptr) {
+        renderSystem->InvalidateTerrain();
+    }
+    // 全消しでよい: 地形資産は数個で、読み直しは次に引かれた 1 個ずつ。負のキャッシュ
+    // (作成前に引かれて失敗した ID) もここで消えるので、新規作成した地形も当たりを持てる
+    if (TerrainColliderLibrary* lib = terraincol::Library()) {
+        lib->Clear();
+    }
+}
 
 // UndoStack のファイル操作エントリ実行部 (M51i)。宣言は UndoStack.h。
 // 「逆操作先消滅時は WARN + no-op」— Explorer 側でファイルが動いた後の Undo で

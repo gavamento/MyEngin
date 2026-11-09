@@ -34,9 +34,13 @@ inline constexpr uint32_t kEditVersion = 1;
 inline constexpr uint32_t kPatchVersion = 1;
 
 enum class BrushMode : uint32_t {
-    Raise = 0,  // 高さを上げ下げ (strength の符号で反転)
-    Smooth = 1, // 近傍平均へ寄せる
-    Paint = 2,  // スプラットを 1 レイヤへ寄せる
+    Raise = 0,   // 高さを上げ下げ (strength の符号で反転)
+    Smooth = 1,  // 近傍平均へ寄せる
+    Paint = 2,   // スプラットを 1 レイヤへ寄せる
+    Lower = 3,   // 掘削 (strength > 0 で下げる)
+    Flatten = 4, // targetHeight (ローカル Y m) へ寄せる
+    Noise = 5,   // 決定論的ノイズで凹凸を足す
+    Terrace = 6, // terraceStep (m) ごとに段状へ量子化
 };
 
 // ブラシ 1 回 (= 1 ダブ) の指定。座標は**地形ローカル空間の XZ** (中心原点・メートル)。
@@ -46,8 +50,12 @@ struct Brush {
     float centerX = 0.0f;
     float centerZ = 0.0f;
     float radius = 8.0f;   // m。0 以下は何も塗らない
-    float strength = 1.0f; // Raise: ワールド Y の増分 (m、負で掘る) / Smooth・Paint: 0..1 の寄せ率
+    float strength = 1.0f; // Raise/Lower: m/ダブ / Smooth・Paint・Flatten・Noise・Terrace: 0..1
     uint32_t layer = 0;    // Paint の対象レイヤ (0..kMaxLayers-1)
+    float targetHeight = 0.0f; // Flatten: 目標の地形ローカル Y (m)
+    float terraceStep = 2.0f;  // Terrace: 段の高さ (m)。0 以下は効果なし
+    float noiseScale = 0.5f;   // Noise: 振幅 (m)
+    uint32_t noiseSeed = 1;    // Noise: 決定論的シード
 };
 
 // 編集 1 ストロークぶんの差分 (Undo エントリの中身)。

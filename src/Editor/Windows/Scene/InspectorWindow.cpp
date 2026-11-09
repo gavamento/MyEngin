@@ -18,6 +18,7 @@
 #include "Editor/Scene/CameraPilot.h"
 #include "Editor/Scene/ComponentClipboard.h"
 #include "Editor/Scene/ComponentDependencies.h"
+#include "Editor/Scene/TwoBoneIkAutoSetup.h"
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Windows/Scene/ComputeInspectorSection.h" // M91h: スクリプトの Compute 欄
 #include "Engine/Engine/Script/ScriptHost.h"
@@ -397,6 +398,11 @@ constexpr const char* kUIPresetRowJa[] = { "上", "中央", "下", "伸縮" };
 constexpr const char* kRtScopeLabels[] = { "Inherit", "On", "Off" };
 constexpr const char* kRtScopeJa[] = { "継承", "ON", "OFF" };
 static_assert(kRtScopeInherit == 0 && kRtScopeOn == 1 && kRtScopeOff == 2);
+// TwoBoneIK の鎖の mode (twoboneikmode の並び)
+constexpr const char* kIkModeLabels[] = { "Off", "Position", "Position + Rotation", "Ground" };
+constexpr const char* kIkModeJa[] = { "オフ", "位置", "位置 + 回転", "接地" };
+static_assert(twoboneikmode::kOff == 0 && twoboneikmode::kPosition == 1 && twoboneikmode::kPositionRotation == 2
+              && twoboneikmode::kGround == 3 && std::size(kIkModeLabels) == 4 && std::size(kIkModeJa) == 4);
 // 番号の表 (Components.h) とラベルの件数を機械で揃える。種類を足してラベルを忘れると
 // コンボが "(invalid)" 表示になり、エディタから選ぶ手段が消える (M60f で踏んだ)
 static_assert(std::size(kColliderShapeLabels) == collidershape::kCount
@@ -448,6 +454,11 @@ constexpr EnumFieldLabels kEnumFields[] = {
     { "PartBounds", "shape", kPartBoundsShapeLabels, 2, kPartBoundsShapeJa },
     { "RayTracing", "inScene", kRtScopeLabels, 3, kRtScopeJa },
     { "RayTracing", "receiver", kRtScopeLabels, 3, kRtScopeJa },
+    // 鎖の欄名は Components.cpp の MYE_IK_FIELD が "chain" #i #member で作る
+    { "TwoBoneIK", "chain0mode", kIkModeLabels, 4, kIkModeJa },
+    { "TwoBoneIK", "chain1mode", kIkModeLabels, 4, kIkModeJa },
+    { "TwoBoneIK", "chain2mode", kIkModeLabels, 4, kIkModeJa },
+    { "TwoBoneIK", "chain3mode", kIkModeLabels, 4, kIkModeJa },
 };
 
 // ImGui::InputText は終端より後ろのバイトを掃除しない。一方 WorldHasher は登録フィールドを
@@ -460,6 +471,43 @@ void ZeroStringTail(char* buf, size_t cap)
     if (n + 1 < cap) {
         std::memset(buf + n + 1, 0, cap - n - 1);
     }
+}
+
+// スケルトンの骨から 1 本選ぶコンボ (char[64] の骨名の欄。Part.joint / TwoBoneIK の先端・骨盤)。
+// 先頭の項目 emptyLabel = 空文字。モデルに無い名前は消さずに "(モデルに無い)" と出す
+bool DrawSkeletonJointCombo(const char* label, char* joint, const SkinnedModel& model, const char* emptyLabel)
+{
+    bool changed = false;
+    char missing[96];
+    const char* preview = emptyLabel;
+    if (joint[0] != '\0') {
+        preview = joint;
+        if (model.FindJointByName(joint) < 0) {
+            std::snprintf(missing, sizeof(missing), Tr(StrId::Insp_PartJointMissing), joint);
+            preview = missing;
+        }
+    }
+    if (ImGui::BeginCombo(label, preview)) {
+        if (ImGui::Selectable(emptyLabel, joint[0] == '\0')) {
+            std::memset(joint, 0, 64); // 生バイトが hash 対象なので末尾までゼロ埋め
+            changed = true;
+        }
+        for (size_t i = 0; i < model.joints.size(); ++i) {
+            const std::string& n = model.joints[i].name;
+            if (n.empty() || n.size() >= 64) {
+                continue; // 無名は FindJointByName の対象外、63 バイト超は欄に収まらない
+            }
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Selectable(n.c_str(), n == joint)) {
+                std::memset(joint, 0, 64);
+                std::snprintf(joint, 64, "%s", n.c_str());
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
 }
 
 const EnumFieldLabels* FindEnumLabels(const char* component, const char* field)
@@ -1379,6 +1427,38 @@ void InspectorWindow::DrawComponentNotes(EngineContext& ctx, Selection& selectio
             ImGui::TextDisabled("%s", Tr(StrId::Insp_Joint2DAxisHint));
         }
     }
+    // TwoBoneIK の自動設定 (追加時と同じ処理のやり直し)。空いている鎖だけ埋めるので、手で直した鎖は残る。
+    // 見つからない手足を並べ、自動では埋まらない理由をここで読めるようにする
+    if (std::strcmp(desc.name, "TwoBoneIK") == 0 && !tg.multi) {
+        const auto* sm = world.GetComponent<SkinnedMeshComponent>(tg.e);
+        const SkinnedModel* model =
+            (sm && ctx.resources) ? ctx.resources->skinnedModels.Get(sm->model) : nullptr;
+        ImGui::PushTextWrapPos(0.0f);
+        if (model == nullptr) {
+            ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Insp_IkNoSkin));
+        } else {
+            if (!undo.IsRecording() && ImGui::Button(Tr(StrId::Insp_IkAutoSetup))) {
+                undo.Record("TwoBoneIK Auto Setup", *ctx.scene, selection, tg.fid, UndoStack::StructuralChanges::Apply,
+                            [&] { ApplyTwoBoneIkAutoSetup(*ctx.scene, tg.e, *model); });
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", Tr(StrId::Insp_IkAutoSetupHint));
+            const IkLimbJoints limbs = FindIkLimbJoints(*model);
+            constexpr StrId kLimbNames[] = { StrId::Insp_IkLimbHandL, StrId::Insp_IkLimbHandR, StrId::Insp_IkLimbFootL,
+                                             StrId::Insp_IkLimbFootR };
+            std::string missing;
+            for (int k = 0; k < static_cast<int>(IkLimb::Count); ++k) {
+                if (limbs.joint[k] < 0) {
+                    missing += missing.empty() ? "" : ", ";
+                    missing += Tr(kLimbNames[k]);
+                }
+            }
+            if (!missing.empty()) {
+                ImGui::TextColored(themeColor::Warning, Tr(StrId::Insp_IkLimbMissing), missing.c_str());
+            }
+        }
+        ImGui::PopTextWrapPos();
+    }
     // M50a: PartBounds 単独 (Part 無し) は RaycastParts の収集
     // ({Part, PartBounds, WorldMatrix} の同居アーキタイプ) から黙って外れるため警告
     if (std::strcmp(desc.name, "PartBounds") == 0
@@ -2151,13 +2231,25 @@ void InspectorWindow::DrawAddComponentPopup(EngineContext& ctx, Selection& selec
                     }
                 }
                 std::vector<uint64_t> addedFids;
+                std::vector<EntityID> addedEnts;
                 for (size_t i = 0; i < tg.ents.size(); ++i) {
                     if (!world.HasComponent(tg.ents[i], t)) {
                         AddComponentWithRequirements(world, tg.ents[i], t); // M82c: NavMeshAgent なら CC も同じ Undo で
                         addedFids.push_back(tg.fids[i]);
+                        addedEnts.push_back(tg.ents[i]);
                     }
                 }
                 world.ApplyStructuralChanges();
+                // TwoBoneIK は付けた時点で手足の鎖を骨から埋め、手の目標の子を作る。CaptureBefore / After は
+                // サブツリーを撮るので、作った子も同じ 1 Undo で消える。モデル未解決なら何もしない (注意欄のボタンで後から)
+                if (t == TwoBoneIKComponent::sTypeId && ctx.resources != nullptr) {
+                    for (EntityID added : addedEnts) {
+                        const auto* sm = world.GetComponent<SkinnedMeshComponent>(added);
+                        if (const SkinnedModel* model = sm ? ctx.resources->skinnedModels.Get(sm->model) : nullptr) {
+                            ApplyTwoBoneIkAutoSetup(*ctx.scene, added, *model);
+                        }
+                    }
+                }
                 for (uint64_t af : addedFids) {
                     undo.CaptureAfter(*ctx.scene, af);
                 }
@@ -2601,8 +2693,90 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
         // M48i: 部位のジョイントは供給元スケルトンの名前から選ぶ (M48a の名前保持が効く)。
         // モデルが解決できないときは自由入力にフォールバックする — 骨がまだ登録されていない
         // だけの場合に、既に入っている正しい名前を消させないため
-        if (componentName && std::strcmp(componentName, "Part") == 0
-            && std::strcmp(field.name, "joint") == 0) {
+        if (componentName && std::strcmp(componentName, "Terrain") == 0
+            && std::strcmp(field.name, "source") == 0) {
+            char* src = static_cast<char*>(p);
+            auto resolveAbs = [&](const char* relUtf8) -> std::wstring {
+                if (relUtf8[0] == '\0' || ctx.assetsRoot.empty()) {
+                    return {};
+                }
+                std::wstring w = Utf8ToWide(relUtf8);
+                for (wchar_t& c : w) {
+                    if (c == L'/') {
+                        c = L'\\';
+                    }
+                }
+                return ctx.assetsRoot + L"\\" + w;
+            };
+            char preview[160];
+            if (src[0] == '\0') {
+                std::snprintf(preview, sizeof(preview), "%s", Tr(StrId::Insp_NoneItem));
+            } else {
+                const std::wstring abs = resolveAbs(src);
+                std::error_code ec;
+                if (abs.empty() || !std::filesystem::exists(abs, ec)) {
+                    std::snprintf(preview, sizeof(preview), Tr(StrId::Insp_TerrainSourceMissing), src);
+                } else {
+                    std::snprintf(preview, sizeof(preview), "%s", src);
+                }
+            }
+            if (ImGui::BeginCombo(label, preview)) {
+                if (ImGui::Selectable(Tr(StrId::Insp_NoneItem), src[0] == '\0')) {
+                    std::memset(src, 0, 64);
+                    changed = true;
+                }
+                if (!ctx.assetsRoot.empty()) {
+                    for (const DiskAssetCandidate& c :
+                         CollectDiskAssetCandidates(ctx.assetsRoot, AssetType::Terrain)) {
+                        const std::string rel = c.relUtf8;
+                        const bool tooLong = rel.size() > 63;
+                        ImGui::PushID(rel.c_str());
+                        if (tooLong) {
+                            ImGui::BeginDisabled();
+                        }
+                        if (ImGui::Selectable(rel.c_str(), rel == src)) {
+                            if (!tooLong) {
+                                std::memset(src, 0, 64);
+                                std::snprintf(src, 64, "%s", rel.c_str());
+                                changed = true;
+                            }
+                        }
+                        if (tooLong && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                            ImGui::SetTooltip("%s", Tr(StrId::Insp_TerrainSourceTooLong));
+                        }
+                        if (tooLong) {
+                            ImGui::EndDisabled();
+                        }
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* pa = ImGui::AcceptDragDropPayload(kAssetDragPayload)) {
+                    const std::string utf8 = static_cast<const char*>(pa->Data);
+                    const std::wstring dropPath = Utf8ToWide(utf8);
+                    if (AssetDatabase::ClassifyPath(dropPath) == AssetType::Terrain) {
+                        std::error_code ec;
+                        const std::string rel =
+                            WideToUtf8(std::filesystem::relative(dropPath, ctx.assetsRoot, ec).wstring());
+                        if (rel.size() <= 63) {
+                            std::string norm = rel;
+                            for (char& ch : norm) {
+                                if (ch == '\\') {
+                                    ch = '/';
+                                }
+                            }
+                            std::memset(src, 0, 64);
+                            std::snprintf(src, 64, "%s", norm.c_str());
+                            changed = true;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+        } else if (componentName && std::strcmp(componentName, "Part") == 0
+                   && std::strcmp(field.name, "joint") == 0) {
             char* joint = static_cast<char*>(p);
             World& w = ctx.scene->GetWorld();
             const EntityID src = Parts::ResolvePartSource(
@@ -2617,40 +2791,30 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 }
                 ImGui::TextDisabled("%s", Tr(StrId::Insp_PartNoSkin));
             } else {
-                char missing[96];
-                const char* preview = Tr(StrId::Insp_PartJointStatic);
-                if (joint[0] != '\0') {
-                    preview = joint;
-                    if (model->FindJointByName(joint) < 0) {
-                        std::snprintf(missing, sizeof(missing),
-                                      Tr(StrId::Insp_PartJointMissing), joint);
-                        preview = missing;
-                    }
-                }
-                if (ImGui::BeginCombo(label, preview)) {
-                    if (ImGui::Selectable(Tr(StrId::Insp_PartJointStatic), joint[0] == '\0')) {
-                        std::memset(joint, 0, 64); // 生バイトが hash 対象なので末尾までゼロ埋め
-                        changed = true;
-                    }
-                    for (size_t i = 0; i < model->joints.size(); ++i) {
-                        const std::string& n = model->joints[i].name;
-                        if (n.empty()) {
-                            continue; // 無名ジョイントは FindJointByName の対象外
-                        }
-                        ImGui::PushID(static_cast<int>(i));
-                        if (ImGui::Selectable(n.c_str(), n == joint)) {
-                            std::memset(joint, 0, 64);
-                            std::snprintf(joint, 64, "%s", n.c_str());
-                            changed = true;
-                        }
-                        ImGui::PopID();
-                    }
-                    ImGui::EndCombo();
-                }
+                changed = DrawSkeletonJointCombo(label, joint, *model, Tr(StrId::Insp_PartJointStatic));
                 // v1 規約: 骨追従の部位は供給元の直子。破っていると実行時に黙って skip される
                 if (joint[0] != '\0' && w.GetParent(entity) != src) {
                     ImGui::TextDisabled("%s", Tr(StrId::Insp_PartNotChild));
                 }
+            }
+        } else if (componentName && std::strcmp(componentName, "TwoBoneIK") == 0
+                   && (std::strcmp(field.name, "pelvisJoint") == 0
+                       || (std::strncmp(field.name, "chain", 5) == 0 && std::strstr(field.name, "endJoint") != nullptr))) {
+            // 先端・骨盤のジョイント名は同じエンティティの SkinnedMesh の骨から選ぶ。モデルが引けないときは
+            // 自由入力のまま (入っている名前を消させない。理由はコンポーネント下の注意に 1 回だけ出す)
+            char* joint = static_cast<char*>(p);
+            const auto* sm = ctx.scene->GetWorld().GetComponent<SkinnedMeshComponent>(entity);
+            const SkinnedModel* model =
+                (sm && ctx.resources) ? ctx.resources->skinnedModels.Get(sm->model) : nullptr;
+            if (model == nullptr) {
+                changed = ImGui::InputText(label, joint, 64);
+                if (changed) {
+                    ZeroStringTail(joint, 64);
+                }
+            } else {
+                const bool pelvis = std::strcmp(field.name, "pelvisJoint") == 0;
+                changed = DrawSkeletonJointCombo(label, joint, *model,
+                                                 Tr(pelvis ? StrId::Insp_IkPelvisAuto : StrId::Insp_IkJointNone));
             }
         } else if (componentName && std::strcmp(componentName, "BehaviorTree") == 0
                    && std::strncmp(field.name, "bbEntityKey", 11) == 0) {
@@ -2748,6 +2912,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
     std::vector<AssetEntry> entries;
     // テクスチャを指すフィールド。名前に "tex" を含まない Sprite2D.normalMap もテクスチャ (M94p)
     const bool isTextureRef = fname.find("tex") != std::string::npos || fname == "normalmap";
+    const bool isTerrainShapeRef = fname == "meshasset" && !comps.empty()
+        && static_cast<const ColliderComponent*>(comps.front())->shape == collidershape::kTerrain;
     const bool isShape2DRef = fname == "meshasset" && !comps.empty()
         && static_cast<const ColliderComponent*>(comps.front())->shape >= collidershape::kPolygon2D;
     // ディスク上のファイルも候補に出す種別 (Unknown = ライブラリの一覧だけ)。
@@ -2819,6 +2985,8 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
         for (const SkinnedModelEntry& s : ctx.resources->skinnedModels.Enumerate()) {
             entries.push_back({ AssetID{ s.hash }, s.name });
         }
+    } else if (isTerrainShapeRef) {
+        diskType = AssetType::Terrain;
     } else if (isShape2DRef) {
         // M94h: Collider.meshAsset が 2D 形状 (kPolygon2D / kEdge2D) のとき .shape2d.json を選ぶ
         if (ShapeLibrary2D* shapes2d = shape2d::Library()) {
@@ -2930,6 +3098,10 @@ void InspectorWindow::DrawAssetRef(EngineContext& ctx, const FieldDesc& field, v
                 if (SpriteShapeLibrary* profiles = spriteshape::Library()) {
                     profiles->LoadFromFile(dropPath);
                 }
+                const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
+                                                  : AssetDatabase::EnsureMeta(dropPath);
+                assign(AssetID{ guid });
+            } else if (isTerrainShapeRef && AssetDatabase::ClassifyPath(dropPath) == AssetType::Terrain) {
                 const uint64_t guid = ctx.assetDb ? ctx.assetDb->GuidForPath(dropPath, true)
                                                   : AssetDatabase::EnsureMeta(dropPath);
                 assign(AssetID{ guid });
