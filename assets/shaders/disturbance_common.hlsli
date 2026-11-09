@@ -15,6 +15,8 @@
 #define MYE_DFLD_EDGE_FADE_CELLS 2.0f
 // CB 全体のバイト数 (C++ の kDisturbanceFieldCbBytes)
 #define MYE_DFLD_CB_BYTES 528
+// 嵩チャネルの列の層の厚さの下限 [m] (C++ の kMinColumnThickness。嵩 0 の列で 0 で割らない)
+#define MYE_DFLD_MIN_COLUMN_THICKNESS 0.001f
 
 #ifndef MYE_DFLD_SRV_FLOW
 #define MYE_DFLD_SRV_FLOW 1
@@ -42,7 +44,8 @@ struct DisturbanceLayer
     float4 look;       // x = fogDensity [1/m], y = fogBrightness, z = restDensity, w = 1: 濃さチャネルあり
     float4 fogColor;   // rgb = 霧の色, w = 1: 太陽光 (平行光) を当てる / 0: 当てない (地面の霧だけが読む)
     float4 texScale;   // x = 1 / テクスチャ幅, y = 1 / テクスチャ高さ (配列は最大寸法で作るので層ごとに違う),
-                       // z / w = 基準高さのずれ (G チャネル) の最小 / 最大 [m] (板を包む範囲)
+                       // z = 基準高さのずれ (G チャネル) の最小 [m]、w = 列の上端 - baseY - thickness の最大 [m]
+                       // (ずれ + thickness × (嵩 - 1)。嵩の無い層はずれの最大)。z / w で板を包む
     DisturbanceNoise noise; // 霧のノイズ (見た目だけ。地面の霧だけが読む)
 };
 
@@ -54,8 +57,8 @@ cbuffer DisturbanceFieldCB : MYE_DFLD_REG(b, MYE_DFLD_CB)
 
 // (vx, vz, 濃さ ρ, 跡 τ)
 Texture2DArray<float4> gDfldFlow : MYE_DFLD_REG(t, MYE_DFLD_SRV_FLOW);
-// (波紋 h, 基準面の高さのずれ = 列の基準高さ - baseY)
-Texture2DArray<float2> gDfldAux : MYE_DFLD_REG(t, MYE_DFLD_SRV_AUX);
+// (波紋 h, 基準面の高さのずれ = 列の基準高さ - baseY, 霧の嵩 (嵩チャネルの無い層は 1), 未使用)
+Texture2DArray<float4> gDfldAux : MYE_DFLD_REG(t, MYE_DFLD_SRV_AUX);
 SamplerState gDfldSampler : MYE_DFLD_REG(s, MYE_DFLD_SAMPLER);
 
 // 霧のノイズのマップ (層ごと)。読む段 (地面の霧) が MYE_DFLD_SRV_NOISE_MAP (先頭。続く 3 本が連番) と
@@ -105,7 +108,8 @@ float DfldBaseOffsetAt(uint li, DisturbanceLayer L, float gx, float gz)
     return gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)li), 0).y;
 }
 
-// 層 i の位置 posW での消散係数 σ [1/m] (fogDensity × ρ × p(y) × 縁の立ち上げ × 霧のノイズ)。層の格子の外 / 濃さチャネルなしは 0。
+// 層 i の位置 posW での消散係数 σ [1/m] (fogDensity × ρ × p(y) × 縁の立ち上げ × 霧のノイズ)。
+// p(y) の厚さは列の厚さ = thickness × 嵩 (嵩チャネルの無い層・状態の無い層は thickness。C++ の DisturbanceSampleAt と同じ)。層の格子の外 / 濃さチャネルなしは 0。
 // **sub-03 以降、読むのは地面の霧 (ground_fog.hlsli) だけ**。フロクセルは立体 (Volume) のみ読む
 float DfldLayerSigma(uint i, float3 posW)
 {
@@ -126,6 +130,7 @@ float DfldLayerSigma(uint i, float3 posW)
 
     float rho = L.look.z;       // 状態が無い (編集中・Play 前) は静止状態の定数
     float baseOffset = 0.0f;
+    float thickness = L.extent.z;
     if (L.extent.w > 0.5f) {
         // セル中心 (i + 0.5) がテクセル中心になる並び。層が配列より小さいときに隣の層の余白を
         // 混ぜないよう、層の中のテクセル中心の範囲へ切る
@@ -133,9 +138,11 @@ float DfldLayerSigma(uint i, float3 posW)
         const float2 uvHi = float2(nx - 0.5f, nz - 0.5f) * L.texScale.xy;
         const float2 uv = clamp(float2(gx, gz) * L.texScale.xy, uvLo, uvHi);
         rho = gDfldFlow.SampleLevel(gDfldSampler, float3(uv, (float)i), 0).z;
-        baseOffset = gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)i), 0).y;
+        const float4 aux = gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)i), 0);
+        baseOffset = aux.y;
+        thickness = max(L.extent.z * aux.z, MYE_DFLD_MIN_COLUMN_THICKNESS);
     }
-    const float shape = DfldHeightShape(posW.y, L.originSize.w + baseOffset, L.extent.z);
+    const float shape = DfldHeightShape(posW.y, L.originSize.w + baseOffset, thickness);
     return L.look.x * rho * shape * edgeFade * DfldLayerNoise(i, L.noise, posW);
 }
 

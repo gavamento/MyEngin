@@ -559,6 +559,10 @@ uint64_t HashDisturbanceState(const DisturbanceState& state, DumpCtx* d)
         EmitArray(d, "Disturbance", "ripple", s.ripple.data(), static_cast<uint32_t>(s.ripple.size()), h);
         h = HashStateBytes(s.ripplePrev.data(), s.ripplePrev.size() * sizeof(float), h);
         EmitArray(d, "Disturbance", "ripplePrev", s.ripplePrev.data(), static_cast<uint32_t>(s.ripplePrev.size()), h);
+        if (!s.mass.empty()) { // 嵩チャネルの場だけ。他の場のハッシュ列は増えない
+            h = HashStateBytes(s.mass.data(), s.mass.size() * sizeof(float), h);
+            EmitArray(d, "Disturbance", "mass", s.mass.data(), static_cast<uint32_t>(s.mass.size()), h);
+        }
         EmitU64(d, "Disturbance", "#field", h, h); // 場の小計 (ここまでの畳み込み)
     }
     if (d && d->lines) {

@@ -44,7 +44,7 @@ bool SlotShapeValid(const DisturbanceSlot& s)
         || s.cellsZ > kMaxDisturbanceSide) {
         return false;
     }
-    // Volume のチャネルは濃さだけ (跡・波紋は持たない)
+    // Volume のチャネルは濃さだけ (跡・波紋・嵩は持たない)
     const uint32_t allowed = s.shape == kDisturbanceVolume ? kDisturbanceChannelDensity : kDisturbanceChannelMask;
     if (static_cast<int64_t>(s.cellsX) * s.cellsY * s.cellsZ > kMaxDisturbanceCells || (s.channels & ~allowed) != 0) {
         return false;
@@ -109,6 +109,7 @@ void DisturbanceState::Write(ByteWriter& w) const
         w.PodVector(s.trail);
         w.PodVector(s.ripple);
         w.PodVector(s.ripplePrev);
+        w.PodVector(s.mass);
     }
     w.PodVector(queue_);
 }
@@ -146,6 +147,7 @@ bool DisturbanceState::Read(ByteReader& r, DisturbanceState& out)
         s.trail = r.PodVector<float>();
         s.ripple = r.PodVector<float>();
         s.ripplePrev = r.PodVector<float>();
+        s.mass = r.PodVector<float>();
         const size_t n = s.CellCount();
         if (!r.Ok() || s.flowX.size() != n || s.flowZ.size() != n
             || s.flowY.size() != (s.shape == kDisturbanceVolume ? n : 0)
@@ -154,7 +156,8 @@ bool DisturbanceState::Read(ByteReader& r, DisturbanceState& out)
             || s.density.size() != ExpectedLength(s, kDisturbanceChannelDensity)
             || s.trail.size() != ExpectedLength(s, kDisturbanceChannelTrail)
             || s.ripple.size() != ExpectedLength(s, kDisturbanceChannelRipple)
-            || s.ripplePrev.size() != ExpectedLength(s, kDisturbanceChannelRipple)) {
+            || s.ripplePrev.size() != ExpectedLength(s, kDisturbanceChannelRipple)
+            || s.mass.size() != ExpectedLength(s, kDisturbanceChannelMass)) {
             return false;
         }
     }

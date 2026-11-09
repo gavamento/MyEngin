@@ -78,6 +78,8 @@ const ShowcaseDef kShowcases[] = {
       false }, // M96b
     { L"--fog-noise-demo", false, L"cache\\fog_noise_showcase.scene.json", nullptr,
       &BuildPlain<&BuildFogNoiseShowcaseScene>, false }, // M96 追補: 霧のノイズ (数値 / マップ) の見比べ
+    { L"--fog-kick-demo", false, L"cache\fog_kick_showcase.scene.json", nullptr,
+      &BuildPlain<&BuildFogKickShowcaseScene>, false }, // M96 追補: 霧の嵩 (蹴って穴・縁・重力で埋まる)
 };
 
 } // namespace

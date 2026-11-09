@@ -2651,7 +2651,7 @@ struct DisturbanceFieldComponent {
     int32_t cellsZ = 128;
     float cellSize = 0.25f;     // [m] 1 マスの辺
     float thickness = 1.0f;     // [m] GroundLayer の層の厚さ
-    uint32_t channels = 1;      // ビット: 1 = 濃さ / 2 = 跡 / 4 = 波紋
+    uint32_t channels = 1;      // ビット: 1 = 濃さ / 2 = 跡 / 4 = 波紋 / 8 = 嵩 (GroundLayer だけ)
     float restDensity = 1.0f;   // 静止状態の濃さ [0,1]
     float densityKeep = 0.99f;  // 1 tick で濃さが静止状態へ戻る残し率 (1 = 戻らない)
     float velocityKeep = 0.95f; // 流れの残し率
@@ -2688,7 +2688,8 @@ struct DisturbanceFieldComponent {
     AssetID noiseMap = {};                // マップ (R を使う。リニアで読む。空 = マップなし)
     float noiseMapScale = 8.0f;           // [m] マップ 1 枚がワールドで覆う辺の長さ (繰り返して敷く)
     DirectX::XMFLOAT2 noiseMapScroll = { 0.2f, 0.0f }; // [m/s] マップが流れる速度 (ワールドの x, z)
-    uint32_t pad3 = 0;                    // 明示パディング
+    // ---- 霧の嵩 (sim が読む。旧 pad3 の 4 バイトを使う = 大きさは不変) ----
+    float massGravity = 0.03f;            // 嵩の重力 [1/tick、0 〜 kMaxMassGravity]。押しのけた穴を周りの嵩が埋める速さ (0 = 埋まらない)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

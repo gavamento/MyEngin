@@ -82,6 +82,7 @@
     <ClCompile Include="..\src\GameLogic\Scripts\WaveWalker.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\ZTwoDHero.cpp" />
     <ClCompile Include="..\src\GameLogic\Scripts\ZZFieldDemoDriver.cpp" />
+    <ClCompile Include="..\src\GameLogic\Scripts\ZZFogKickDriver.cpp" />
     <ClInclude Include="..\src\GameLogic\Generated\Kernels.gen.h" />
     <ClInclude Include="..\src\Shared\EngineAPI.h" />
     <ClInclude Include="..\src\Shared\FeelMath.h" />

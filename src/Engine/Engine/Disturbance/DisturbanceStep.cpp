@@ -39,7 +39,7 @@ float BakeColumnBaseY(World& world, const DisturbanceSlot& s, int32_t x, int32_t
     return s.baseY;
 }
 
-// 静止状態の新しいスロット (全マス: 流れ 0、濃さ restDensity、跡 0、波紋 0)。followTerrain は全列の基準高さを焼く
+// 静止状態の新しいスロット (全マス: 流れ 0、濃さ restDensity、跡 0、波紋 0、嵩 1)。followTerrain は全列の基準高さを焼く
 DisturbanceSlot MakeRestSlot(World& world, const FieldParams& p)
 {
     DisturbanceSlot s;
@@ -70,6 +70,9 @@ DisturbanceSlot MakeRestSlot(World& world, const FieldParams& p)
     if ((p.channels & kDisturbanceChannelRipple) != 0) {
         s.ripple.assign(n, 0.0f);
         s.ripplePrev.assign(n, 0.0f);
+    }
+    if ((p.channels & kDisturbanceChannelMass) != 0) {
+        s.mass.assign(n, 1.0f);
     }
     if (p.followTerrain) {
         s.columnBaseY.resize(n);
@@ -826,6 +829,113 @@ void AdvectDensity(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::S
     s.density.swap(sc.density);
 }
 
+// ---- 霧の嵩 (嵩チャネル) ----
+// 濃さ (非保存の半ラグランジュ + 静止状態への戻し) と違い、嵩は総量を保つ。押しのけた分は消えずに流れの止まる所 (縁) に積もり、
+// 戻すのは重力の項だけ (時間で湧いて戻るのではなく、周りの嵩が流れ込んで埋まる)。
+// 半ラグランジュ移流は保存しないので採らない (押しのけた分が消え、縁が盛り上がらない)
+
+// 保存形の移流 (donor-cell)。投影後の流れで運ぶ: 投影は Radial インパルスの発散を残すので、キック (Radial を数 tick) の中の嵩が外へ運ばれ、
+// 流れが弱まる半径の外で詰まって縁になる。面の速度は両側のマスの流れの平均 (格子外は目標速度)。
+// 面を越える量 = クーラン数 × 風上のマスの嵩 × 風上のマスの縮め率。同じ面の量は両側のマスが同じ式・同じ入力から求めるのでビット一致し、
+// 総量は面ごとに打ち消し合う。1 マスから出るクーラン数の和が 1 を超えるマスは縮め率 1 / 和 で出る量を嵩以下に抑える (嵩が負にならない)。
+// 格子外は嵩 1 (静止状態) の開いた境界。縮め率の段と流束の段はどちらも前の配列を読んで自分のマスだけを書く
+void AdvectMass(DisturbanceSlot& s, float targetX, float targetZ, DisturbanceState::SolverScratch& sc)
+{
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    const float toCells = 1.0f / (s.cellSize * kDisturbanceTickRate);
+    const auto inside = [nx, nz](int32_t x, int32_t z) { return x >= 0 && x < nx && z >= 0 && z < nz; };
+    const auto index = [nx](int32_t x, int32_t z) {
+        return static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+    };
+    // 面 (x, z)-(x + 1, z) / (x, z)-(x, z + 1) の速度 [マス/tick]
+    const auto faceX = [&](int32_t x, int32_t z) {
+        const float a = inside(x, z) ? s.flowX[index(x, z)] : targetX;
+        const float b = inside(x + 1, z) ? s.flowX[index(x + 1, z)] : targetX;
+        return (a + b) * 0.5f * toCells;
+    };
+    const auto faceZ = [&](int32_t x, int32_t z) {
+        const float a = inside(x, z) ? s.flowZ[index(x, z)] : targetZ;
+        const float b = inside(x, z + 1) ? s.flowZ[index(x, z + 1)] : targetZ;
+        return (a + b) * 0.5f * toCells;
+    };
+    sc.massLimit.resize(s.CellCount());
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const float out = (std::max(faceX(x, z), 0.0f) + std::max(-faceX(x - 1, z), 0.0f))
+                                  + (std::max(faceZ(x, z), 0.0f) + std::max(-faceZ(x, z - 1), 0.0f));
+                sc.massLimit[index(x, z)] = out > 1.0f ? 1.0f / out : 1.0f;
+            }
+        }
+    });
+    const auto massAt = [&](int32_t x, int32_t z) { return inside(x, z) ? s.mass[index(x, z)] : 1.0f; };
+    const auto limitAt = [&](int32_t x, int32_t z) { return inside(x, z) ? sc.massLimit[index(x, z)] : 1.0f; };
+    // 面を +x / +z へ越える量 (負なら逆向き)
+    const auto fluxX = [&](int32_t x, int32_t z) {
+        const float c = faceX(x, z);
+        return c >= 0.0f ? c * massAt(x, z) * limitAt(x, z) : c * massAt(x + 1, z) * limitAt(x + 1, z);
+    };
+    const auto fluxZ = [&](int32_t x, int32_t z) {
+        const float c = faceZ(x, z);
+        return c >= 0.0f ? c * massAt(x, z) * limitAt(x, z) : c * massAt(x, z + 1) * limitAt(x, z + 1);
+    };
+    sc.mass.resize(s.CellCount());
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = index(x, z);
+                sc.mass[i] = s.mass[i] - ((fluxX(x, z) - fluxX(x - 1, z)) + (fluxZ(x, z) - fluxZ(x, z - 1)));
+            }
+        }
+    });
+    s.mass.swap(sc.mass);
+}
+
+// 重力の広がり: 重い霧の薄膜 (多孔質媒体型の拡散)。面を高い側から低い側へ越える量 = k × 平均の嵩 × 嵩の差。
+// 嵩が薄い所ほど流れにくいので、穴の縁から内へゆっくり埋まる。k × 嵩の上限 <= 0.25 (kMaxMassGravity) で陽解法が単調 = 負にならない。
+// 面の量は G(a, b) = -G(b, a) がビットで成り立つ式 ((a + b) と (a - b) の積) なので総量を保つ。格子外は嵩 1
+void SlumpMass(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::SolverScratch& sc)
+{
+    if (!(p.massGravity > 0.0f)) {
+        return;
+    }
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    const float k = p.massGravity * 0.5f;
+    sc.mass.resize(s.CellCount());
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+                const float m = s.mass[i];
+                const float mE = x + 1 < nx ? s.mass[i + 1] : 1.0f;
+                const float mW = x > 0 ? s.mass[i - 1] : 1.0f;
+                const float mN = z + 1 < nz ? s.mass[i + static_cast<size_t>(nx)] : 1.0f;
+                const float mS = z > 0 ? s.mass[i - static_cast<size_t>(nx)] : 1.0f;
+                const auto g = [k](float a, float b) { return k * (a + b) * (a - b); };
+                // 加算は (E+W)+(N+S): x と z を入れ替えても結果がビット一致する順序
+                sc.mass[i] = m - ((g(m, mE) + g(m, mW)) + (g(m, mN) + g(m, mS)));
+            }
+        }
+    });
+    s.mass.swap(sc.mass);
+}
+
+// 嵩の範囲の強制 [0, kMaxFogMass]。非有限は静止状態 (1) へ戻して true
+bool ClampMass(DisturbanceSlot& s)
+{
+    bool bad = false;
+    for (float& m : s.mass) {
+        if (!std::isfinite(m)) {
+            m = 1.0f;
+            bad = true;
+        }
+        m = std::min(std::max(m, 0.0f), kMaxFogMass);
+    }
+    return bad;
+}
+
 // 濃さと跡の復元・値の範囲の強制 (B の 7 の後半と 9)。各マスが自分のマスだけを書く。
 // 非有限の値が出たら静止状態へ戻して true を返す
 bool RelaxScalars(DisturbanceSlot& s, const FieldParams& p)
@@ -1229,6 +1339,7 @@ void FollowShift(World& world, const FieldParams& p, DisturbanceSlot& s, std::ve
     ShiftArray(s.trail, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     ShiftArray(s.ripple, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
     ShiftArray(s.ripplePrev, scratch, nx, ny, nz, d[0], d[1], d[2], 0.0f);
+    ShiftArray(s.mass, scratch, nx, ny, nz, d[0], d[1], d[2], 1.0f);
     for (int i = 0; i < 3; ++i) {
         s.originCell[i] += d[i];
     }
@@ -1375,6 +1486,11 @@ void DisturbanceStep(World& world, DisturbanceState& state)
         if ((s.channels & kDisturbanceChannelDensity) != 0) {
             AdvectDensity(s, p, state.solver_);
         }
+        if ((s.channels & kDisturbanceChannelMass) != 0) {
+            AdvectMass(s, targetX, targetZ, state.solver_);
+            SlumpMass(s, p, state.solver_);
+            repaired = ClampMass(s) || repaired;
+        }
         repaired = RelaxScalars(s, p) || repaired;
         if ((s.channels & kDisturbanceChannelRipple) != 0) {
             repaired = StepRipple(s, p, state.rippleScratch_) || repaired;
@@ -1468,7 +1584,10 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
         const float fz = gz - 0.5f;
         // 地形に沿う層は、この位置の列の基準高さ (双線形。格子の外のマスは baseY) を使う
         const float base = s.columnBaseY.empty() ? s.baseY : Bilinear(s.columnBaseY, s.cellsX, s.cellsZ, fx, fz, s.baseY);
-        if (!(pos.y >= base - thickness && pos.y <= base + 2.0f * thickness)) {
+        // 嵩チャネルの層は列の厚さ = thickness × 嵩 (描画の DfldLayerSigma と同じ。下限は 0 除算を避ける値)
+        const float columnThickness =
+            s.mass.empty() ? thickness : std::max(thickness * Bilinear(s.mass, s.cellsX, s.cellsZ, fx, fz, 1.0f), kMinColumnThickness);
+        if (!(pos.y >= base - thickness && pos.y <= base + 2.0f * std::max(thickness, columnThickness))) {
             continue;
         }
         out.field = s.entity;
@@ -1476,7 +1595,7 @@ bool DisturbanceSampleAt(const DisturbanceState& state, World& world, EntityID f
         out.flow[2] = Bilinear(s.flowZ, s.cellsX, s.cellsZ, fx, fz, wind[2]);
         if ((s.channels & kDisturbanceChannelDensity) != 0) {
             // 高さの形 p(y): 板の下端より下は 1、上へ thickness かけて 0 (描画と同じ式)
-            const float shape = pos.y <= base ? 1.0f : Saturate(1.0f - (pos.y - base) / thickness);
+            const float shape = pos.y <= base ? 1.0f : Saturate(1.0f - (pos.y - base) / columnThickness);
             out.density = Bilinear(s.density, s.cellsX, s.cellsZ, fx, fz, rest) * shape;
         }
         if ((s.channels & kDisturbanceChannelTrail) != 0) {

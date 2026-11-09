@@ -299,5 +299,8 @@ void BuildFieldShowcaseScene(EngineContext& ctx);
 // 霧のノイズの見比べ (--fog-noise-demo)。地面の層 3 枚 (ノイズなし / 数値 / マップ) と、数値 + マップの Volume の煙 1 本 (場は合わせて 4 個まで)。
 // マップは assets\textures\fog_noise.png (tools\gen_fog_noise.py が作る)
 void BuildFogNoiseShowcaseScene(EngineContext& ctx);
+// 霧の嵩 (--fog-kick-demo)。人が蹴ると霧に穴が開き、押し出された分が縁に盛り上がり、重力でゆっくり埋まる (濃さ + 嵩の 2D 層 1 枚)。
+// 人は自動で歩いて蹴り、WASD / 左スティックで歩き、J / 左クリック / RB で蹴れる (ZZFogKickDriver。GameLogic.dll が無い構成では動かない)
+void BuildFogKickShowcaseScene(EngineContext& ctx);
 
 } // namespace mye

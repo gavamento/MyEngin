@@ -141,7 +141,8 @@ bool SameSlot(const DisturbanceSlot& a, const DisturbanceSlot& b)
            && std::memcmp(a.originCell, b.originCell, sizeof(a.originCell)) == 0 && a.baseY == b.baseY
            && a.shape == b.shape && a.cellsY == b.cellsY && SameBits(a.flowY, b.flowY) && SameBits(a.columnBaseY, b.columnBaseY)
            && SameBits(a.flowX, b.flowX) && SameBits(a.flowZ, b.flowZ) && SameBits(a.density, b.density)
-           && SameBits(a.trail, b.trail) && SameBits(a.ripple, b.ripple) && SameBits(a.ripplePrev, b.ripplePrev);
+           && SameBits(a.trail, b.trail) && SameBits(a.ripple, b.ripple) && SameBits(a.ripplePrev, b.ripplePrev)
+           && SameBits(a.mass, b.mass);
 }
 
 // 静止状態: 流れ 0、濃さ rest、跡 0、波紋 0 (ビットで比べる)
@@ -1251,6 +1252,174 @@ bool RunDisturbanceNoiseTests()
     return ok;
 }
 
+// ---- 霧の嵩 (嵩チャネル) ----
+// 64 x 64 マス (16 m 四方) の層の中心を、デモの蹴り (ZZFogKickDriver) と同じ Radial で kMassKickTicks 押す。
+// 格子の外は開いた境界なので、押した流れが縁まで届くと総量が出入りする。保存の検査はそれが無視できる広さで行う
+constexpr int kMassCells = 64;
+constexpr int kMassKickTicks = 14;
+constexpr float kMassKickRadius = 2.0f;
+constexpr float kMassKickSpeed = 12.0f;
+
+float SumOf(const std::vector<float>& a)
+{
+    double sum = 0.0;
+    for (float v : a) {
+        sum += v;
+    }
+    return static_cast<float>(sum);
+}
+
+// 中心 (0, 0) を含むマスの嵩
+float CenterMass(const DisturbanceSlot& s)
+{
+    const int cx = CellIndexOf(s, 0.1f, 0);
+    const int cz = CellIndexOf(s, 0.1f, 2);
+    return s.mass[static_cast<size_t>(cx) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(cz)];
+}
+
+float MaxOf(const std::vector<float>& a)
+{
+    float m = a.empty() ? 0.0f : a[0];
+    for (float v : a) {
+        m = std::max(m, v);
+    }
+    return m;
+}
+
+EntityID AddMassField(Sim& s, float gravity)
+{
+    const EntityID e = AddField(s, 0.0f, 0.0f, 0.0f, kMassCells, kMassCells, kDisturbanceChannelDensity | kDisturbanceChannelMass);
+    FieldOf(s, e)->massGravity = gravity;
+    FieldOf(s, e)->thickness = 0.6f;
+    return e;
+}
+
+void KickCenter(Sim& s)
+{
+    FieldImpulse imp = MakeImpulse(0.0f, 0.2f, 0.0f, kMassKickRadius, 0.0f, 0.0f, kMassKickSpeed);
+    imp.shape = kFieldImpulseRadial;
+    for (int t = 0; t < kMassKickTicks; ++t) {
+        DisturbanceQueueImpulse(s.scene, imp);
+        s.Step();
+    }
+}
+
+bool RunDisturbanceMassTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  [disturbance] FAIL: %s", what);
+            ok = false;
+        }
+    };
+
+    // ---- 静止状態は動かない (流れ 0 なら嵩は 1 のままビット不変) ----
+    {
+        auto sim = std::make_unique<Sim>();
+        AddMassField(*sim, 0.03f);
+        sim->Flush();
+        sim->Step(30);
+        const DisturbanceSlot& s = sim->D().Slots()[0];
+        check(SameBits(s.mass, std::vector<float>(s.CellCount(), 1.0f)), "mass: a field at rest keeps mass 1 in every cell");
+    }
+
+    // ---- 蹴りで穴・縁、重力なしなら総量を保つ。重力ありで埋まる ----
+    {
+        auto sim = std::make_unique<Sim>();
+        const EntityID field = AddMassField(*sim, 0.0f);
+        sim->Flush();
+        sim->Step(1);
+        const float total0 = SumOf(sim->D().Slots()[0].mass);
+        KickCenter(*sim);
+        const DisturbanceSlot& s = sim->D().Slots()[0];
+        const float hole = CenterMass(s);
+        const float rim = MaxOf(s.mass);
+        const float total1 = SumOf(s.mass);
+        MYE_LOG_INFO("  [disturbance] mass: after the kick center %.3f, rim max %.3f, total %.2f -> %.2f", hole, rim, total0, total1);
+        check(hole < 0.5f, "mass: the kick opens a hole (center mass < 0.5)");
+        check(rim > 1.1f, "mass: the pushed fog piles up at the rim (max mass > 1.1)");
+        check(std::fabs(total1 - total0) <= total0 * 1.0e-3f, "mass: without gravity the total mass is conserved (within 0.1%)");
+        // 重力なしでは穴が開いたまま (戻す項を持たない)
+        sim->Step(120);
+        check(CenterMass(sim->D().Slots()[0]) < 0.5f, "mass: without gravity the hole stays open");
+
+        // 穴の中は霧の層が薄い = 同じ高さの濃さが静止状態より低い (FieldSample と描画の p(y) は列の厚さで測る)
+        FieldSampleOut inHole{};
+        FieldSampleOut outside{};
+        check(DisturbanceSampleAt(sim->D(), sim->W(), field, { 0.1f, 0.3f, 0.1f }, inHole)
+                  && DisturbanceSampleAt(sim->D(), sim->W(), field, { 5.0f, 0.3f, 5.0f }, outside),
+              "mass: FieldSample reads the layer inside and outside the hole");
+        check(inHole.density < outside.density * 0.5f, "mass: FieldSample sees thinner fog in the hole");
+
+        // 重力を入れると周りの嵩が流れ込んで埋まる
+        FieldOf(*sim, field)->massGravity = 0.03f;
+        float prev = CenterMass(sim->D().Slots()[0]);
+        bool rising = true;
+        for (int k = 0; k < 12; ++k) {
+            sim->Step(100);
+            const float now = CenterMass(sim->D().Slots()[0]);
+            rising = rising && now >= prev;
+            prev = now;
+        }
+        const DisturbanceSlot& after = sim->D().Slots()[0];
+        MYE_LOG_INFO("  [disturbance] mass: 20 s of gravity -> center %.3f, max %.3f", CenterMass(after), MaxOf(after.mass));
+        check(rising, "mass: with gravity the hole fills monotonically");
+        check(CenterMass(after) > 0.9f && MaxOf(after.mass) < 1.1f, "mass: after 20 s of gravity the hole and the rim have flattened");
+    }
+
+    // ---- jobs あり / なしでビット一致、スナップショット往復、ハッシュに畳まれる ----
+    {
+        auto a = std::make_unique<Sim>();
+        auto b = std::make_unique<Sim>();
+        AddMassField(*a, 0.03f);
+        AddMassField(*b, 0.03f);
+        a->Flush();
+        b->Flush();
+        jobs::System().SetEnabled(true);
+        KickCenter(*a);
+        a->Step(50);
+        jobs::System().SetEnabled(false);
+        KickCenter(*b);
+        b->Step(50);
+        jobs::System().SetEnabled(true);
+        check(SameSlot(a->D().Slots()[0], b->D().Slots()[0]), "mass: jobs on / off give bit-identical slots");
+
+        SimRefs refs;
+        refs.scene = &a->scene;
+        std::vector<std::byte> blob;
+        check(CaptureSimSnapshot(refs, blob), "mass: capture succeeds");
+        auto c = std::make_unique<Sim>();
+        AddMassField(*c, 0.03f);
+        c->Flush();
+        SimRefs refsC;
+        refsC.scene = &c->scene;
+        check(RestoreSimSnapshot(refsC, blob.data(), blob.size()) && !c->D().Slots().empty()
+                  && SameSlot(a->D().Slots()[0], c->D().Slots()[0]),
+              "mass: a snapshot round trip keeps the mass array bit for bit");
+
+        const uint64_t h0 = a->Hash();
+        a->D().Slots()[0].mass[0] += 0.25f;
+        check(a->Hash() != h0, "mass: the mass array is folded into the world hash");
+    }
+
+    // ---- 嵩の無い場は配列を持たない / Volume では嵩のビットが落ちる ----
+    {
+        auto sim = std::make_unique<Sim>();
+        AddField(*sim, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity);
+        const EntityID vol = AddField(*sim, 20.0f, 2.0f, 0.0f, 8, 8, kDisturbanceChannelDensity | kDisturbanceChannelMass, "Volume");
+        FieldOf(*sim, vol)->shape = kDisturbanceVolume;
+        FieldOf(*sim, vol)->cellsY = 8;
+        sim->Flush();
+        sim->Step(2);
+        const auto& slots = sim->D().Slots();
+        check(slots.size() == 2 && slots[0].mass.empty(), "mass: a field without the mass bit allocates no mass array");
+        check(slots.size() == 2 && slots[1].channels == kDisturbanceChannelDensity && slots[1].mass.empty(),
+              "mass: a volume drops the mass bit");
+    }
+    return ok;
+}
+
 // review-1 の修正の回帰: 復元後の描画の通番 / 巨大な速度 / 格子外の流れ = 風。Fast 層に載せる小さな場だけを使う
 bool RunDisturbanceRobustnessTests()
 {
@@ -1947,6 +2116,11 @@ bool RunDisturbanceFieldImpl(bool heavy)
 
     // 霧のノイズ (見た目だけ)
     if (!heavy && !RunDisturbanceNoiseTests()) {
+        ++failCount;
+    }
+
+    // 霧の嵩 (保存の移流と重力)
+    if (!heavy && !RunDisturbanceMassTests()) {
         ++failCount;
     }
 

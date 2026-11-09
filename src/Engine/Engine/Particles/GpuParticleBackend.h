@@ -20,7 +20,7 @@ constexpr int kParticleFieldVolumeSrvSlot = 4;
 constexpr int kParticleFieldLayerCbSlot = 3;
 constexpr int kParticleFieldVolumeCbSlot = 4;
 constexpr int kParticleFieldSamplerSlot = 1;
-// 2D 層の基準高さのずれ (RG16F の G。起伏に沿う層の板の判定) の SRV。HLSL の MYE_DFLD_SRV_AUX と一致
+// 2D 層の基準高さのずれ (RGBA16F の G。起伏に沿う層の板の判定) の SRV。HLSL の MYE_DFLD_SRV_AUX と一致
 constexpr int kParticleFieldAuxSrvSlot = 8;
 
 // GPU パーティクル (engine_spec.md 7.3)。

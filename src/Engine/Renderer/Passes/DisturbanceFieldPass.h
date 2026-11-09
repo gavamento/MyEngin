@@ -64,6 +64,7 @@ struct DisturbanceLayerUpload {
     const float* trail = nullptr;
     const float* ripple = nullptr;
     const float* baseOffset = nullptr; // 列の基準高さ - baseY (起伏に沿う層。null = 0)
+    const float* mass = nullptr;       // 霧の嵩 (嵩チャネルの層。null = 1 = 層の厚さそのまま)
     int32_t originCellX = 0;
     int32_t originCellZ = 0;
     float cellSize = 0.25f;
@@ -152,7 +153,7 @@ static_assert(sizeof(DisturbanceFieldCB) == kDisturbanceFieldCbBytes, "HLSL の 
 // 読む側は CB の layerCount と、各層の extent.w (テクスチャを読むか) を見る
 struct DisturbanceFieldGpu {
     ID3D11ShaderResourceView* flowSRV = nullptr; // Texture2DArray RGBA16F (vx, vz, 濃さ, 跡)
-    ID3D11ShaderResourceView* auxSRV = nullptr;  // Texture2DArray RG16F (波紋 h, 基準面のずれ)
+    ID3D11ShaderResourceView* auxSRV = nullptr;  // Texture2DArray RGBA16F (波紋 h, 基準面のずれ, 霧の嵩, 未使用)
     DisturbanceFieldCB cb;
     // 局所ライトで照らす層のビット (bit i = 層 i)。層の CB は変えないので別に持つ
     uint32_t localLightMask = 0;
@@ -203,7 +204,8 @@ private:
     bool lightOverflowWarned_ = false; // 8 本を超えた WARN を出したか (超過が解消したら戻す)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> groundFogSampler_;
     Microsoft::WRL::ComPtr<ID3D11SamplerState> noiseSampler_; // 霧のノイズのマップ用 (wrap)
-    // 層ごとの基準高さのずれの最小 / 最大 (板を包む範囲)。転送したときに更新する
+    // 層ごとの板を包む範囲: [0] = 基準高さのずれの最小、[1] = 列の上端 - baseY - thickness の最大
+    // (ずれ + thickness × (嵩 - 1)。嵩の無い層はずれの最大)。転送したときに更新する
     float offsetRange_[kDisturbanceMaxLayers][2] = {};
     bool createFailed_ = false; // 同じ寸法で一度落ちたら毎フレーム再試行してログを溢れさせない
     int32_t failedWidth_ = 0;

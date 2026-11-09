@@ -607,4 +607,88 @@ void BuildFogNoiseShowcaseScene(EngineContext& ctx)
     s.GetWorld().ApplyStructuralChanges();
 }
 
+namespace {
+
+// ---- --fog-kick-demo (霧の嵩: 蹴って穴を開け、縁に積もり、重力で埋まる) ----
+// 場は 2D 層 1 枚 (濃さ + 嵩)。蹴りは ZZFogKickDriver が Radial を数 tick 出すだけで、穴・縁・埋め戻しは嵩チャネルの sim が作る
+
+// 層: 0.25 m の 96 x 96 マス = 24 m 四方。薄い層 (0.6 m) を濃く描いて、厚さの起伏 (穴と縁) を読ませる
+constexpr int32_t kKickFieldCells = 96;
+constexpr float kKickFieldThickness = 0.6f;
+
+void AddKickDemoCamera(Scene& s)
+{
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    // 低めの角度から見下ろす (穴の深さと縁の盛り上がりが輪郭で読める高さ)
+    camera.SetLocalPosition(0.0f, 4.0f, -8.0f);
+    camera.SetLocalRotationEuler(24.0f, 0.0f, 0.0f);
+}
+
+void AddKickDemoEnvironment(Scene& s)
+{
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(35.0f, -40.0f, 0.0f);
+    // 風なし (穴が流されずにその場で埋まる様子を見せる)
+    GameObject envGo = s.CreateGameObject("Environment");
+    envGo.AddComponent<PhysicsEnvironmentComponent>()->gravity = { 0.0f, -9.81f, 0.0f };
+}
+
+void AddKickDemoField(Scene& s)
+{
+    GameObject field = s.CreateGameObject("DisturbanceField");
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 0;
+    f->cellsX = kKickFieldCells;
+    f->cellsZ = kKickFieldCells;
+    f->thickness = kKickFieldThickness;
+    f->channels = kDisturbanceChannelDensity | kDisturbanceChannelMass;
+    f->densityKeep = 0.995f;
+    f->windScale = 0.0f;
+    f->massGravity = 0.03f; // 穴が十数秒かけて埋まる
+    // 薄めにして床が透ける濃さ: 厚い縁は白く、薄い穴は床の暗さが出る (不透明だと上面しか見えず起伏が読めない)
+    f->fogDensity = 1.2f;
+    f->fogSunLight = true;
+}
+
+// 蹴る人: CharacterController の本体 + 見た目の胴 (カプセル) と足 (球、"KickFoot")。足はスクリプトが蹴りの間だけ前へ出す
+void AddKickDemoKicker(Scene& s, const AssetID capsule, const AssetID sphere)
+{
+    GameObject person = s.CreateGameObject("FogKicker");
+    person.SetLocalPosition(-2.0f, 0.9f, -2.0f); // CC の中心は足元から 0.9 m 上
+    person.AddComponent<CharacterControllerComponent>();
+    AttachScriptIfRegistered(s.GetWorld(), person.Id(), "ZZFogKickDriver");
+    GameObject body = s.CreateGameObject("Body");
+    body.SetParent(person);
+    body.SetLocalScale(0.6f, 0.9f, 0.6f);
+    auto* mr = body.AddComponent<MeshRendererComponent>();
+    mr->mesh = capsule;
+    mr->material = AssetID{ HashStr("pdemo_ball") };
+    GameObject foot = s.CreateGameObject("KickFoot");
+    foot.SetParent(person);
+    foot.SetLocalPosition(0.0f, -0.7f, 0.25f);
+    foot.SetLocalScale(0.3f, 0.3f, 0.3f);
+    auto* footMr = foot.AddComponent<MeshRendererComponent>();
+    footMr->mesh = sphere;
+    footMr->material = AssetID{ HashStr("pdemo_buoy") };
+}
+
+} // namespace
+
+// --fog-kick-demo。霧の嵩のデモ: 蹴ると穴が開き、押し出された霧が縁に盛り上がり、重力でゆっくり穴が埋まる
+void BuildFogKickShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    s.SetName("fog_kick_showcase");
+    const AssetID cube = ctx.resources->meshes.Cube();
+    AddKickDemoCamera(s);
+    AddKickDemoEnvironment(s);
+    AddGround(s, cube);
+    AddKickDemoField(s);
+    AddKickDemoKicker(s, ctx.resources->meshes.Capsule(), ctx.resources->meshes.Sphere());
+    AddNoiseDemoLabel(s, "移動: WASD / 左スティック    蹴る: J / 左クリック / RB", 0.0f, 3.2f, 8.0f);
+    s.GetWorld().ApplyStructuralChanges();
+}
+
 } // namespace mye

@@ -106,6 +106,7 @@ int32_t BuildDisturbanceFieldUpload(World& world, const DisturbanceState* state,
             l.density = DataOrNull(slot->density);
             l.trail = DataOrNull(slot->trail);
             l.ripple = DataOrNull(slot->ripple);
+            l.mass = DataOrNull(slot->mass);
             if (!slot->columnBaseY.empty()) {
                 std::vector<float>& offset = out.baseOffsetStorage[out.layerCount];
                 offset.resize(slot->columnBaseY.size());

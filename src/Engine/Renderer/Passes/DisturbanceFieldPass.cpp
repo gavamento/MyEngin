@@ -31,6 +31,12 @@ float At(const float* a, size_t i)
     return a != nullptr ? a[i] : 0.0f;
 }
 
+// 霧の嵩 (嵩チャネルの無い層は 1 = 層の厚さそのまま)
+float MassAt(const float* a, size_t i)
+{
+    return a != nullptr ? a[i] : 1.0f;
+}
+
 } // namespace
 
 int SelectGroundFogLights(const SceneLightData& lights, const DisturbanceFieldCB& layers, uint32_t localLightMask,
@@ -144,7 +150,7 @@ bool DisturbanceFieldPass::EnsureArrays(GraphicsDevice& device, int32_t width, i
     Microsoft::WRL::ComPtr<ID3D11Texture2D> aux;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> flowSrv;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> auxSrv;
-    if (!create(DXGI_FORMAT_R16G16B16A16_FLOAT, flow, flowSrv) || !create(DXGI_FORMAT_R16G16_FLOAT, aux, auxSrv)) {
+    if (!create(DXGI_FORMAT_R16G16B16A16_FLOAT, flow, flowSrv) || !create(DXGI_FORMAT_R16G16B16A16_FLOAT, aux, auxSrv)) {
         MYE_LOG_ERROR("DisturbanceFieldPass: Texture2DArray (%dx%dx%d) を作れなかった (場の霧は描かれない)", w, h,
                       kDisturbanceMaxLayers);
         createFailed_ = true;
@@ -232,12 +238,15 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
             // 状態を流し直すときだけ数え直す (描画は 60 Hz の sim より何倍も速く回る)
             float lo = 0.0f;
             float hi = 0.0f;
-            if (readTex && l.baseOffset != nullptr) {
+            if (readTex && (l.baseOffset != nullptr || l.mass != nullptr)) {
+                // 列の上端 - baseY - thickness = ずれ + thickness × (嵩 - 1)。嵩が積もった縁の上まで板を伸ばす
+                const auto top = [&](size_t k) { return At(l.baseOffset, k) + l.thickness * (MassAt(l.mass, k) - 1.0f); };
                 const size_t n = static_cast<size_t>(l.cellsX) * static_cast<size_t>(l.cellsZ);
-                lo = hi = l.baseOffset[0];
+                lo = At(l.baseOffset, 0);
+                hi = top(0);
                 for (size_t k = 1; k < n; ++k) {
-                    lo = (std::min)(lo, l.baseOffset[k]);
-                    hi = (std::max)(hi, l.baseOffset[k]);
+                    lo = (std::min)(lo, At(l.baseOffset, k));
+                    hi = (std::max)(hi, top(k));
                 }
             }
             offsetRange_[i][0] = lo;
@@ -275,14 +284,16 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         }
         const size_t n = static_cast<size_t>(l.cellsX) * static_cast<size_t>(l.cellsZ);
         flowHalf.resize(n * 4);
-        auxHalf.resize(n * 2);
+        auxHalf.resize(n * 4);
         for (size_t k = 0; k < n; ++k) {
             flowHalf[k * 4 + 0] = ToHalf(At(l.flowX, k));
             flowHalf[k * 4 + 1] = ToHalf(At(l.flowZ, k));
             flowHalf[k * 4 + 2] = ToHalf(l.hasDensity ? At(l.density, k) : 0.0f);
             flowHalf[k * 4 + 3] = ToHalf(At(l.trail, k));
-            auxHalf[k * 2 + 0] = ToHalf(At(l.ripple, k));
-            auxHalf[k * 2 + 1] = ToHalf(At(l.baseOffset, k));
+            auxHalf[k * 4 + 0] = ToHalf(At(l.ripple, k));
+            auxHalf[k * 4 + 1] = ToHalf(At(l.baseOffset, k));
+            auxHalf[k * 4 + 2] = ToHalf(MassAt(l.mass, k));
+            auxHalf[k * 4 + 3] = 0;
         }
         // 層 i の左上 (0,0) から cellsX x cellsZ だけ書く。RowPitch は 1 行のバイト数
         D3D11_BOX box = {};
@@ -291,7 +302,7 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         box.back = 1;
         const UINT sub = D3D11CalcSubresource(0, static_cast<UINT>(i), 1);
         dc->UpdateSubresource(flowTex_.Get(), sub, &box, flowHalf.data(), static_cast<UINT>(l.cellsX) * 8u, 0);
-        dc->UpdateSubresource(auxTex_.Get(), sub, &box, auxHalf.data(), static_cast<UINT>(l.cellsX) * 4u, 0);
+        dc->UpdateSubresource(auxTex_.Get(), sub, &box, auxHalf.data(), static_cast<UINT>(l.cellsX) * 8u, 0);
     }
     const auto t1 = std::chrono::steady_clock::now();
     uploadMs_ = static_cast<float>(std::chrono::duration<double, std::milli>(t1 - t0).count());

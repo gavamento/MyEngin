@@ -40,12 +40,21 @@ inline constexpr float kMaxWindScale = 10.0f;
 inline constexpr float kMaxBuoyancy = 20.0f;
 // sim の周波数。cellSize × この値が流れの速さの上限 (1 tick に 1 マス)
 inline constexpr float kDisturbanceTickRate = 60.0f;
+// 霧の嵩 (静止状態 1) の上限。押し寄せた縁でもこれ以上は積もらない
+inline constexpr float kMaxFogMass = 4.0f;
+// 嵩の重力の係数の上限 [1/tick]。広がりの係数は massGravity × 嵩なので、陽解法の拡散の安定条件
+// (係数 <= 0.25) を嵩の上限でも守る値 = 0.25 / kMaxFogMass
+inline constexpr float kMaxMassGravity = 0.25f / kMaxFogMass;
+// 嵩チャネルの列の層の厚さの下限 [m] (嵩 0 の列の p(y) で 0 で割らない)。
+// assets\shaders\disturbance_common.hlsli の MYE_DFLD_MIN_COLUMN_THICKNESS と一致させる (FieldSample と描画で同じ式)
+inline constexpr float kMinColumnThickness = 0.001f;
 
 enum DisturbanceChannel : uint32_t {
     kDisturbanceChannelDensity = 1u,
     kDisturbanceChannelTrail = 2u,
     kDisturbanceChannelRipple = 4u,
-    kDisturbanceChannelMask = 7u,
+    kDisturbanceChannelMass = 8u, // 霧の嵩 (保存して運ばれ、重力で平らに戻る。GroundLayer だけ)
+    kDisturbanceChannelMask = 15u,
 };
 
 enum DisturbanceShape : int32_t {
@@ -95,6 +104,9 @@ struct DisturbanceSlot {
     std::vector<float> trail;            // [0,1]
     std::vector<float> ripple;           // 波紋の高さ h [m]
     std::vector<float> ripplePrev;       // 1 tick 前の h
+    // 霧の嵩 m [0, kMaxFogMass] (静止状態 1)。列の層の厚さ = thickness × m。流れで保存して運ばれ (押しのけた分が縁に積もる)、
+    // 重力で高い所から低い所へ流れて平らに戻る。他のチャネルと違い静止状態へ「戻す」項は持たない
+    std::vector<float> mass;
 
     uint32_t CellCount() const
     {
@@ -133,6 +145,8 @@ public:
         bool radialActive[kMaxDisturbanceFields] = {};
         std::vector<float> targetRowZ; // 格子外の流れ (目標速度の z) を行として渡すための行
         std::vector<float> density;
+        std::vector<float> mass;      // 嵩の移流・重力の書き込み先
+        std::vector<float> massLimit; // 嵩の移流: マスごとの流出の縮め率 (出る量が嵩を超えないように)
     };
 
     const std::vector<DisturbanceSlot>& Slots() const { return slots_; }
@@ -169,7 +183,7 @@ private:
     SolverScratch solver_; // 流れのソルバの作業領域
 };
 
-// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 流れの移流・減衰・(Volume は浮力)・投影 → 濃さの移流 → 復元 → 波紋 → 範囲の強制。
+// 1 tick の step (フェーズ 4)。場の掃除と作り直し → 源の注入 → 配送待ちの注入 → 流れの移流・減衰・(Volume は浮力)・投影 → 濃さの移流 → 嵩の移流と重力 → 復元 → 波紋 → 範囲の強制。
 // 移流・投影・復元・波紋は z 行 (Volume は y × z 行) で jobs::ParallelRanges に割る (注入は直列)。
 // 場が 1 つも無く配送待ちも空なら走査だけで抜ける。World から読むのは Transform 確定後の WorldMatrix、
 // CharacterController.velocity、Rigidbody.velocity と、場・源のコンポーネント、PhysicsEnvironment の風

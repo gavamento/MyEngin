@@ -2073,7 +2073,7 @@ void RegisterBuiltinComponents()
         MYE_JP("マス数 Z", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsZ, Int32, "cells along Z (2 to 512)")),
         MYE_JP("マスの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, cellSize, Float, 0.05f, 8.0f)),
         MYE_JP("層の厚さ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, thickness, Float, 0.05f, 20.0f)),
-        MYE_JP("チャネル", MYE_FIELD_TIP(DisturbanceFieldComponent, channels, UInt32, "bit flags: 1 = density (fog) / 2 = trail (snow, sand) / 4 = ripple (water). The flow is always on. A volume uses the density bit only")),
+        MYE_JP("チャネル", MYE_FIELD_TIP(DisturbanceFieldComponent, channels, UInt32, "bit flags: 1 = density (fog) / 2 = trail (snow, sand) / 4 = ripple (water) / 8 = mass (the fog's bulk: pushed fog piles up at the rim and gravity fills the hole again; ground layer only). The flow is always on. A volume uses the density bit only")),
         MYE_JP("静止時の濃さ", MYE_FIELD_RANGE(DisturbanceFieldComponent, restDensity, Float, 0.0f, 1.0f)),
         MYE_JP("濃さの残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, densityKeep, Float, 0.0f, 1.0f)),
         MYE_JP("流れの残し率", MYE_FIELD_RANGE(DisturbanceFieldComponent, velocityKeep, Float, 0.0f, 1.0f)),
@@ -2103,6 +2103,7 @@ void RegisterBuiltinComponents()
         MYE_JP("ノイズマップ", MYE_FIELD(DisturbanceFieldComponent, noiseMap, AssetRef)),
         MYE_JP("マップの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, noiseMapScale, Float, 0.1f, 200.0f)),
         MYE_JP("マップの流れ (m/s)", MYE_FIELD(DisturbanceFieldComponent, noiseMapScroll, Float2)),
+        MYE_JP("嵩の重力", ::mye::FieldDesc{ .name = "massGravity", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, massGravity)), .minVal = 0.0f, .maxVal = 0.0625f, .tooltip = "mass channel only: how fast the fog's bulk flows from high to low under gravity, filling holes that were pushed open (0 = holes stay open; up to 0.0625 per tick). Changing it changes the result" }),
     });
 
     // M96: かき乱しの源 (TypeId=97、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変

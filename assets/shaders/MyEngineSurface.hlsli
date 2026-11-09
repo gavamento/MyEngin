@@ -168,7 +168,7 @@ float4 MyeFieldSample(float3 posW)
         const float2 uvHi = float2(nx - 0.5f, nz - 0.5f) * L.texScale.xy;
         const float2 uv = clamp(float2(gx, gz) * L.texScale.xy, uvLo, uvHi);
         const float4 flow = gDfldFlow.SampleLevel(gDfldSampler, float3(uv, (float)li), 0);
-        const float2 aux = gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)li), 0);
+        const float2 aux = gDfldAux.SampleLevel(gDfldSampler, float3(uv, (float)li), 0).xy;
         result.xy += flow.xy * edgeFade;
         result.z = max(result.z, flow.z * edgeFade);
         result.w += aux.x * edgeFade;
