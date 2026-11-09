@@ -2065,7 +2065,7 @@ void RegisterBuiltinComponents()
 
     // M96: かき乱しフィールド (TypeId=96、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
     // 範囲外の値は sim が切った値で動く (Inspector のレンジはスライダの目安)
-    static_assert(sizeof(DisturbanceFieldComponent) == 160, "DisturbanceFieldComponent: no implicit padding");
+    static_assert(sizeof(DisturbanceFieldComponent) == 168, "DisturbanceFieldComponent: no implicit padding");
     RegisterComponent<DisturbanceFieldComponent>("DisturbanceField", {
         MYE_JP("形", MYE_FIELD_TIP(DisturbanceFieldComponent, shape, Int32, "0 = ground layer (a thin layer that creeps along the floor) / 1 = volume (3D smoke / fog; only the density channel is used, trail and ripple are ignored)")),
         MYE_JP("マス数 X", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsX, Int32, "cells along X (2 to 512; at most 262144 cells in total). Changing it rebuilds the field at rest")),
@@ -2104,7 +2104,9 @@ void RegisterBuiltinComponents()
         MYE_JP("マップの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, noiseMapScale, Float, 0.1f, 200.0f)),
         MYE_JP("マップの流れ (m/s)", MYE_FIELD(DisturbanceFieldComponent, noiseMapScroll, Float2)),
         MYE_JP("コライダーを無視", MYE_FIELD_TIP(DisturbanceFieldComponent, ignoreColliders, Bool, "mass channel only: when on, colliders (spheres, boxes, capsules, convex hulls and character controllers that reach into the layer) do not push the fog's bulk aside. Off (default): the fog is pushed out of every such collider, piles up around it and cannot flow back in. Meshes, terrain, 2D shapes and triggers never push")),
-        MYE_JP("嵩の重力", ::mye::FieldDesc{ .name = "massGravity", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, massGravity)), .minVal = 0.0f, .maxVal = 0.0625f, .tooltip = "mass channel only: how fast the fog's bulk flows from high to low under gravity, filling holes that were pushed open (0 = holes stay open; up to 0.0625 per tick). Changing it changes the result" }),
+        MYE_JP("押しのけの余白 (m)", MYE_FIELD_TIP(DisturbanceFieldComponent, pushMargin, Float, "mass channel only: how far beyond a collider's shape the fog is pushed aside [m] (0 = exactly the shape, up to 4). A DisturbancePusher on the object overrides it")),
+        MYE_JP("押しのけの強さ", MYE_FIELD_TIP(DisturbanceFieldComponent, pushStrength, Float, "mass channel only: how much of the fog a collider pushes out of its footprint, 0 to 1 (1 = empty, 0.5 = half stays, 0 = colliders do not push). A DisturbancePusher on the object overrides it")),
+        MYE_JP("跡が埋まる速さ (嵩の重力)", ::mye::FieldDesc{ .name = "massGravity", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, massGravity)), .minVal = 0.0f, .maxVal = 0.0625f, .tooltip = "mass channel only: how fast the fog's bulk flows from high to low under gravity, filling holes that were pushed open (0 = holes stay open; up to 0.0625 per tick). Changing it changes the result" }),
     });
 
     // M96: かき乱しの源 (TypeId=97、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
@@ -2121,6 +2123,13 @@ void RegisterBuiltinComponents()
         MYE_JP("定常の流れ", MYE_FIELD(DisturbanceSourceComponent, constantVelocity, Float3)),
         MYE_JP("前の位置", MYE_FIELD_FLAGS(DisturbanceSourceComponent, prevPos, Float3, kFieldReadOnly)),
         MYE_JP("前の位置が有効", MYE_FIELD_FLAGS(DisturbanceSourceComponent, prevValid, UInt32, kFieldReadOnly)),
+    });
+
+    // M96 の後の追補: 霧を押しのける (TypeId=98、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    static_assert(sizeof(DisturbancePusherComponent) == 8, "DisturbancePusherComponent: no implicit padding");
+    RegisterComponent<DisturbancePusherComponent>("DisturbancePusher", {
+        MYE_JP("押しのけの余白 (m)", MYE_FIELD_TIP(DisturbancePusherComponent, margin, Float, "how far beyond this object's collider the fog is pushed aside [m] (0 to 4). Replaces the field's pushMargin for this object")),
+        MYE_JP("押しのけの強さ", MYE_FIELD_TIP(DisturbancePusherComponent, strength, Float, "how much of the fog this object pushes out of its footprint, 0 to 1 (1 = empty, 0 = this object does not push). Replaces the field's pushStrength for this object")),
     });
 }
 

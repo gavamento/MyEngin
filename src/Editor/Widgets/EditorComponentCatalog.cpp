@@ -73,6 +73,7 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "SpringFollow", { ICON_FA_WAVE_SQUARE, "Physics", "ばね追従" } }, // M94g
         { "DisturbanceField", { ICON_FA_WIND, "VFX", "かき乱しフィールド" } }, // M96: 歩き・攻撃・風でかき乱される格子の場 (霧など)
         { "DisturbanceSource", { ICON_FA_BOLT, "VFX", "かき乱しの源" } }, // M96
+        { "DisturbancePusher", { ICON_FA_WIND, "VFX", "霧を押しのける" } }, // M96 の後の追補: 物ごとの押しのけ方
         { "SpriteRenderer", { ICON_FA_IMAGE, "VFX", "スプライトレンダラー" } },
         { "TrailRenderer", { ICON_FA_WIND, "VFX", "トレイルレンダラー" } },
         { "TextMesh", { ICON_FA_FONT, "VFX", "テキストメッシュ" } },

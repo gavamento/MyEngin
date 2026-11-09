@@ -45,6 +45,8 @@ FieldParams SanitizeField(EntityID e, const DisturbanceFieldComponent& c, const 
     p.buoyancy = ClampOr(c.buoyancy, 0.0f, kMaxBuoyancy, 0.0f);
     p.massGravity = ClampOr(c.massGravity, 0.0f, kMaxMassGravity, 0.0f);
     p.ignoreColliders = c.ignoreColliders;
+    p.pushMargin = ClampOr(c.pushMargin, 0.0f, kMaxPushMargin, 0.0f);
+    p.pushStrength = ClampOr(c.pushStrength, 0.0f, 1.0f, 1.0f);
     p.followTarget = c.followTarget;
     // ずらしは軸のどれかがこの値以上ずれた step で起きる。格子の半分を超えると中心に戻せないので半分で切る
     const int32_t smallestSide = p.shape == kDisturbanceVolume ? std::min({ p.cellsX, p.cellsY, p.cellsZ }) : std::min(p.cellsX, p.cellsZ);

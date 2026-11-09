@@ -2693,6 +2693,18 @@ struct DisturbanceFieldComponent {
     DirectX::XMFLOAT2 noiseMapScroll = { 0.2f, 0.0f }; // [m/s] マップが流れる速度 (ワールドの x, z)
     // ---- 霧の嵩 (sim が読む。旧 pad3 の 4 バイトを使う = 大きさは不変) ----
     float massGravity = 0.03f;            // 嵩の重力 [1/tick、0 〜 kMaxMassGravity]。押しのけた穴を周りの嵩が埋める速さ (0 = 埋まらない)
+    // ---- コライダーによる押しのけの既定値 (嵩チャネル。sim が読む。DisturbancePusher を付けた物はそちらが優先) ----
+    float pushMargin = 0.0f;              // [m] コライダーの形からさらに外側まで押しのける幅 [0, kMaxPushMargin]
+    float pushStrength = 1.0f;            // 押しのける割合 [0,1] (1 = 中を空にする / 0.5 = 半分残す / 0 = 押しのけない)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
+// ---- 霧を押しのける (M96 の後の追補、TypeId=98) ----
+// コライダー (または CharacterController) を持つエンティティに付けると、嵩チャネルの場での押しのけ方を
+// 場の既定値 (pushMargin / pushStrength) の代わりにこの値にする。コライダーが無ければ何もしない。hash 対象
+struct DisturbancePusherComponent {
+    float margin = 0.0f;   // [m] 形からさらに外側まで押しのける幅 [0, kMaxPushMargin]
+    float strength = 1.0f; // 押しのける割合 [0,1] (0 = この物は押しのけない)
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -48,6 +48,8 @@ struct FieldParams {
     float buoyancy = 0.0f;          // Volume だけ。[0, kMaxBuoyancy] [m/s^2 / 濃さ]
     float massGravity = 0.0f;       // 嵩の重力 [0, kMaxMassGravity] [1/tick]
     bool ignoreColliders = false;   // 嵩チャネル: コライダーが嵩を押しのけない
+    float pushMargin = 0.0f;        // コライダーの押しのけの既定の余白 [0, kMaxPushMargin] [m]
+    float pushStrength = 1.0f;      // コライダーの押しのけの既定の強さ [0,1]
     EntityID followTarget = kNullEntity; // null なら固定
     int32_t followMargin = 4;            // [1, 格子の最小の辺の半分]
     bool followTerrain = false;          // GroundLayer だけ true になる (Volume は無視)

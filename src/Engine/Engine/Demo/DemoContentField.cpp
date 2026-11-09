@@ -658,6 +658,10 @@ void AddKickDemoKicker(Scene& s, const AssetID capsule, const AssetID sphere)
     GameObject person = s.CreateGameObject("FogKicker");
     person.SetLocalPosition(-2.0f, 0.9f, -2.0f); // CC の中心は足元から 0.9 m 上
     person.AddComponent<CharacterControllerComponent>();
+    // 歩いた跡の溝: カプセル (半径 0.3 m) より 0.25 m 広く霧を押しのける。強さ・余白はこの部品で物ごとに変えられる
+    auto* pusher = person.AddComponent<DisturbancePusherComponent>();
+    pusher->margin = 0.25f;
+    pusher->strength = 1.0f;
     AttachScriptIfRegistered(s.GetWorld(), person.Id(), "ZZFogKickDriver");
     GameObject body = s.CreateGameObject("Body");
     body.SetParent(person);

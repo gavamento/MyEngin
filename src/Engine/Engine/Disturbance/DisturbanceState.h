@@ -48,6 +48,8 @@ inline constexpr float kMaxMassGravity = 0.25f / kMaxFogMass;
 // 嵩チャネルの列の層の厚さの下限 [m] (嵩 0 の列の p(y) で 0 で割らない)。
 // assets\shaders\disturbance_common.hlsli の MYE_DFLD_MIN_COLUMN_THICKNESS と一致させる (FieldSample と描画で同じ式)
 inline constexpr float kMinColumnThickness = 0.001f;
+// コライダーの押しのけの余白の上限 [m]
+inline constexpr float kMaxPushMargin = 4.0f;
 
 enum DisturbanceChannel : uint32_t {
     kDisturbanceChannelDensity = 1u,
@@ -152,6 +154,7 @@ public:
         std::vector<uint8_t> massSolid;
         std::vector<float> massPushX;
         std::vector<float> massPushZ;
+        std::vector<float> massKeep;  // 固体のマスに残す嵩 (1 - 押しのけの強さ)。これを超えた分だけ押し出す
     };
 
     const std::vector<DisturbanceSlot>& Slots() const { return slots_; }

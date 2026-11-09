@@ -948,8 +948,11 @@ void SlumpMass(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::Solve
 // 嵩を押しのけるコライダー 1 個 (ワールドの形)。物理と同じ ShapePose で持ち、判定も物理の実装 (shapes::) を使う
 struct Obstacle {
     ShapePose pose;
-    float lo[3] = { 0.0f, 0.0f, 0.0f }; // 形を包む AABB
+    float lo[3] = { 0.0f, 0.0f, 0.0f }; // 形を包む AABB (余白は含まない)
     float hi[3] = { 0.0f, 0.0f, 0.0f };
+    bool hasPusher = false; // DisturbancePusher を持つ (場の既定値の代わりに下の値を使う)
+    float margin = 0.0f;    // [m] 切った後の値
+    float strength = 1.0f;
 };
 
 // 押しのける形か。閉じた体積を持つ基本形と凸包だけ (メッシュ・地形・2D 形状は床や地面になるので押しのけない)
@@ -959,10 +962,15 @@ bool PushesFog(int32_t shape)
            || shape == collidershape::kConvex;
 }
 
-void AddObstacle(const ShapePose& pose, std::vector<Obstacle>& out)
+void AddObstacle(const ShapePose& pose, const DisturbancePusherComponent* pusher, std::vector<Obstacle>& out)
 {
     Obstacle o;
     o.pose = pose;
+    if (pusher != nullptr) {
+        o.hasPusher = true;
+        o.margin = ClampOr(pusher->margin, 0.0f, kMaxPushMargin, 0.0f);
+        o.strength = ClampOr(pusher->strength, 0.0f, 1.0f, 1.0f);
+    }
     shapes::ComputeAabb(pose, o.lo[0], o.lo[1], o.lo[2], o.hi[0], o.hi[1], o.hi[2]);
     for (int k = 0; k < 3; ++k) {
         if (!std::isfinite(o.lo[k]) || !std::isfinite(o.hi[k])) {
@@ -1012,17 +1020,20 @@ void CollectObstacles(World& world, std::vector<Obstacle>& out)
     std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.entity.index < b.entity.index; });
     out.clear();
     for (const Row& r : rows) {
-        AddObstacle(r.pose, out);
+        AddObstacle(r.pose, world.GetComponent<DisturbancePusherComponent>(r.entity), out);
     }
 }
 
 // 列の中で固体かを調べる高さ (層の厚さに対する割合)。床の箱 (上面 = 層の下端) はどれにも当たらない
 constexpr float kSolidProbe[3] = { 0.25f, 0.5f, 0.75f };
 
-// 固体のマスと押し出す向きを作る。どのマスも固体でなければ massSolid を空にして false
-bool BuildSolidMask(const DisturbanceSlot& s, float thickness, const std::vector<Obstacle>& obstacles,
+// 固体のマスと押し出す向き・残す嵩を作る。どのマスも固体でなければ massSolid を空にして false。
+// 余白 m: 形から m 以内の点も固体 (DistanceToShape <= m)。強さ k: 固体のマスに 1 - k を残す (k = 0 の物は固体にしない)。
+// 余白・強さは DisturbancePusher があればその値、無ければ場の既定値。重なったマスは強い方 (残す嵩の小さい方)
+bool BuildSolidMask(const DisturbanceSlot& s, const FieldParams& p, const std::vector<Obstacle>& obstacles,
                     DisturbanceState::SolverScratch& sc)
 {
+    const float thickness = p.thickness;
     sc.massSolid.clear();
     if (obstacles.empty()) {
         return false;
@@ -1031,11 +1042,16 @@ bool BuildSolidMask(const DisturbanceSlot& s, float thickness, const std::vector
     const int32_t nz = s.cellsZ;
     bool any = false;
     for (const Obstacle& o : obstacles) {
+        const float margin = o.hasPusher ? o.margin : p.pushMargin;
+        const float strength = o.hasPusher ? o.strength : p.pushStrength;
+        if (!(strength > 0.0f)) {
+            continue;
+        }
         int32_t x0 = 0, x1 = 0, z0 = 0, z1 = 0;
         const float cx = (o.lo[0] + o.hi[0]) * 0.5f;
         const float cz = (o.lo[2] + o.hi[2]) * 0.5f;
-        if (!CellRange(cx, (o.hi[0] - o.lo[0]) * 0.5f, s.cellSize, s.originCell[0], nx, x0, x1)
-            || !CellRange(cz, (o.hi[2] - o.lo[2]) * 0.5f, s.cellSize, s.originCell[2], nz, z0, z1)) {
+        if (!CellRange(cx, (o.hi[0] - o.lo[0]) * 0.5f + margin, s.cellSize, s.originCell[0], nx, x0, x1)
+            || !CellRange(cz, (o.hi[2] - o.lo[2]) * 0.5f + margin, s.cellSize, s.originCell[2], nz, z0, z1)) {
             continue;
         }
         for (int32_t z = z0; z <= z1; ++z) {
@@ -1044,13 +1060,13 @@ bool BuildSolidMask(const DisturbanceSlot& s, float thickness, const std::vector
                 const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
                 // 層の高さの範囲 (地形に沿う層は列ごとの基準高さ)
                 const float base = s.columnBaseY.empty() ? s.baseY : s.columnBaseY[i];
-                if (o.hi[1] <= base || o.lo[1] >= base + thickness) {
+                if (o.hi[1] + margin <= base || o.lo[1] - margin >= base + thickness) {
                     continue;
                 }
                 const float wx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
                 bool hit = false;
                 for (float t : kSolidProbe) {
-                    hit = hit || shapes::DistanceToShape(o.pose, wx, base + thickness * t, wz) <= 0.0f;
+                    hit = hit || shapes::DistanceToShape(o.pose, wx, base + thickness * t, wz) <= margin;
                 }
                 if (!hit) {
                     continue;
@@ -1060,7 +1076,9 @@ bool BuildSolidMask(const DisturbanceSlot& s, float thickness, const std::vector
                     sc.massSolid.assign(s.CellCount(), 0);
                     sc.massPushX.assign(s.CellCount(), 0.0f);
                     sc.massPushZ.assign(s.CellCount(), 0.0f);
+                    sc.massKeep.assign(s.CellCount(), 1.0f);
                 }
+                sc.massKeep[i] = std::min(sc.massKeep[i], 1.0f - strength);
                 // 形の中心から外向き (水平)。重なった形は単位ベクトルを足してから正規化する
                 const float dx = wx - o.pose.px;
                 const float dz = wz - o.pose.pz;
@@ -1092,7 +1110,7 @@ bool BuildSolidMask(const DisturbanceSlot& s, float thickness, const std::vector
     return true;
 }
 
-// 固体のマスの嵩を外へ押し出す (保存形の donor-cell。1 マス/tick)。面の速度 [マス/tick]:
+// 固体のマスの嵩を外へ押し出す (保存形の donor-cell。1 マス/tick)。出すのは残す嵩 (massKeep) を超えた分だけ。面の速度 [マス/tick]:
 //   固体 → 空き: 固体の押し出す向きの成分が空きの側を向くときだけ (空きの嵩を固体へ引き込まない)
 //   固体 → 固体: 両側の成分の平均 / 空き同士: 0 (空気の流れと重力の担当)
 // 流出のクーラン数の和が 1 を超えるマスは比で縮める。格子の外へは押し出さない (外の面は 0)
@@ -1151,7 +1169,7 @@ void DisplaceMass(DisturbanceSlot& s, DisturbanceState::SolverScratch& sc)
             return 0.0f;
         }
         const size_t d = c > 0.0f ? index(x, z) : index(x + 1, z);
-        return c * s.mass[d] * sc.massLimit[d];
+        return c * std::max(s.mass[d] - sc.massKeep[d], 0.0f) * sc.massLimit[d];
     };
     const auto fluxZ = [&](int32_t x, int32_t z) {
         const float c = faceZ(x, z);
@@ -1159,7 +1177,7 @@ void DisplaceMass(DisturbanceSlot& s, DisturbanceState::SolverScratch& sc)
             return 0.0f;
         }
         const size_t d = c > 0.0f ? index(x, z) : index(x, z + 1);
-        return c * s.mass[d] * sc.massLimit[d];
+        return c * std::max(s.mass[d] - sc.massKeep[d], 0.0f) * sc.massLimit[d];
     };
     sc.mass.resize(s.CellCount());
     ForRows(nz, [&](int32_t z0, int32_t z1) {
@@ -1749,7 +1767,7 @@ void DisturbanceStep(World& world, DisturbanceState& state)
         if ((s.channels & kDisturbanceChannelMass) != 0) {
             // 固体の目印は場ごとに作り直す (前の場の目印を持ち越さない)
             state.solver_.massSolid.clear();
-            if (!p.ignoreColliders && BuildSolidMask(s, p.thickness, obstacles, state.solver_)) {
+            if (!p.ignoreColliders && BuildSolidMask(s, p, obstacles, state.solver_)) {
                 DisplaceMass(s, state.solver_);
             }
             AdvectMass(s, targetX, targetZ, state.solver_);

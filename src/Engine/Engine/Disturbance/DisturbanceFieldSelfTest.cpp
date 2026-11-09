@@ -12,6 +12,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "Engine/Core/Diagnostics/Log.h"
@@ -830,8 +831,8 @@ bool RunDisturbanceVolumeTests(bool heavy)
     RegisterBuiltinComponents();
 
     // ---- 既定値と状態の形 ----
-    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 160,
-          "volume: buoyancy defaults to 0 (the component is 160 bytes with the follow / terrain / noise fields)");
+    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 168,
+          "volume: buoyancy defaults to 0 (the component is 168 bytes with the follow / terrain / noise / push fields)");
     {
         auto s = std::make_unique<Sim>();
         const EntityID v = AddVolume(*s, 3.0f, 2.0f, -1.0f, 16, 8, 16);
@@ -1128,7 +1129,7 @@ bool RunDisturbanceNoiseTests()
     const DisturbanceFieldComponent def{};
     check(def.noiseStrength == 0.0f && def.noiseMapStrength == 0.0f && def.noiseMap.IsNull(),
           "the noise is off by default (no strength, no map)");
-    check(sizeof(DisturbanceFieldComponent) == 160, "the component grew only by the 56 bytes of the noise fields");
+    check(sizeof(DisturbanceFieldComponent) == 168, "the component grew only by the noise fields (56 bytes) and the push defaults (8 bytes)");
 
     // 無効なら CB は 0 (シェーダは読まない = 従来の絵とビット一致)
     {
@@ -1485,6 +1486,38 @@ bool RunDisturbanceMassTests()
         MYE_LOG_INFO("  [disturbance] mass: moving sphere -> trough %.3f, after 10 s %.3f", trough, filled);
         check(trough < 0.8f, "mass: a moving collider leaves a trough behind it");
         check(filled > trough + 0.3f, "mass: gravity fills the trough after the collider has passed");
+    }
+    {
+        // 押しのけの余白・強さ (場の既定値) と、DisturbancePusher による物ごとの上書き
+        const auto runRock = [&](float margin, float strength, bool pusher, float pusherMargin, float pusherStrength) {
+            auto sim = std::make_unique<Sim>();
+            const EntityID f = AddMassField(*sim, 0.0f, kMassColliderCells);
+            FieldOf(*sim, f)->pushMargin = margin;
+            FieldOf(*sim, f)->pushStrength = strength;
+            const EntityID rock = AddCollider(*sim, "Rock", collidershape::kSphere, 0.0f, 0.3f, 0.0f, 0.75f);
+            if (pusher) {
+                auto* pc = sim->W().AddComponent<DisturbancePusherComponent>(rock);
+                pc->margin = pusherMargin;
+                pc->strength = pusherStrength;
+            }
+            sim->Flush();
+            sim->Step(60);
+            const DisturbanceSlot& s = sim->D().Slots()[0];
+            return std::make_pair(CenterMass(s), MassAt(s, 1.1f, 0.1f)); // 中心と、形 (半径 0.75 m) の外 1.1 m
+        };
+        const auto plain = runRock(0.0f, 1.0f, false, 0.0f, 0.0f);
+        const auto wide = runRock(0.5f, 1.0f, false, 0.0f, 0.0f);
+        const auto half = runRock(0.0f, 0.5f, false, 0.0f, 0.0f);
+        const auto off = runRock(0.0f, 0.0f, false, 0.0f, 0.0f);
+        const auto overrideWide = runRock(0.0f, 1.0f, true, 0.5f, 1.0f);
+        const auto overrideOff = runRock(0.5f, 1.0f, true, 0.0f, 0.0f);
+        MYE_LOG_INFO("  [disturbance] mass: push plain %.3f / %.3f, margin 0.5 %.3f / %.3f, strength 0.5 %.3f", plain.first,
+                     plain.second, wide.first, wide.second, half.first);
+        check(plain.second > 0.9f && wide.second < 0.05f, "mass: pushMargin widens the pushed area beyond the shape");
+        check(half.first > 0.45f && half.first < 0.55f, "mass: pushStrength 0.5 leaves half of the fog inside the collider");
+        check(off.first == 1.0f && off.second == 1.0f, "mass: pushStrength 0 does not push");
+        check(overrideWide.second < 0.05f, "mass: a DisturbancePusher overrides the field's margin for that object");
+        check(overrideOff.first == 1.0f && overrideOff.second == 1.0f, "mass: a DisturbancePusher with strength 0 turns pushing off for that object");
     }
     {
         // CharacterController のカプセルも押しのける。jobs あり / なしでビット一致
@@ -2254,7 +2287,7 @@ bool RunDisturbanceLocalLightTests()
         }
     };
     check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
-    check(sizeof(DisturbanceFieldComponent) == 160, "local lights: the component size is only the follow / terrain (M96i / M96j) and noise fields more");
+    check(sizeof(DisturbanceFieldComponent) == 168, "local lights: the component size is only the follow / terrain (M96i / M96j), noise and push fields more");
 
     // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
     DisturbanceFieldCB layers;
