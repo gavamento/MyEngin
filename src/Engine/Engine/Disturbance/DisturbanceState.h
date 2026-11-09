@@ -147,6 +147,11 @@ public:
         std::vector<float> density;
         std::vector<float> mass;      // 嵩の移流・重力の書き込み先
         std::vector<float> massLimit; // 嵩の移流: マスごとの流出の縮め率 (出る量が嵩を超えないように)
+        // コライダーの中のマス (1 = 固体) と、そこから嵩を押し出す向き (水平の単位ベクトル)。毎 step コライダーから作り直す。
+        // 空 = この場に固体のマスが無い (面を閉じない)
+        std::vector<uint8_t> massSolid;
+        std::vector<float> massPushX;
+        std::vector<float> massPushZ;
     };
 
     const std::vector<DisturbanceSlot>& Slots() const { return slots_; }

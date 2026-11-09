@@ -16,6 +16,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h" // ResolvePhysicsEnvironment (風)
+#include "Engine/Engine/Physics/Rigid/Shapes.h"        // 嵩を押しのけるコライダーの形の判定 (物理と同じ実装)
 #include "Engine/Engine/Scene/Scene.h"
 
 // ★決定論 (check_rules 規則 18): このファイルの計算は + - * / sqrt floor ceil min max だけ。
@@ -848,13 +849,22 @@ void AdvectMass(DisturbanceSlot& s, float targetX, float targetZ, DisturbanceSta
     const auto index = [nx](int32_t x, int32_t z) {
         return static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
     };
+    // 固体 (コライダーの中) のマスに接する面は閉じる (霧は固体へ入らない。押し出しは DisplaceMass)
+    const bool anySolid = !sc.massSolid.empty();
+    const auto solid = [&](int32_t x, int32_t z) { return anySolid && inside(x, z) && sc.massSolid[index(x, z)] != 0; };
     // 面 (x, z)-(x + 1, z) / (x, z)-(x, z + 1) の速度 [マス/tick]
     const auto faceX = [&](int32_t x, int32_t z) {
+        if (solid(x, z) || solid(x + 1, z)) {
+            return 0.0f;
+        }
         const float a = inside(x, z) ? s.flowX[index(x, z)] : targetX;
         const float b = inside(x + 1, z) ? s.flowX[index(x + 1, z)] : targetX;
         return (a + b) * 0.5f * toCells;
     };
     const auto faceZ = [&](int32_t x, int32_t z) {
+        if (solid(x, z) || solid(x, z + 1)) {
+            return 0.0f;
+        }
         const float a = inside(x, z) ? s.flowZ[index(x, z)] : targetZ;
         const float b = inside(x, z + 1) ? s.flowZ[index(x, z + 1)] : targetZ;
         return (a + b) * 0.5f * toCells;
@@ -903,6 +913,7 @@ void SlumpMass(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::Solve
     const int32_t nx = s.cellsX;
     const int32_t nz = s.cellsZ;
     const float k = p.massGravity * 0.5f;
+    const uint8_t* solid = sc.massSolid.empty() ? nullptr : sc.massSolid.data();
     sc.mass.resize(s.CellCount());
     ForRows(nz, [&](int32_t z0, int32_t z1) {
         for (int32_t z = z0; z < z1; ++z) {
@@ -914,8 +925,248 @@ void SlumpMass(DisturbanceSlot& s, const FieldParams& p, DisturbanceState::Solve
                 const float mN = z + 1 < nz ? s.mass[i + static_cast<size_t>(nx)] : 1.0f;
                 const float mS = z > 0 ? s.mass[i - static_cast<size_t>(nx)] : 1.0f;
                 const auto g = [k](float a, float b) { return k * (a + b) * (a - b); };
+                if (solid != nullptr) {
+                    // 固体のマスに接する面は閉じる (重力で固体の中へ埋め戻さない。固体の中の嵩は DisplaceMass だけが動かす)
+                    const size_t sx = static_cast<size_t>(nx);
+                    const bool self = solid[i] != 0;
+                    const float gE = self || (x + 1 < nx && solid[i + 1] != 0) ? 0.0f : g(m, mE);
+                    const float gW = self || (x > 0 && solid[i - 1] != 0) ? 0.0f : g(m, mW);
+                    const float gN = self || (z + 1 < nz && solid[i + sx] != 0) ? 0.0f : g(m, mN);
+                    const float gS = self || (z > 0 && solid[i - sx] != 0) ? 0.0f : g(m, mS);
+                    sc.mass[i] = m - ((gE + gW) + (gN + gS));
+                    continue;
+                }
                 // 加算は (E+W)+(N+S): x と z を入れ替えても結果がビット一致する順序
                 sc.mass[i] = m - ((g(m, mE) + g(m, mW)) + (g(m, mN) + g(m, mS)));
+            }
+        }
+    });
+    s.mass.swap(sc.mass);
+}
+
+// ---- コライダーによる押しのけ ----
+// 嵩を押しのけるコライダー 1 個 (ワールドの形)。物理と同じ ShapePose で持ち、判定も物理の実装 (shapes::) を使う
+struct Obstacle {
+    ShapePose pose;
+    float lo[3] = { 0.0f, 0.0f, 0.0f }; // 形を包む AABB
+    float hi[3] = { 0.0f, 0.0f, 0.0f };
+};
+
+// 押しのける形か。閉じた体積を持つ基本形と凸包だけ (メッシュ・地形・2D 形状は床や地面になるので押しのけない)
+bool PushesFog(int32_t shape)
+{
+    return shape == collidershape::kSphere || shape == collidershape::kBox || shape == collidershape::kCapsule
+           || shape == collidershape::kConvex;
+}
+
+void AddObstacle(const ShapePose& pose, std::vector<Obstacle>& out)
+{
+    Obstacle o;
+    o.pose = pose;
+    shapes::ComputeAabb(pose, o.lo[0], o.lo[1], o.lo[2], o.hi[0], o.hi[1], o.hi[2]);
+    for (int k = 0; k < 3; ++k) {
+        if (!std::isfinite(o.lo[k]) || !std::isfinite(o.hi[k])) {
+            return; // 壊れた Transform のコライダーは押しのけない
+        }
+    }
+    out.push_back(o);
+}
+
+// 嵩を押しのけるコライダーを entity index の昇順で集める: ColliderComponent (トリガー以外、PushesFog の形) と
+// CharacterController (カプセル。Transform の scale が掛かる = 物理と同じ)。どちらも WorldMatrix から形を作る
+void CollectObstacles(World& world, std::vector<Obstacle>& out)
+{
+    struct Row {
+        EntityID entity;
+        ShapePose pose;
+    };
+    std::vector<Row> rows;
+    const ComponentTypeId colReq[] = { ColliderComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(colReq, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(ColliderComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* col = static_cast<const ColliderComponent*>(arch.GetPtr(ci, row));
+            if (col->isTrigger || !PushesFog(col->shape)) {
+                continue;
+            }
+            const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+            rows.push_back({ arch.EntityAt(row), shapes::MakePoseFromMatrix(*col, wm->value) });
+        }
+    });
+    const ComponentTypeId ccReq[] = { CharacterControllerComponent::sTypeId, WorldMatrixComponent::sTypeId };
+    world.ForEachArchetype(ccReq, [&](Archetype& arch) {
+        const int ci = arch.FindTypeIndex(CharacterControllerComponent::sTypeId);
+        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
+        for (uint32_t row = 0; row < arch.Count(); ++row) {
+            const auto* cc = static_cast<const CharacterControllerComponent*>(arch.GetPtr(ci, row));
+            ColliderComponent capsule;
+            capsule.shape = collidershape::kCapsule;
+            capsule.radius = cc->radius;
+            capsule.height = cc->height;
+            const auto* wm = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
+            rows.push_back({ arch.EntityAt(row), shapes::MakePoseFromMatrix(capsule, wm->value) });
+        }
+    });
+    // 同じエンティティにコライダーと CC があれば両方入る (同じ index では集めた順 = コライダーが先)
+    std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.entity.index < b.entity.index; });
+    out.clear();
+    for (const Row& r : rows) {
+        AddObstacle(r.pose, out);
+    }
+}
+
+// 列の中で固体かを調べる高さ (層の厚さに対する割合)。床の箱 (上面 = 層の下端) はどれにも当たらない
+constexpr float kSolidProbe[3] = { 0.25f, 0.5f, 0.75f };
+
+// 固体のマスと押し出す向きを作る。どのマスも固体でなければ massSolid を空にして false
+bool BuildSolidMask(const DisturbanceSlot& s, float thickness, const std::vector<Obstacle>& obstacles,
+                    DisturbanceState::SolverScratch& sc)
+{
+    sc.massSolid.clear();
+    if (obstacles.empty()) {
+        return false;
+    }
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    bool any = false;
+    for (const Obstacle& o : obstacles) {
+        int32_t x0 = 0, x1 = 0, z0 = 0, z1 = 0;
+        const float cx = (o.lo[0] + o.hi[0]) * 0.5f;
+        const float cz = (o.lo[2] + o.hi[2]) * 0.5f;
+        if (!CellRange(cx, (o.hi[0] - o.lo[0]) * 0.5f, s.cellSize, s.originCell[0], nx, x0, x1)
+            || !CellRange(cz, (o.hi[2] - o.lo[2]) * 0.5f, s.cellSize, s.originCell[2], nz, z0, z1)) {
+            continue;
+        }
+        for (int32_t z = z0; z <= z1; ++z) {
+            const float wz = (static_cast<float>(s.originCell[2] + z) + 0.5f) * s.cellSize;
+            for (int32_t x = x0; x <= x1; ++x) {
+                const size_t i = static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+                // 層の高さの範囲 (地形に沿う層は列ごとの基準高さ)
+                const float base = s.columnBaseY.empty() ? s.baseY : s.columnBaseY[i];
+                if (o.hi[1] <= base || o.lo[1] >= base + thickness) {
+                    continue;
+                }
+                const float wx = (static_cast<float>(s.originCell[0] + x) + 0.5f) * s.cellSize;
+                bool hit = false;
+                for (float t : kSolidProbe) {
+                    hit = hit || shapes::DistanceToShape(o.pose, wx, base + thickness * t, wz) <= 0.0f;
+                }
+                if (!hit) {
+                    continue;
+                }
+                if (!any) {
+                    any = true;
+                    sc.massSolid.assign(s.CellCount(), 0);
+                    sc.massPushX.assign(s.CellCount(), 0.0f);
+                    sc.massPushZ.assign(s.CellCount(), 0.0f);
+                }
+                // 形の中心から外向き (水平)。重なった形は単位ベクトルを足してから正規化する
+                const float dx = wx - o.pose.px;
+                const float dz = wz - o.pose.pz;
+                const float len = std::sqrt(dx * dx + dz * dz);
+                sc.massSolid[i] = 1;
+                if (len > 1.0e-6f) {
+                    sc.massPushX[i] += dx / len;
+                    sc.massPushZ[i] += dz / len;
+                }
+            }
+        }
+    }
+    if (!any) {
+        return false;
+    }
+    for (size_t i = 0; i < sc.massSolid.size(); ++i) {
+        if (sc.massSolid[i] == 0) {
+            continue;
+        }
+        const float len = std::sqrt(sc.massPushX[i] * sc.massPushX[i] + sc.massPushZ[i] * sc.massPushZ[i]);
+        if (len > 1.0e-6f) {
+            sc.massPushX[i] /= len;
+            sc.massPushZ[i] /= len;
+        } else {
+            sc.massPushX[i] = 1.0f; // 中心ちょうど・向きが打ち消し合ったマスは +x へ
+            sc.massPushZ[i] = 0.0f;
+        }
+    }
+    return true;
+}
+
+// 固体のマスの嵩を外へ押し出す (保存形の donor-cell。1 マス/tick)。面の速度 [マス/tick]:
+//   固体 → 空き: 固体の押し出す向きの成分が空きの側を向くときだけ (空きの嵩を固体へ引き込まない)
+//   固体 → 固体: 両側の成分の平均 / 空き同士: 0 (空気の流れと重力の担当)
+// 流出のクーラン数の和が 1 を超えるマスは比で縮める。格子の外へは押し出さない (外の面は 0)
+void DisplaceMass(DisturbanceSlot& s, DisturbanceState::SolverScratch& sc)
+{
+    const int32_t nx = s.cellsX;
+    const int32_t nz = s.cellsZ;
+    const auto index = [nx](int32_t x, int32_t z) {
+        return static_cast<size_t>(x) + static_cast<size_t>(nx) * static_cast<size_t>(z);
+    };
+    const auto inside = [nx, nz](int32_t x, int32_t z) { return x >= 0 && x < nx && z >= 0 && z < nz; };
+    // a → b の向きの面の速度。pushA / pushB は a / b の押し出す向きの、面の軸の成分
+    const auto face = [&](size_t a, size_t b, float pushA, float pushB) {
+        const bool sa = sc.massSolid[a] != 0;
+        const bool sb = sc.massSolid[b] != 0;
+        if (sa && sb) {
+            return (pushA + pushB) * 0.5f;
+        }
+        if (sa) {
+            return std::max(pushA, 0.0f);
+        }
+        if (sb) {
+            return std::min(pushB, 0.0f);
+        }
+        return 0.0f;
+    };
+    const auto faceX = [&](int32_t x, int32_t z) {
+        if (!inside(x, z) || !inside(x + 1, z)) {
+            return 0.0f;
+        }
+        const size_t a = index(x, z);
+        const size_t b = index(x + 1, z);
+        return face(a, b, sc.massPushX[a], sc.massPushX[b]);
+    };
+    const auto faceZ = [&](int32_t x, int32_t z) {
+        if (!inside(x, z) || !inside(x, z + 1)) {
+            return 0.0f;
+        }
+        const size_t a = index(x, z);
+        const size_t b = index(x, z + 1);
+        return face(a, b, sc.massPushZ[a], sc.massPushZ[b]);
+    };
+    sc.massLimit.resize(s.CellCount());
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const float out = (std::max(faceX(x, z), 0.0f) + std::max(-faceX(x - 1, z), 0.0f))
+                                  + (std::max(faceZ(x, z), 0.0f) + std::max(-faceZ(x, z - 1), 0.0f));
+                sc.massLimit[index(x, z)] = out > 1.0f ? 1.0f / out : 1.0f;
+            }
+        }
+    });
+    const auto fluxX = [&](int32_t x, int32_t z) {
+        const float c = faceX(x, z);
+        if (c == 0.0f) {
+            return 0.0f;
+        }
+        const size_t d = c > 0.0f ? index(x, z) : index(x + 1, z);
+        return c * s.mass[d] * sc.massLimit[d];
+    };
+    const auto fluxZ = [&](int32_t x, int32_t z) {
+        const float c = faceZ(x, z);
+        if (c == 0.0f) {
+            return 0.0f;
+        }
+        const size_t d = c > 0.0f ? index(x, z) : index(x, z + 1);
+        return c * s.mass[d] * sc.massLimit[d];
+    };
+    sc.mass.resize(s.CellCount());
+    ForRows(nz, [&](int32_t z0, int32_t z1) {
+        for (int32_t z = z0; z < z1; ++z) {
+            for (int32_t x = 0; x < nx; ++x) {
+                const size_t i = index(x, z);
+                sc.mass[i] = s.mass[i] - ((fluxX(x, z) - fluxX(x - 1, z)) + (fluxZ(x, z) - fluxZ(x, z - 1)));
             }
         }
     });
@@ -1459,7 +1710,16 @@ void DisturbanceStep(World& world, DisturbanceState& state)
     state.queue_.clear();
     state.queueFullWarned_ = false;
 
-    // 5〜9. 流れ (移流 → 減衰 → 上限) → 投影 → 濃さの移流 → 復元 → 波紋 → 範囲の強制
+    // 嵩を押しのけるコライダー (嵩の場があり、コライダーを無視しない場があるときだけ集める)
+    std::vector<Obstacle> obstacles;
+    for (const FieldParams& p : active) {
+        if ((p.channels & kDisturbanceChannelMass) != 0 && !p.ignoreColliders) {
+            CollectObstacles(world, obstacles);
+            break;
+        }
+    }
+
+    // 5〜9. 流れ (移流 → 減衰 → 上限) → 投影 → 濃さの移流 → 嵩 (押しのけ → 移流 → 重力) → 復元 → 波紋 → 範囲の強制
     for (size_t f = 0; f < state.slots_.size(); ++f) {
         DisturbanceSlot& s = state.slots_[f];
         const FieldParams& p = active[f];
@@ -1487,6 +1747,11 @@ void DisturbanceStep(World& world, DisturbanceState& state)
             AdvectDensity(s, p, state.solver_);
         }
         if ((s.channels & kDisturbanceChannelMass) != 0) {
+            // 固体の目印は場ごとに作り直す (前の場の目印を持ち越さない)
+            state.solver_.massSolid.clear();
+            if (!p.ignoreColliders && BuildSolidMask(s, p.thickness, obstacles, state.solver_)) {
+                DisplaceMass(s, state.solver_);
+            }
             AdvectMass(s, targetX, targetZ, state.solver_);
             SlumpMass(s, p, state.solver_);
             repaired = ClampMass(s) || repaired;

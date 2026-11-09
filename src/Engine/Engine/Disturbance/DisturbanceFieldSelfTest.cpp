@@ -1286,12 +1286,34 @@ float MaxOf(const std::vector<float>& a)
     return m;
 }
 
-EntityID AddMassField(Sim& s, float gravity)
+// コライダーの項目は小さい場 (8 m 四方) で回す (Debug で fast 層の時間に収めるため)
+constexpr int kMassColliderCells = 32;
+
+EntityID AddMassField(Sim& s, float gravity, int cells = kMassCells)
 {
-    const EntityID e = AddField(s, 0.0f, 0.0f, 0.0f, kMassCells, kMassCells, kDisturbanceChannelDensity | kDisturbanceChannelMass);
+    const EntityID e = AddField(s, 0.0f, 0.0f, 0.0f, cells, cells, kDisturbanceChannelDensity | kDisturbanceChannelMass);
     FieldOf(s, e)->massGravity = gravity;
     FieldOf(s, e)->thickness = 0.6f;
     return e;
+}
+
+// 場の中の点 (x, z) を含むマスの嵩
+float MassAt(const DisturbanceSlot& s, float x, float z)
+{
+    const int cx = CellIndexOf(s, x, 0);
+    const int cz = CellIndexOf(s, z, 2);
+    return s.mass[static_cast<size_t>(cx) + static_cast<size_t>(s.cellsX) * static_cast<size_t>(cz)];
+}
+
+// 当たり判定だけのコライダー (Rigidbody なし = 静的)。shape は collidershape::
+EntityID AddCollider(Sim& s, const char* name, int32_t shape, float x, float y, float z, float radius)
+{
+    GameObject go = s.scene.CreateGameObjectTracked(name);
+    go.SetLocalPosition(x, y, z);
+    auto* col = go.AddComponent<ColliderComponent>();
+    col->shape = shape;
+    col->radius = radius;
+    return go.Id();
 }
 
 void KickCenter(Sim& s)
@@ -1401,6 +1423,88 @@ bool RunDisturbanceMassTests()
         const uint64_t h0 = a->Hash();
         a->D().Slots()[0].mass[0] += 0.25f;
         check(a->Hash() != h0, "mass: the mass array is folded into the world hash");
+    }
+
+    // ---- コライダーが嵩を押しのける ----
+    {
+        // 静止した球 (半径 1 m、層の中) : 足元が空になり、周りに積もり、重力 0 なら総量を保つ
+        auto sim = std::make_unique<Sim>();
+        AddMassField(*sim, 0.0f, kMassColliderCells);
+        AddCollider(*sim, "Rock", collidershape::kSphere, 0.0f, 0.3f, 0.0f, 1.0f);
+        sim->Flush();
+        sim->Step(1);
+        const float total0 = static_cast<float>(kMassColliderCells * kMassColliderCells);
+        sim->Step(60);
+        const DisturbanceSlot& s = sim->D().Slots()[0];
+        MYE_LOG_INFO("  [disturbance] mass: static sphere -> center %.3f, rim max %.3f, total %.2f", CenterMass(s), MaxOf(s.mass),
+                     SumOf(s.mass));
+        check(CenterMass(s) < 0.05f, "mass: a static sphere collider empties the fog inside it");
+        check(MaxOf(s.mass) > 1.1f, "mass: the fog pushed out of the collider piles up around it");
+        check(std::fabs(SumOf(s.mass) - total0) <= total0 * 1.0e-3f, "mass: pushing out of a collider conserves the total (no gravity)");
+        // 重力を入れても固体の中へは埋め戻さない
+        FieldOf(*sim, sim->D().Slots()[0].entity)->massGravity = 0.03f;
+        sim->Step(120);
+        check(CenterMass(sim->D().Slots()[0]) < 0.05f, "mass: gravity does not fill the inside of a collider");
+    }
+    {
+        // ignoreColliders / 層の下の床の箱 / トリガーは押しのけない
+        auto sim = std::make_unique<Sim>();
+        const EntityID ignoring = AddMassField(*sim, 0.03f, kMassColliderCells);
+        FieldOf(*sim, ignoring)->ignoreColliders = true;
+        AddCollider(*sim, "Rock", collidershape::kSphere, 0.0f, 0.3f, 0.0f, 1.0f);
+        sim->Flush();
+        sim->Step(60);
+        const DisturbanceSlot& s = sim->D().Slots()[0];
+        check(SameBits(s.mass, std::vector<float>(s.CellCount(), 1.0f)), "mass: ignoreColliders keeps the mass untouched");
+
+        auto sim2 = std::make_unique<Sim>();
+        AddMassField(*sim2, 0.03f, kMassColliderCells);
+        const EntityID floor = AddCollider(*sim2, "Floor", collidershape::kBox, 0.0f, -0.5f, 0.0f, 0.5f);
+        TransformOf(*sim2, floor)->scale = { 40.0f, 1.0f, 40.0f };
+        const EntityID trigger = AddCollider(*sim2, "Trigger", collidershape::kSphere, 0.0f, 0.3f, 0.0f, 1.0f);
+        sim2->W().GetComponent<ColliderComponent>(trigger)->isTrigger = true;
+        sim2->Flush();
+        sim2->Step(60);
+        const DisturbanceSlot& s2 = sim2->D().Slots()[0];
+        check(SameBits(s2.mass, std::vector<float>(s2.CellCount(), 1.0f)),
+              "mass: a floor box under the layer and a trigger do not push the fog");
+    }
+    {
+        // 動く球: 通った跡に溝が残り、重力で埋まる
+        auto sim = std::make_unique<Sim>();
+        AddMassField(*sim, 0.03f, kMassColliderCells);
+        const EntityID ball = AddCollider(*sim, "Ball", collidershape::kSphere, -3.0f, 0.3f, 0.0f, 0.5f);
+        sim->Flush();
+        for (int t = 0; t < 120; ++t) {
+            TransformOf(*sim, ball)->position.x = -3.0f + 0.05f * static_cast<float>(t);
+            sim->Step();
+        }
+        const float trough = MassAt(sim->D().Slots()[0], -1.5f, 0.1f);
+        sim->Step(600);
+        const float filled = MassAt(sim->D().Slots()[0], -1.5f, 0.1f);
+        MYE_LOG_INFO("  [disturbance] mass: moving sphere -> trough %.3f, after 10 s %.3f", trough, filled);
+        check(trough < 0.8f, "mass: a moving collider leaves a trough behind it");
+        check(filled > trough + 0.3f, "mass: gravity fills the trough after the collider has passed");
+    }
+    {
+        // CharacterController のカプセルも押しのける。jobs あり / なしでビット一致
+        std::unique_ptr<Sim> sims[2];
+        for (int k = 0; k < 2; ++k) {
+            sims[k] = std::make_unique<Sim>();
+            AddMassField(*sims[k], 0.03f, kMassColliderCells);
+            GameObject person = sims[k]->scene.CreateGameObjectTracked("Person");
+            person.SetLocalPosition(0.0f, 0.9f, 0.0f);
+            person.AddComponent<CharacterControllerComponent>();
+            AddCollider(*sims[k], "Rock", collidershape::kBox, 2.0f, 0.3f, 1.0f, 0.5f);
+            sims[k]->Flush();
+            jobs::System().SetEnabled(k == 0);
+            KickCenter(*sims[k]);
+            sims[k]->Step(60);
+        }
+        jobs::System().SetEnabled(true);
+        check(CenterMass(sims[0]->D().Slots()[0]) < 0.05f, "mass: a character controller capsule pushes the fog aside");
+        check(MassAt(sims[0]->D().Slots()[0], 2.1f, 1.1f) < 0.05f, "mass: a box collider pushes the fog aside");
+        check(SameSlot(sims[0]->D().Slots()[0], sims[1]->D().Slots()[0]), "mass: colliders give bit-identical results with jobs on / off");
     }
 
     // ---- 嵩の無い場は配列を持たない / Volume では嵩のビットが落ちる ----

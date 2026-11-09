@@ -2675,7 +2675,10 @@ struct DisturbanceFieldComponent {
     int32_t followMargin = 4;             // 中心とのずれがこのセル数以上になった step でずらす [1, 格子の半分]
     // ---- 地形に沿う (sim が読む。変えたら作り直す) ----
     bool followTerrain = false;           // true: GroundLayer の層の下端を列ごとに地形の高さへ置く (焼き込み。Volume は無視)
-    uint8_t pad2[3] = {};                 // 明示パディング (生バイトに未初期化を残さない)
+    // 嵩チャネルの場だけ: true でコライダー (剛体・静的・CharacterController) が嵩を押しのけない。
+    // 旧 pad2 の先頭 1 バイト (既定 false = 0 なので既存シーンの生バイトは不変)
+    bool ignoreColliders = false;
+    uint8_t pad2[2] = {};                 // 明示パディング (生バイトに未初期化を残さない)
     // ---- 霧のノイズ (見た目。sim と FieldSample は読まない) ----
     // 霧の濃さに σ × (1 + 強さ × (2n - 1)) を掛けてムラを付ける (n = ノイズ [0,1]。平均の濃さは変えない)。
     // 数値のノイズ (3D の fBm) とマップのノイズ (テクスチャを真上から敷く) は重ねて使える。強さ 0 = 無効 (従来の絵とビット一致)

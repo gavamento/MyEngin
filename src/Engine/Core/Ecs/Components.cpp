@@ -2103,6 +2103,7 @@ void RegisterBuiltinComponents()
         MYE_JP("ノイズマップ", MYE_FIELD(DisturbanceFieldComponent, noiseMap, AssetRef)),
         MYE_JP("マップの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, noiseMapScale, Float, 0.1f, 200.0f)),
         MYE_JP("マップの流れ (m/s)", MYE_FIELD(DisturbanceFieldComponent, noiseMapScroll, Float2)),
+        MYE_JP("コライダーを無視", MYE_FIELD_TIP(DisturbanceFieldComponent, ignoreColliders, Bool, "mass channel only: when on, colliders (spheres, boxes, capsules, convex hulls and character controllers that reach into the layer) do not push the fog's bulk aside. Off (default): the fog is pushed out of every such collider, piles up around it and cannot flow back in. Meshes, terrain, 2D shapes and triggers never push")),
         MYE_JP("嵩の重力", ::mye::FieldDesc{ .name = "massGravity", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, massGravity)), .minVal = 0.0f, .maxVal = 0.0625f, .tooltip = "mass channel only: how fast the fog's bulk flows from high to low under gravity, filling holes that were pushed open (0 = holes stay open; up to 0.0625 per tick). Changing it changes the result" }),
     });
 
