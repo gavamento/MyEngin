@@ -387,6 +387,49 @@ $constGroups = @(
             'assets\shaders\particle_sim.cs.hlsl' = '#\s*define\s+MYE_DFLD_SRV_AUX\s+(\d+)'
         }
     },
+    # 霧のノイズ (M96 追補): 格子の周期・重ね数の上限・マップの束縛番号。食い違うと模様がタイルの継ぎ目で飛ぶ / 別のリソースを読む
+    @{
+        label = 'kDisturbanceNoisePeriod / MYE_DFLD_NOISE_PERIOD'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceNoise.h' = 'constexpr\s+int\s+kDisturbanceNoisePeriod\s*=\s*(\d+)'
+            'assets\shaders\disturbance_noise.hlsli' = '#\s*define\s+MYE_DFLD_NOISE_PERIOD\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceNoiseMaxOctaves / MYE_DFLD_NOISE_MAX_OCTAVES'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceNoise.h' = 'constexpr\s+int\s+kDisturbanceNoiseMaxOctaves\s*=\s*(\d+)'
+            'assets\shaders\disturbance_noise.hlsli' = '#\s*define\s+MYE_DFLD_NOISE_MAX_OCTAVES\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogSrvNoiseMapSlot / MYE_GFOG_SRV_NOISE_MAP'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogSrvNoiseMapSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_SRV_NOISE_MAP\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kGroundFogNoiseSamplerSlot / MYE_GFOG_NOISE_SAMPLER'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceFieldPass.h' = 'constexpr\s+int\s+kGroundFogNoiseSamplerSlot\s*=\s*(\d+)'
+            'assets\shaders\ground_fog.hlsli' = '#\s*define\s+MYE_GFOG_NOISE_SAMPLER\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceVolumeSrvNoiseMapSlot / MYE_DFLD_VOL_SRV_NOISE_MAP'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceVolumePass.h' = 'constexpr\s+int\s+kDisturbanceVolumeSrvNoiseMapSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_volume.hlsli' = '#\s*define\s+MYE_DFLD_VOL_SRV_NOISE_MAP\s+(\d+)'
+        }
+    },
+    @{
+        label = 'kDisturbanceVolumeNoiseSamplerSlot / MYE_DFLD_VOL_NOISE_SAMPLER'
+        sites = @{
+            'src\Engine\Renderer\Passes\DisturbanceVolumePass.h' = 'constexpr\s+int\s+kDisturbanceVolumeNoiseSamplerSlot\s*=\s*(\d+)'
+            'assets\shaders\disturbance_volume.hlsli' = '#\s*define\s+MYE_DFLD_VOL_NOISE_SAMPLER\s+(\d+)'
+        }
+    },
     # M55a: ライト配列長は CB のレイアウトそのものなので、食い違うと「静かに壊れる」の典型
     # (RtPasses.cpp:40 の static_assert は C++ 内の 2 者しか見ていない)
     @{

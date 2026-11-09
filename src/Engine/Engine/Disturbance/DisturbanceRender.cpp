@@ -35,6 +35,26 @@ bool SlotUsable(const DisturbanceSlot& s, const FieldParams& p)
 // 列の基準高さ - baseY の上限 [m] (half で表せる範囲に収める)
 constexpr float kMaxBaseOffset = 1000.0f;
 
+// 霧のノイズの設定を写す (見た目だけ)。値の切り詰めと時刻の掛け算は描画側 (PackDisturbanceNoise) がする。
+// マップの SRV は RenderSystem が AssetID から解決する
+DisturbanceNoiseUpload NoiseOf(const DisturbanceFieldComponent& c)
+{
+    DisturbanceNoiseUpload n;
+    n.strength = c.noiseStrength;
+    n.scale = c.noiseScale;
+    n.octaves = c.noiseOctaves;
+    n.evolve = c.noiseEvolve;
+    n.scroll[0] = c.noiseScroll.x;
+    n.scroll[1] = c.noiseScroll.y;
+    n.scroll[2] = c.noiseScroll.z;
+    n.mapStrength = c.noiseMapStrength;
+    n.mapAsset = c.noiseMap.value;
+    n.mapScale = c.noiseMapScale;
+    n.mapScroll[0] = c.noiseMapScroll.x;
+    n.mapScroll[1] = c.noiseMapScroll.y;
+    return n;
+}
+
 } // namespace
 
 int32_t BuildDisturbanceFieldUpload(World& world, const DisturbanceState* state, DisturbanceFieldUpload& out)
@@ -65,6 +85,7 @@ int32_t BuildDisturbanceFieldUpload(World& world, const DisturbanceState* state,
         l.fogBrightness = std::max(FiniteOr(r.comp.fogBrightness, 1.0f), 0.0f);
         l.fogSunLight = r.comp.fogSunLight;
         l.fogLocalLights = r.comp.fogLocalLights;
+        l.noise = NoiseOf(r.comp);
 
         const DisturbanceSlot* slot = nullptr;
         if (state != nullptr) {
@@ -134,6 +155,7 @@ int32_t BuildDisturbanceVolumeUpload(World& world, const DisturbanceState* state
         v.fogBrightness = std::max(FiniteOr(r.comp.fogBrightness, 1.0f), 0.0f);
         v.fogSunLight = r.comp.fogSunLight;
         v.autoFroxel = r.comp.autoFroxel;
+        v.noise = NoiseOf(r.comp);
 
         const DisturbanceSlot* slot = nullptr;
         if (state != nullptr) {

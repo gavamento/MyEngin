@@ -35,6 +35,7 @@
 #include "Engine/Engine/Script/EngineApiTable.h"
 #include "Shared/EngineAPI.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
+#include "Engine/Renderer/Passes/DisturbanceNoise.h"
 #include "Engine/Renderer/Passes/DisturbanceVolumePass.h"
 #include "Engine/Renderer/Passes/SkyboxPass.h"
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
@@ -828,8 +829,8 @@ bool RunDisturbanceVolumeTests(bool heavy)
     RegisterBuiltinComponents();
 
     // ---- 既定値と状態の形 ----
-    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 104,
-          "volume: buoyancy defaults to 0 and is the last field");
+    check(DisturbanceFieldComponent{}.buoyancy == 0.0f && sizeof(DisturbanceFieldComponent) == 160,
+          "volume: buoyancy defaults to 0 (the component is 160 bytes with the follow / terrain / noise fields)");
     {
         auto s = std::make_unique<Sim>();
         const EntityID v = AddVolume(*s, 3.0f, 2.0f, -1.0f, 16, 8, 16);
@@ -1111,6 +1112,144 @@ bool RunDisturbanceVolumeTests(bool heavy)
 } // namespace
 
 namespace {
+
+// 霧のノイズ (見た目だけ): 既定は無効 / CB の詰め方 (無効なら 0、周期の折り返し、範囲外の切り詰め) /
+// 設定が 2D 層と Volume の転送指示へ写る / sim のハッシュに入るのは欄の生バイトだけで、場の状態は変えない
+bool RunDisturbanceNoiseTests()
+{
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) {
+        if (!cond) {
+            MYE_LOG_ERROR("  FAIL: noise: %s", what);
+            ok = false;
+        }
+    };
+    const DisturbanceFieldComponent def{};
+    check(def.noiseStrength == 0.0f && def.noiseMapStrength == 0.0f && def.noiseMap.IsNull(),
+          "the noise is off by default (no strength, no map)");
+    check(sizeof(DisturbanceFieldComponent) == 160, "the component grew only by the 56 bytes of the noise fields");
+
+    // 無効なら CB は 0 (シェーダは読まない = 従来の絵とビット一致)
+    {
+        DisturbanceNoiseUpload n;
+        n.scroll[0] = 5.0f;
+        n.mapScroll[1] = 3.0f;
+        const DisturbanceNoiseCB cb = PackDisturbanceNoise(n, 123.0);
+        const DisturbanceNoiseCB zero{};
+        check(std::memcmp(&cb, &zero, sizeof(cb)) == 0, "with no strength the noise CB is all zero");
+    }
+    // 数値のノイズ: 1 / 大きさ、強さ、重ね数、流れ × 時刻 / 大きさを周期 256 で折り返す
+    {
+        DisturbanceNoiseUpload n;
+        n.strength = 0.5f;
+        n.scale = 2.0f;
+        n.octaves = 3;
+        n.evolve = 0.25f;
+        n.scroll[0] = 1.0f;
+        n.scroll[2] = -1.0f;
+        const DisturbanceNoiseCB a = PackDisturbanceNoise(n, 10.0);
+        check(a.a[3] == 0.5f && a.b[0] == 0.5f && a.b[1] == 3.0f, "procedural: 1 / scale, strength and octaves");
+        check(a.a[0] == 5.0f && a.a[1] == 0.0f && a.a[2] == 251.0f, "procedural: the offset is scroll x time / scale, wrapped into [0, 256)");
+        check(a.b[2] == 2.5f, "procedural: the evolve phase is evolve x time");
+        check(a.b[3] == 0.0f && a.c[3] == 0.0f, "procedural only: the map part stays zero");
+        const DisturbanceNoiseCB b = PackDisturbanceNoise(n, 1000.0);
+        check(b.a[0] == 244.0f, "procedural: 500 cells wrap to 244 (the lattice repeats every 256 cells)");
+        const DisturbanceNoiseCB late = PackDisturbanceNoise(n, 3600.0 * 24.0 * 30.0);
+        check(late.a[0] >= 0.0f && late.a[0] < 256.0f && late.b[2] >= 0.0f && late.b[2] < 256.0f,
+              "procedural: after 30 days the offsets are still inside one period (no float drift)");
+    }
+    // 範囲外と非有限: 強さは [0,1] へ、重ね数は [1,6] へ、非有限の強さは無効、非有限の時刻は 0
+    {
+        DisturbanceNoiseUpload n;
+        n.strength = 2.0f;
+        n.octaves = 99;
+        n.scale = -3.0f;
+        check(PackDisturbanceNoise(n, 1.0).b[0] == 1.0f && PackDisturbanceNoise(n, 1.0).b[1] == 6.0f
+                  && PackDisturbanceNoise(n, 1.0).a[3] == 0.25f,
+              "strength clamps to 1, octaves to 6 and a bad scale falls back to 4 m");
+        n.octaves = 0;
+        check(PackDisturbanceNoise(n, 1.0).b[1] == 1.0f, "octaves clamp up to 1");
+        n.strength = std::numeric_limits<float>::quiet_NaN();
+        check(PackDisturbanceNoise(n, 1.0).b[0] == 0.0f, "a NaN strength turns the noise off");
+        n.strength = 0.5f;
+        n.scroll[0] = 1.0f;
+        n.scale = 1.0f;
+        check(PackDisturbanceNoise(n, std::numeric_limits<double>::infinity()).a[0] == 0.0f, "a non-finite time packs offset 0");
+    }
+    // マップ: SRV が無ければ強さ 0 扱い。張れば 1 / 大きさと UV のずらし ([0,1) へ折り返す)
+    {
+        DisturbanceNoiseUpload n;
+        n.mapStrength = 0.75f;
+        n.mapScale = 8.0f;
+        n.mapScroll[0] = 2.0f;
+        n.mapScroll[1] = -1.0f;
+        n.mapAsset = 42;
+        check(PackDisturbanceNoise(n, 10.0).b[3] == 0.0f && PackDisturbanceNoise(n, 10.0).c[3] == 0.0f,
+              "map: an unresolved map (no SRV) is not applied");
+        // 指すだけで読まない (PackDisturbanceNoise は null かどうかしか見ない)
+        alignas(8) unsigned char dummy[8] = {};
+        n.mapSRV = reinterpret_cast<decltype(n.mapSRV)>(dummy); // 型名は書かない (D3D の型は描画の境界の中だけ。規則 16)
+        const DisturbanceNoiseCB m = PackDisturbanceNoise(n, 10.0);
+        check(m.b[3] == 0.75f && m.c[3] == 1.0f && m.c[2] == 0.125f, "map: strength, the bound flag and 1 / scale");
+        check(m.c[0] == 0.5f && m.c[1] == 0.75f, "map: the UV offset is scroll x time / scale wrapped into [0, 1)");
+        check(m.b[0] == 0.0f, "map only: the procedural part stays off");
+    }
+    // 設定が転送指示へ写る (2D 層と Volume)。sim の状態はノイズで変わらない
+    {
+        auto s = std::make_unique<Sim>();
+        const EntityID layer = AddField(*s, 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity, "NoiseLayer");
+        const EntityID vol = AddVolume(*s, 20.0f, 2.0f, 0.0f, 8, 8, 8, "NoiseVolume");
+        s->Flush();
+        for (const EntityID e : { layer, vol }) {
+            DisturbanceFieldComponent* f = FieldOf(*s, e);
+            f->noiseStrength = 0.6f;
+            f->noiseScale = 3.0f;
+            f->noiseOctaves = 4;
+            f->noiseEvolve = 0.2f;
+            f->noiseScroll = { 0.5f, 0.1f, -0.25f };
+            f->noiseMapStrength = 0.4f;
+            f->noiseMap = AssetID{ 777 };
+            f->noiseMapScale = 12.0f;
+            f->noiseMapScroll = { 0.3f, -0.2f };
+        }
+        s->Step();
+        DisturbanceFieldUpload up;
+        check(BuildDisturbanceFieldUpload(s->W(), &s->D(), up) == 1, "upload: one layer");
+        const DisturbanceNoiseUpload& ln = up.layers[0].noise;
+        check(ln.strength == 0.6f && ln.scale == 3.0f && ln.octaves == 4 && ln.evolve == 0.2f && ln.scroll[0] == 0.5f
+                  && ln.scroll[1] == 0.1f && ln.scroll[2] == -0.25f && ln.mapStrength == 0.4f && ln.mapAsset == 777
+                  && ln.mapScale == 12.0f && ln.mapScroll[0] == 0.3f && ln.mapScroll[1] == -0.2f && ln.mapSRV == nullptr,
+              "upload: the layer carries every noise setting (the SRV is resolved by RenderSystem)");
+        DisturbanceVolumeUpload vup;
+        check(BuildDisturbanceVolumeUpload(s->W(), &s->D(), vup) == 1, "upload: one volume");
+        const DisturbanceNoiseUpload& vn = vup.volumes[0].noise;
+        check(vn.strength == 0.6f && vn.octaves == 4 && vn.mapAsset == 777 && vn.mapScroll[1] == -0.2f,
+              "upload: the volume carries the noise settings too");
+    }
+    // ノイズは見た目だけ: 欄を変えても場の状態 (配列) は 1 ビットも変わらない
+    {
+        std::unique_ptr<Sim> sims[2] = { std::make_unique<Sim>(), std::make_unique<Sim>() };
+        for (int k = 0; k < 2; ++k) {
+            const EntityID e = AddField(*sims[k], 0.0f, 0.0f, 0.0f, 16, 16, kDisturbanceChannelDensity, "Layer");
+            sims[k]->Flush();
+            if (k == 1) {
+                FieldOf(*sims[k], e)->noiseStrength = 1.0f;
+                FieldOf(*sims[k], e)->noiseMapStrength = 1.0f;
+            }
+            FieldImpulse imp = MakeImpulse(0.5f, 0.2f, 0.5f, 1.5f, 1.0f, 0.0f, 3.0f);
+            imp.density = -0.5f;
+            DisturbanceQueueImpulse(sims[k]->scene, imp);
+            for (int i = 0; i < 20; ++i) {
+                sims[k]->Step();
+            }
+        }
+        const DisturbanceSlot& a = sims[0]->D().Slots()[0];
+        const DisturbanceSlot& b = sims[1]->D().Slots()[0];
+        check(a.density == b.density && a.flowX == b.flowX && a.flowZ == b.flowZ,
+              "the noise does not touch the simulated field (looks only)");
+    }
+    return ok;
+}
 
 // review-1 の修正の回帰: 復元後の描画の通番 / 巨大な速度 / 格子外の流れ = 風。Fast 層に載せる小さな場だけを使う
 bool RunDisturbanceRobustnessTests()
@@ -1750,8 +1889,10 @@ bool RunDisturbanceFieldImpl(bool heavy)
             // M96i: DisturbanceFieldComponent が followTarget / followMargin で 88 → 100 B に伸び、World のカラムの生バイトが変わった
             // (0x851C4663912825C1 → 下の値。2D の sim の式は変えていない)。--field-bench の Debug / Release が同じ値を出す
             // 注入する目標速度を cellSize * 60 で切るようにした。場面の歩く源が 400 tick ごとに巻き戻る 1 tick で
-            // 約 960 m/s の速度を注入していたのが切られ、2D の流れが変わった (0x0D0CBC4DCBEE185E → 下の値)。--field-bench の Debug / Release が同じ値を出す
-            constexpr uint64_t kBakedFinalHash = 0x67C1AB58E919A515ull;
+            // 約 960 m/s の速度を注入していたのが切られ、2D の流れが変わった (0x0D0CBC4DCBEE185E → 0x67C1AB58E919A515)。
+            // 霧のノイズ: DisturbanceFieldComponent がノイズの欄で 104 → 160 B に伸び、World のカラムの生バイトが変わった
+            // (0x67C1AB58E919A515 → 下の値。sim の式は変えていない)。--field-bench の Debug / Release が同じ値を出す
+            constexpr uint64_t kBakedFinalHash = 0xE5C12D3A6452D219ull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
@@ -1804,6 +1945,11 @@ bool RunDisturbanceFieldImpl(bool heavy)
         ++failCount;
     }
 
+    // 霧のノイズ (見た目だけ)
+    if (!heavy && !RunDisturbanceNoiseTests()) {
+        ++failCount;
+    }
+
     // 水面の波紋 (M96 sub-12)
     if (!RunDisturbanceWaterRippleTests()) {
         ++failCount;
@@ -1830,7 +1976,7 @@ bool RunDisturbanceLocalLightTests()
         }
     };
     check(!DisturbanceFieldComponent{}.fogLocalLights, "local lights: fogLocalLights is off by default");
-    check(sizeof(DisturbanceFieldComponent) == 104, "local lights: the component size is only the 16 bytes of followTarget / followMargin / followTerrain more (M96i / M96j)");
+    check(sizeof(DisturbanceFieldComponent) == 160, "local lights: the component size is only the follow / terrain (M96i / M96j) and noise fields more");
 
     // 原点 (0,0,0) から 8x8 マス (cellSize 1)、y は 0〜1 m の 1 枚の層
     DisturbanceFieldCB layers;

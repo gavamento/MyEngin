@@ -347,6 +347,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Mesh\SkinBounds.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceFieldPass.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceNoise.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceVolumePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\EditorLinePass.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\EnvMapBaker.cpp" />
@@ -738,6 +739,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Mesh\SkinBounds.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceFieldPass.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceNoise.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceVolumePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\EditorLinePass.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\EnvMapBaker.h" />

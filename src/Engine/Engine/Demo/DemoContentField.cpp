@@ -470,4 +470,141 @@ void BuildFieldShowcaseScene(EngineContext& ctx)
     s.GetWorld().ApplyStructuralChanges();
 }
 
+namespace {
+
+// ---- --fog-noise-demo (霧のノイズの見比べ) ----
+// 地面の層 3 枚 (ノイズなし / 数値 / マップ) を横に並べ、奥に数値 + マップを重ねた Volume の煙を 1 本置く
+// (場は層と Volume を合わせて 4 個まで)。各帯に球を 1 個ずつ転がし、ノイズを掛けても霧がかき乱されること
+// (sim はノイズを読まない) を見せる
+
+// 帯 1 本の寸法: 10 m x 20 m (0.25 m の 40 x 80 マス)。帯の間は 1 m 空け、3 本で床 (幅 34 m) に収める
+constexpr int kNoiseStripCellsX = 40;
+constexpr int kNoiseStripCellsZ = 80;
+constexpr float kNoiseStripCenterZ = 10.0f;
+constexpr int kNoiseStripCount = 3;
+constexpr float kNoiseStripX[kNoiseStripCount] = { -10.5f, 0.0f, 10.5f };
+// 奥の Volume の中心 (12 x 6 x 12 m。帯の奥の端 z = 20 のすぐ後ろ)
+constexpr float kNoiseVolumeCenter[3] = { 0.0f, 3.0f, 27.0f };
+
+void AddNoiseDemoCamera(Scene& s)
+{
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.AddComponent<CameraComponent>();
+    // 3 本の帯を手前から見下ろし、奥の煙も画面の上側に入る高さと角度
+    camera.SetLocalPosition(0.0f, 11.0f, -11.0f);
+    camera.SetLocalRotationEuler(32.0f, 0.0f, 0.0f);
+}
+
+void AddNoiseDemoLights(Scene& s)
+{
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.AddComponent<LightComponent>();
+    sun.SetLocalRotationEuler(50.0f, -30.0f, 0.0f);
+}
+
+void AddNoiseDemoLabel(Scene& s, const char* text, float x, float y, float z)
+{
+    GameObject label = s.CreateGameObject("Label");
+    label.SetLocalPosition(x, y, z);
+    auto* tm = label.AddComponent<TextMeshComponent>();
+    std::snprintf(tm->text, sizeof(tm->text), "%s", text);
+    tm->fontScale = 3.0f;
+    tm->color = { 0.95f, 0.95f, 0.80f, 1.0f };
+}
+
+// 帯の地面の層。濃さだけ (跡は使わない)。ノイズの欄は呼び出し側が埋める。
+// 霧は既定より薄くしてある (濃いと層が白く飽和し、ノイズのムラが埋もれる)
+DisturbanceFieldComponent* AddNoiseStrip(Scene& s, const char* name, float x)
+{
+    GameObject field = s.CreateGameObject(name);
+    field.SetLocalPosition(x, 0.0f, kNoiseStripCenterZ);
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 0;
+    f->cellsX = kNoiseStripCellsX;
+    f->cellsZ = kNoiseStripCellsZ;
+    f->thickness = 1.5f;
+    f->channels = kDisturbanceChannelDensity;
+    f->densityKeep = 0.995f;
+    f->fogDensity = 0.45f;
+    f->fogSunLight = true;
+    return f;
+}
+
+// 奥の Volume の煙 (12 x 6 x 12 m)。ノイズの欄は呼び出し側が埋める
+DisturbanceFieldComponent* AddNoiseVolume(Scene& s, const char* name)
+{
+    GameObject field = s.CreateGameObject(name);
+    field.SetLocalPosition(kNoiseVolumeCenter[0], kNoiseVolumeCenter[1], kNoiseVolumeCenter[2]);
+    auto* f = field.AddComponent<DisturbanceFieldComponent>();
+    f->shape = 1;
+    f->cellsX = 24;
+    f->cellsY = 12;
+    f->cellsZ = 24;
+    f->cellSize = 0.5f;
+    f->channels = kDisturbanceChannelDensity;
+    f->fogDensity = 0.3f;
+    f->fogSunLight = true;
+    return f;
+}
+
+void SetProceduralNoise(DisturbanceFieldComponent& f, float strength, float scale, int octaves)
+{
+    f.noiseStrength = strength;
+    f.noiseScale = scale;
+    f.noiseOctaves = octaves;
+    f.noiseEvolve = 0.2f;
+    f.noiseScroll = { 0.6f, 0.05f, 0.3f };
+}
+
+void SetMapNoise(DisturbanceFieldComponent& f, AssetID map, float strength, float scale)
+{
+    f.noiseMap = map;
+    f.noiseMapStrength = strength;
+    f.noiseMapScale = scale;
+    f.noiseMapScroll = { 0.5f, 0.15f };
+}
+
+} // namespace
+
+// --fog-noise-demo。霧のノイズ (数値 / マップ) の見比べ。マップは assets\textures\fog_noise.png (tools\gen_fog_noise.py)
+void BuildFogNoiseShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    s.SetName("fog_noise_showcase");
+    const AssetID cube = ctx.resources->meshes.Cube();
+    const AssetID sphere = ctx.resources->meshes.Sphere();
+    // マップはデータなので srgb=false (.meta も srgb off)。読めなければマップの帯はノイズなしと同じ絵になる
+    const AssetID map = ctx.resources->textures.LoadFile(ctx.assetsRoot + L"\\textures\\fog_noise.png", false);
+    if (map.IsNull()) {
+        MYE_LOG_ERROR("[fog-noise-demo] textures\\fog_noise.png could not be loaded (run tools\\gen_fog_noise.py)");
+    }
+
+    AddNoiseDemoCamera(s);
+    AddNoiseDemoLights(s);
+    AddPhysicsEnvironment(s);
+    AddGround(s, cube);
+
+    AddNoiseStrip(s, "Fog_None", kNoiseStripX[0]);
+    SetProceduralNoise(*AddNoiseStrip(s, "Fog_Procedural", kNoiseStripX[1]), 1.0f, 2.5f, 4);
+    SetMapNoise(*AddNoiseStrip(s, "Fog_Map", kNoiseStripX[2]), map, 1.0f, 6.0f);
+    {
+        DisturbanceFieldComponent* smoke = AddNoiseVolume(s, "Smoke_Both");
+        SetProceduralNoise(*smoke, 1.0f, 2.0f, 4);
+        SetMapNoise(*smoke, map, 0.8f, 8.0f);
+    }
+
+    AddNoiseDemoLabel(s, "ノイズなし", kNoiseStripX[0], 3.0f, -2.0f);
+    AddNoiseDemoLabel(s, "数値", kNoiseStripX[1], 3.0f, -2.0f);
+    AddNoiseDemoLabel(s, "マップ", kNoiseStripX[2], 3.0f, -2.0f);
+    AddNoiseDemoLabel(s, "Volume: 数値 + マップ", kNoiseVolumeCenter[0], 7.5f, kNoiseVolumeCenter[2]);
+
+    // 各帯を奥へ転がる球 (霧を割る)。物理の初速だけで動く = 決定的
+    for (int i = 0; i < kNoiseStripCount; ++i) {
+        char name[16];
+        std::snprintf(name, sizeof(name), "Ball_%d", i);
+        AddRollingBall(s, sphere, name, kNoiseStripX[i], -1.0f, 3.0f);
+    }
+    s.GetWorld().ApplyStructuralChanges();
+}
+
 } // namespace mye

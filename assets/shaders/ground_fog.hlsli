@@ -18,6 +18,9 @@
 #define MYE_GFOG_CB 6
 #define MYE_GFOG_VIEW_CB 7
 #define MYE_GFOG_LIGHT_CB 8
+// 霧のノイズのマップ (層ごと、4 本連番) と wrap のサンプラ (C++ の kGroundFogSrvNoiseMapSlot / kGroundFogNoiseSamplerSlot)
+#define MYE_GFOG_SRV_NOISE_MAP 34
+#define MYE_GFOG_NOISE_SAMPLER 9
 // 照らす局所ライトの最大本数 (C++ の kGroundFogMaxLights)
 #define MYE_GFOG_MAX_LIGHTS 8
 // 板の積分の段数 (C++ の kGroundFogSteps)
@@ -29,6 +32,12 @@
 #define MYE_DFLD_SRV_AUX MYE_GFOG_SRV_AUX
 #define MYE_DFLD_SAMPLER MYE_GFOG_SAMPLER
 #define MYE_DFLD_CB MYE_GFOG_CB
+// register() の中では足し算できないので、連番の 4 本を数字で並べる
+#define MYE_DFLD_SRV_NOISE_MAP MYE_GFOG_SRV_NOISE_MAP
+#define MYE_DFLD_SRV_NOISE_MAP_1 35
+#define MYE_DFLD_SRV_NOISE_MAP_2 36
+#define MYE_DFLD_SRV_NOISE_MAP_3 37
+#define MYE_DFLD_NOISE_SAMPLER MYE_GFOG_NOISE_SAMPLER
 #include "disturbance_common.hlsli"
 
 // 1 回の描画 (ビュー) ごとに変わる値。C++ の GroundFogViewCB と同じ並び (float4 x 8 = 128 バイト)

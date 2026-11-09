@@ -112,6 +112,12 @@ bool FroxelPass::Init(GraphicsDevice& device, ShaderManager& shaders)
     if (FAILED(device.Device()->CreateSamplerState(&ls, linearClamp_.GetAddressOf()))) {
         return false;
     }
+    // M96 霧のノイズのマップ (Volume ごと)。繰り返して敷くので wrap
+    D3D11_SAMPLER_DESC ws = ls;
+    ws.AddressU = ws.AddressV = ws.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    if (FAILED(device.Device()->CreateSamplerState(&ws, linearWrap_.GetAddressOf()))) {
+        return false;
+    }
     timer_.Init(device); // 失敗しても 0ms を返すだけ (計測が消えるだけで描画は続く)
     temporalTimer_.Init(device);
     integrateTimer_.Init(device);
@@ -134,6 +140,7 @@ void FroxelPass::Shutdown()
     integrateTimer_.Release();
     shadowSampler_.Reset();
     linearClamp_.Reset();
+    linearWrap_.Reset();
     postCb_.Reset();
     dfldCb_.Reset();
     dfldVolumeCb_.Reset();
@@ -236,7 +243,9 @@ bool FroxelPass::Inject(GraphicsDevice& device, ShaderManager& shaders, const Re
 
     timer_.Begin(device);
     constexpr int kCsCbCount = kDisturbanceVolumeCbSlot + 1;
-    constexpr int kCsSrvCount = kDisturbanceVolumeSrvSlot + kDisturbanceMaxVolumes;
+    constexpr int kCsSrvCount = kDisturbanceVolumeSrvNoiseMapSlot + kDisturbanceMaxVolumes;
+    static_assert(kDisturbanceVolumeSrvNoiseMapSlot == kDisturbanceVolumeSrvSlot + kDisturbanceMaxVolumes,
+                  "霧のノイズのマップは Volume の Texture3D の直後");
     static_assert(kDisturbanceVolumeCbSlot > kDisturbanceCbSlot && kDisturbanceVolumeSrvSlot > kDisturbanceSrvAuxSlot,
                   "Volume の束縛は 2D 層の束縛の後ろ");
     ID3D11Buffer* cbs[kCsCbCount] = { cb_.Get(), dfldCb_.Get(), dfldVolumeCb_.Get() };
@@ -246,15 +255,18 @@ bool FroxelPass::Inject(GraphicsDevice& device, ShaderManager& shaders, const Re
     srvs[kDisturbanceSrvAuxSlot] = field != nullptr ? field->auxSRV : nullptr;
     for (int i = 0; i < kDisturbanceMaxVolumes; ++i) {
         srvs[kDisturbanceVolumeSrvSlot + i] = volumes != nullptr ? volumes->srv[i] : nullptr;
+        srvs[kDisturbanceVolumeSrvNoiseMapSlot + i] = volumes != nullptr ? volumes->noiseMapSRV[i] : nullptr;
     }
-    ID3D11SamplerState* samps[kDisturbanceSamplerSlot + 1] = {};
+    static_assert(kDisturbanceVolumeNoiseSamplerSlot == kDisturbanceSamplerSlot + 1, "サンプラは s0 / s1 / s2 の連番");
+    ID3D11SamplerState* samps[kDisturbanceVolumeNoiseSamplerSlot + 1] = {};
     samps[0] = shadowSampler_.Get();
     samps[kDisturbanceSamplerSlot] = linearClamp_.Get();
+    samps[kDisturbanceVolumeNoiseSamplerSlot] = linearWrap_.Get();
     ID3D11UnorderedAccessView* uavs[1] = { scatter_.UAV() };
     dc->CSSetShader(prog->cs.Get(), nullptr, 0);
     dc->CSSetConstantBuffers(0, kCsCbCount, cbs);
     dc->CSSetShaderResources(0, kCsSrvCount, srvs);
-    dc->CSSetSamplers(0, kDisturbanceSamplerSlot + 1, samps);
+    dc->CSSetSamplers(0, kDisturbanceVolumeNoiseSamplerSlot + 1, samps);
     dc->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
     dc->Dispatch(
         static_cast<UINT>(froxel::DispatchGroups(scatter_.Width(), froxel::kGroupSize)),

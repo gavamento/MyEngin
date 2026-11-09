@@ -21,6 +21,7 @@
 // 2D 層 (地面の霧) は ground_fog.hlsli が各ピクセルで描くので、ここは立体 (Volume) だけを読む
 #include "disturbance_common.hlsli"
 // 立体 (Volume) 最大 4 個: CB (b2) と Texture3D (t3〜t6)
+#define MYE_DFLD_VOL_NOISE_MAPS // 霧のノイズのマップ (t7〜t10 / s2) を読む
 #include "disturbance_volume.hlsli"
 
 // 立体 (Volume) の霧。4 個を順に足す。無い / 外のセルは sigma = 0・emit = 0 ちょうど (従来の絵とビット一致)
@@ -30,10 +31,10 @@ void DisturbanceVolumeFogAt(float3 posW, out float sigma, out float3 emit, out f
     sigma = 0.0f;
     emit = 0.0f;
     sunSigma = 0.0f;
-    DfldVolumeAccumulate(0, gDfldVol0, posW, sigma, emit, sunSigma);
-    DfldVolumeAccumulate(1, gDfldVol1, posW, sigma, emit, sunSigma);
-    DfldVolumeAccumulate(2, gDfldVol2, posW, sigma, emit, sunSigma);
-    DfldVolumeAccumulate(3, gDfldVol3, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(0, gDfldVol0, gDfldVolNoise0, gDfldVolNoiseSampler, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(1, gDfldVol1, gDfldVolNoise1, gDfldVolNoiseSampler, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(2, gDfldVol2, gDfldVolNoise2, gDfldVolNoiseSampler, posW, sigma, emit, sunSigma);
+    DfldVolumeAccumulate(3, gDfldVol3, gDfldVolNoise3, gDfldVolNoiseSampler, posW, sigma, emit, sunSigma);
 }
 
 // C++ の FroxelInjectCB (src\Engine\Renderer\FroxelPass.cpp) とレイアウト一致 (2720 バイト)

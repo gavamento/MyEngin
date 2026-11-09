@@ -2065,7 +2065,7 @@ void RegisterBuiltinComponents()
 
     // M96: かき乱しフィールド (TypeId=96、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変。
     // 範囲外の値は sim が切った値で動く (Inspector のレンジはスライダの目安)
-    static_assert(sizeof(DisturbanceFieldComponent) == 104, "DisturbanceFieldComponent: no implicit padding");
+    static_assert(sizeof(DisturbanceFieldComponent) == 160, "DisturbanceFieldComponent: no implicit padding");
     RegisterComponent<DisturbanceFieldComponent>("DisturbanceField", {
         MYE_JP("形", MYE_FIELD_TIP(DisturbanceFieldComponent, shape, Int32, "0 = ground layer (a thin layer that creeps along the floor) / 1 = volume (3D smoke / fog; only the density channel is used, trail and ripple are ignored)")),
         MYE_JP("マス数 X", MYE_FIELD_TIP(DisturbanceFieldComponent, cellsX, Int32, "cells along X (2 to 512; at most 262144 cells in total). Changing it rebuilds the field at rest")),
@@ -2093,6 +2093,16 @@ void RegisterBuiltinComponents()
         MYE_JP("追従する相手", MYE_FIELD_TIP(DisturbanceFieldComponent, followTarget, EntityRef, "when set, the grid follows this entity in whole-cell steps (the field is fixed when empty). Cells that come into view start at rest")),
         MYE_JP("追従の余白 (マス)", ::mye::FieldDesc{ .name = "followMargin", .type = ::mye::FieldType::Int32, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, followMargin)), .minVal = 1.0f, .maxVal = 256.0f, .tooltip = "the grid shifts when the target is this many cells or more away from the grid center (1 to half the grid size)" }),
         MYE_JP("地形に沿う", MYE_FIELD_TIP(DisturbanceFieldComponent, followTerrain, Bool, "ground layer only (ignored by Volumes): the layer's bottom follows the terrain collider height per column, so fog creeps along hills. Heights are baked when the field is built (and for columns that come into view when following); moving the terrain later is not tracked. Changing it rebuilds the field at rest")),
+        // 霧のノイズ (見た目だけ。sim と FieldSample は読まない)
+        MYE_JP("ノイズの強さ", MYE_FIELD_TIP(DisturbanceFieldComponent, noiseStrength, Float, "procedural (fBm) noise on the fog density, 0 to 1 (0 = off). Looks only: the simulation and FieldSample ignore it. The average density stays the same; only blotches are added")),
+        MYE_JP("ノイズの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, noiseScale, Float, 0.1f, 100.0f)),
+        MYE_JP("ノイズの重ね数", ::mye::FieldDesc{ .name = "noiseOctaves", .type = ::mye::FieldType::Int32, .offset = static_cast<uint32_t>(offsetof(DisturbanceFieldComponent, noiseOctaves)), .minVal = 1.0f, .maxVal = 6.0f, .tooltip = "octaves of the procedural noise (1 = soft blobs, more = finer detail, more GPU time)" }),
+        MYE_JP("ノイズの変化の速さ", MYE_FIELD_TIP(DisturbanceFieldComponent, noiseEvolve, Float, "how fast the noise pattern changes shape [1/s] (0 = the pattern only drifts)")),
+        MYE_JP("ノイズの流れ (m/s)", MYE_FIELD(DisturbanceFieldComponent, noiseScroll, Float3)),
+        MYE_JP("マップノイズの強さ", MYE_FIELD_TIP(DisturbanceFieldComponent, noiseMapStrength, Float, "noise from a texture laid from above (R channel, read as linear), 0 to 1 (0 = off). Can be combined with the procedural noise")),
+        MYE_JP("ノイズマップ", MYE_FIELD(DisturbanceFieldComponent, noiseMap, AssetRef)),
+        MYE_JP("マップの大きさ (m)", MYE_FIELD_RANGE(DisturbanceFieldComponent, noiseMapScale, Float, 0.1f, 200.0f)),
+        MYE_JP("マップの流れ (m/s)", MYE_FIELD(DisturbanceFieldComponent, noiseMapScroll, Float2)),
     });
 
     // M96: かき乱しの源 (TypeId=97、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変

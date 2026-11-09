@@ -245,6 +245,9 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
         }
         c.texScale[2] = offsetRange_[i][0];
         c.texScale[3] = offsetRange_[i][1];
+        // 霧のノイズ。強さ 0 なら CB も 0 = シェーダが読まない (従来の絵とビット一致)
+        c.noise = PackDisturbanceNoise(l.noise, src.noiseTime);
+        gpu_.noiseMapSRV[i] = c.noise.c[3] > 0.5f ? l.noise.mapSRV : nullptr;
     }
     gpu_.cb = cb;
     gpu_.localLightMask = localLightMask;
@@ -303,7 +306,7 @@ bool DisturbanceFieldPass::Upload(GraphicsDevice& device, const DisturbanceField
 
 bool DisturbanceFieldPass::CreateGroundFogResources(GraphicsDevice& device)
 {
-    if (groundFogLayersCb_ && groundFogViewCb_ && groundFogLightsCb_ && groundFogSampler_) {
+    if (groundFogLayersCb_ && groundFogViewCb_ && groundFogLightsCb_ && groundFogSampler_ && noiseSampler_) {
         return true;
     }
     ID3D11Device* dev = device.Device();
@@ -313,15 +316,22 @@ bool DisturbanceFieldPass::CreateGroundFogResources(GraphicsDevice& device)
     sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
     sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
     sd.MaxLOD = D3D11_FLOAT32_MAX;
+    // 霧のノイズのマップは繰り返して敷く (wrap)。遠くで模様がちらつかないよう mip も使う
+    D3D11_SAMPLER_DESC nd = sd;
+    nd.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+    nd.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+    nd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
     if (!gpubuf::CreateConstant(dev, sizeof(DisturbanceFieldCB), groundFogLayersCb_)
         || !gpubuf::CreateConstant(dev, sizeof(GroundFogViewCB), groundFogViewCb_)
         || !gpubuf::CreateConstant(dev, sizeof(GroundFogLightsCB), groundFogLightsCb_)
-        || FAILED(dev->CreateSamplerState(&sd, groundFogSampler_.ReleaseAndGetAddressOf()))) {
+        || FAILED(dev->CreateSamplerState(&sd, groundFogSampler_.ReleaseAndGetAddressOf()))
+        || FAILED(dev->CreateSamplerState(&nd, noiseSampler_.ReleaseAndGetAddressOf()))) {
         MYE_LOG_ERROR("DisturbanceFieldPass: 地面の霧の CB / サンプラを作れなかった (地面の霧は描かれない)");
         groundFogLayersCb_.Reset();
         groundFogViewCb_.Reset();
         groundFogLightsCb_.Reset();
         groundFogSampler_.Reset();
+        noiseSampler_.Reset();
         return false;
     }
     MYE_LOG_INFO("DisturbanceFieldPass: 地面の霧のリソースを作成 (板の積分 %d 段)", kGroundFogSteps);
@@ -375,6 +385,10 @@ bool DisturbanceFieldPass::BindGroundFog(GraphicsDevice& device, const Disturban
     dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
     ID3D11SamplerState* samp[1] = { groundFogSampler_.Get() };
     dc->PSSetSamplers(kGroundFogSamplerSlot, 1, samp);
+    // 霧のノイズのマップ (層ごと。マップの無い層は null)。読むのは地面の霧の PS だけ
+    dc->PSSetShaderResources(kGroundFogSrvNoiseMapSlot, kDisturbanceMaxLayers, field->noiseMapSRV);
+    ID3D11SamplerState* noiseSamp[1] = { noiseSampler_.Get() };
+    dc->PSSetSamplers(kGroundFogNoiseSamplerSlot, 1, noiseSamp);
     // サーフェスシェーダの VS (草の倒れ。MyeFieldSample) が同じ番号で読む。層の CB だけ (b7 / b8 は PS 専用)
     dc->VSSetConstantBuffers(kGroundFogCbSlot, 1, cbs);
     dc->VSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
@@ -391,6 +405,9 @@ void DisturbanceFieldPass::UnbindGroundFog(GraphicsDevice& device)
     dc->PSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
     ID3D11SamplerState* samp[1] = {};
     dc->PSSetSamplers(kGroundFogSamplerSlot, 1, samp);
+    ID3D11ShaderResourceView* noiseSrvs[kDisturbanceMaxLayers] = {};
+    dc->PSSetShaderResources(kGroundFogSrvNoiseMapSlot, kDisturbanceMaxLayers, noiseSrvs);
+    dc->PSSetSamplers(kGroundFogNoiseSamplerSlot, 1, samp);
     dc->VSSetConstantBuffers(kGroundFogCbSlot, 1, cbs);
     dc->VSSetShaderResources(kGroundFogSrvFlowSlot, 2, srvs);
     dc->VSSetSamplers(kGroundFogSamplerSlot, 1, samp);
@@ -402,6 +419,7 @@ void DisturbanceFieldPass::Release()
     groundFogViewCb_.Reset();
     groundFogLightsCb_.Reset();
     groundFogSampler_.Reset();
+    noiseSampler_.Reset();
     flowSrv_.Reset();
     auxSrv_.Reset();
     flowTex_.Reset();

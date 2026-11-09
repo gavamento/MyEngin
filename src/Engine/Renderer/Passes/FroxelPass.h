@@ -156,6 +156,7 @@ private:
     // M57c: 履歴の再投影サンプラ (LINEAR / CLAMP)。CLAMP でよいのは、グリッドの外は
     // シェーダ側で先に弾いていて端の値を引く経路が無いため
     Microsoft::WRL::ComPtr<ID3D11SamplerState> linearClamp_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> linearWrap_; // 霧のノイズのマップ用 (M96)
     VolumeTexture scatter_;
     // M57c: 前方積分の出力。**ビュー間で共有する** — 消費者 (M57d/M57e) は同じ
     // Render の中で読み切るので、SceneView と GameView が上書きし合っても問題ない。

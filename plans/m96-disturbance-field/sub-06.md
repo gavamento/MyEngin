@@ -57,7 +57,7 @@ SELF_EVAL: sub-06 (round 1)
 - ClipEventKind::Disturb と ControllerClipEvent の末尾 8 欄 (disturb*) を追加。JSON は radius / speed / shape / dir / coneDeg / density / trail / ripple。不正な shape と半径 0 以下はイベントごと捨てる。
 - 配送は TickRunner.cpp の BuildClipEventImpulse (新規) → DisturbanceQueueImpulse。向きは WorldMatrix の回転で回して正規化。
 - エディタ (AnimationPreviewWindow) に disturb の kind と欄、Tr() 両言語 8 件。
-- デモ: --field-demo に anim_test.glb + assetsnimsield_swing.controller.json (Attack の 22 tick、Hand.R、cone) を AddFieldDemoSwing で追加。
+- デモ: --field-demo に anim_test.glb + assets\anims\field_swing.controller.json (Attack の 22 tick、Hand.R、cone) を AddFieldDemoSwing で追加。
 - selftest (RunDisturbanceAnimEventTests) は書いたが未実行。replay_verify も未実行 (運用)。
 - 検証: Debug / Release ビルド OK、check_rules 0 error、スクショ撮影済み。
 

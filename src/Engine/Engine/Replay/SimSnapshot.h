@@ -185,7 +185,8 @@ struct SimRefs {
 // v74 (M96k): ParticleEmitterComponent の末尾に fieldInfluence (descCache の生バイトが伸びる)
 // v75 (M96j): DisturbanceFieldComponent の末尾に followTerrain、DFLD 節のスロットに列ごとの基準高さ columnBaseY (followTerrain の GroundLayer だけ)
 // v76 (M96m): TerrainComponent (NoHash) の末尾に trailColor / trailStrength / trailBendDepth。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 76;
+// v77: DisturbanceFieldComponent の末尾に霧のノイズの欄 (noiseStrength 〜 noiseMapScroll、見た目だけ)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 77;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

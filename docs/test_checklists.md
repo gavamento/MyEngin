@@ -898,18 +898,21 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 ## M96: かき乱しフィールド（動く霧と、その汎用化）
 
-仕様は `engine_spec.md` §10.16、判断は `docsdr\ADR-036-disturbance-field.md`。契約の機械検証は `MYE_SELFTEST_ONLY=disturbance` (全部は `disturbancelong` を含む `--selftest-full`)、`Editor.exe --field-bench`、replay_verify の `field` ジョブが見る。ここは目視・実機・Editor の操作が要る項目。デモは `Runtime.exe --field-demo`、絵は `--screenshot` / `--shot-frame` で撮る。
+仕様は `engine_spec.md` §10.16、判断は `docs\adr\ADR-036-disturbance-field.md`。契約の機械検証は `MYE_SELFTEST_ONLY=disturbance` (全部は `disturbancelong` を含む `--selftest-full`)、`Editor.exe --field-bench`、replay_verify の `field` ジョブが見る。ここは目視・実機・Editor の操作が要る項目。デモは `Runtime.exe --field-demo`、絵は `--screenshot` / `--shot-frame` で撮る。
 
 ### 霧と描画
 
 - [ ] `--field-demo` で、球が通った筋の霧が薄くなり、時間で戻る。霧の広場の絵に**流れの市松模様のムラ**が出ていない (投影は幅 2 の 5 点なので、出たら planner へ。ADR-036 の制限)
-- [ ] 斬撃 (Cone。デモのスクリプトと `assetsnimsield_swing.controller.json` のアニメイベント `disturb`) の扇が霧の絵で読める (帯状にぼやけて読みにくければ霧のコントラストを調整する)
+- [ ] 斬撃 (Cone。デモのスクリプトと `assets\anims\field_swing.controller.json` のアニメイベント `disturb`) の扇が霧の絵で読める (帯状にぼやけて読みにくければ霧のコントラストを調整する)
 - [ ] 霧のある場面で雪の跡 (地形の跡) が読める (通常のデモの濃さの霧では読みにくい場合は、霧を薄くした変種で確認する。shot_verify に跡の golden を足すなら霧を薄くした場面が要る)
 - [ ] 池の波紋が霧の層の下で見える (`--field-demo` の池)。波紋の注入は有界の寄せなので小さめ。ripple の強さと水面のスペキュラの調整はユーザーの目視で決める
 - [ ] Gerstner サーフェス (`WaterGerstner.surface.hlsl`) の水面に波紋が出る。サーフェスのマテリアルの水面と波紋の層を置いた一時の場面で撮る (fxc のコンパイルだけでは絵を確認していない)
 - [ ] 草 (`GrassField.surface.hlsl`) を 441 本置いた場面で、草なしと比べた GPU 時間の増分を測る (絶対値だけでなく差を見る)。倒れの係数 (`_BendPerSpeed` / `_MaxBend`) を目視で調整する
 - [ ] GPU 粒子と水面が、丘の上の層 (`followTerrain`) で流れ・波紋に乗る
 - [ ] `water_surface.hlsl` の `ApplyFog` の引数の並びの修正 (W4 統合後の追補) で、Fog コンポーネントを持つ水面のシーン (三校・HAL Collector にあれば) の見た目が「正しい霧」へ変わる。三校の verify の絵の比較が落ちたら、この修正が原因か断定する
+- [ ] 霧のノイズ: `Runtime.exe --fog-noise-demo` で、左の「ノイズなし」の帯は一様、中の「数値」の帯に斑のムラ、右の「マップ」の帯に横に流れる筋が出て、Play 中に模様がゆっくり流れる。奥の Volume の煙にもムラが出る。球が通った筋はノイズの帯でも晴れる (sim はノイズを読まない)
+- [ ] 霧のノイズ: Inspector で「ノイズの強さ」「マップノイズの強さ」を動かすと、その場の霧の絵だけが変わる。「ノイズマップ」に別の画像を入れて差し替わる。強さ 0 に戻すとノイズなしの絵に戻る。編集中 (Play 前) は模様が止まっている
+- [ ] 霧のノイズの調整値 (デモの強さ・大きさ・流れの速さ、`fog_noise.png` の模様) を目視で決める。Volume の煙は箱の形が残りやすい (フロクセルの解像度と縁の立ち上げ 2 マス) ので、見え方を確認する
 - [ ] Forward でスカイボックスの無い背景にも地面の霧が掛かり、Deferred と同じ霧に見える (地平線向きのカメラ)。霧の後ろの粒子・文字が霧色に潰れない
 
 ### エディタ (GUI)
@@ -924,8 +927,8 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 ### 回帰
 
-- [ ] `bind\Debug\Editor.exe --selftest-full` と `bind\Release\Editor.exe --selftest-full` が全スイート PASS する
+- [ ] `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` が全スイート PASS する
 - [ ] `tools\check_rules.ps1` が 0 error。`tools\check_rules_selftest.ps1` が PASS する (規則 18 の自己検査。replay_verify の `rules` ジョブも回す)
-- [ ] `toolseplay_verify.bat` が全ジョブ PASS する (`field` ジョブと jobs A/B を含む)
+- [ ] `tools\replay_verify.bat` が全ジョブ PASS する (`field` ジョブと jobs A/B を含む)
 - [ ] `tools\shot_verify.bat` が PASS する (撮り直した `fog.png` を含む。`flow_title` の FAIL は M96 着手前からの別件)
 - [ ] 三校の `verify.bat` が既存の 2 件 FAIL 以外増えない

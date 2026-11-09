@@ -2676,6 +2676,19 @@ struct DisturbanceFieldComponent {
     // ---- 地形に沿う (sim が読む。変えたら作り直す) ----
     bool followTerrain = false;           // true: GroundLayer の層の下端を列ごとに地形の高さへ置く (焼き込み。Volume は無視)
     uint8_t pad2[3] = {};                 // 明示パディング (生バイトに未初期化を残さない)
+    // ---- 霧のノイズ (見た目。sim と FieldSample は読まない) ----
+    // 霧の濃さに σ × (1 + 強さ × (2n - 1)) を掛けてムラを付ける (n = ノイズ [0,1]。平均の濃さは変えない)。
+    // 数値のノイズ (3D の fBm) とマップのノイズ (テクスチャを真上から敷く) は重ねて使える。強さ 0 = 無効 (従来の絵とビット一致)
+    float noiseStrength = 0.0f;           // 数値のノイズの強さ [0,1]
+    float noiseScale = 4.0f;              // [m] ノイズの模様の大きさ (1 周期)
+    int32_t noiseOctaves = 3;             // 重ねる回数 [1,6]
+    float noiseEvolve = 0.15f;            // 模様の形が変わる速さ [1/s] (ノイズの 3 次元目を進める)
+    DirectX::XMFLOAT3 noiseScroll = { 0.3f, 0.0f, 0.1f }; // [m/s] 模様が流れる速度 (ワールド)
+    float noiseMapStrength = 0.0f;        // マップのノイズの強さ [0,1]
+    AssetID noiseMap = {};                // マップ (R を使う。リニアで読む。空 = マップなし)
+    float noiseMapScale = 8.0f;           // [m] マップ 1 枚がワールドで覆う辺の長さ (繰り返して敷く)
+    DirectX::XMFLOAT2 noiseMapScroll = { 0.2f, 0.0f }; // [m/s] マップが流れる速度 (ワールドの x, z)
+    uint32_t pad3 = 0;                    // 明示パディング
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

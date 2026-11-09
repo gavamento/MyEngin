@@ -1221,6 +1221,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceFieldPass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceNoise.cpp">
+      <Filter>Renderer\Passes</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Passes\DisturbanceVolumePass.cpp">
       <Filter>Renderer\Passes</Filter>
     </ClCompile>
@@ -2392,6 +2395,9 @@
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceFieldPass.h">
+      <Filter>Renderer\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceNoise.h">
       <Filter>Renderer\Passes</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Passes\DisturbanceVolumePass.h">

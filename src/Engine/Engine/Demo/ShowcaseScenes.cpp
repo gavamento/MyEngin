@@ -76,6 +76,8 @@ const ShowcaseDef kShowcases[] = {
       false }, // M94i
     { L"--field-demo", false, L"cache\\field_showcase.scene.json", nullptr, &BuildPlain<&BuildFieldShowcaseScene>,
       false }, // M96b
+    { L"--fog-noise-demo", false, L"cache\\fog_noise_showcase.scene.json", nullptr,
+      &BuildPlain<&BuildFogNoiseShowcaseScene>, false }, // M96 追補: 霧のノイズ (数値 / マップ) の見比べ
 };
 
 } // namespace

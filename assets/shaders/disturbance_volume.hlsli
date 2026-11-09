@@ -14,7 +14,7 @@
 // 同時に描ける Volume の数 (C++ の kDisturbanceMaxVolumes)
 #define MYE_DFLD_VOL_MAX 4
 // CB 全体のバイト数 (C++ の kDisturbanceVolumeCbBytes)
-#define MYE_DFLD_VOL_CB_BYTES 272
+#define MYE_DFLD_VOL_CB_BYTES 464
 // 先頭の SRV の番号 (C++ の kDisturbanceVolumeSrvSlot。続く 3 本が連番) と CB の番号 (kDisturbanceVolumeCbSlot)
 // 別の段 (粒子の sim CS) が読むときは、先に MYE_DFLD_VOL_T0〜T3 と MYE_DFLD_VOL_CB を #define して空きスロットへ張る
 #ifndef MYE_DFLD_VOL_CB
@@ -28,13 +28,14 @@
 #define MYE_DFLD_VOL_T3 6
 #endif
 
-// Volume 1 個の設定。C++ の DisturbanceVolumeEntryCB と同じ並び (全て float4 = 64 バイト)
+// Volume 1 個の設定。C++ の DisturbanceVolumeEntryCB と同じ並び (全て float4 = 112 バイト)
 struct DisturbanceVolume
 {
     float4 originSize; // xyz = 原点セルの番号 (整数), w = cellSize [m]
     float4 extent;     // xyz = cellsX / cellsY / cellsZ, w = 1: テクスチャを読む / 0: restDensity の定数
     float4 look;       // x = fogDensity [1/m], y = fogBrightness, z = restDensity, w = 1: 濃さチャネルあり
     float4 fogColor;   // rgb = 霧の色, w = 1: 平行光を当てる (fogSunLight)
+    DisturbanceNoise noise; // 霧のノイズ (見た目だけ。フロクセル注入だけが読む)
 };
 
 cbuffer DisturbanceVolumeCB : MYE_DFLD_REG(b, MYE_DFLD_VOL_CB)
@@ -49,11 +50,25 @@ Texture3D<float4> gDfldVol1 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T1);
 Texture3D<float4> gDfldVol2 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T2);
 Texture3D<float4> gDfldVol3 : MYE_DFLD_REG(t, MYE_DFLD_VOL_T3);
 
-// Volume i の位置 posW での消散係数 σ [1/m] = fogDensity × ρ × 縁の立ち上げ (3D の縁 2 マス) を sigma へ、
+// 霧のノイズのマップ (Volume ごと、t7〜t10) と wrap のサンプラ (s2)。C++ の kDisturbanceVolumeSrvNoiseMapSlot /
+// kDisturbanceVolumeNoiseSamplerSlot と一致 (規則 9)。読むのはフロクセル注入だけなので、そこが
+// MYE_DFLD_VOL_NOISE_MAPS を #define したときだけ宣言する (粒子の sim CS は t8 を別の用途に使う)
+#define MYE_DFLD_VOL_SRV_NOISE_MAP 7
+#define MYE_DFLD_VOL_NOISE_SAMPLER 2
+#ifdef MYE_DFLD_VOL_NOISE_MAPS
+Texture2D gDfldVolNoise0 : register(t7);
+Texture2D gDfldVolNoise1 : register(t8);
+Texture2D gDfldVolNoise2 : register(t9);
+Texture2D gDfldVolNoise3 : register(t10);
+SamplerState gDfldVolNoiseSampler : register(s2);
+#endif
+
+// Volume i の位置 posW での消散係数 σ [1/m] = fogDensity × ρ × 縁の立ち上げ (3D の縁 2 マス) × 霧のノイズを sigma へ、
 // 自己照明 σ × fogColor × fogBrightness を emit へ足す。格子の AABB の外は読まずに抜ける (分岐)
 // fogSunLight の Volume の σ だけを sunSigma へも足す (平行光の散乱を掛ける重み)
-void DfldVolumeAccumulate(uint i, Texture3D<float4> tex, float3 posW, inout float sigma, inout float3 emit,
-                          inout float sunSigma)
+// noiseMap = この Volume の霧のノイズのマップ (張っていなければ CB の noise.c.w = 0 で読まない)
+void DfldVolumeAccumulate(uint i, Texture3D<float4> tex, Texture2D noiseMap, SamplerState noiseSampler, float3 posW,
+                          inout float sigma, inout float3 emit, inout float sunSigma)
 {
     if (i >= gDfldVolHeader.x) {
         return;
@@ -75,7 +90,10 @@ void DfldVolumeAccumulate(uint i, Texture3D<float4> tex, float3 posW, inout floa
         // セル中心 (i + 0.5) がテクセル中心になる並び。テクスチャは (x, z, y) の順
         rho = tex.SampleLevel(gDfldSampler, float3(g.x / n.x, g.z / n.z, g.y / n.y), 0).w;
     }
-    const float s = V.look.x * rho * edgeFade;
+    float s = V.look.x * rho * edgeFade;
+    if (V.noise.b.x > 0.0f || V.noise.b.w > 0.0f) {
+        s *= DfldNoiseFactor(V.noise, posW, noiseMap, noiseSampler);
+    }
     sigma += s;
     emit += s * V.fogColor.rgb * V.look.y;
     if (V.fogColor.w > 0.5f) {

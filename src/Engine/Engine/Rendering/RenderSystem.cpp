@@ -521,6 +521,37 @@ Texture* LoadTextureRememberingFailure(TextureLibrary& textures, AssetID id, con
     return tex;
 }
 
+// 霧のノイズのマップ (M96) を AssetID から解決する。LUT と同じ遅延ロードで、ノイズはデータなので srgb=false。
+// 解決できなければ null = そのノイズのマップは掛からない (数値のノイズと霧そのものは描かれる)
+void ResolveDisturbanceNoiseMap(TextureLibrary& textures, DisturbanceNoiseUpload& noise, FailedTextureLoad& failed)
+{
+    noise.mapSRV = nullptr;
+    if (noise.mapAsset == 0 || !(noise.mapStrength > 0.0f)) {
+        return;
+    }
+    const AssetID id{ noise.mapAsset };
+    Texture* tex = textures.Get(id);
+    if (tex == nullptr) {
+        const std::wstring path = assetguid::ResolvePath(id.value);
+        if (!path.empty()) {
+            tex = LoadTextureRememberingFailure(textures, id, path, /*srgb=*/false, failed);
+        }
+    }
+    if (tex != nullptr && tex->srv) {
+        noise.mapSRV = tex->srv.Get();
+    }
+}
+
+// 霧のノイズの時計 [s]。水面と同じく sim の tick の時刻を描画の補間で割る (描画フレーム数では進めない =
+// 60 FPS 以外でも同じ速さで流れ、決定的撮影で同じ絵になる)。tick 0 (編集中) は 0 = 模様は止まって見える
+double DisturbanceNoiseTime(uint64_t simTick, float interpAlpha)
+{
+    if (simTick == 0) {
+        return 0.0;
+    }
+    return (static_cast<double>(simTick - 1) + static_cast<double>(interpAlpha)) * (1.0 / 60.0);
+}
+
 void CollectEnvironment(World& world, RenderView& view)
 {
     // 最初 (entity.index 最小) の active な Skybox
@@ -714,8 +745,8 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     DecideTaaAndFroxel(world, path, target, cameraOverride, f);
     CollectLights(world, f);
     // 草 (サーフェスシェーダの VS) が影エントリでも同じ場を読むので、カスケード影より前に束縛する
-    UpdateDisturbanceField(world, device, f);
-    UpdateDisturbanceVolumes(world, device, f); // フロクセルの注入 (UpdateFroxel) が読む
+    UpdateDisturbanceField(world, device, resources, f);
+    UpdateDisturbanceVolumes(world, device, resources, f); // フロクセルの注入 (UpdateFroxel) が読む
     CollectDrawables(world, resources, target, f);
     RenderCascadeShadows(world, device, shaders, resources, f);
     AllocateShadowAtlas(device, shaders, resources, f);
@@ -2151,7 +2182,8 @@ void RenderSystem::UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, 
 // かき乱しフィールド (M96) の 2D 層を GPU のテクスチャ配列へ上げ、view へ配線する。
 // 地面の霧は各ピクセルが読む (ground_fog.hlsli) ので、フロクセルの on / off に依らず霧のある層があれば転送し、
 // PS の固定スロットへ張る (剥がすのは描画の最後)。霧のある層が無ければ view.disturbance は null のまま = 従来と同じ絵
-void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, FrameContext& f)
+void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, RenderResources& resources,
+                                          FrameContext& f)
 {
     f.view.disturbance = nullptr;
     if (disturbanceWorld == nullptr) {
@@ -2162,6 +2194,10 @@ void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, 
     DisturbanceFieldUpload up;
     if (BuildDisturbanceFieldUpload(world, state, up) <= 0) {
         return;
+    }
+    up.noiseTime = DisturbanceNoiseTime(simTick, interpAlpha);
+    for (int32_t i = 0; i < up.layerCount; ++i) {
+        ResolveDisturbanceNoiseMap(resources.textures, up.layers[i].noise, noiseMapLoadFailed_[i]);
     }
     // 霧のある層、状態を持つ層 (流れを草が読む。MyeFieldSample / 波紋を水面が読む) があれば転送する。
     // 状態の無い層 (編集中) は流れが無いので、霧が無ければ従来どおり転送しない
@@ -2205,7 +2241,8 @@ void RenderSystem::UpdateDisturbanceField(World& world, GraphicsDevice& device, 
 
 // かき乱しフィールドの Volume (M96g、3D) を Texture3D へ上げ、view へ配線する。読むのはフロクセルの注入だけなので
 // フロクセルの on / off に依らず転送するが、霧を出す Volume が無ければ view.disturbanceVolumes は null のまま = 従来と同じ絵
-void RenderSystem::UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, FrameContext& f)
+void RenderSystem::UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, RenderResources& resources,
+                                            FrameContext& f)
 {
     f.view.disturbanceVolumes = nullptr;
     if (disturbanceWorld == nullptr) {
@@ -2215,6 +2252,11 @@ void RenderSystem::UpdateDisturbanceVolumes(World& world, GraphicsDevice& device
     DisturbanceVolumeUpload up;
     if (BuildDisturbanceVolumeUpload(world, state, up) <= 0) {
         return;
+    }
+    up.noiseTime = DisturbanceNoiseTime(simTick, interpAlpha);
+    for (int32_t i = 0; i < up.count; ++i) {
+        ResolveDisturbanceNoiseMap(resources.textures, up.volumes[i].noise,
+                                   noiseMapLoadFailed_[kDisturbanceMaxLayers + i]);
     }
     if (disturbanceVolumePass_.Upload(device, up)) {
         f.view.disturbanceVolumes = &disturbanceVolumePass_.Gpu();

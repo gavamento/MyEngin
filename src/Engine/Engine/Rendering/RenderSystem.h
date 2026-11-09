@@ -413,8 +413,9 @@ private:
                        const FrameTarget& target, FrameContext& f);
     void UpdateFroxel(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target, FrameContext& f);
     void UpdateAcousticVolume(GraphicsDevice& device, const FrameTarget& target, FrameContext& f);
-    void UpdateDisturbanceField(World& world, GraphicsDevice& device, FrameContext& f);
-    void UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, FrameContext& f); // M96g: Volume (3D)
+    void UpdateDisturbanceField(World& world, GraphicsDevice& device, RenderResources& resources, FrameContext& f);
+    void UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, RenderResources& resources,
+                                  FrameContext& f); // M96g: Volume (3D)
     void DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
                                RenderResources& resources, const FrameTarget& target,
                                const CameraOverride* cameraOverride, ParticleSystem* particles, VfxRenderer* vfx,
@@ -547,6 +548,8 @@ private:
     // 同期遅延ロードに失敗したスカイ / LUT (壊れた画像を毎フレーム読み直さない)
     FailedTextureLoad    skyLoadFailed_;
     FailedTextureLoad    lutLoadFailed_;
+    // 霧のノイズのマップ (M96)。2D 層 4 枚 + Volume 4 個の並び (どの場がどの番号かは描画ごとの並び)
+    FailedTextureLoad    noiseMapLoadFailed_[8];
     AssetID              loadedFxStackId_[4];       // 直前に読んだ fxStack ID
     int64_t              loadedFxStackStamp_[4] = {}; // 直前に読んだ fxstack.json の更新時刻 (再読込の判定用)
 };

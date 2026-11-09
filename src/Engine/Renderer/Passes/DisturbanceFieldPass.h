@@ -10,6 +10,8 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/Passes/DisturbanceNoise.h"
+
 namespace mye {
 
 class GraphicsDevice;
@@ -18,7 +20,7 @@ struct SceneLightData;
 // 同時に描ける 2D 層の数 (assets\shaders\disturbance_common.hlsli の MYE_DFLD_MAX_LAYERS と一致。規則 9)
 constexpr int kDisturbanceMaxLayers = 4;
 // CB 全体のバイト数 (同 MYE_DFLD_CB_BYTES と一致。規則 9)
-constexpr int kDisturbanceFieldCbBytes = 336;
+constexpr int kDisturbanceFieldCbBytes = 528;
 // コンピュートシェーダ (フロクセル注入) の束縛番号。HLSL の MYE_DFLD_SRV_FLOW / _AUX / _SAMPLER / _CB と一致 (規則 9)。
 // 別の段が読むときは、その段の空きスロットへ張る
 constexpr int kDisturbanceSrvFlowSlot = 1;
@@ -35,6 +37,10 @@ constexpr int kGroundFogCbSlot = 6;
 constexpr int kGroundFogViewCbSlot = 7;
 // 局所ライト (点・スポット) の CB。HLSL の MYE_GFOG_LIGHT_CB と一致 (規則 9)。b4 は速度が使う
 constexpr int kGroundFogLightCbSlot = 8;
+// 霧のノイズのマップ (層ごとに 1 枚、4 本連番) と、繰り返して敷くサンプラ (wrap)。PS 専用。
+// HLSL の MYE_GFOG_SRV_NOISE_MAP / MYE_GFOG_NOISE_SAMPLER と一致 (規則 9)
+constexpr int kGroundFogSrvNoiseMapSlot = 34;
+constexpr int kGroundFogNoiseSamplerSlot = 9;
 // 地面の霧が照らす局所ライトの最大本数 (同 MYE_GFOG_MAX_LIGHTS と一致。規則 9)
 constexpr int kGroundFogMaxLights = 8;
 // 板の積分の段数 (同 MYE_GFOG_STEPS と一致。規則 9)
@@ -70,6 +76,7 @@ struct DisturbanceLayerUpload {
     float fogBrightness = 1.0f;
     bool fogSunLight = false; // true: 平行光を霧に当てる (影なし)
     bool fogLocalLights = false; // true: 点・スポットのライトを霧に当てる (最大 kGroundFogMaxLights 本、影なし)
+    DisturbanceNoiseUpload noise; // 霧のノイズ (見た目だけ。既定 = 掛けない)
     // 場のエンティティ (index, generation)。どの層がどの場かを、転送を省く判定に使う
     uint32_t entityIndex = 0;
     uint32_t entityGeneration = 0;
@@ -80,17 +87,20 @@ struct DisturbanceFieldUpload {
     DisturbanceLayerUpload layers[kDisturbanceMaxLayers];
     // sim の通番。**前回と同じで層の構成も同じなら転送しない** (sim は 60 Hz だが描画は何千 fps で回る)
     uint64_t serial = 0;
+    // ノイズの時計 [s] (sim の tick の時刻を描画の補間で割ったもの。描画フレーム数では進めない)
+    double noiseTime = 0.0;
     // layers[i].baseOffset の実体 (起伏に沿う層だけ詰める)。Build が作り、Upload が読む
     std::vector<float> baseOffsetStorage[kDisturbanceMaxLayers];
 };
 
-// HLSL の DisturbanceLayer (float4 x 5) と同じ並び
+// HLSL の DisturbanceLayer (float4 x 8 = 5 + ノイズの 3) と同じ並び
 struct DisturbanceLayerCB {
     float originSize[4] = {};
     float extent[4] = {};
     float look[4] = {};
     float fogColor[4] = {};
     float texScale[4] = {};
+    DisturbanceNoiseCB noise; // 霧のノイズ (float4 x 3。DisturbanceNoise.h)
 };
 
 // HLSL の cbuffer GroundFogViewCB と同じ並び (1 回の描画ごとに変わる値)
@@ -146,6 +156,8 @@ struct DisturbanceFieldGpu {
     DisturbanceFieldCB cb;
     // 局所ライトで照らす層のビット (bit i = 層 i)。層の CB は変えないので別に持つ
     uint32_t localLightMask = 0;
+    // 層ごとの霧のノイズのマップ (null = その層はマップなし。CB の noiseC.w と対応)
+    ID3D11ShaderResourceView* noiseMapSRV[kDisturbanceMaxLayers] = {};
 };
 
 // 局所ライトの選び方 (純粋関数。同じ入力から同じ結果)。lights の点・スポットのうち、影響球が localLightMask の
@@ -190,6 +202,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11Buffer> groundFogLightsCb_;
     bool lightOverflowWarned_ = false; // 8 本を超えた WARN を出したか (超過が解消したら戻す)
     Microsoft::WRL::ComPtr<ID3D11SamplerState> groundFogSampler_;
+    Microsoft::WRL::ComPtr<ID3D11SamplerState> noiseSampler_; // 霧のノイズのマップ用 (wrap)
     // 層ごとの基準高さのずれの最小 / 最大 (板を包む範囲)。転送したときに更新する
     float offsetRange_[kDisturbanceMaxLayers][2] = {};
     bool createFailed_ = false; // 同じ寸法で一度落ちたら毎フレーム再試行してログを溢れさせない

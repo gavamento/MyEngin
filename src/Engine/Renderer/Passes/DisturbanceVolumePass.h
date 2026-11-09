@@ -9,6 +9,8 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/Passes/DisturbanceNoise.h"
+
 namespace mye {
 
 class GraphicsDevice;
@@ -17,10 +19,14 @@ class GraphicsDevice;
 // Texture3D は配列にできないので、1 個ごとに別のテクスチャを持つ
 constexpr int kDisturbanceMaxVolumes = 4;
 // Volume の CB 全体のバイト数 (同 MYE_DFLD_VOL_CB_BYTES と一致。規則 9)
-constexpr int kDisturbanceVolumeCbBytes = 272;
+constexpr int kDisturbanceVolumeCbBytes = 464;
 // フロクセル注入 (CS) の束縛番号。HLSL の MYE_DFLD_VOL_SRV (先頭。続く 3 本が連番) / MYE_DFLD_VOL_CB と一致 (規則 9)
 constexpr int kDisturbanceVolumeSrvSlot = 3;
 constexpr int kDisturbanceVolumeCbSlot = 2;
+// 霧のノイズのマップ (Volume ごとに 1 枚、4 本連番) と、繰り返して敷くサンプラ (wrap)。フロクセル注入 (CS) の番号。
+// HLSL の MYE_DFLD_VOL_SRV_NOISE_MAP / MYE_DFLD_VOL_NOISE_SAMPLER と一致 (規則 9)
+constexpr int kDisturbanceVolumeSrvNoiseMapSlot = 7;
+constexpr int kDisturbanceVolumeNoiseSamplerSlot = 2;
 
 // Volume 1 個の転送指示。Engine 層が sim の状態 (または編集中の設定) から詰める。
 // ★DisturbanceState を直接受け取らない (DisturbanceLayerUpload と同じ。Renderer から Engine を参照しない)
@@ -44,6 +50,7 @@ struct DisturbanceVolumeEntryUpload {
     float fogBrightness = 1.0f;
     bool fogSunLight = false; // true: 平行光をこの Volume の霧に当てる (影なし)
     bool autoFroxel = true;   // true: カメラのフロクセルが off でもこの霧のために回す
+    DisturbanceNoiseUpload noise; // 霧のノイズ (見た目だけ。既定 = 掛けない)
     uint32_t entityIndex = 0;
     uint32_t entityGeneration = 0;
 };
@@ -53,14 +60,17 @@ struct DisturbanceVolumeUpload {
     DisturbanceVolumeEntryUpload volumes[kDisturbanceMaxVolumes];
     // sim の通番。前回と同じで構成も同じなら転送しない (sim は 60 Hz、描画はそれより速く回る)
     uint64_t serial = 0;
+    // ノイズの時計 [s] (DisturbanceFieldUpload::noiseTime と同じ値)
+    double noiseTime = 0.0;
 };
 
-// HLSL の DisturbanceVolume (float4 x 4) と同じ並び
+// HLSL の DisturbanceVolume (float4 x 7 = 4 + ノイズの 3) と同じ並び
 struct DisturbanceVolumeEntryCB {
     float originSize[4] = {}; // xyz = 原点セル (整数), w = cellSize [m]
     float extent[4] = {};     // xyz = cellsX/Y/Z, w = 1: テクスチャを読む / 0: restDensity の定数
     float look[4] = {};       // x = fogDensity [1/m], y = fogBrightness, z = restDensity, w = 1: 濃さチャネルあり
     float fogColor[4] = {};   // rgb = 霧の色, w = 1: 平行光を当てる (fogSunLight)
+    DisturbanceNoiseCB noise; // 霧のノイズ (float4 x 3。DisturbanceNoise.h)
 };
 
 // HLSL の cbuffer DisturbanceVolumeCB と同じ並び
@@ -78,6 +88,8 @@ struct DisturbanceVolumeGpu {
     // 霧を出す (濃さチャネルあり && fogDensity > 0) autoFroxel な Volume が 1 つでもあるか。
     // true なら、カメラのフロクセルが off のビューでも「場だけのモード」で回す
     bool wantsAutoFroxel = false;
+    // Volume ごとの霧のノイズのマップ (null = その Volume はマップなし。CB の noise.c[3] と対応)
+    ID3D11ShaderResourceView* noiseMapSRV[kDisturbanceMaxVolumes] = {};
 };
 
 // Volume の Texture3D の所有者。GPU は読むだけ — sim の状態は CPU (決定論) が持つ
