@@ -15,7 +15,8 @@
 | M98b | 完了 | Launcher プロジェクト、インストール・一覧・起動・削除、`--release-source` |
 | M98c | 完了 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
 | M98d | 完了 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
-| M98e | 完了 (v0.86 公開済み) | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
+| M98e | 完了 (v0.86 公開済み) |
+| M98f | 完了 | Defender 対策 (ダウンロードの印とスキャン、自己複製をやめる、zip から Launcher を外す)、0.86.1 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
 
 ## ユーザーの追加指示 (2026-11-10、M98a の後)
 
@@ -24,6 +25,9 @@
 - 0.86 は `ParseEngineVersion` で [0, 86, 0, 0] になり、0.6.8.22 より新しいと判定される (順序は正しい)。asset 名は `MyEngine-0.86-win64.zip`
 
 ## 申し送り
+
+- M98f (ユーザー判断: 方針 1 = IAttachmentExecute、版は 0.86.1、自己配置はボタン): ダウンロードを Attachment Manager で保存 (MOTW + AV スキャン)、展開物へ印を引き継ぐ、Setup.ps1 -NoUnblock、起動時の自己コピーとスタートメニュー登録をやめて場所の記録 (launcher_location.json) だけにする、zip から Launcher を外す。2 回目の実走 (新しい Launcher + v0.86 の zip) では新しい Launcher 自体は止められず、v0.86 の zip に同梱の旧 Launcher が展開時に検知された
+- M98f: 0.86 の e2e 試験 (環境変数で置き場を差し替え) でユーザーの実際のスタートメニューに一時フォルダを指すショートカットが作られていた。削除はユーザーの承認待ち
 
 - **M98e 公開後に判明 (未解決)**: GitHub から落とした `MyEngineLauncher.exe` が、Release から 344 MB を落として入れ、Editor を起動した直後に Windows Defender の振る舞い検知 `Behavior:Win32/DefenseEvasion.A!ml` で実行を止められた (2026-11-10 22:33)。ローカル取得元からの同じ流れ (ネットワークなし) では検知されていない。推定: 「インターネットから落とした実行ファイルを Mark-of-the-Web 無しで書き、起動する」がドロッパー型の振る舞いに見える。対策案: (1) ダウンロードを IAttachmentExecute (Attachment Manager) 経由で保存して MOTW と AV スキャンを正規に通す、(2) コード署名、(3) Microsoft への誤検知の報告。ユーザーの判断待ち
 - M98e: v0.86 公開 (`5a3552a`、タグ `v0.86`、https://github.com/gavamento/MyEngin/releases/tag/v0.86)。試走 run 42819599483 と公開 run 42822125348 はどちらも success (ランナーで fast selftest 107 スイート PASS、zip 344.3 MB)。GitHub の latest リンクから落とした Launcher で 44 秒でインストール・起動まで確認

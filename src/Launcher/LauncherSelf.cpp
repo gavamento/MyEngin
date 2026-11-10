@@ -18,6 +18,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Engine/Update/InstallLayout.h"
+#include "Engine/Platform/DownloadTrust.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Sha256.h"
 
@@ -37,19 +38,11 @@ std::wstring PlacedExe(const std::wstring& root)
     return LauncherDir(root) + L"\\" + kLauncherExeName;
 }
 
-std::wstring SiblingPath(const std::wstring& root, const wchar_t* suffix)
+// C:\x\MyEngineLauncher.exe → C:\x\MyEngineLauncher.new.exe
+std::wstring SiblingPath(const std::wstring& exe, const wchar_t* suffix)
 {
-    // MyEngineLauncher.exe → MyEngineLauncher.new.exe
-    std::wstring name = kLauncherExeName;
-    name = name.substr(0, name.size() - 4) + suffix;
-    return LauncherDir(root) + L"\\" + name;
-}
-
-std::wstring RunningExePath()
-{
-    wchar_t buf[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    return buf;
+    const fs::path p(exe);
+    return (p.parent_path() / (p.stem().wstring() + suffix)).wstring();
 }
 
 bool WriteVersionFile(const std::wstring& root, const std::string& version)
@@ -59,15 +52,39 @@ bool WriteVersionFile(const std::wstring& root, const std::string& version)
     return WriteFileReplacing(LauncherDir(root) + L"\\" + kVersionFile, j.dump(2));
 }
 
-bool CreateStartMenuShortcut(const std::wstring& target)
+bool ScriptSupports(const std::wstring& script, const char* parameter)
+{
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, script.c_str(), L"rb") != 0 || !f) {
+        return false;
+    }
+    std::string text;
+    char buf[4096];
+    size_t n = 0;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+        text.append(buf, n);
+    }
+    fclose(f);
+    return text.find(std::string("$") + parameter) != std::string::npos;
+}
+
+std::wstring StartMenuShortcutPath()
 {
     PWSTR programs = nullptr;
     if (FAILED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programs))) {
-        return false;
+        return {};
     }
     const std::wstring linkPath = std::wstring(programs) + L"\\" + kShortcutName;
     CoTaskMemFree(programs);
+    return linkPath;
+}
 
+bool CreateStartMenuShortcut(const std::wstring& target)
+{
+    const std::wstring linkPath = StartMenuShortcutPath();
+    if (linkPath.empty()) {
+        return false;
+    }
     IShellLinkW* link = nullptr;
     if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) {
         return false;
@@ -87,6 +104,13 @@ bool CreateStartMenuShortcut(const std::wstring& target)
 }
 
 } // namespace
+
+std::wstring RunningLauncherPath()
+{
+    wchar_t buf[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    return buf;
+}
 
 EngineVersion PlacedLauncherVersion(const std::wstring& root)
 {
@@ -108,37 +132,46 @@ EngineVersion PlacedLauncherVersion(const std::wstring& root)
     return v;
 }
 
-void PlaceLauncherCopy(const std::wstring& root, bool createShortcut)
+bool AddLauncherToStartMenu(const std::wstring& root, std::string& error)
 {
-    const std::wstring running = RunningExePath();
+    const std::wstring running = RunningLauncherPath();
     const std::wstring placed = PlacedExe(root);
-    if (NormalizePathKey(running) == NormalizePathKey(placed)) {
-        return; // もう置き場から動いている
-    }
-    const EngineVersion current = CurrentEngineVersion();
-    const EngineVersion existing = PlacedLauncherVersion(root);
     std::error_code ec;
-    if (fs::exists(placed, ec) && existing.valid && CompareEngineVersion(existing, current) > 0) {
-        return; // 置いてある方が新しい (古い Launcher を落とし直して開いた場合)
+    if (NormalizePathKey(running) != NormalizePathKey(placed)) {
+        const EngineVersion existing = PlacedLauncherVersion(root);
+        const bool placedIsNewer = fs::exists(placed, ec) && existing.valid
+            && CompareEngineVersion(existing, CurrentEngineVersion()) > 0;
+        if (!placedIsNewer) {
+            fs::create_directories(LauncherDir(root), ec);
+            if (!CopyFileW(running.c_str(), placed.c_str(), FALSE)) {
+                // 置き場の Launcher が動いていると上書きできない
+                error = "cannot copy the Launcher to " + WideToUtf8(placed) + " (" + std::to_string(GetLastError()) + ")";
+                return false;
+            }
+            WriteVersionFile(root, CurrentEngineVersion().text);
+        }
     }
-    fs::create_directories(LauncherDir(root), ec);
-    // 置き場の Launcher が動いていると上書きできない。そのときは今回は諦める (次に開いたときに置く)
-    if (!CopyFileW(running.c_str(), placed.c_str(), FALSE)) {
-        MYE_LOG_WARN("launcher: could not place a copy at %s (%lu)", WideToUtf8(placed).c_str(), GetLastError());
-        return;
+    if (!CreateStartMenuShortcut(placed)) {
+        error = "cannot create the Start menu shortcut";
+        return false;
     }
-    WriteVersionFile(root, current.text);
-    if (createShortcut && !CreateStartMenuShortcut(placed)) {
-        MYE_LOG_WARN("launcher: could not create the Start menu shortcut");
-    }
-    MYE_LOG_INFO("launcher: placed a copy at %s", WideToUtf8(placed).c_str());
+    RecordLauncherLocation(root, placed);
+    MYE_LOG_INFO("launcher: added to the Start menu (%s)", WideToUtf8(placed).c_str());
+    return true;
 }
 
-void CleanupOldLauncherFiles(const std::wstring& root)
+bool IsLauncherInStartMenu()
+{
+    const std::wstring linkPath = StartMenuShortcutPath();
+    std::error_code ec;
+    return !linkPath.empty() && fs::exists(linkPath, ec);
+}
+
+void CleanupOldLauncherFiles(const std::wstring& launcherExe)
 {
     std::error_code ec;
-    fs::remove(SiblingPath(root, kOldSuffix), ec);
-    fs::remove(SiblingPath(root, kNewSuffix), ec);
+    fs::remove(SiblingPath(launcherExe, kOldSuffix), ec);
+    fs::remove(SiblingPath(launcherExe, kNewSuffix), ec);
 }
 
 bool LauncherUpdateAvailable(const ReleaseInfo& release)
@@ -148,8 +181,9 @@ bool LauncherUpdateAvailable(const ReleaseInfo& release)
         && FindReleaseAsset(release, kLauncherAssetName) && FindReleaseAsset(release, hashName);
 }
 
-InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root,
-                                      const InstallProgressFn& progress, const std::atomic<bool>* cancel)
+InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const ReleaseInfo& release,
+                                      const std::wstring& targetExe, const InstallProgressFn& progress,
+                                      const std::atomic<bool>* cancel)
 {
     InstallOutcome out;
     out.version = release.version.text;
@@ -168,8 +202,7 @@ InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const Release
         return out;
     }
     std::error_code ec;
-    fs::create_directories(LauncherDir(root), ec);
-    const std::wstring newPath = SiblingPath(root, kNewSuffix);
+    const std::wstring newPath = SiblingPath(targetExe, kNewSuffix);
     const HttpResult d = FetchReleaseAsset(
         source, *exe, newPath,
         [&](uint64_t done, uint64_t total) {
@@ -183,6 +216,15 @@ InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const Release
         out.error = d.error;
         return out;
     }
+    if (exe->url.rfind("https://", 0) == 0) {
+        // Launcher 自身もブラウザと同じく印を付けてスキャンを通す (ADR-037 D9)
+        const DownloadTrustResult trust = MarkAndScanDownload(newPath, exe->url);
+        if (!trust.ok) {
+            fs::remove(newPath, ec);
+            out.error = trust.error;
+            return out;
+        }
+    }
     std::string actual;
     if (!Sha256FileHex(newPath, actual) || actual != expected) {
         fs::remove(newPath, ec);
@@ -194,11 +236,11 @@ InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const Release
     return out;
 }
 
-bool ApplyLauncherUpdate(const std::wstring& root, const std::string& newVersion, bool startNew, std::string& error)
+bool ApplyLauncherUpdate(const std::wstring& targetExe, const std::wstring& root, const std::string& newVersion,
+                         bool startNew, std::string& error)
 {
-    const std::wstring placed = PlacedExe(root);
-    const std::wstring newPath = SiblingPath(root, kNewSuffix);
-    const std::wstring oldPath = SiblingPath(root, kOldSuffix);
+    const std::wstring newPath = SiblingPath(targetExe, kNewSuffix);
+    const std::wstring oldPath = SiblingPath(targetExe, kOldSuffix);
     std::error_code ec;
     if (!fs::exists(newPath, ec)) {
         error = "no downloaded Launcher";
@@ -206,22 +248,24 @@ bool ApplyLauncherUpdate(const std::wstring& root, const std::string& newVersion
     }
     fs::remove(oldPath, ec);
     // 実行中の exe は消せないが rename はできる。退避 → 差し込みの順で、失敗したら戻す
-    const bool hadPlaced = fs::exists(placed, ec);
-    if (hadPlaced && !MoveFileExW(placed.c_str(), oldPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+    const bool hadTarget = fs::exists(targetExe, ec);
+    if (hadTarget && !MoveFileExW(targetExe.c_str(), oldPath.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         error = "cannot move the current Launcher aside (" + std::to_string(GetLastError()) + ")";
         return false;
     }
-    if (!MoveFileExW(newPath.c_str(), placed.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+    if (!MoveFileExW(newPath.c_str(), targetExe.c_str(), MOVEFILE_REPLACE_EXISTING)) {
         error = "cannot put the new Launcher in place (" + std::to_string(GetLastError()) + ")";
-        if (hadPlaced) {
-            MoveFileExW(oldPath.c_str(), placed.c_str(), MOVEFILE_REPLACE_EXISTING);
+        if (hadTarget) {
+            MoveFileExW(oldPath.c_str(), targetExe.c_str(), MOVEFILE_REPLACE_EXISTING);
         }
         return false;
     }
-    WriteVersionFile(root, newVersion);
+    if (NormalizePathKey(targetExe) == NormalizePathKey(PlacedExe(root))) {
+        WriteVersionFile(root, newVersion);
+    }
     if (startNew) {
-        const HINSTANCE r = ShellExecuteW(nullptr, L"open", placed.c_str(), nullptr, LauncherDir(root).c_str(),
-                                          SW_SHOWNORMAL);
+        const std::wstring dir = fs::path(targetExe).parent_path().wstring();
+        const HINSTANCE r = ShellExecuteW(nullptr, L"open", targetExe.c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL);
         if (reinterpret_cast<intptr_t>(r) <= 32) {
             error = "the new Launcher did not start";
             return false;
@@ -240,7 +284,12 @@ bool RunSetupScript(const std::wstring& installDir, std::string& error)
     }
     // 配布先に pwsh があるとは限らないので Windows 標準の PowerShell 5.1 で動かす (Setup.ps1 は 5.1 対応)
     // -NoExit: 終わっても窓を閉じない (どの依存が入らなかったかを読めるように)
-    const std::wstring args = L"-NoExit -NoProfile -ExecutionPolicy Bypass -File \"" + script + L"\" -NoLaunch";
+    std::wstring args = L"-NoExit -NoProfile -ExecutionPolicy Bypass -File \"" + script + L"\" -NoLaunch";
+    // -NoUnblock: Launcher が付けた「インターネット由来」の印を Setup に外させない (自動で印を外す動きは
+    // 防御の回避と見なされる)。0.86 の Setup.ps1 はこの引数を知らないので、対応している版にだけ渡す
+    if (ScriptSupports(script, "NoUnblock")) {
+        args += L" -NoUnblock";
+    }
     const HINSTANCE r = ShellExecuteW(nullptr, L"open", L"powershell.exe", args.c_str(), installDir.c_str(),
                                       SW_SHOWNORMAL);
     if (reinterpret_cast<intptr_t>(r) <= 32) {

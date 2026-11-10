@@ -35,6 +35,7 @@ struct LauncherState
     std::wstring deleteTarget; // 非空で削除確認を開く
     std::string deleteLabel;
     bool updateFlowDone = false;
+    bool inStartMenu = true; // LauncherBegin で調べる。false の間は登録ボタンを出す
 };
 
 // 起動直後に 1 回: インストール済みの走査と最新版の確認を始める

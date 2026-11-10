@@ -13,6 +13,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Platform/DownloadTrust.h"
 #include "Engine/Platform/Sha256.h"
 #include "Engine/Platform/ZipExtract.h"
 #include "Launcher/LauncherSelf.h"
@@ -48,6 +49,12 @@ void Report(const InstallProgressFn& progress, InstallStage stage, uint64_t done
 bool IsCancelled(const std::atomic<bool>* cancel)
 {
     return cancel && cancel->load(std::memory_order_relaxed);
+}
+
+// ローカル取得元 (検証用) の asset は印を付けない
+bool IsInternetAsset(const ReleaseAsset& asset)
+{
+    return asset.url.rfind("https://", 0) == 0;
 }
 
 } // namespace
@@ -121,6 +128,15 @@ InstallOutcome InstallRelease(const ReleaseSource& source, const ReleaseInfo& re
     }
 
     Report(progress, InstallStage::Verifying, 0, 0);
+    // ネットワークから落とした物は、ブラウザと同じく「インターネット由来」の印を付けてスキャンを通す (ADR-037 D9)
+    std::string zoneId;
+    if (IsInternetAsset(*zipAsset)) {
+        const DownloadTrustResult trust = MarkAndScanDownload(part.wstring(), zipAsset->url);
+        if (!trust.ok) {
+            return fail(trust.error, false);
+        }
+        ReadZoneIdentifier(part.wstring(), zoneId);
+    }
     std::string actualHex;
     if (!Sha256FileHex(part.wstring(), actualHex, cancel)) {
         return fail(IsCancelled(cancel) ? "cancelled" : "cannot read the download", IsCancelled(cancel));
@@ -139,6 +155,15 @@ InstallOutcome InstallRelease(const ReleaseSource& source, const ReleaseInfo& re
     }
 
     Report(progress, InstallStage::Finishing, 0, 0);
+    // zip の印を展開したファイルへ引き継ぐ (エクスプローラーで展開したときと同じ扱い)。
+    // 印の無い exe を書いて起動すると振る舞い検知に「防御の回避」と見なされる
+    if (!zoneId.empty()) {
+        for (fs::recursive_directory_iterator it(staging, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->is_regular_file(ec) && !WriteZoneIdentifier(it->path().wstring(), zoneId)) {
+                return fail("cannot mark " + WideToUtf8(it->path().wstring()), false);
+            }
+        }
+    }
     if (!fs::exists(InstalledEditorPath(staging.wstring()), ec)) {
         return fail("the package does not contain bin\\x64\\Release\\Editor.exe", false);
     }
@@ -335,11 +360,12 @@ void LauncherJob::StartUninstall(const std::wstring& installDir)
     });
 }
 
-void LauncherJob::StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root)
+void LauncherJob::StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release,
+                                  const std::wstring& targetExe)
 {
-    Launch(Kind::SelfUpdate, [this, source, release, root] {
+    Launch(Kind::SelfUpdate, [this, source, release, targetExe] {
         InstallOutcome r = DownloadLauncherUpdate(
-            source, release, root,
+            source, release, targetExe,
             [this](InstallStage stage, uint64_t done, uint64_t total) { SetProgress(stage, done, total); }, &cancel_);
         std::lock_guard<std::mutex> lock(mutex_);
         install_ = std::move(r);

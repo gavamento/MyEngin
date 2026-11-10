@@ -133,7 +133,7 @@ void DrawLatest(LauncherState& st)
         ImGui::BeginDisabled(busy);
         const std::string label = std::string(ICON_FA_ROTATE " ") + Tr(StrId::Launcher_SelfUpdate);
         if (ImGui::SmallButton(label.c_str())) {
-            st.job.StartSelfUpdate(st.options.source, st.latest.release, st.options.root);
+            st.job.StartSelfUpdate(st.options.source, st.latest.release, RunningLauncherPath());
         }
         ImGui::EndDisabled();
     }
@@ -277,6 +277,7 @@ void DrawDeleteConfirm(LauncherState& st)
 
 void LauncherBegin(LauncherState& st)
 {
+    st.inStartMenu = IsLauncherInStartMenu();
     Rescan(st);
     st.job.StartCheck(st.options.source, st.options.includePrerelease);
 }
@@ -305,7 +306,7 @@ bool LauncherTick(LauncherState& st)
         Rescan(st);
         if (kind == LauncherJob::Kind::SelfUpdate && outcome.ok) {
             std::string error;
-            if (ApplyLauncherUpdate(st.options.root, outcome.version, true, error)) {
+            if (ApplyLauncherUpdate(RunningLauncherPath(), st.options.root, outcome.version, true, error)) {
                 return false; // 新しい Launcher が起動した
             }
             SetMessage(st, Format1(StrId::Launcher_SelfUpdateFailed, error), true);
@@ -356,6 +357,20 @@ bool DrawLauncherUi(LauncherState& st)
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", Format1(StrId::Launcher_SelfVersion, kEngineVersion).c_str());
+    // スタートメニューへの登録は押したときだけ (自動で自分を写して居座らない、ADR-037 D7)
+    if (!st.inStartMenu) {
+        ImGui::SameLine();
+        const std::string label = std::string(ICON_FA_THUMBTACK " ") + Tr(StrId::Launcher_AddToStartMenu);
+        if (ImGui::SmallButton(label.c_str())) {
+            std::string error;
+            if (AddLauncherToStartMenu(st.options.root, error)) {
+                st.inStartMenu = true;
+                SetMessage(st, Tr(StrId::Launcher_AddedToStartMenu), false);
+            } else {
+                SetMessage(st, Format1(StrId::Launcher_AddToStartMenuFailed, error), true);
+            }
+        }
+    }
     if (st.options.updateMode && !st.updateFlowDone) {
         const std::string project = st.options.launchProject.empty()
             ? std::string("Hub")

@@ -1167,6 +1167,9 @@
     <ClCompile Include="..\src\Engine\Platform\CrashHandler.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\DownloadTrust.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\HttpClient.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
@@ -2353,6 +2356,9 @@
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\CrashHandler.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\DownloadTrust.h">
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\HttpClient.h">

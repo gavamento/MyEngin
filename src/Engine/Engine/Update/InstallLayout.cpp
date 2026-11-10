@@ -127,6 +127,32 @@ std::vector<InstalledEngine> ScanInstalledEngines(const std::wstring& root)
     return out;
 }
 
+bool RecordLauncherLocation(const std::wstring& root, const std::wstring& launcherExe)
+{
+    nlohmann::json j;
+    j["path"] = WideToUtf8(launcherExe);
+    std::error_code ec;
+    fs::create_directories(root, ec);
+    return WriteFileReplacing((fs::path(root) / L"launcher_location.json").wstring(), j.dump(2));
+}
+
+std::wstring RecordedLauncherPath(const std::wstring& root)
+{
+    std::ifstream f(fs::path(root) / L"launcher_location.json", std::ios::binary);
+    if (!f) {
+        return {};
+    }
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    const nlohmann::json j = nlohmann::json::parse(ss.str(), nullptr, false);
+    if (!j.is_object()) {
+        return {};
+    }
+    const std::wstring path = Utf8ToWide(j.value("path", std::string()));
+    std::error_code ec;
+    return !path.empty() && fs::exists(path, ec) ? path : std::wstring();
+}
+
 std::wstring FindManagedInstallDir(const std::wstring& exeDir)
 {
     // <install>\bin\x64\Release の 3 段上

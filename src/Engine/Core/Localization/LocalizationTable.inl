@@ -925,6 +925,9 @@ MYE_STR(Launcher_RunSetup,       "Run setup (installs missing VC++ / .NET 8 / Gi
                                 "セットアップを実行 (足りない VC++ / .NET 8 / Git を入れる)")
 MYE_STR(Launcher_SelfUpdateAvail, "A newer Launcher (%s) is available.", "新しい Launcher (%s) があります。")
 MYE_STR(Launcher_SelfUpdate,     "Update the Launcher",     "Launcher を更新")
+MYE_STR(Launcher_AddToStartMenu, "Add to Start menu",       "スタートメニューに追加")
+MYE_STR(Launcher_AddedToStartMenu, "Added MyEngine Launcher to the Start menu.", "スタートメニューに MyEngine Launcher を追加しました。")
+MYE_STR(Launcher_AddToStartMenuFailed, "Could not add to the Start menu: %s", "スタートメニューに追加できませんでした: %s")
 MYE_STR(Launcher_SelfUpdateFailed, "Could not update the Launcher: %s",
                                 "Launcher を更新できませんでした: %s")
 

@@ -76,6 +76,11 @@ bool ShouldAutoCheckUpdate(bool enabled, int64_t lastCheckUnix, int64_t nowUnix)
 
 std::wstring FindLauncherForUpdate(const std::wstring& installRoot, const std::wstring& exeDir)
 {
+    // 利用者が置いた場所 (Launcher が起動時に記録する) → スタートメニューに登録した置き場 → エディタの隣 (0.86 の zip)
+    const std::wstring recorded = RecordedLauncherPath(installRoot);
+    if (!recorded.empty()) {
+        return recorded;
+    }
     std::error_code ec;
     const std::wstring placed = LauncherDir(installRoot) + L"\\" + kLauncherExeName;
     if (std::filesystem::exists(placed, ec)) {

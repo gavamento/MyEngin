@@ -14,6 +14,7 @@
 #include <Windows.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Platform/DownloadTrust.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Sha256.h"
 #include "Launcher/InstallService.h"
@@ -247,14 +248,15 @@ bool RunLauncherSelfTest()
         check(!HasLeftovers(root) && ScanInstalledEngines(root).size() == 1, "cleanup: removes leftovers only");
     }
 
-    // 10. Launcher 自身: 置き場へ写す・新しい版の取得と入れ替え
+    // 10. Launcher 自身: 置かれた場所の記録・新しい版の取得と入れ替え (スタートメニューは触らない)
     {
         const std::wstring selfRoot = (tmp / L"selfroot").wstring();
-        PlaceLauncherCopy(selfRoot, false);
-        const fs::path placed = fs::path(LauncherDir(selfRoot)) / kLauncherExeName;
-        check(fs::exists(placed) && PlacedLauncherVersion(selfRoot).valid
-                  && CompareEngineVersion(PlacedLauncherVersion(selfRoot), CurrentEngineVersion()) == 0,
-              "self: the running exe is copied to the Launcher folder with its version");
+        const fs::path target = tmp / L"downloads" / kLauncherExeName; // 利用者が置いた場所のつもり
+        fs::create_directories(target.parent_path());
+        WriteText(target, "old-launcher-bytes");
+        check(RecordLauncherLocation(selfRoot, target.wstring()) && RecordedLauncherPath(selfRoot) == target.wstring(),
+              "self: the Launcher location is recorded for the editor");
+        check(RecordedLauncherPath((tmp / L"noroot").wstring()).empty(), "self: no record means no path");
 
         // 新しい版の Launcher (中身は何でもよい) を取得元に置く
         const fs::path src = tmp / L"src_self";
@@ -269,29 +271,47 @@ bool RunLauncherSelfTest()
         std::string error;
         ParseGitHubReleases(json, list, error);
         check(!list.empty() && LauncherUpdateAvailable(list.front()), "self: a newer Launcher in the release is detected");
-        const InstallOutcome d = DownloadLauncherUpdate(ResolveReleaseSource(src.wstring()), list.front(), selfRoot,
-                                                        InstallProgressFn{}, nullptr);
-        check(d.ok, "self: the new Launcher is downloaded and verified");
-        check(ApplyLauncherUpdate(selfRoot, "99.0", false, error), "self: the new Launcher is swapped in");
-        std::ifstream f(placed, std::ios::binary);
+        const InstallOutcome d = DownloadLauncherUpdate(ResolveReleaseSource(src.wstring()), list.front(),
+                                                        target.wstring(), InstallProgressFn{}, nullptr);
+        check(d.ok && fs::exists(target.parent_path() / L"MyEngineLauncher.new.exe"),
+              "self: the new Launcher is downloaded next to the current one and verified");
+        check(ApplyLauncherUpdate(target.wstring(), selfRoot, "99.0", false, error), "self: the new Launcher is swapped in");
+        std::ifstream f(target, std::ios::binary);
         std::string now((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         f.close();
-        check(now == "new-launcher-bytes" && PlacedLauncherVersion(selfRoot).text == "99.0",
-              "self: the placed Launcher and its version are the new ones");
-        // 置いてある方が新しいなら古い exe で上書きしない
-        PlaceLauncherCopy(selfRoot, false);
-        std::ifstream f2(placed, std::ios::binary);
-        std::string after((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
-        f2.close();
-        check(after == "new-launcher-bytes", "self: an older Launcher does not overwrite a newer placed one");
-        CleanupOldLauncherFiles(selfRoot);
-        check(!fs::exists(fs::path(LauncherDir(selfRoot)) / L"MyEngineLauncher.old.exe"), "self: the old exe is cleaned up");
+        check(now == "new-launcher-bytes" && fs::exists(target.parent_path() / L"MyEngineLauncher.old.exe"),
+              "self: the Launcher was replaced in place and the old one moved aside");
+        CleanupOldLauncherFiles(target.wstring());
+        check(!fs::exists(target.parent_path() / L"MyEngineLauncher.old.exe"), "self: the old exe is cleaned up");
 
         WriteText(src / L"MyEngineLauncher.exe.sha256", std::string(64, '0') + "  MyEngineLauncher.exe");
-        const InstallOutcome bad = DownloadLauncherUpdate(ResolveReleaseSource(src.wstring()), list.front(), selfRoot,
-                                                          InstallProgressFn{}, nullptr);
-        check(!bad.ok && !fs::exists(fs::path(LauncherDir(selfRoot)) / L"MyEngineLauncher.new.exe"),
+        const InstallOutcome bad = DownloadLauncherUpdate(ResolveReleaseSource(src.wstring()), list.front(),
+                                                          target.wstring(), InstallProgressFn{}, nullptr);
+        check(!bad.ok && !fs::exists(target.parent_path() / L"MyEngineLauncher.new.exe"),
               "self: a Launcher with a wrong SHA-256 is discarded");
+    }
+
+    // 11. ダウンロード物の印 (Attachment Manager)。ネットワークには出ない: ローカルのファイルに
+    //     「この URL から落とした」と伝えて印を付けさせ、スキャンを通す
+    {
+        const fs::path dl = tmp / L"trust" / L"payload.zip";
+        fs::create_directories(dl.parent_path());
+        WriteText(dl, "harmless payload");
+        const DownloadTrustResult trust =
+            MarkAndScanDownload(dl.wstring(), "https://github.com/gavamento/MyEngin/releases/download/v0.86/payload.zip");
+        std::string zone;
+        const bool marked = ReadZoneIdentifier(dl.wstring(), zone);
+        check(trust.ok && fs::exists(dl), "trust: a harmless download passes the security check");
+        check(marked && zone.find("ZoneId=3") != std::string::npos,
+              "trust: the download is marked as coming from the Internet (ZoneId=3)");
+        const fs::path extracted = tmp / L"trust" / L"Editor.exe";
+        WriteText(extracted, "x");
+        std::string copied;
+        check(WriteZoneIdentifier(extracted.wstring(), zone) && ReadZoneIdentifier(extracted.wstring(), copied)
+                  && copied == zone,
+              "trust: the mark is copied to an extracted file");
+        std::string none;
+        check(!ReadZoneIdentifier((tmp / L"trust" / L"missing.bin").wstring(), none), "trust: no mark on a missing file");
     }
 
     fs::remove_all(tmp, ec);

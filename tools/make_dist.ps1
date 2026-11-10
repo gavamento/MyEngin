@@ -2,7 +2,7 @@
 # 他の人へ渡すエンジン配布物 (ビルド済み exe 一式 + Setup.bat) を dist_engine\MyEngine\ に集め、zip にする。
 #   pwsh -NoProfile -File tools\make_dist.ps1             # Release をビルドしてから詰める
 #   pwsh -NoProfile -File tools\make_dist.ps1 -SkipBuild  # 今の bin\x64\Release をそのまま詰める
-#   pwsh -NoProfile -File tools\make_dist.ps1 -SkipBuild -Version 0.86 -Release
+#   pwsh -NoProfile -File tools\make_dist.ps1 -SkipBuild -Version 0.86.1 -Release
 #                                                         # GitHub Releases 用 (release.yml が使う、M98)
 # 受け取った側は zip を展開して Setup.bat を実行する (足りない依存を winget で入れて Editor を起動)。
 # GitHub Releases の版は MyEngineLauncher.exe が展開まで行う (中の Setup.ps1 も Launcher が実行する)。
@@ -70,8 +70,7 @@ if (-not $SkipBuild) {
 
 # 欠けたまま配ると、受け取った側で「C# だけ動かない」のような原因の分かりにくい縮退になる
 $required = 'Editor.exe', 'Runtime.exe', 'Server.exe', 'GameLogic.dll', 'nethost.dll', 'MyeScripting.dll',
-    'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll',
-    'MyEngineLauncher.exe'
+    'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll'
 # M93: EOS SDK を入れてビルドしたなら、その DLL が無いと Runtime / Editor が起動しない (import している)
 if (Test-Path -LiteralPath (Join-Path $repo 'external\eos-sdk\Include\eos_sdk.h')) {
     $required += 'EOSSDK-Win64-Shipping.dll'
@@ -93,8 +92,10 @@ New-Item -ItemType Directory -Force $binOut | Out-Null
 # bin は実行時に save\ crash\ shots\ などが生まれる場所なので、拾う物を形で絞る。
 # 直下は exe / dll / json だけ (pdb・lib・exp・ログは渡さない)、
 # サブフォルダは Roslyn の翻訳リソース (*.resources.dll だけを含む cs\ ja\ など) だけ
+# MyEngineLauncher.exe は入れない: Release の asset として単体で配る。zip にも入れると、Launcher が展開のときに
+# 自分と同じ exe を書くことになり (自己複製に見える)、振る舞い検知に疑われる (ADR-037 D7)
 Get-ChildItem -LiteralPath $bin -File |
-    Where-Object { $_.Extension -in '.exe', '.dll', '.json' } |
+    Where-Object { $_.Extension -in '.exe', '.dll', '.json' -and $_.Name -ne 'MyEngineLauncher.exe' } |
     Copy-Item -Destination $binOut
 Get-ChildItem -LiteralPath $bin -Directory | ForEach-Object {
     $files = @(Get-ChildItem -LiteralPath $_.FullName -File -Recurse)

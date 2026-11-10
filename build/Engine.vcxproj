@@ -327,6 +327,7 @@
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
     <ClCompile Include="..\src\Engine\Platform\CrashHandler.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\DownloadTrust.cpp" />
     <ClCompile Include="..\src\Engine\Platform\HttpClient.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Input.cpp" />
     <ClCompile Include="..\src\Engine\Platform\InputActions.cpp" />
@@ -723,6 +724,7 @@
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\Clock.h" />
     <ClInclude Include="..\src\Engine\Platform\CrashHandler.h" />
+    <ClInclude Include="..\src\Engine\Platform\DownloadTrust.h" />
     <ClInclude Include="..\src\Engine\Platform\HttpClient.h" />
     <ClInclude Include="..\src\Engine\Platform\Input.h" />
     <ClInclude Include="..\src\Engine\Platform\InputActions.h" />

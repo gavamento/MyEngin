@@ -3,7 +3,9 @@
 # ★Windows 標準の PowerShell 5.1 で動くこと (配布先に pwsh があるとは限らない)。
 #   三項演算子・??・ArgumentList などの 7 系の書き方を使わない。
 #   tools\make_dist.ps1 が BOM 付き UTF-8 + CRLF に変換して同梱する (5.1 は BOM 無しを CP932 で読む)
-param([switch]$NoLaunch)
+# -NoUnblock: MyEngineLauncher.exe から呼ばれたとき。Launcher がブラウザと同じく付けた「インターネット由来」の印を
+#   外さない (ADR-037 D9)。手で zip を展開した人向けの既定は従来どおり外す
+param([switch]$NoLaunch, [switch]$NoUnblock)
 $ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
@@ -76,8 +78,10 @@ function Install-WingetPackage([string]$id, [string[]]$extra)
 
 # zip を展開したファイルにはインターネット由来の印 (Zone.Identifier) が付き、exe ごとに
 # SmartScreen の確認が出る。このフォルダの中身に限って印を外す
-Write-Step 'ファイルの準備'
-Get-ChildItem -LiteralPath $root -Recurse -File | Unblock-File
+if (-not $NoUnblock) {
+    Write-Step 'ファイルの準備'
+    Get-ChildItem -LiteralPath $root -Recurse -File | Unblock-File
+}
 
 $deps = @(
     @{ Label = 'Visual C++ 再頒布可能パッケージ'; Id = 'Microsoft.VCRedist.2015+.x64'; Test = ${function:Test-VCRedist};

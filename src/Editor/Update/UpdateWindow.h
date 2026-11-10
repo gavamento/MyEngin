@@ -19,7 +19,8 @@ class ToastCenter;
 // 1 日 1 回の自動確認をするか (enabled かつ前回から 24 時間以上。時計が戻っていても確認する)
 bool ShouldAutoCheckUpdate(bool enabled, int64_t lastCheckUnix, int64_t nowUnix);
 
-// 更新に使う Launcher: 置き場 (<root>\Launcher) を優先し、無ければこのエディタの隣。見つからなければ空
+// 更新に使う Launcher: 記録された場所 (launcher_location.json) → 置き場 (<root>\Launcher) → このエディタの隣。
+// 見つからなければ空
 std::wstring FindLauncherForUpdate(const std::wstring& installRoot, const std::wstring& exeDir);
 
 // 更新の確認 (M98d)。GitHub Releases の最新版を別スレッドで見に行き、新しければ知らせる。

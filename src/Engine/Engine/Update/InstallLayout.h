@@ -51,6 +51,12 @@ struct InstalledEngine
 // install.json があり、フォルダ名と印の版が一致するものだけ。新しい順
 std::vector<InstalledEngine> ScanInstalledEngines(const std::wstring& root);
 
+// Launcher が最後に動いた場所 (<root>\launcher_location.json)。エディタの「更新して再起動」が Launcher を探すのに使う。
+// Launcher は自分を勝手に複製しない (自分を写して居座る動きは振る舞い検知に疑われる、ADR-037 D7) ので、
+// 利用者が置いた場所を記録して辿る
+bool RecordLauncherLocation(const std::wstring& root, const std::wstring& launcherExe);
+std::wstring RecordedLauncherPath(const std::wstring& root); // 記録が無い・ファイルが消えていれば空
+
 // exe のフォルダ (<install>\bin\x64\Release) から、Launcher が入れた配布版のフォルダを返す。
 // 印が無い (リポジトリのビルドや手で展開した zip) なら空
 std::wstring FindManagedInstallDir(const std::wstring& exeDir);

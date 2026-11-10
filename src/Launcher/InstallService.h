@@ -79,7 +79,7 @@ public:
     void StartCheck(const ReleaseSource& source, bool includePrerelease);
     void StartInstall(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root);
     void StartUninstall(const std::wstring& installDir);
-    void StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root);
+    void StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& targetExe);
     void Cancel() { cancel_.store(true); }
 
     void Progress(InstallStage& stage, uint64_t& done, uint64_t& total) const;

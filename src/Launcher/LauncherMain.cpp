@@ -152,10 +152,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const HRESULT coInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // ShellExecute / ショートカット用
     if (firstInstance) {
         mye::CleanupStaleInstallWork(st.options.root);
-        mye::CleanupOldLauncherFiles(st.options.root);
-        // ダウンロードしたその場から開かれても、次からはスタートメニューで開けるように自分を置き場へ写す。
-        // 検証 (--install-root / --screenshot) ではスタートメニューを汚さない
-        mye::PlaceLauncherCopy(st.options.root, args.installRoot.empty() && args.screenshot.empty());
+        mye::CleanupOldLauncherFiles(mye::RunningLauncherPath());
+        // 自分は複製しない (ADR-037 D7)。エディタの「更新して再起動」が辿れるよう、置かれた場所だけを記録する
+        mye::RecordLauncherLocation(st.options.root, mye::RunningLauncherPath());
     }
     mye::Win32Window window;
     mye::GraphicsDevice device;

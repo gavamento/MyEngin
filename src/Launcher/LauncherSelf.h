@@ -12,27 +12,33 @@
 
 namespace mye {
 
-// ダウンロードフォルダなどから起動されたら、自分を <root>\Launcher\MyEngineLauncher.exe へ写す
-// (そこにある版より自分が古ければ写さない)。createShortcut ならスタートメニューに
-// 「MyEngine Launcher」を作る (検証用の --install-root では作らない)
-void PlaceLauncherCopy(const std::wstring& root, bool createShortcut);
+// 動いている MyEngineLauncher.exe の絶対パス
+std::wstring RunningLauncherPath();
 
-// 前回の自己更新が残した *.old.exe / *.new.exe を消す
-void CleanupOldLauncherFiles(const std::wstring& root);
+// 利用者が押したときだけ: 自分を <root>\Launcher\MyEngineLauncher.exe へ写し (置いてある方が新しければ写さない)、
+// スタートメニューに「MyEngine Launcher」を作る。起動時に自動ではやらない — 自分を写して居座る動きは
+// 振る舞い検知に疑われる (v0.86 で Behavior:Win32/DefenseEvasion.A!ml に止められた、ADR-037 D7)
+bool AddLauncherToStartMenu(const std::wstring& root, std::string& error);
+bool IsLauncherInStartMenu();
 
-// <root>\Launcher\launcher.json に書いた、置いてある Launcher の版 (無ければ無効)
+// launcherExe の隣に残った前回の自己更新の *.old.exe / *.new.exe を消す
+void CleanupOldLauncherFiles(const std::wstring& launcherExe);
+
+// <root>\Launcher\launcher.json に書いた、置き場の Launcher の版 (無ければ無効)
 EngineVersion PlacedLauncherVersion(const std::wstring& root);
 
 // release に自分より新しい Launcher (exe と .sha256) があるか
 bool LauncherUpdateAvailable(const ReleaseInfo& release);
 
-// 新しい Launcher を <root>\Launcher\MyEngineLauncher.new.exe へ落として SHA-256 を照合する
-InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root,
-                                      const InstallProgressFn& progress, const std::atomic<bool>* cancel);
+// 新しい Launcher を targetExe の隣 (MyEngineLauncher.new.exe) へ落とし、印とスキャンを通して SHA-256 を照合する
+InstallOutcome DownloadLauncherUpdate(const ReleaseSource& source, const ReleaseInfo& release,
+                                      const std::wstring& targetExe, const InstallProgressFn& progress,
+                                      const std::atomic<bool>* cancel);
 
-// .new.exe を本体と入れ替える (動いている本体は .old.exe へ rename する。実行中でも rename はできる)。
-// startNew なら入れ替えた Launcher を起動する。呼び出し側はその後に終了する
-bool ApplyLauncherUpdate(const std::wstring& root, const std::string& newVersion, bool startNew, std::string& error);
+// .new.exe を targetExe と入れ替える (動いている本体は .old.exe へ rename する。実行中でも rename はできる)。
+// 置き場の Launcher なら launcher.json の版も書き換える。startNew なら入れ替えた Launcher を起動する
+bool ApplyLauncherUpdate(const std::wstring& targetExe, const std::wstring& root, const std::string& newVersion,
+                         bool startNew, std::string& error);
 
 // 配布版に同梱の Setup.ps1 (VC++ 再頒布・.NET 8・Git を winget で入れる) を別のコンソール窓で -NoLaunch 実行する。
 // C++ Build Tools を入れるかの y/N を聞くので、隠さずに見せる

@@ -1,6 +1,6 @@
 # ADR-037: 配布と更新 — GitHub Releases に版ごとの zip を置き、入れ替えは Launcher だけが行う
 
-- 状態: **確定** (2026-11-10、M98a〜M98e)
+- 状態: **確定** (2026-11-10、M98a〜M98e。同日 0.86.1 で D7 を改め D9 を追加)
 - 出所: M98。計画と進捗は `plans/m98-release-launcher.md`。
 - 実体:
   - 共通部品 (Engine 層): `src/Engine/Platform/HttpClient.{h,cpp}` (WinHTTP、https のみ)、`Sha256.{h,cpp}` (BCrypt)、`ZipExtract.{h,cpp}` (miniz 3.0.2、`external/miniz/`)、`src/Engine/Engine/Update/EngineRelease.{h,cpp}` (版の解析と比較・Release JSON・asset 名の契約・取得元)、`InstallLayout.{h,cpp}` (置き場と `install.json`)。
@@ -9,7 +9,7 @@
   - 公開: `.github/workflows/release.yml`、`tools/make_dist.ps1` (`-Version` / `-Release`)。手順は `docs/release.md`。
   - アイコン: `tools/gen_app_icon.ps1` → `build/res/MyEngine.ico` (起動スプラッシュのメビウスの輪)、`build/res/AppIcon.rc`。
   - 検証: selftest `update` (Engine 層)・`editorupdate` (エディタ)、`MyEngineLauncher.exe --selftest`。
-- 番号: ABI・SimSnapshot・TypeId は**変更なし**。製品の版 `kEngineVersion` を 0.6.8.22 → **0.86** に変更 (最初の公開版)。
+- 番号: ABI・SimSnapshot・TypeId は**変更なし**。製品の版 `kEngineVersion` を 0.6.8.22 → **0.86** (最初の公開版) → **0.86.1** (D9 の修正版)。
 
 ## 背景
 
@@ -57,8 +57,21 @@ Launcher が入れた版でない (`install.json` が無い = リポジトリの
 
 ### D7. Launcher は単体の exe
 
-CRT 静的、import は Windows 標準 DLL だけ (Engine.lib をリンクし、使わない DLL は遅延ロード。Server.exe と同じ手)。初回起動で自分を `%LOCALAPPDATA%\MyEngine\Launcher\` へ写してスタートメニューに登録し、Release に新しい Launcher があれば動いている exe を `.old.exe` へ rename して入れ替える。
+CRT 静的、import は Windows 標準 DLL だけ (Engine.lib をリンクし、使わない DLL は遅延ロード。Server.exe と同じ手)。
+起動時は**自分を複製しない**。置かれた場所を `<root>\launcher_location.json` に記録するだけで、エディタの「更新して再起動」はこれを辿る。
+`%LOCALAPPDATA%\MyEngine\Launcher\` への写しとスタートメニューの登録は、利用者が「スタートメニューに追加」を押したときだけ行う。
+Release に新しい Launcher があれば、今置かれている場所で動いている exe を `.old.exe` へ rename して入れ替える。
+Launcher は配布 zip に入れない (Release の asset として単体で配る)。
+0.86 では初回起動で自動的に自分を写していたが、D9 の検知を受けて改めた (自分を写して居座る動きは振る舞い検知に疑われる。zip に同梱すると展開のたびに自分と同じ exe を書く)。
 画面は Hub と同じ ImGui の小さなループ。生の D3D 型を持たせないため `SwapChain::BindAndClearBackbuffer` を足し、`src\Launcher` を規則 16 の検査対象に入れた。
+
+### D9. ダウンロードはブラウザと同じ扱いにする (0.86.1)
+
+https で落とした物は Windows の Attachment Manager (`IAttachmentExecute::Save`、`src/Engine/Platform/DownloadTrust.cpp`) を通して保存する。Mark-of-the-Web (Zone.Identifier、ZoneId=3) が付き、登録されたウイルス対策がスキャンする。拒否されたらインストールを止める。
+zip の印は展開したすべてのファイルへ引き継ぐ (エクスプローラーで展開したときと同じ)。Launcher から呼ぶ `Setup.ps1` には `-NoUnblock` を渡し、印を外させない (印に対応した版の Setup.ps1 にだけ渡す)。
+経緯: 0.86 の Launcher は、落とした exe を印なしで書いて起動し、自分も写していた。GitHub から落として実際に入れたところ、Windows Defender に `Behavior:Win32/DefenseEvasion.A!ml` で止められた。2 回目の試験では、0.86 の zip に同梱されていた同じ Launcher のファイルが展開の段で検知された (同じハッシュのファイルが既知の危険物として扱われたと推定)。
+代償: 署名の無いエディタは、新しく入れた版を初めて起動するときに SmartScreen の「発行元が不明」の確認が出る (手で zip を落として展開したときと同じ)。根本的にはコード署名 (D10 候補、費用がかかる) で消える。
+却下: 印を付けない・外す (振る舞い検知に「防御の回避」と見なされる。今回それで止められた)。
 
 ### D8. 安全
 
@@ -67,7 +80,7 @@ https 以外は受け付けない。zip のエントリ名は書き込む前に�
 
 ## 制限
 
-- 署名が無いので、Launcher を初めて開くと SmartScreen の確認が出る。Launcher が落とした zip には Zone.Identifier が付かないので、中の exe には出ない。
+- 署名が無いので、Launcher を初めて開くときと、新しく入れた版のエディタを初めて起動するときに SmartScreen の確認が出る (D9)。
 - 1 版あたり約 400 MB。古い版は自動では消さない (Launcher の一覧から削除する)。
 - ダウンロードの再開 (Range) は無い。途中で切れたら最初からやり直す。
 - 公開のたびに `kEngineVersion` を上げる必要があり、上げると Hub が既存プロジェクトに版違いの注意を出す (警告だけ、起動は止めない)。

@@ -67,6 +67,11 @@ bool RunUpdateWindowSelfTest()
         Touch(fs::path(LauncherDir(root)) / kLauncherExeName);
         check(FindLauncherForUpdate(root, exeDir.wstring()) == LauncherDir(root) + L"\\" + kLauncherExeName,
               "launcher: the placed one wins");
+        const fs::path chosen = tmp / L"downloads" / kLauncherExeName;
+        Touch(chosen);
+        RecordLauncherLocation(root, chosen.wstring());
+        check(FindLauncherForUpdate(root, exeDir.wstring()) == chosen.wstring(),
+              "launcher: the location the Launcher recorded wins");
         // 印の無い置き場は開発ビルド扱い (更新ボタンを出さない)
         check(FindManagedInstallDir(exeDir.wstring()).empty(), "managed: no install.json is a source build");
         InstallMarker marker;
