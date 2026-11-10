@@ -1146,6 +1146,9 @@
     <ClCompile Include="..\src\Engine\Engine\Update\EngineRelease.cpp">
       <Filter>Engine\Update</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Update\InstallLayout.cpp">
+      <Filter>Engine\Update</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Update\UpdateSelfTest.cpp">
       <Filter>Engine\Update</Filter>
     </ClCompile>
@@ -2326,6 +2329,9 @@
       <Filter>Engine\UI</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Update\EngineRelease.h">
+      <Filter>Engine\Update</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Update\InstallLayout.h">
       <Filter>Engine\Update</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Update\UpdateSelfTest.h">

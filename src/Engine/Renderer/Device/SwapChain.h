@@ -30,6 +30,10 @@ public:
     int Width() const { return width_; }
     int Height() const { return height_; }
 
+    // バックバッファを描画先にして全面を rgba で塗る (ビューポートもバックバッファ全体)。
+    // ImGui だけを描く小さな窓 (Launcher, M98b) が生の D3D 型に触れずに済むようにする
+    void BindAndClearBackbuffer(const float rgba[4]);
+
     // バックバッファを PNG に保存 (Present 前に呼ぶこと)。検証/CI 用
     bool SaveBackbufferPng(const std::wstring& path);
 

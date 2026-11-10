@@ -320,6 +320,7 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgetFactory.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgets.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Update\EngineRelease.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Update\InstallLayout.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Update\UpdateSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\EffectSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
@@ -714,6 +715,7 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UIWidgetFactory.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIWidgets.h" />
     <ClInclude Include="..\src\Engine\Engine\Update\EngineRelease.h" />
+    <ClInclude Include="..\src\Engine\Engine\Update\InstallLayout.h" />
     <ClInclude Include="..\src\Engine\Engine\Update\UpdateSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\EffectSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />

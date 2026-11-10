@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\src\Launcher\InstallService.cpp" />
+    <ClCompile Include="..\src\Launcher\LauncherMain.cpp" />
+    <ClCompile Include="..\src\Launcher\LauncherSelfTest.cpp" />
+    <ClCompile Include="..\src\Launcher\LauncherUi.cpp" />
+    <ClInclude Include="..\src\Launcher\InstallService.h" />
+    <ClInclude Include="..\src\Launcher\LauncherSelfTest.h" />
+    <ClInclude Include="..\src\Launcher\LauncherUi.h" />
+  </ItemGroup>
+</Project>

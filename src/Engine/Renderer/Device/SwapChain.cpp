@@ -146,6 +146,19 @@ void SwapChain::Resize(int width, int height)
     CreateDepth();
 }
 
+void SwapChain::BindAndClearBackbuffer(const float rgba[4])
+{
+    ID3D11DeviceContext* dc = device_->Context();
+    ID3D11RenderTargetView* rtv = rtv_.Get();
+    dc->OMSetRenderTargets(1, &rtv, nullptr);
+    D3D11_VIEWPORT vp = {};
+    vp.Width = static_cast<float>(width_);
+    vp.Height = static_cast<float>(height_);
+    vp.MaxDepth = 1.0f;
+    dc->RSSetViewports(1, &vp);
+    dc->ClearRenderTargetView(rtv, rgba);
+}
+
 bool SwapChain::SaveBackbufferPng(const std::wstring& path)
 {
     ComPtr<ID3D11Texture2D> backbuffer;

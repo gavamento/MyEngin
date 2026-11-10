@@ -12,7 +12,7 @@
 | サブ | 状態 | 内容 |
 |---|---|---|
 | M98a | 完了 | miniz、HttpClient / Sha256 / ZipExtract / EngineRelease、`update` スイート |
-| M98b | 未着手 | Launcher プロジェクト、インストール・一覧・起動・削除、`--release-source` |
+| M98b | 完了 | Launcher プロジェクト、インストール・一覧・起動・削除、`--release-source` |
 | M98c | 未着手 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
 | M98d | 未着手 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
 | M98e | 未着手 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
@@ -24,6 +24,12 @@
 - 0.86 は `ParseEngineVersion` で [0, 86, 0, 0] になり、0.6.8.22 より新しいと判定される (順序は正しい)。asset 名は `MyEngine-0.86-win64.zip`
 
 ## 申し送り
+
+- M98b: Launcher は exe 単体で動く (CRT 静的、import は Windows 標準 DLL だけ。d3dcompiler_47 は遅延)。Release で約 1.8 MB
+- M98b: ImGui の描画先クリアは `SwapChain::BindAndClearBackbuffer` に足した (Launcher に生の D3D 型を持たせないため)。`src\Launcher` は規則 16 の検査対象に入れた
+- M98b: 規則 13-d により Launcher.vcxproj にオンライン SDK の DLL 名は書けない。遅延ロード指定から外した (参照されないので import も無い)
+- M98b: 検証用の起動 `MyEngineLauncher.exe --warp --frames N --install-root <tmp> --release-source <dir> [--update --launch-project P] --screenshot x.png`。実 GitHub API へは疎通済み (Release 0 件 = 404 を「まだ公開された版がありません」と表示)
+- ユーザー追加指示 (M98b 中): **アイコンは起動スプラッシュのメビウスの輪。黒背景に白 (少し灰色寄り)**。Launcher と Editor の exe / 窓に付ける (M98c で実施)
 
 - M98a: `MyeWarnAsError=true` の Debug ビルドは master の時点で `AnimatorControllerSelfTest.cpp` (C4456 / C4389) により失敗する (M98 と無関係の既存の赤)。M98 のファイルは警告 0
 - M98a: 取得元の切り替えは `ResolveReleaseSource(cli)` (cli > `MYE_RELEASE_SOURCE` > GitHub)。ローカル取得元の `release.json` は GitHub API と同じ形で、asset の `browser_download_url` はフォルダからの相対パスでよい

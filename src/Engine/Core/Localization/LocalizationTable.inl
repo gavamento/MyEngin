@@ -878,6 +878,47 @@ MYE_STR(Hub_DeleteMsg,        "Delete the project \"%s\"", "プロジェクト \
 MYE_STR(Hub_TipEngineVer,     "Created with engine %s (current: %s)",
                               "エンジン %s で作成 (現在: %s)")
 
+// ---- Launcher (M98b)。MyEngineLauncher.exe の画面 ----
+MYE_STR(Launcher_Title,         "MyEngine Launcher",        "MyEngine Launcher")
+MYE_STR(Launcher_SelfVersion,   "Launcher %s",              "Launcher %s")
+MYE_STR(Launcher_Latest,        "Latest release",           "最新版")
+MYE_STR(Launcher_Checking,      "Checking for the latest release...",
+                                "最新版を確認しています...")
+MYE_STR(Launcher_CheckFailed,   "Could not get the latest release: %s",
+                                "最新版を取得できませんでした: %s")
+MYE_STR(Launcher_NoRelease,     "No release has been published yet.",
+                                "まだ公開された版がありません。")
+MYE_STR(Launcher_LatestLine,    "MyEngine %s  (published %s)", "MyEngine %s  (公開日 %s)")
+MYE_STR(Launcher_Install,       "Install",                  "インストール")
+MYE_STR(Launcher_AlreadyInstalled, "Installed",             "インストール済み")
+MYE_STR(Launcher_Retry,         "Check again",              "もう一度確認")
+MYE_STR(Launcher_ReleaseNotes,  "Release notes",            "リリースノート")
+MYE_STR(Launcher_InstalledList, "Installed versions",       "インストール済みの版")
+MYE_STR(Launcher_NoneInstalled, "No version is installed yet. Install the latest release above.",
+                                "まだ版が入っていません。上の最新版をインストールしてください。")
+MYE_STR(Launcher_Launch,        "Launch",                   "起動")
+MYE_STR(Launcher_OpenFolder,    "Open folder",              "フォルダを開く")
+MYE_STR(Launcher_NewestMark,    "(newest)",                 "(最新)")
+MYE_STR(Launcher_DeleteTitle,   "Delete version###LauncherDelete", "版の削除###LauncherDelete")
+MYE_STR(Launcher_DeleteMsg,     "Delete MyEngine %s? Your projects are not deleted.",
+                                "MyEngine %s を削除しますか？ プロジェクトは消えません。")
+MYE_STR(Launcher_StageChecking, "Checking...",              "確認中...")
+MYE_STR(Launcher_StageDownloading, "Downloading",           "ダウンロード中")
+MYE_STR(Launcher_StageVerifying, "Verifying the download",  "ダウンロードを照合中")
+MYE_STR(Launcher_StageExtracting, "Extracting",             "展開中")
+MYE_STR(Launcher_StageFinishing, "Finishing",               "仕上げ中")
+MYE_STR(Launcher_StageDeleting, "Deleting",                 "削除中")
+MYE_STR(Launcher_InstallDone,   "Installed MyEngine %s.",   "MyEngine %s をインストールしました。")
+MYE_STR(Launcher_InstallFailed, "Install failed: %s",       "インストールに失敗しました: %s")
+MYE_STR(Launcher_DeleteFailed,  "Could not delete: %s",     "削除できませんでした: %s")
+MYE_STR(Launcher_LaunchFailed,  "Could not start the editor: %s",
+                                "エディタを起動できませんでした: %s")
+MYE_STR(Launcher_Cancelled,     "Cancelled.",               "取り消しました。")
+MYE_STR(Launcher_UpdateMode,    "Updating MyEngine. The editor reopens %s when done.",
+                                "MyEngine を更新しています。終わるとエディタで %s を開き直します。")
+MYE_STR(Launcher_InstallPlace,  "Installed to: %s (about 400 MB per version)",
+                                "インストール先: %s (1 版あたり約 400 MB)")
+
 // ---- オーディオミキサー (M47b) ----
 MYE_STR(Mixer_Asset,          "mixer asset",   "ミキサーアセット")
 MYE_STR(Mixer_AddBus,         "+ Add Bus",     "+ バスを追加")

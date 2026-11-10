@@ -1344,7 +1344,7 @@ if ($LASTEXITCODE -ne 0) {
 #   16-b: 許可リストのファイルが無くなったら項目を消す (死んだ許可を残さない)
 $d3dIncludeRx = '^\s*#\s*include\s*[<"](?:d3d11|dxgi|d3dcompiler|d3d11shader)[^>"]*[>"]'
 $d3dIdentRx = '\bID3D11\w+|\bIDXGI\w+|\bD3D11_[A-Z0-9_]+\b|\bDXGI_[A-Z0-9_]+\b'
-$d3dGuardDirs = @('src\Engine\Core', 'src\Engine\Engine', 'src\Editor', 'src\Runtime', 'src\GameLogic', 'src\Shared', 'src\Server')
+$d3dGuardDirs = @('src\Engine\Core', 'src\Engine\Engine', 'src\Editor', 'src\Runtime', 'src\GameLogic', 'src\Shared', 'src\Server', 'src\Launcher')
 $d3dAllow = @(
     # ---- Engine 層の描画系 (Renderer のパスへ RTV / SRV / バッファを渡す側) ----
     @{ Path = 'src\Engine\Engine\Rendering\RenderSystem.h'; Reason = 'FrameTarget (RTV / DSV) と各パスへの受け渡し' },

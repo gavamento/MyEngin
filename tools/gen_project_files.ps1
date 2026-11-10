@@ -115,6 +115,11 @@ $serverSrc = Get-SourceItems @(@{ Path = 'src\Server'; Prefix = '' })
 Update-Vcxproj 'Server' $serverSrc
 Update-Filters 'Server' $serverSrc
 
+# ---- Launcher (配布版のインストーラ兼起動器 MyEngineLauncher.exe、M98b) ----
+$launcherSrc = Get-SourceItems @(@{ Path = 'src\Launcher'; Prefix = '' })
+Update-Vcxproj 'Launcher' $launcherSrc
+Update-Filters 'Launcher' $launcherSrc
+
 # ---- Compute.ForEach のカーネル表 (M91e): assets\shaders\kernels\*.kernel.hlsl → src\GameLogic\Generated\Kernels.gen.{h,cpp} ----
 # ハッシュの手順の正本は src\Engine\Engine\Compute\KernelHash.h (BOM を 1 個除く → CR+LF の CR を除く → FNV-1a 64bit)。
 # 参照値: "a" = af63dc4c8601ec8c (KernelSelfTest と同じテストベクタ)。算術は C# の unchecked で行う (PowerShell の [uint64] は乗算で溢れて例外になる)
