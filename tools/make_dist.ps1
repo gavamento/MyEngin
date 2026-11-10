@@ -2,16 +2,22 @@
 # 他の人へ渡すエンジン配布物 (ビルド済み exe 一式 + Setup.bat) を dist_engine\MyEngine\ に集め、zip にする。
 #   pwsh -NoProfile -File tools\make_dist.ps1             # Release をビルドしてから詰める
 #   pwsh -NoProfile -File tools\make_dist.ps1 -SkipBuild  # 今の bin\x64\Release をそのまま詰める
+#   pwsh -NoProfile -File tools\make_dist.ps1 -SkipBuild -Version 0.86 -Release
+#                                                         # GitHub Releases 用 (release.yml が使う、M98)
 # 受け取った側は zip を展開して Setup.bat を実行する (足りない依存を winget で入れて Editor を起動)。
+# GitHub Releases の版は MyEngineLauncher.exe が展開まで行う (中の Setup.ps1 も Launcher が実行する)。
 # ★出力先は dist\ ではなく dist_engine\。dist\ はエディタのゲーム書き出し (Build Settings) の既定先
-param([switch]$SkipBuild)
+#   -Version  zip 名を MyEngine-<版>-win64.zip にする (Launcher が探す asset 名の契約。EngineRelease.h)
+#   -Release  公開用の検査を足す: オンライン SDK の DLL が bin にあれば止める (再配布の可否が未確認、ADR-031)
+param([switch]$SkipBuild, [string]$Version = '', [switch]$Release)
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent $PSScriptRoot
 $bin = Join-Path $repo 'bin\x64\Release'
 $outRoot = Join-Path $repo 'dist_engine'
 $stage = Join-Path $outRoot 'MyEngine'
-$zipPath = Join-Path $outRoot ('MyEngine-{0}.zip' -f (Get-Date -Format 'yyyyMMdd-HHmm'))
+$zipName = if ($Version) { 'MyEngine-{0}-win64.zip' -f $Version } else { 'MyEngine-{0}.zip' -f (Get-Date -Format 'yyyyMMdd-HHmm') }
+$zipPath = Join-Path $outRoot $zipName
 
 # git の出力は UTF-8 で受ける。[Console]::OutputEncoding を書き換えるとコンソールのコードページが
 # プロセス終了後も残る (chcp と同じ) ので、子プロセス単位で読む
@@ -64,15 +70,23 @@ if (-not $SkipBuild) {
 
 # 欠けたまま配ると、受け取った側で「C# だけ動かない」のような原因の分かりにくい縮退になる
 $required = 'Editor.exe', 'Runtime.exe', 'Server.exe', 'GameLogic.dll', 'nethost.dll', 'MyeScripting.dll',
-    'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll'
+    'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll',
+    'MyEngineLauncher.exe'
 # M93: EOS SDK を入れてビルドしたなら、その DLL が無いと Runtime / Editor が起動しない (import している)
 if (Test-Path -LiteralPath (Join-Path $repo 'external\eos-sdk\Include\eos_sdk.h')) {
     $required += 'EOSSDK-Win64-Shipping.dll'
 }
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $bin $_)) })
 if ($missing.Count -gt 0) { throw "missing in ${bin}: $($missing -join ', ')" }
+if ($Release) {
+    $sdkDlls = @(Get-ChildItem -LiteralPath $bin -File -Filter 'EOSSDK-*.dll')
+    if ($sdkDlls.Count -gt 0) {
+        throw "release packages must not contain the online SDK DLL ($($sdkDlls.Name -join ', ')): build without external\eos-sdk"
+    }
+}
 
 if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 $binOut = Join-Path $stage 'bin\x64\Release'
 New-Item -ItemType Directory -Force $binOut | Out-Null
 

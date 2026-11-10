@@ -1,7 +1,7 @@
 # Custom Game Engine Specification
 
 - **Engine Name**: MyEngine
-- **Version**: 1.0 (as of M68)
+- **Version**: 0.86 (エンジンの版 `kEngineVersion`。GitHub Releases の `v0.86`、M98)
 - **Author**: Gavament
 - **Last Updated**: 2026-10-12
 
@@ -3077,6 +3077,18 @@ A grid field that the player's steps, attacks, explosions, enemies and wind actu
 
 ---
 
+### 10.17 Distribution and updates (M98, ADR-037)
+
+The engine is published on GitHub Releases and installed by a dedicated launcher; the editor only checks and hands over.
+
+- **Publishing.** Pushing the tag `v<kEngineVersion>` runs `.github/workflows/release.yml`: Release build, the fast selftest tier and `MyEngineLauncher.exe --selftest`, `tools/make_dist.ps1 -SkipBuild -Version <v> -Release`, then `gh release create` with four assets: `MyEngine-<v>-win64.zip`, its `.sha256`, `MyEngineLauncher.exe` and its `.sha256`. A tag that differs from `kEngineVersion` stops the run; a suffixed tag (`-rc1`) becomes a prerelease that the launcher and the editor ignore by default. The workflow does not depend on `ci.yml`. Procedure: [`docs/release.md`](docs/release.md).
+- **Install layout.** `%LOCALAPPDATA%\MyEngine\Engine\<v>\` holds the zip's contents in the repository layout (so `FindAssetsRoot` / `FindEngineRepoRoot` work unchanged) plus `install.json`. Versions sit side by side. Install = fetch `.sha256` → download to `Downloads\*.part` → SHA-256 check → extract into `<v>.staging-<pid>` (zip entry names are all validated first: no `..`, absolute paths, drive letters, `:`, control characters, reserved device names) → `install.json` → one rename. Uninstall renames to `<v>.deleting-<pid>` first, so a version whose editor is running is left untouched. Folders without `install.json` are never touched.
+- **Launcher** (`src/Launcher`, a single static-CRT exe that imports only Windows DLLs). Shows the latest release and its notes, installs it, lists installed versions (launch / open folder / run `Setup.ps1` / delete), places itself in `%LOCALAPPDATA%\MyEngine\Launcher\` with a Start menu entry, and replaces itself when the release carries a newer launcher (the running exe is renamed to `.old.exe`). `--update --launch-project <dir>` installs the latest release and reopens the editor on that project.
+- **Editor.** Help → Check for Updates / About MyEngine. At interactive startup (never in automation runs) it checks at most once a day (`editor_global.json`: `autoUpdateCheck`, `lastUpdateCheckUnix`) on a worker thread and shows a toast; a failed automatic check is silent. "Update and restart" goes through the unsaved-changes prompt (`PendingAction::UpdateAndRestart`), starts the launcher with `--update` and exits. Editors not installed by the launcher (source builds) check but cannot update.
+- **Test seams.** `--release-source <dir>` / `MYE_RELEASE_SOURCE` read a GitHub-shaped `release.json` from a folder; `--install-root` / `MYE_INSTALL_ROOT` move the install root. The selftests `update` and `editorupdate` and the launcher's `--selftest` run the whole path without network access.
+- **Not touched.** ABI, SimSnapshot and TypeIds are unchanged; the update check is editor-only and never reaches simulation state. Runtime.exe and Server.exe get neither the update feature nor the icon. Release packages never contain the online SDK DLL.
+- **Icon.** `tools/gen_app_icon.ps1` renders the startup splash's Möbius strip (black background, light grey lines) into `build/res/MyEngine.ico`, embedded in Editor.exe and the launcher and used by their window classes.
+
 ## 11. Debug/Release Consistency Policy
 
 ### 11.1 Purpose
@@ -3963,6 +3975,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Game feel | M94 (game feel line, GitHub side, merged 2026-11-05) | Hit-stop and timed slow motion on the tick gate, a `FeelState` table of played feels (copies of `MyeFeelDesc`) whose camera shake / kick / FOV, decaying rumble and screen pulse are pure functions of state and interpolation, `.feel.json` presets edited live with curve editing and Undo, `FeelTrigger` (TypeId 81) and `SpringFollow` (TypeId 82), input buffering and stick response curves in `actions.json`, Feel Monitor, `--feel-demo` and the replay job `feel`; content-gated hashing keeps other scenes' hash streams unchanged (§10.15, **ABI v31**, 175 → 181 slots, SimSnapshot v51, ADR-035) |
 | Action combat foundations | M95 | Hit stop (`pauseTicks`), part overlap / sphere sweep queries, interruptible controller transitions, CC-vs-CC push-out with contact reports, vertical root motion, event times in seconds / frames; ABI v32 = 193, SimSnapshot v66-v68, controller v3, ADR-034 (§10.14). Plus the three-layer selftest (`MYE_SELFTEST_ONLY`, `--selftest-list`, `--selftest-full`; §11.3) |
 | Disturbance field | M96 | A sim-owned grid field (2D ground layer or 3D volume, up to 4) with flow / density / trail / ripple channels, driven by `DisturbanceSourceComponent`, queued impulses (`FieldAddImpulse`, the animation event `disturb`) and uniform wind, solved as a stable-fluids reduction (semi-Lagrangian advection, fixed-iteration Jacobi projection, keep-rate decay, no CRT transcendentals: check_rules rule 18), row-parallel with jobs A/B proof, optionally following a target or the terrain relief. Read by ray-marched ground fog (also in Forward without a skybox), froxel volume fog, grass, water ripples, CPU / GPU particles and terrain trails, and by scripts through `FieldSample`; content-gated hashing keeps other scenes' hash streams unchanged (§10.16, **ABI v35**, 200 -> 202 slots, SimSnapshot v76, TypeId 96 / 97, ADR-036) |
+| Distribution and updates | M98 | GitHub Releases published from a version tag (`release.yml`), `MyEngineLauncher.exe` that installs versions side by side under `%LOCALAPPDATA%\MyEngine\Engine\` with SHA-256 and zip-slip checks and updates itself, the editor's daily update check / Help menu / About handing over to the launcher, the Möbius app icon; first public version **0.86** (§10.17, ABI / SimSnapshot unchanged, ADR-037) |
 | Hardening, documentation and dogfooding close-out | M93 (maintenance line a-g, GitHub side, merged 2026-11-05) | (a) the C# host compares the API table's `version` with the mirror's `kExpectedApiVersion` at `Bootstrap.Initialize` and refuses a stale `MyeScripting.dll` (rule 11-e); (b) §6.3's rendering boundary rewritten to match the implementation and frozen by rule 16 (26-file allow list, a ratchet); (c) the review ledger `docs/rev/oversights.md` §8 with the status of all 55 fix requirements, plus the small fixes (`AdjustWindowRectExForDpi` / `WM_DPICHANGED`, NaN-safe `Clamp01` / histogram bins / modal damping, cascade-split and exposure-speed guards); (d) README / AGENTS / feature guide refreshed, 100+ machine-specific absolute paths removed from docs, rule 17 warns if they return; (e) the last five dogfooding findings: `--debug-draw-log`, `builtin://wheel`, the missing-`PhysicsEnvironment` warning, `SendScriptMessage` / `onMessage` (**ABI v33**, 193 → 194 slots after the merge; the CharacterController contact events of this line were dropped in favour of M95's opt-in `reportContacts`); (f) document-level Undo for the Animator Controller, Animation Preview and Audio Mixer windows (`UndoDocOp`, `DocUndoRecorder`); (g) the three largest sources split into per-responsibility translation units by pure code motion — `DemoContent.cpp` → `DemoContent{Render,Animation,Flow,Physics,Vfx,Audio,Ui,Ai,Compute}.cpp`, `PhysicsSystem.cpp` → `PhysicsCharacters.cpp` / `PhysicsMaterials.cpp` / `PhysicsBodyOps.cpp` (+ `PhysicsSystemInternal.h`, `RaycastWorld` into `PhysicsQueries.cpp`), `InspectorWindow.cpp` → `InspectorWindowAssets.cpp` / `InspectorWindowNav.cpp` (the physics and inspector splits were redone on the merged code) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
@@ -4025,7 +4038,8 @@ ADR-027 skeletal pose program (M89) /
 **ADR-033 the 2D lane: plane-constrained 3D solver, integer sort keys, assets plus a sparse sim-state diff** (§6.15, §10.13) /
 **ADR-034 CCs exchange no momentum: priority push-out from the start-of-tick pose plus contact reports** (§10.14).
 **ADR-035 game feel: store what was played, derive what is shown** (§10.15; written as ADR-031 on the GitHub side) /
-**ADR-036 disturbance field: the simulation owns the field, fog / grass / water / particles / trails only read it** (§10.16).
+**ADR-036 disturbance field: the simulation owns the field, fog / grass / water / particles / trails only read it** (§10.16) /
+**ADR-037 distribution and updates: versioned zips on GitHub Releases, only the launcher swaps installs** (§10.17).
 
 ---
 

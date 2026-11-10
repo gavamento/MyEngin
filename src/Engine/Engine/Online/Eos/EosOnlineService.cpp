@@ -28,6 +28,7 @@
 #include <Windows/eos_Windows.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Engine/App/Project.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -96,7 +97,7 @@ public:
         EOS_InitializeOptions init = {};
         init.ApiVersion = EOS_INITIALIZE_API_LATEST;
         init.ProductName = "MyEngine";
-        init.ProductVersion = "1.0";
+        init.ProductVersion = kEngineVersion; // 製品の版はエンジンの版 (M98 で統一)
         const EOS_EResult initResult = EOS_Initialize(&init);
         if (initResult != EOS_EResult::EOS_Success && initResult != EOS_EResult::EOS_AlreadyConfigured) {
             return FailLogin(std::string("EOS_Initialize failed: ") + EOS_EResult_ToString(initResult));

@@ -25,6 +25,10 @@
 
 ## 申し送り
 
+- M98e: 実パッケージ (352.8 MB) をローカル取得元から Launcher (--update) で 11 秒で入れ、入った Editor がプロジェクト付きで起動することを確認
+- M98e: ユーザー指摘で起動スプラッシュ下部の文字の重なり (長いパス・ログの折り返し) を直した。DirectWrite を NO_WRAP + 省略記号 (区切り `\` を 1 個残す) にした。PrintWindow で窓だけを撮って確認 (画面からの切り取りは上の窓が写るので使わない)
+- M98e: `--selftest-full` Release で `disturbancelong` の焼き込みハッシュが 1 件 FAIL。基点 fbba064 (M98 着手前) を別 worktree でビルドしても同じ FAIL = **M98 と無関係の既存の失敗** (M89q / M97a の合流後から。別件で直す)。他の 119 スイートは Debug / Release とも PASS
+
 - M98d: 自動確認の ON/OFF は計画の「ProjectSettings 窓」ではなく更新窓のチェックボックスに置いた (`editor_global.json` の `autoUpdateCheck` / `lastUpdateCheckUnix`)。自動確認は対話起動のときだけ (`EditorApp::allowAutoUpdateCheck = !automation`)
 - M98d: 「更新して再起動」は `PendingAction::UpdateAndRestart` で既存の未保存確認を通し、Launcher を `--update --launch-project <projectRoot>` で起動して終了する。環境変数 (`MYE_RELEASE_SOURCE` / `MYE_INSTALL_ROOT`) は Launcher に引き継がれる
 - M98d: 画面は一時プローブで撮影して確認済み (更新あり・開発ビルドでボタン無効・About)。Launcher が入れた版での「更新して再起動」の実走は M98e の本物のパッケージで行う

@@ -1,0 +1,123 @@
+# Release (M98、ADR-037): タグ v<kEngineVersion> の push で、エンジンの配布物を GitHub Releases に公開する。
+#
+# 公開する asset (名前は Launcher との契約。src/Engine/Engine/Update/EngineRelease.h):
+#   MyEngine-<版>-win64.zip          tools/make_dist.ps1 の配布物 (bin\x64\Release + assets + src/Shared …)
+#   MyEngine-<版>-win64.zip.sha256   Launcher が展開前に照合する
+#   MyEngineLauncher.exe             利用者が最初にダウンロードする 1 個 (releases/latest/download/ で常に最新)
+#   MyEngineLauncher.exe.sha256      Launcher の自己更新が照合する
+#
+# ★ci.yml の成功を条件にしない。ci.yml は replay 照合やスクショまで回す重い検査で、
+#   それが赤い間も公開を止めないため。ここでは Release のビルドと短い selftest だけを独自に回す。
+# ★C++ の警告をエラーにしない (MyeWarnAsError を渡さない)。警告の掃除は ci.yml の担当
+# ★-rc などの接尾辞付きタグはプレリリースになる。Launcher とエディタは既定でプレリリースを見ない
+# ★workflow_dispatch は試走: Release は作らず、同じ asset を artifact に上げるだけ
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build + package + publish
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      MYE_EXTRA_ARGS: --warp --no-audio
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版の正本は kEngineVersion (src/Engine/Engine/App/Project.h)。タグと食い違ったまま公開すると、
+      # Launcher が入れた版と About に出る版がずれ、更新確認が終わらなくなる
+      - name: version
+        id: version
+        shell: pwsh
+        run: |
+          $m = Select-String -Path src\Engine\Engine\App\Project.h -Pattern 'kEngineVersion = "([^"]+)"'
+          if (-not $m) { throw 'kEngineVersion not found in Project.h' }
+          $engine = $m.Matches[0].Groups[1].Value
+          if ('${{ github.ref_type }}' -eq 'tag') {
+            $tag = '${{ github.ref_name }}'
+            $numbers = ($tag.TrimStart('v') -split '-', 2)[0]
+            if ($numbers -ne $engine) { throw "tag $tag does not match kEngineVersion $engine (bump Project.h first)" }
+            $version = $tag.TrimStart('v')
+          } else {
+            $version = $engine
+          }
+          $pre = if ($version.Contains('-')) { 'true' } else { 'false' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "prerelease=$pre" >> $env:GITHUB_OUTPUT
+          "zip=MyEngine-$version-win64.zip" >> $env:GITHUB_OUTPUT
+          "== version $version (prerelease: $pre)"
+
+      - name: managed host (Release)
+        shell: cmd
+        run: tools\build_managed.bat Release
+
+      - name: rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: collab service (Release)
+        shell: cmd
+        run: tools\build_collab.bat Release
+
+      - name: native build (Release)
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          & $msbuild MyEngine.sln /p:Configuration=Release /p:Platform=x64 /m /v:minimal /nologo
+          if ($LASTEXITCODE -ne 0) { throw "MyEngine.sln Release build failed ($LASTEXITCODE)" }
+
+      # 短い回帰: エディタの fast 層と Launcher のインストール経路 (どちらもネットワークに出ない)
+      - name: selftest (Release, fast)
+        shell: cmd
+        run: bin\x64\Release\Editor.exe --selftest %MYE_EXTRA_ARGS%
+
+      - name: launcher selftest
+        shell: cmd
+        run: bin\x64\Release\MyEngineLauncher.exe --selftest
+
+      - name: package
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tools\make_dist.ps1 -SkipBuild -Version '${{ steps.version.outputs.version }}' -Release
+          if ($LASTEXITCODE -ne 0) { throw "make_dist failed ($LASTEXITCODE)" }
+          New-Item -ItemType Directory -Force out | Out-Null
+          $zip = '${{ steps.version.outputs.zip }}'
+          Copy-Item "dist_engine\$zip" "out\$zip"
+          Copy-Item bin\x64\Release\MyEngineLauncher.exe out\MyEngineLauncher.exe
+          foreach ($name in $zip, 'MyEngineLauncher.exe') {
+            $hash = (Get-FileHash -Algorithm SHA256 "out\$name").Hash.ToLowerInvariant()
+            [System.IO.File]::WriteAllText("out\$name.sha256", "$hash  $name`n")
+          }
+          Get-ChildItem out | ForEach-Object { '{0}  {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
+
+      - name: upload artifact (dry run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mye-release-${{ steps.version.outputs.version }}
+          path: out\*
+          retention-days: 7
+
+      - name: publish release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $ghArgs = @('release', 'create', $tag, '--title', "MyEngine ${{ steps.version.outputs.version }}", '--generate-notes', '--verify-tag')
+          if ('${{ steps.version.outputs.prerelease }}' -eq 'true') { $ghArgs += '--prerelease' }
+          $ghArgs += (Get-ChildItem out -File | ForEach-Object { $_.FullName })
+          & gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }

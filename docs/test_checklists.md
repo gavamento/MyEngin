@@ -950,3 +950,24 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `tools\replay_verify.bat` が全ジョブ PASS する (`field` ジョブと jobs A/B を含む)
 - [ ] `tools\shot_verify.bat` が PASS する (撮り直した `fog.png` を含む。`flow_title` の FAIL は M96 着手前からの別件)
 - [ ] 三校の `verify.bat` が既存の 2 件 FAIL 以外増えない
+
+## M98: GitHub Releases 配布・Launcher・エディタの更新
+
+自動: `MyEngineLauncher.exe --selftest` (インストール・SHA 不一致・zip slip・取り消し・削除・自己更新)、`MYE_SELFTEST_ONLY=update,editorupdate`。手順と仕組みは [docs/release.md](release.md) / [ADR-037](adr/ADR-037-release-launcher.md)。
+
+### Launcher
+
+- [ ] Releases のページから `MyEngineLauncher.exe` だけを落として開く。SmartScreen の確認の後、最新版 (0.86) とリリースノートが出る
+- [ ] 「インストール」で進捗 (ダウンロード → 照合 → 展開) が進み、取り消しボタンで止められる。止めたら `%LOCALAPPDATA%\MyEngine\Engine\` に staging や .part が残らない
+- [ ] 初回のインストール後に Setup の PowerShell 窓が開き、足りない依存だけを入れる (窓は閉じずに結果が読める)
+- [ ] 一覧の ▶ でエディタ (Hub) が開く。フォルダ / 削除が効く。エディタを開いたままの版は削除できず理由が出る
+- [ ] Launcher を閉じた後、スタートメニューの「MyEngine Launcher」から開ける。exe とタスクバーのアイコンがメビウスの輪 (黒地に白寄りの灰色)
+- [ ] オフラインで開くと「最新版を取得できませんでした」と理由が出て、入っている版は起動できる
+
+### エディタ
+
+- [ ] Launcher で入れたエディタでヘルプ → 更新を確認。最新なら「最新の版を使っています」。About に版 0.86・ビルド・インストール先が出る。タイトルバーと Hub の版も 0.86
+- [ ] 新しい版が出ている状態で起動するとトーストが出る (1 日 1 回。更新窓のチェックを外すと出ない)
+- [ ] 未保存の変更がある状態で「更新して再起動」→ 保存の確認 → Launcher が新しい版を入れて同じプロジェクトでエディタが開き直す
+- [ ] リポジトリからビルドしたエディタでは「更新して再起動」が押せず、git で更新する案内が出る
+- [ ] 起動スプラッシュの下部で、長いプロジェクトのパスやログが折り返さず「…」で省略され、段階名と重ならない

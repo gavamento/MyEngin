@@ -64,7 +64,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     mye::SuppressCrtDialogs();
 
     mye::EngineConfig config;
-    config.title = L"MyEngine Editor";
+    // 版はタイトルにも出す (Hub・About・Launcher と同じ kEngineVersion)
+    config.title = L"MyEngine Editor " + mye::Utf8ToWide(mye::kEngineVersion);
     config.renderSceneToBackbuffer = false; // シーンは SceneView/GameView の RT に描く
     bool selftest = false;
     bool selftestFull = false;  // --selftest-full (Full 層も回す)

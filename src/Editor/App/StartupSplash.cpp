@@ -387,6 +387,18 @@ void StartupSplash::RunThread()
                                     DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"en-us", &fmtBody);
     dwriteFactory->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                                     DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"en-us", &fmtMono);
+    // 下部の帯は 1 行ずつの固定枠。長いパスやログを折り返すと次の行 (段階名・進捗) に重なるので、
+    // 折り返さずに「…」で省略する。区切り '\\' を 1 個残す指定で、パスは最後のフォルダ名
+    // (= プロジェクト名やファイル名) が見えたまま中ほどが省かれる
+    IDWriteInlineObject* ellipsis = nullptr;
+    dwriteFactory->CreateEllipsisTrimmingSign(fmtBody ? fmtBody : fmtMono, &ellipsis);
+    const DWRITE_TRIMMING lineTrimming = { DWRITE_TRIMMING_GRANULARITY_CHARACTER, L'\\', 1 };
+    for (IDWriteTextFormat* f : { fmtBody, fmtMono }) {
+        if (f) {
+            f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            f->SetTrimming(&lineTrimming, ellipsis);
+        }
+    }
     rt->CreateSolidColorBrush(ToD2D(themeColor::Text), &brush);
 
     LoadSplashBitmap(rt, desc_.imagePath, &splashImage);
@@ -569,6 +581,7 @@ void StartupSplash::RunThread()
 
     SafeRelease(splashImage);
     SafeRelease(brush);
+    SafeRelease(ellipsis);
     SafeRelease(fmtMono);
     SafeRelease(fmtBody);
     SafeRelease(fmtTitle);
