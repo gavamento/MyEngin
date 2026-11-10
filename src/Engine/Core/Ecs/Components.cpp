@@ -1790,6 +1790,9 @@ void RegisterBuiltinComponents()
                                               "ground chains search this far (m) above and below the entity's base")),
         MYE_JP("地面のレイヤー", MYE_FIELD_TIP(TwoBoneIKComponent, groundLayerMask, UInt32,
                                               "collider layers treated as ground (bit i = layer i)")),
+        // M89q: 足首を地面の傾きに揃える
+        MYE_JP("足首を傾ける上限 (勾配、1 = 45 度、0 = 揃えない)", MYE_FIELD_TIP(TwoBoneIKComponent, footMaxTilt, Float,
+                                                "ground chains tilt the foot to match the ground up to this slope (rise over run; 1 = 45 degrees, 0 = off)")),
     });
 #undef MYE_IK_CHAIN
 #undef MYE_IK_FIELD
