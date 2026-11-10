@@ -375,6 +375,18 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 縁で前へ進めなくなった Agent は約 1 秒後に `Stuck` になり、WARN が 1 回出る。目的地を変えると解除される
 - [ ] CharacterController の `stepOffset` を 0 にすると段差を登らない。Transform の scale.y を倍にすると登れる高さも倍になる
 
+### キャラクターの入力操作 (M97a)
+
+- [ ] `MYE_SELFTEST_ONLY=characterinput` を設定した `Editor.exe --selftest` が PASS する
+- [ ] 空のエンティティに CharacterInput を Add Component すると CharacterController も一緒に付く
+- [ ] 床 (Box コライダー) の上に置いて Play すると、WASD で歩き Space で跳ぶ。押しっぱなしでは連続して跳ばず、空中では跳ばない
+- [ ] Inspector の「右キー」を別のキーに変えただけでは D でも動く (「左右の軸名」の MoveX が残っている)。軸名を空にすると新しいキーだけで動く
+- [ ] ゲームパッドの左スティックで動き、A ボタンで跳ぶ (actions.json の MoveX / MoveY / Jump 経由)
+- [ ] 移動方式を「3D カメラ相対」にすると、主カメラを回した向きが前になり、進む方へ体が向く。「旋回速度」を 0 にすると向きは変わらない
+- [ ] 移動方式を「2D 横スクロール」にし、CharacterController の plane2D を有効にすると、左右だけ動く
+- [ ] ポーズ (TimeControl) 中に Space を押して離してから再開しても跳ばない
+- [ ] CharacterInput を付けたシーンで `--record` → `--verify` のハッシュが一致する
+
 ### Obstacle / Modifier / Link (M82f〜M82h)
 
 - [ ] Play 中に Obstacle (carve) を経路上へ動かすと、同じ tick で切り抜きが表示に反映され Agent が迂回する。消すと元に戻る。`carve` を外した Obstacle の Inspector に注意書きが出る

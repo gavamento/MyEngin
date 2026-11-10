@@ -191,6 +191,7 @@ SpriteRenderer は板状画像、TrailRenderer は移動の軌跡、TextMesh は
 | トリガー・衝突イベント | 接触をゲームロジックへ通知 |
 | 空間クエリ | Raycast、SphereCast、OverlapSphere / Box、レイヤマスク |
 | CharacterController | カプセル型キャラクターの移動・接地・ジャンプ |
+| CharacterInput | スクリプト無しで入力を CharacterController へ流す。キー（既定 WASD + Space、Inspector で変更）と `actions.json` の軸 / アクションを合成し、3D ワールド軸・3D カメラ相対・2D 横スクロールから選ぶ。NavMeshAgent・GridAgent2D・ルートモーションとは併用しない |
 | ConstantForce / SpringJoint | 継続的な力、ばねによる接続 |
 | 物理材料 | 静動摩擦、反発、転がり抵抗などの資産化 |
 | PhysicsEnvironment | 重力、空気、風、水面などの共通設定 |
