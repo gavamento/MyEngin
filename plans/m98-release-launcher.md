@@ -15,7 +15,13 @@
 | M98b | 未着手 | Launcher プロジェクト、インストール・一覧・起動・削除、`--release-source` |
 | M98c | 未着手 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
 | M98d | 未着手 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
-| M98e | 未着手 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、rc タグでの実走 (push 前にユーザーへ確認) |
+| M98e | 未着手 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
+
+## ユーザーの追加指示 (2026-11-10、M98a の後)
+
+- 全部終わったら **版 0.86 で公開する** (タグ `v0.86`)。`kEngineVersion` (`src\Engine\Engine\App\Project.h`)・Hub の表記・`tools\collab_fixture.ps1` など版の表記を 0.86 に統一する (M98e で実施)
+- 公開の許可はこの指示で出ている。M98e では `workflow_dispatch` の試走で artifact を確かめてから `v0.86` を push する (rc タグの試走は不要になった)
+- 0.86 は `ParseEngineVersion` で [0, 86, 0, 0] になり、0.6.8.22 より新しいと判定される (順序は正しい)。asset 名は `MyEngine-0.86-win64.zip`
 
 ## 申し送り
 
@@ -121,7 +127,7 @@ GitHub Releases は 0 件、Release を作るワークフローも無い。エ�
 | M98b | Launcher プロジェクト (sln / vcxproj / `gen_project_files.ps1` / 規則 15・16 の許可リスト)、インストール・一覧・起動・削除の画面と処理、`--release-source` | ローカルの release フォルダからインストール → 起動、途中で取り消し / 壊れた zip / SHA 不一致で既存の版が無事なこと、`--screenshot` |
 | M98c | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 | 古い Launcher → 新しい Launcher へ差し替わり再起動すること |
 | M98d | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し | ローカルの取得元で「通知 → 更新して再起動 → 新しい版のエディタが同じプロジェクトで開く」、開発ビルドではボタンが無効、`--screenshot` |
-| M98e | make_dist.ps1 の拡張、`release.yml`、README / `engine_spec.md` / ADR-037 / リリース手順書 (`docs\release.md`) | `workflow_dispatch` で artifact まで通る。最後にユーザーの確認を取ってから `v0.6.8.23-rc1` を push → プレリリースが作られ、`--include-prerelease` の Launcher で実際に入れられること |
+| M98e | make_dist.ps1 の拡張、`release.yml`、README / `engine_spec.md` / ADR-037 / リリース手順書 (`docs\release.md`) | `workflow_dispatch` で artifact まで通る。版の表記を 0.86 に統一 → `workflow_dispatch` の試走 → `v0.86` を push → Release が作られ、Launcher で実際に入れられること |
 
 ## 決まっている副作用と注意
 - 公開のたびに `kEngineVersion` を上げる必要がある。上げると Hub が既存プロジェクトに版違いの注意を出す (既存の挙動、警告だけ)
