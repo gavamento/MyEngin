@@ -41,6 +41,7 @@
 #include "Engine/Engine/Feel/FeelMathSelfTest.h"
 #include "Engine/Engine/Feel/FeelSystemSelfTest.h"
 #include "Engine/Engine/Disturbance/DisturbanceFieldSelfTest.h"
+#include "Engine/Engine/Update/UpdateSelfTest.h"
 #include "Engine/Engine/Feel/SpringFollowSelfTest.h"
 #include "Engine/Engine/Loop/CharacterInputSelfTest.h"
 #include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
@@ -253,6 +254,7 @@ const SelfTestSuite kSuites[] = {
     { "characterinput", mye::RunCharacterInputSelfTest, SelfTestTier::Fast, "M97a: 入力 → CharacterController (移動方式・キーの変更・ジャンプ・レーン)" },
     { "disturbance", mye::RunDisturbanceFieldSelfTest, SelfTestTier::Fast, "M96: かき乱しフィールド (静止・減衰と復元・注入の境界・源の速度・波紋・寿命・短い並走・復元後の通番・巨大な速度・格子外の風)" },
     { "disturbancelong", mye::RunDisturbanceFieldLongSelfTest, SelfTestTier::Full, "M96: かき乱しフィールドの重い項目 (128x128 を 600 tick・1200 tick の復元・10000 tick の波紋・600 tick 並走と焼き込みハッシュ・スナップショット往復・ソルバ・Volume の浮力と風と並走と往復・草・追従・粒子・地形)" },
+    { "update", mye::RunUpdateSelfTest, SelfTestTier::Fast, "M98a: 版の比較 / Release JSON / SHA-256 / zip の安全な展開 / ローカル取得元" },
 };
 
 const SelfTestAlias kAliases[] = {

@@ -94,6 +94,7 @@ $engineExternal = Get-SourceItems @(
     @{ Path = 'external\imgui'; Prefix = 'external\imgui' },
     @{ Path = 'external\libtess2'; Prefix = 'external\libtess2' },
     @{ Path = 'external\meshoptimizer'; Prefix = 'external\meshoptimizer' },
+    @{ Path = 'external\miniz'; Prefix = 'external\miniz' },
     @{ Path = 'external\recastnavigation'; Prefix = 'external\recastnavigation' }
 )
 # external は vcxproj に手書き済み (WarningLevel 指定のため)。filters のみ反映

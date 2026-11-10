@@ -18,6 +18,7 @@
 | OpenSSL | 3.6.5 (vcpkg `x64-windows` の Release。ヘッダ + import lib + `libssl-3-x64.dll` / `libcrypto-3-x64.dll`)。GameLift SDK の依存で DLL 必須 (M81g)。手順は `openssl\BUILD.md` | https://github.com/openssl/openssl/releases/tag/openssl-3.6.5 | Apache-2.0 (LICENSE.txt 同梱) |
 | Recast Navigation | v1.6.0 (`6dc1667f580357e8a2154c28b7867bea7e8ad3a7`)。Recast / Detour / DetourTileCache / DetourCrowd / DebugUtils の Include と Source だけ (RecastDemo / Tests / CMake は入れない)。DebugUtils の RecastDump.cpp はビルド対象外。パッチは `recastnavigation\PATCHES.md` (M82a) | https://github.com/recastnavigation/recastnavigation/releases/tag/v1.6.0 | Zlib (License.txt 同梱) |
 | meshoptimizer | v1.3 (`9e1f07b159d3cb777f1c67ed31fc11fd117986f4`)。`src\` のうちメッシュ LOD 生成に要る meshoptimizer.h / allocator.cpp / indexgenerator.cpp / simplifier.cpp と LICENSE.md だけ (M90e)。改変なし | https://github.com/zeux/meshoptimizer/releases/tag/v1.3 | MIT (LICENSE.md 同梱) |
+| miniz | 3.0.2 (リリース zip の amalgamated miniz.{c,h} と LICENSE だけ。改変なし。ヘッダ内の表記は 3.0.0 のまま)。配布 zip の展開に使う (M98a)。`MINIZ_NO_ZLIB_COMPATIBLE_NAMES` でビルドする | https://github.com/richgel999/miniz/releases/tag/3.0.2 | MIT (LICENSE 同梱) |
 
 方針: パッケージマネージャ・サブモジュールは使わず、ソースをそのままコミットする（クローン → F5 で動くことを優先）。
 例外 (M81g): GameLift Server SDK と OpenSSL は、ソースからのビルドが重い (SDK は CMake + 依存取得、OpenSSL は Perl + NASM で約 13 分) ため、

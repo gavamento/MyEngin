@@ -139,6 +139,9 @@
     <Filter Include="Engine\UI">
       <UniqueIdentifier>{AD97C4EA-898A-15C7-7B0A-F4DF0AA75D30}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Engine\Update">
+      <UniqueIdentifier>{A503EF82-8BBC-1228-EA97-F12A618753DE}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Engine\Vfx">
       <UniqueIdentifier>{515E74B9-0ABA-83E2-939F-4FF67E4E6CE9}</UniqueIdentifier>
     </Filter>
@@ -162,6 +165,9 @@
     </Filter>
     <Filter Include="external\meshoptimizer">
       <UniqueIdentifier>{F59630C1-1575-80D4-313C-3DF84CC86FF3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="external\miniz">
+      <UniqueIdentifier>{8827F89E-FA65-3B70-977F-E24A49557DE2}</UniqueIdentifier>
     </Filter>
     <Filter Include="external\recastnavigation">
       <UniqueIdentifier>{7D0C315C-0EEB-9161-2426-456BF9B87805}</UniqueIdentifier>
@@ -1137,6 +1143,12 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgets.cpp">
       <Filter>Engine\UI</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Update\EngineRelease.cpp">
+      <Filter>Engine\Update</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Update\UpdateSelfTest.cpp">
+      <Filter>Engine\Update</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Vfx\EffectSystem.cpp">
       <Filter>Engine\Vfx</Filter>
     </ClCompile>
@@ -1150,6 +1162,9 @@
       <Filter>Platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\CrashHandler.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\HttpClient.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Input.cpp">
@@ -1167,7 +1182,13 @@
     <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\Sha256.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp">
+      <Filter>Platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Platform\ZipExtract.cpp">
       <Filter>Platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.cpp">
@@ -2304,6 +2325,12 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UIWidgets.h">
       <Filter>Engine\UI</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Update\EngineRelease.h">
+      <Filter>Engine\Update</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Update\UpdateSelfTest.h">
+      <Filter>Engine\Update</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Vfx\EffectSystem.h">
       <Filter>Engine\Vfx</Filter>
     </ClInclude>
@@ -2322,6 +2349,9 @@
     <ClInclude Include="..\src\Engine\Platform\CrashHandler.h">
       <Filter>Platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\HttpClient.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Input.h">
       <Filter>Platform</Filter>
     </ClInclude>
@@ -2337,10 +2367,16 @@
     <ClInclude Include="..\src\Engine\Platform\PathUtil.h">
       <Filter>Platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\Sha256.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\VkNameTable.inl">
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h">
+      <Filter>Platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Platform\ZipExtract.h">
       <Filter>Platform</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.h">
@@ -2673,6 +2709,9 @@
     <ClCompile Include="..\external\meshoptimizer\simplifier.cpp">
       <Filter>external\meshoptimizer</Filter>
     </ClCompile>
+    <ClCompile Include="..\external\miniz\miniz.c">
+      <Filter>external\miniz</Filter>
+    </ClCompile>
     <ClCompile Include="..\external\recastnavigation\DebugUtils\Source\DebugDraw.cpp">
       <Filter>external\recastnavigation\DebugUtils\Source</Filter>
     </ClCompile>
@@ -2813,6 +2852,9 @@
     </ClInclude>
     <ClInclude Include="..\external\meshoptimizer\meshoptimizer.h">
       <Filter>external\meshoptimizer</Filter>
+    </ClInclude>
+    <ClInclude Include="..\external\miniz\miniz.h">
+      <Filter>external\miniz</Filter>
     </ClInclude>
     <ClInclude Include="..\external\recastnavigation\DebugUtils\Include\DebugDraw.h">
       <Filter>external\recastnavigation\DebugUtils\Include</Filter>

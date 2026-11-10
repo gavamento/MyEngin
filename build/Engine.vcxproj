@@ -319,17 +319,22 @@
     <ClCompile Include="..\src\Engine\Engine\UI\UITextMetrics.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgetFactory.cpp" />
     <ClCompile Include="..\src\Engine\Engine\UI\UIWidgets.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Update\EngineRelease.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Update\UpdateSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\EffectSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Vfx\VfxSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Clock.cpp" />
     <ClCompile Include="..\src\Engine\Platform\CrashHandler.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\HttpClient.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Input.cpp" />
     <ClCompile Include="..\src\Engine\Platform\InputActions.cpp" />
     <ClCompile Include="..\src\Engine\Platform\InputActionsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Net\UdpSocket.cpp" />
     <ClCompile Include="..\src\Engine\Platform\PathUtil.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\Sha256.cpp" />
     <ClCompile Include="..\src\Engine\Platform\Win32Window.cpp" />
+    <ClCompile Include="..\src\Engine\Platform\ZipExtract.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\FxGpuBackend.cpp" />
@@ -708,19 +713,24 @@
     <ClInclude Include="..\src\Engine\Engine\UI\UITextMetrics.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIWidgetFactory.h" />
     <ClInclude Include="..\src\Engine\Engine\UI\UIWidgets.h" />
+    <ClInclude Include="..\src\Engine\Engine\Update\EngineRelease.h" />
+    <ClInclude Include="..\src\Engine\Engine\Update\UpdateSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\EffectSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxGeometry.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxRenderer.h" />
     <ClInclude Include="..\src\Engine\Engine\Vfx\VfxSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\Clock.h" />
     <ClInclude Include="..\src\Engine\Platform\CrashHandler.h" />
+    <ClInclude Include="..\src\Engine\Platform\HttpClient.h" />
     <ClInclude Include="..\src\Engine\Platform\Input.h" />
     <ClInclude Include="..\src\Engine\Platform\InputActions.h" />
     <ClInclude Include="..\src\Engine\Platform\InputActionsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Platform\Net\UdpSocket.h" />
     <ClInclude Include="..\src\Engine\Platform\PathUtil.h" />
+    <ClInclude Include="..\src\Engine\Platform\Sha256.h" />
     <ClInclude Include="..\src\Engine\Platform\VkNameTable.inl" />
     <ClInclude Include="..\src\Engine\Platform\Win32Window.h" />
+    <ClInclude Include="..\src\Engine\Platform\ZipExtract.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ComputeAbiSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\FxGpuBackend.h" />
@@ -876,6 +886,13 @@
     <ClCompile Include="..\external\libtess2\Source\tess.c">
       <WarningLevel>Level3</WarningLevel>
       <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <ClCompile Include="..\external\miniz\miniz.c">
+      <WarningLevel>Level3</WarningLevel>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <PreprocessorDefinitions>MINIZ_NO_ZLIB_COMPATIBLE_NAMES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!-- C4005: miniz.c が WIN32_LEAN_AND_MEAN を自前で定義する (Common.props と重なるだけで無害) -->
+      <DisableSpecificWarnings>4005;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="..\external\meshoptimizer\allocator.cpp">
       <WarningLevel>Level3</WarningLevel>
