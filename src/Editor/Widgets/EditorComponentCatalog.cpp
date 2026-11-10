@@ -49,6 +49,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "ConstantForce", { ICON_FA_BOLT, "Physics", "定常力" } },
         { "SpringJoint", { ICON_FA_LINK, "Physics", "スプリングジョイント" } },
         { "CharacterController", { ICON_FA_PERSON_RUNNING, "Physics", "キャラクターコントローラー" } },
+        // M97a: 入力 → CharacterController。動かす相手の隣に置く
+        { "CharacterInput", { ICON_FA_PERSON_WALKING, "Physics", "キャラクター入力操作" } },
         // M59b: シーン全体の物理環境 (重力ベクトル / 空気 / 風 / 水面)。Skybox/Fog と同じ
         // 「1 個だけ効く」設定物だが、消費者が物理なので棚は Physics に置く
         { "PhysicsEnvironment", { ICON_FA_GLOBE, "Physics", "物理環境" } },

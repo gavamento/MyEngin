@@ -2131,6 +2131,26 @@ void RegisterBuiltinComponents()
         MYE_JP("押しのけの余白 (m)", MYE_FIELD_TIP(DisturbancePusherComponent, margin, Float, "how far beyond this object's collider the fog is pushed aside [m] (0 to 4). Replaces the field's pushMargin for this object")),
         MYE_JP("押しのけの強さ", MYE_FIELD_TIP(DisturbancePusherComponent, strength, Float, "how much of the fog this object pushes out of its footprint, 0 to 1 (1 = empty, 0 = this object does not push). Replaces the field's pushStrength for this object")),
     });
+
+    // M97a: キャラクターの入力操作 (TypeId=99、末尾 append)。新規 opt-in 型なので既存シーンのハッシュは不変
+    static_assert(sizeof(CharacterInputComponent) == 244, "CharacterInputComponent: no implicit padding");
+    RegisterComponent<CharacterInputComponent>("CharacterInput", {
+        MYE_JP("移動方式", MYE_FIELD_TIP(CharacterInputComponent, mode, Int32, "World Axes 3D: left/right moves along world X, forward/back along world Z. Camera Relative 3D: moves relative to the camera's facing and turns the body toward the movement. Side Scroll 2D: left/right only (use with a plane2D CharacterController)")),
+        MYE_JP("プレイヤー番号", MYE_FIELD_TIP(CharacterInputComponent, playerIndex, Int32, "input lane (0 = keyboard + pad 0, n = pad n). An out-of-range lane gives no input")),
+        MYE_JP("移動速度 (m/s)", MYE_FIELD_RANGE(CharacterInputComponent, moveSpeed, Float, 0.0f, 50.0f)),
+        MYE_JP("ジャンプ初速 (m/s)", MYE_FIELD_RANGE(CharacterInputComponent, jumpSpeed, Float, 0.0f, 50.0f)),
+        MYE_JP("旋回速度 (度/秒)", MYE_FIELD_TIP(CharacterInputComponent, turnSpeedDeg, Float, "Camera Relative 3D only: how fast the body turns toward the movement direction. 0 = never turn. Ignored while the entity has a parent")),
+        MYE_JP("基準カメラ", MYE_FIELD_TIP(CharacterInputComponent, cameraEntity, EntityRef, "Camera Relative 3D only: the entity whose facing defines forward. Empty = the scene's primary camera")),
+        MYE_JP("前進キー", MYE_FIELD_TIP(CharacterInputComponent, keyForward, Int32, "key that moves forward. Combined with the Move Y axis below; clear that axis name to use only this key")),
+        MYE_JP("後退キー", MYE_FIELD_TIP(CharacterInputComponent, keyBack, Int32, "key that moves back. Combined with the Move Y axis below")),
+        MYE_JP("左キー", MYE_FIELD_TIP(CharacterInputComponent, keyLeft, Int32, "key that moves left. Combined with the Move X axis below")),
+        MYE_JP("右キー", MYE_FIELD_TIP(CharacterInputComponent, keyRight, Int32, "key that moves right. Combined with the Move X axis below")),
+        MYE_JP("ジャンプキー", MYE_FIELD_TIP(CharacterInputComponent, keyJump, Int32, "key that jumps. Combined with the Jump action below")),
+        MYE_JP("左右の軸名", MYE_FIELD_TIP(CharacterInputComponent, moveXAxis, String64, "axis name in assets/input/actions.json (Project Settings > Input) added to the left/right keys; this is where gamepad sticks come from. Empty = keys only")),
+        MYE_JP("前後の軸名", MYE_FIELD_TIP(CharacterInputComponent, moveYAxis, String64, "axis name in assets/input/actions.json added to the forward/back keys. Empty = keys only")),
+        MYE_JP("ジャンプのアクション名", MYE_FIELD_TIP(CharacterInputComponent, jumpAction, String64, "action name in assets/input/actions.json that also jumps (its bufferTicks gives jump buffering). Empty = key only")),
+        MYE_JP("ジャンプキーの前回の状態", MYE_FIELD_FLAGS(CharacterInputComponent, jumpKeyWasDown, UInt32, kFieldReadOnly | kFieldHidden)),
+    });
 }
 
 } // namespace mye

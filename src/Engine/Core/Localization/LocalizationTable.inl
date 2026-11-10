@@ -606,6 +606,11 @@ MYE_STR(Insp_JointHinge,      "Hinge (spins on axis)",  "ヒンジ (軸まわり
 MYE_STR(Insp_JointFixed,      "Fixed (welded)",         "固定 (溶接)")
 MYE_STR(Insp_JointSlider,     "Slider (glides on axis)", "スライダ (軸上を滑る)")
 MYE_STR(Insp_JointCone,       "Cone (swing / twist)",   "コーン (スイング / ツイスト)")
+// ---- キャラクター入力操作の移動方式 (M97a)。Inspector の mode コンボの選択肢 ----
+// 表示順 = CharacterInputComponent.mode の値順 (charinputmode:: の 0..2)。値の意味を変えると既存シーンが壊れる
+MYE_STR(Insp_CharInputWorldAxes3D,      "World Axes 3D",      "3D ワールド軸")
+MYE_STR(Insp_CharInputCameraRelative3D, "Camera Relative 3D", "3D カメラ相対")
+MYE_STR(Insp_CharInputSideScroll2D,     "Side Scroll 2D",     "2D 横スクロール")
 // ---- カメラの視錐台ワイヤ / 操縦モード / プレビュー窓 ----
 // 視錐台は選択中のカメラだけに出る。far は既定 1000 で素直に描くと画面を埋めるので、
 // 「表示上の打ち切り距離」をここで可変にする (実 farZ の方が小さければそちらが勝つ)
