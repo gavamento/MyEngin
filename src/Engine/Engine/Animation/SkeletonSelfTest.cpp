@@ -1076,6 +1076,152 @@ bool RunSkeletonSelfTest()
               "foot IK (M89m): a foot with no ground in range keeps the animation and does not lower the pelvis");
     }
 
+    // ---- (M89q) 足首の向きを地面の傾きに揃える: 平地 / 前後・左右の斜面 / 段の縁 / 上限 / つま先のレイが使えない ----
+    {
+        RegisterBuiltinComponents();
+        // Pelvis (高さ 2) → Hip → Knee (下へ 1) → Ankle (下へ 1、足元の面 y = 0) → Toe (前 +Z へ 0.2)
+        const auto makeLeg = [](bool withToe, XMFLOAT4 ankleRotation) {
+            SkinnedModel leg;
+            const auto add = [&](const char* name, int32_t parent, XMFLOAT3 t) {
+                SkeletonJoint jt;
+                jt.parent = parent;
+                jt.name = name;
+                jt.bindT = t;
+                leg.joints.push_back(jt);
+            };
+            add("Pelvis", -1, { 0.0f, 2.0f, 0.0f });
+            add("Hip", 0, { 0.0f, 0.0f, 0.0f });
+            add("Knee", 1, { 0.0f, -1.0f, 0.0f });
+            add("Ankle", 2, { 0.0f, -1.0f, 0.0f });
+            leg.joints.back().bindR = ankleRotation;
+            if (withToe) {
+                add("Toe", 3, { 0.0f, 0.0f, 0.2f });
+            }
+            return leg;
+        };
+        constexpr int32_t kAnkle = 3;
+        const XMFLOAT4 noRotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        const SkinnedModel legToe = makeLeg(true, noRotation);
+        const SkinnedModel legNoToe = makeLeg(false, noRotation);
+        XMFLOAT4 yaw;
+        XMStoreFloat4(&yaw, XMQuaternionRotationAxis(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), 0.5f));
+        const SkinnedModel legYaw = makeLeg(true, yaw);
+        RenderResources res;
+        const AssetID legToeId = res.skinnedModels.Register("selftest_foot_align", SkinnedModel(legToe));
+        const AssetID legNoToeId = res.skinnedModels.Register("selftest_foot_align_no_toe", SkinnedModel(legNoToe));
+        const AssetID legYawId = res.skinnedModels.Register("selftest_foot_align_yaw", SkinnedModel(legYaw));
+
+        struct GroundBox {
+            XMFLOAT3 center;
+            XMFLOAT4 rotation;
+            XMFLOAT3 half;
+        };
+        // 上面が原点を通るように傾けた大きな箱 (axis まわりに angle)。half.z を小さくすると、つま先 (z = 0.2) の下には無い
+        const auto slope = [](XMVECTOR axis, float angle, float halfZ, XMFLOAT3& outNormal) {
+            const XMVECTOR q = XMQuaternionRotationAxis(axis, angle);
+            const XMVECTOR n = XMVector3Rotate(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), q);
+            GroundBox b = { {}, {}, { 2.0f, 0.5f, halfZ } };
+            XMStoreFloat3(&b.center, XMVectorScale(n, -0.5f));
+            XMStoreFloat4(&b.rotation, q);
+            XMStoreFloat3(&outNormal, n);
+            return b;
+        };
+        struct Result {
+            int32_t useRotation = 0;
+            XMFLOAT4X4 ankle = {}; // IK 後の足首のグローバル行列 (行 = 足首の軸)
+        };
+        const auto run = [&](const SkinnedModel& model, AssetID modelId, const std::vector<GroundBox>& boxes,
+                             float maxTilt) {
+            Scene scene;
+            World& world = scene.GetWorld();
+            GameObject body = scene.CreateGameObjectTracked("Body");
+            body.AddComponent<SkinnedMeshComponent>()->model = modelId;
+            body.AddComponent<TwoBoneIKComponent>();
+            for (const GroundBox& b : boxes) {
+                GameObject g = scene.CreateGameObjectTracked("Ground");
+                ColliderComponent* col = g.AddComponent<ColliderComponent>();
+                col->shape = collidershape::kBox;
+                col->halfExtents = b.half;
+                if (g.GetComponent<WorldMatrixComponent>() == nullptr) {
+                    g.AddComponent<WorldMatrixComponent>();
+                }
+                world.ApplyStructuralChanges();
+                LocalTransform* lt = g.GetComponent<LocalTransform>();
+                lt->position = b.center;
+                lt->rotation = b.rotation;
+            }
+            TwoBoneIKComponent* ik = body.GetComponent<TwoBoneIKComponent>();
+            std::memcpy(ik->chains[0].endJoint, "Ankle", sizeof("Ankle"));
+            ik->chains[0].mode = twoboneikmode::kGround;
+            ik->chains[0].poleHint = { 0.0f, 1.0f, 1.0f }; // 膝は前へ
+            ik->footMaxTilt = maxTilt;
+            transforms.Update(world); // レイは WorldMatrix のコライダーに当たる
+            TwoBoneIkSystem ikSystem;
+            ikSystem.Update(world, res);
+            const SkinnedMeshComponent* sm = body.GetComponent<SkinnedMeshComponent>();
+            std::vector<XMMATRIX> locals;
+            SampleSkinnedLocals(model, *sm, locals);
+            Result r;
+            r.useRotation = sm->poseIkCount == 1 ? sm->poseIk[0].useRotation : -1;
+            r.ankle = ToF4x4(JointGlobalFromLocals(model, locals, kAnkle));
+            return r;
+        };
+        // 足首の軸 (0 = 右, 1 = 上, 2 = 前) が expected (単位) を向いているか
+        const auto axisIs = [](const Result& r, int axis, XMFLOAT3 expected) {
+            return std::fabs(r.ankle.m[axis][0] - expected.x) < 1e-4f && std::fabs(r.ankle.m[axis][1] - expected.y) < 1e-4f
+                   && std::fabs(r.ankle.m[axis][2] - expected.z) < 1e-4f;
+        };
+        const XMFLOAT4 flat = { 0.0f, 0.0f, 0.0f, 1.0f };
+        const XMVECTOR axisX = XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+        const XMVECTOR axisZ = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+
+        // 足元より 0.1 高い平らな地面: 膝が曲がって脛は傾くが、足首はアニメの向き (ヨー 0.5 rad) のまま
+        Result r = run(legYaw, legYawId, { { { 0.0f, -0.4f, 0.0f }, flat, { 2.0f, 0.5f, 2.0f } } }, 1.0f);
+        XMFLOAT3 yawForward;
+        XMStoreFloat3(&yawForward, XMVector3Rotate(axisZ, XMLoadFloat4(&yaw)));
+        check(r.useRotation == 1 && std::fabs(r.ankle._42 - 0.1f) < 1e-4f && axisIs(r, 1, { 0.0f, 1.0f, 0.0f })
+                  && axisIs(r, 2, yawForward),
+              "foot IK (M89q): on flat ground the ankle keeps the animated rotation while the leg bends");
+
+        XMFLOAT3 normal;
+        GroundBox ground = slope(axisX, 0.3f, 2.0f, normal);
+        r = run(legToe, legToeId, { ground }, 1.0f);
+        check(r.useRotation == 1 && std::fabs(normal.z) > 0.2f && axisIs(r, 1, normal) && axisIs(r, 0, { 1.0f, 0.0f, 0.0f }),
+              "foot IK (M89q): on a slope along the foot the sole pitches to the ground (heel and toe rays)");
+
+        r = run(legNoToe, legNoToeId, { ground }, 1.0f);
+        check(r.useRotation == 1 && axisIs(r, 1, normal),
+              "foot IK (M89q): without a toe joint the sole follows the normal under the ankle");
+
+        r = run(legToe, legToeId, { ground }, 0.2f);
+        const float tilt = std::sqrt(r.ankle._21 * r.ankle._21 + r.ankle._23 * r.ankle._23) / r.ankle._22;
+        check(r.useRotation == 1 && std::fabs(tilt - 0.2f) < 1e-4f,
+              "foot IK (M89q): the tilt is capped by footMaxTilt (a slope, rise over run)");
+
+        r = run(legToe, legToeId, { ground }, 0.0f);
+        check(r.useRotation == 0 && std::fabs(r.ankle._42) < 1e-4f,
+              "foot IK (M89q): footMaxTilt 0 places the foot without aligning the ankle");
+
+        ground = slope(axisZ, 0.3f, 2.0f, normal);
+        r = run(legToe, legToeId, { ground }, 1.0f);
+        check(r.useRotation == 1 && std::fabs(normal.x) > 0.2f && axisIs(r, 1, normal) && axisIs(r, 2, { 0.0f, 0.0f, 1.0f }),
+              "foot IK (M89q): on a slope across the foot the sole rolls to the normal under the ankle");
+
+        ground = slope(axisZ, 0.3f, 0.1f, normal);
+        r = run(legToe, legToeId, { ground }, 1.0f);
+        check(r.useRotation == 1 && axisIs(r, 1, normal),
+              "foot IK (M89q): a toe with no ground under it falls back to the normal under the ankle");
+
+        // 段の縁: かかとの下は高さ 0、つま先 (z = 0.2) の下は高さ 0.1。どちらの面も水平だが、足は 2 点を結ぶ向きに寝る
+        r = run(legToe, legToeId,
+                { { { 0.0f, -0.5f, 0.0f }, flat, { 0.5f, 0.5f, 0.1f } }, { { 0.0f, -0.4f, 0.25f }, flat, { 0.5f, 0.5f, 0.15f } } },
+                1.0f);
+        const float inv = 1.0f / std::sqrt(0.2f * 0.2f + 0.1f * 0.1f);
+        check(r.useRotation == 1 && axisIs(r, 1, { 0.0f, 0.2f * inv, -0.1f * inv })
+                  && axisIs(r, 2, { 0.0f, 0.1f * inv, 0.2f * inv }),
+              "foot IK (M89q): across a step edge the sole pitches by the height difference between heel and toe");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Skeleton self test: ALL PASS ====");
         return true;

@@ -2337,7 +2337,8 @@ enum : int32_t {
     kPosition = 1,         // 先端の位置だけ合わせる
     kPositionRotation = 2, // 先端の回転も目標の回転に合わせる
     // 足の接地 (M89m): 目標は使わず、先端の真下の地面へアニメの高さのまま置く (FootIkSystem)。
-    // 地面が足元の面より低い足があれば、骨盤を pelvisMaxDrop まで下げて届かせる
+    // 地面が足元の面より低い足があれば、骨盤を pelvisMaxDrop まで下げて届かせる。
+    // 足首の向きは地面の傾きに揃える (M89q、footMaxTilt まで)
     kGround = 3,
 };
 } // namespace twoboneikmode
@@ -2365,6 +2366,9 @@ struct TwoBoneIKComponent {
     float pelvisMaxDrop = 0.3f;      // 骨盤を下げる上限 (m、ワールド)
     float groundProbe = 0.5f;        // 足元の面の上下この距離 (m) の範囲で地面を探す
     uint32_t groundLayerMask = 0xFFFFFFFFu; // 地面として当てるコライダーのレイヤー
+    // 足首を地面の傾きに揃えて傾ける上限 (M89q)。勾配 (水平 1 に対する高さ。1 = 45 度) で持つのは、
+    // 角度だと上限で切るのに tan / acos が要るため (ADR-027 決定 17)。0 以下 = 揃えない (足首はアニメの向きを脚が運ぶまま)
+    float footMaxTilt = 1.0f;
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 

@@ -175,6 +175,9 @@ DirectX::XMMATRIX JointGlobalFromLocals(const SkinnedModel& model,
                                         int32_t jointIndex);
 
 // ---- 2 ボーン IK (M89l) ----
+// u の向きを v の向きへ回す最短の弧の四元数 (長さは問わない。0 に近いベクトルは回さない側へ倒れる)。
+// 半角公式 (u×v, 1 + u·v) を正規化するので acos を使わない。ちょうど逆向きは u に垂直な軸で 180 度
+DirectX::XMVECTOR ShortestArc(DirectX::XMVECTOR u, DirectX::XMVECTOR v);
 // 1 本の鎖の目標。座標はすべてモデルのエンティティ空間 (= jointGlobal の空間)
 struct TwoBoneIkGoal {
     int32_t endJoint = -1;                               // 先端。中間 = その親、根 = 中間の親

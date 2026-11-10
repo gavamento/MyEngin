@@ -397,23 +397,6 @@ XMVECTOR PerpendicularTo(XMVECTOR v, XMVECTOR dir)
     return Normalize3OrZero(XMVectorSubtract(v, XMVectorScale(dir, XMVectorGetX(XMVector3Dot(v, dir)))));
 }
 
-// u の向きを v の向きへ回す最短の弧の四元数。半角公式 (u×v, 1 + u·v) を正規化するので acos を使わない。
-// ちょうど逆向きは u に垂直な軸で 180 度
-XMVECTOR ShortestArc(XMVECTOR u, XMVECTOR v)
-{
-    u = Normalize3OrZero(u);
-    v = Normalize3OrZero(v);
-    const float d = XMVectorGetX(XMVector3Dot(u, v));
-    if (d < -0.999999f) {
-        XMVECTOR axis = XMVector3Cross(u, XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f));
-        if (XMVectorGetX(XMVector3LengthSq(axis)) < kIkEpsilon) {
-            axis = XMVector3Cross(u, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-        }
-        return XMVectorSetW(Normalize3OrZero(axis), 0.0f);
-    }
-    return XMQuaternionNormalize(XMVectorSetW(XMVector3Cross(u, v), 1.0f + d));
-}
-
 // グローバル行列 g を、自分の原点 (平行移動の行) を中心に q だけ回す (エンティティ空間で後から掛ける)
 XMMATRIX RotateAboutOwnOrigin(const XMMATRIX& g, XMVECTOR q)
 {
@@ -433,6 +416,21 @@ XMMATRIX InverseParentGlobal(const SkinnedModel& model, const std::vector<XMMATR
 }
 
 } // namespace
+
+XMVECTOR ShortestArc(XMVECTOR u, XMVECTOR v)
+{
+    u = Normalize3OrZero(u);
+    v = Normalize3OrZero(v);
+    const float d = XMVectorGetX(XMVector3Dot(u, v));
+    if (d < -0.999999f) {
+        XMVECTOR axis = XMVector3Cross(u, XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f));
+        if (XMVectorGetX(XMVector3LengthSq(axis)) < kIkEpsilon) {
+            axis = XMVector3Cross(u, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+        }
+        return XMVectorSetW(Normalize3OrZero(axis), 0.0f);
+    }
+    return XMQuaternionNormalize(XMVectorSetW(XMVector3Cross(u, v), 1.0f + d));
+}
 
 void SolveTwoBoneIk(const SkinnedModel& model, const TwoBoneIkGoal& goal, std::vector<XMMATRIX>& locals)
 {
