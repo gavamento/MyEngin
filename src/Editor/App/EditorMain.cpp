@@ -582,6 +582,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     mye::EditorApp app;
     app.startupObserver = config.startupObserver;
     app.saveSceneOnStart = saveSceneOnStart;
+    app.allowAutoUpdateCheck = !automation; // CI / 検証の起動ではネットワークに出ない
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;
     app.openAnimPreview = openAnimPreview;

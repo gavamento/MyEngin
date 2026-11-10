@@ -25,6 +25,9 @@
     <Filter Include="Undo">
       <UniqueIdentifier>{C45724AD-B67D-BA3E-BE10-0FFAC17BD3A6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Update">
+      <UniqueIdentifier>{E5707729-BBCD-7EBC-5A61-17A3113E3137}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Widgets">
       <UniqueIdentifier>{9043029E-9E9C-1DA6-36E1-76F68CEEE880}</UniqueIdentifier>
     </Filter>
@@ -254,6 +257,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp">
       <Filter>Undo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Update\UpdateWindow.cpp">
+      <Filter>Update</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Update\UpdateWindowSelfTest.cpp">
+      <Filter>Update</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp">
       <Filter>Widgets</Filter>
@@ -599,6 +608,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h">
       <Filter>Undo</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Update\UpdateWindow.h">
+      <Filter>Update</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Update\UpdateWindowSelfTest.h">
+      <Filter>Update</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h">
       <Filter>Widgets</Filter>

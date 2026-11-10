@@ -70,6 +70,9 @@ MYE_STR(Menu_SaveSceneAs,     "Save Scene As...",  "名前を付けてシーン�
 MYE_STR(Menu_BuildSettings,   "Build Settings...", "ビルド設定...")
 MYE_STR(Menu_ProjectSettings, "Project Settings...", "プロジェクト設定...")
 MYE_STR(Menu_Exit,            "Exit",              "終了")
+MYE_STR(Menu_Help,            "Help",              "ヘルプ")
+MYE_STR(Menu_CheckUpdates,    "Check for Updates...", "更新を確認...")
+MYE_STR(Menu_About,           "About MyEngine",    "MyEngine について")
 MYE_STR(Menu_View,            "View",              "表示")
 MYE_STR(Menu_Edit,            "Edit",              "編集")
 MYE_STR(Menu_Undo,            "Undo",              "元に戻す")
@@ -924,6 +927,33 @@ MYE_STR(Launcher_SelfUpdateAvail, "A newer Launcher (%s) is available.", "新し
 MYE_STR(Launcher_SelfUpdate,     "Update the Launcher",     "Launcher を更新")
 MYE_STR(Launcher_SelfUpdateFailed, "Could not update the Launcher: %s",
                                 "Launcher を更新できませんでした: %s")
+
+// ---- エディタの更新確認 (M98d) ----
+MYE_STR(Win_Update,             "Update###Update",          "更新###Update")
+MYE_STR(Upd_Current,            "Current version: %s",      "今の版: %s")
+MYE_STR(Upd_Checking,           "Checking for updates...",  "更新を確認しています...")
+MYE_STR(Upd_NotChecked,         "Not checked yet.",         "まだ確認していません。")
+MYE_STR(Upd_Failed,             "Could not check for updates: %s", "更新を確認できませんでした: %s")
+MYE_STR(Upd_NoRelease,          "No release has been published yet.", "まだ公開された版がありません。")
+MYE_STR(Upd_UpToDate,           "You have the latest version.", "最新の版を使っています。")
+MYE_STR(Upd_Available,          "MyEngine %s is available (published %s).", "MyEngine %s が公開されています (公開日 %s)。")
+MYE_STR(Upd_Notes,              "Release notes",            "リリースノート")
+MYE_STR(Upd_UpdateRestart,      "Update and restart",       "更新して再起動")
+MYE_STR(Upd_DevBuild,           "This editor runs from a source build, not a Launcher install. Update it with git.",
+                                "このエディタはソースからのビルドで動いています (Launcher で入れた版ではありません)。git で更新してください。")
+MYE_STR(Upd_NoLauncher,         "MyEngineLauncher.exe was not found. Get it from the Releases page.",
+                                "MyEngineLauncher.exe が見つかりません。Releases のページから入手してください。")
+MYE_STR(Upd_CheckNow,           "Check now",                "今すぐ確認")
+MYE_STR(Upd_OpenReleases,       "Open the Releases page",   "Releases のページを開く")
+MYE_STR(Upd_AutoCheck,          "Check for updates at startup (once a day)", "起動時に更新を確認する (1 日 1 回)")
+MYE_STR(Upd_Toast,              "MyEngine %s is available. Help > Check for Updates to update.",
+                                "MyEngine %s が公開されています。ヘルプ → 更新を確認 から更新できます。")
+MYE_STR(Upd_LaunchFailed,       "Could not start the Launcher: %s", "Launcher を起動できませんでした: %s")
+MYE_STR(About_Title,            "About MyEngine###AboutMyEngine", "MyEngine について###AboutMyEngine")
+MYE_STR(About_Version,          "Version %s",               "バージョン %s")
+MYE_STR(About_Build,            "Build %s (%s)",            "ビルド %s (%s)")
+MYE_STR(About_Install,          "Installed at: %s",         "インストール先: %s")
+MYE_STR(About_SourceBuild,      "Running from a source build", "ソースからのビルドで動いています")
 
 // ---- オーディオミキサー (M47b) ----
 MYE_STR(Mixer_Asset,          "mixer asset",   "ミキサーアセット")

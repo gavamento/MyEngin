@@ -90,6 +90,9 @@ void NotifyUnknownKept(ToastCenter& toasts, const Scene& scene)
 void EditorApp::OnStart(EngineContext& ctx)
 {
     ctx.shaders->Load("forward_lit");
+    if (allowAutoUpdateCheck) {
+        update_.StartupCheck(); // 結果は別スレッドで届く。起動を待たせない
+    }
     // 設定の置き場 (M26): プロジェクト起動時は <project>\.mye\、レガシー時は assets\ 直下
     const std::wstring settingsDir = ctx.projectRoot.empty()
         ? ctx.assetsRoot
@@ -1156,6 +1159,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
         closeRequested_ = false;
         RequestGuardedAction(ctx, PendingAction::Exit);
     }
+    if (update_.OnImGui(toasts_)) {
+        RequestGuardedAction(ctx, PendingAction::UpdateAndRestart); // 未保存なら先に保存の確認
+    }
     DrawSaveConfirmModal(ctx);
     PollReloadToasts(ctx);
     UpdateWindowTitle(ctx);
@@ -1666,6 +1672,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_BuildSettings), nullptr, &buildSettings_.open);
         ImGui::EndMenu();
     }
+    update_.DrawHelpMenu();
 
     ImGui::EndMainMenuBar();
 
@@ -2188,6 +2195,18 @@ void EditorApp::ExecuteAction(EngineContext& ctx, PendingAction action)
     case PendingAction::Exit:
         ctx.requestExit = true;
         break;
+    case PendingAction::UpdateAndRestart: {
+        // Launcher が最新版を入れ、同じプロジェクトでエディタを開き直す (M98d)
+        std::string error;
+        if (UpdateWindow::LaunchUpdater(ctx.projectRoot, error)) {
+            ctx.requestExit = true;
+        } else {
+            char buf[512] = {};
+            snprintf(buf, sizeof(buf), Tr(StrId::Upd_LaunchFailed), error.c_str());
+            toasts_.Notify(LogLevel::Error, buf);
+        }
+        break;
+    }
     case PendingAction::ExitActorEdit:
         CloseActorEdit(ctx); // M48k
         break;

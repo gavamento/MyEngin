@@ -104,6 +104,8 @@
     <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
+    <ClCompile Include="..\src\Editor\Update\UpdateWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Update\UpdateWindowSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\CurveEditorWidget.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorComponentCatalog.cpp" />
@@ -219,6 +221,8 @@
     <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
+    <ClInclude Include="..\src\Editor\Update\UpdateWindow.h" />
+    <ClInclude Include="..\src\Editor\Update\UpdateWindowSelfTest.h" />
     <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\Widgets\CurveEditorWidget.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorComponentCatalog.h" />

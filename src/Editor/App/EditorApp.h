@@ -13,6 +13,7 @@
 #include "Editor/Scene/Selection.h"
 #include "Editor/App/ShortcutHub.h"
 #include "Editor/Widgets/StatusBar.h"
+#include "Editor/Update/UpdateWindow.h"
 #include "Editor/Widgets/ToastCenter.h"
 #include "Editor/Tools/VisualStudioLauncher.h"
 #include "Editor/Undo/UndoStack.h"
@@ -70,6 +71,8 @@ public:
     bool GameMouseArea(InputRect& out) override;
 
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
+    // M98d: 起動時に更新を自動確認してよいか (EditorMain が対話起動のときだけ立てる。CI / 検証の起動では通信しない)
+    bool allowAutoUpdateCheck = false;
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
     bool openTimeline = false;     // --whatif-selftest (M72c: 分岐レーンを撮れるよう Timeline を開く)
     bool serverClient = false;     // M81: --net-connect (専用サーバのクライアント)。Pause / Step を無効にし、sim は常に simulateScripts = true で回す
@@ -104,7 +107,7 @@ private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
     // OpenSceneAsset = AssetBrowser ダブルクリック (pendingOpenScenePath_ をダイアログなしでロード)
     // ExitActorEdit = ミニシーン編集の終了 (M48k)。未保存なら同じ確認モーダルを通す
-    enum class PendingAction { None, NewScene, OpenScene, OpenSceneAsset, Exit, ExitActorEdit };
+    enum class PendingAction { None, NewScene, OpenScene, OpenSceneAsset, Exit, ExitActorEdit, UpdateAndRestart };
 
     void DrawMainMenuBar(EngineContext& ctx);
     void HandleShortcuts(EngineContext& ctx);
@@ -249,6 +252,7 @@ private:
     EditorToolbar toolbar_;
     StatusBar statusBar_;
     ToastCenter toasts_;
+    UpdateWindow update_; // M98d: 更新の確認・Help メニュー・About
     std::string projectName_;              // マニフェストの name (レガシー起動時は空)
     uint64_t savedStateSerial_ = 0;        // 最後に保存/ロードした時点の UndoStack::StateSerial
     PendingAction pendingAction_ = PendingAction::None;

@@ -14,7 +14,7 @@
 | M98a | 完了 | miniz、HttpClient / Sha256 / ZipExtract / EngineRelease、`update` スイート |
 | M98b | 完了 | Launcher プロジェクト、インストール・一覧・起動・削除、`--release-source` |
 | M98c | 完了 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
-| M98d | 未着手 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
+| M98d | 完了 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
 | M98e | 未着手 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
 
 ## ユーザーの追加指示 (2026-11-10、M98a の後)
@@ -24,6 +24,10 @@
 - 0.86 は `ParseEngineVersion` で [0, 86, 0, 0] になり、0.6.8.22 より新しいと判定される (順序は正しい)。asset 名は `MyEngine-0.86-win64.zip`
 
 ## 申し送り
+
+- M98d: 自動確認の ON/OFF は計画の「ProjectSettings 窓」ではなく更新窓のチェックボックスに置いた (`editor_global.json` の `autoUpdateCheck` / `lastUpdateCheckUnix`)。自動確認は対話起動のときだけ (`EditorApp::allowAutoUpdateCheck = !automation`)
+- M98d: 「更新して再起動」は `PendingAction::UpdateAndRestart` で既存の未保存確認を通し、Launcher を `--update --launch-project <projectRoot>` で起動して終了する。環境変数 (`MYE_RELEASE_SOURCE` / `MYE_INSTALL_ROOT`) は Launcher に引き継がれる
+- M98d: 画面は一時プローブで撮影して確認済み (更新あり・開発ビルドでボタン無効・About)。Launcher が入れた版での「更新して再起動」の実走は M98e の本物のパッケージで行う
 
 - M98c: アイコンは `tools\gen_app_icon.ps1` (System.Drawing) が `buildes\MyEngine.ico` を生成 (16〜256 の PNG 格納 ICO、RotY 2.6 / RotX 0.9)。`buildes\AppIcon.rc` を Editor / Launcher が共有し、Win32Window とスプラッシュの窓クラスが id 1 を読む。Runtime / Server には付けていない (ゲーム側の exe なので)
 - M98c: Launcher の自己更新は Release の asset `MyEngineLauncher.exe` と `MyEngineLauncher.exe.sha256` を使う (M98e の release.yml で両方を出すこと)。実行中の exe を .old.exe へ rename できることは実機で確認済み

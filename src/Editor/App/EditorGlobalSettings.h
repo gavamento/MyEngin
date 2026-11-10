@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <string>
 
 #include "Engine/Core/Localization/Localization.h"
@@ -21,6 +22,9 @@ std::wstring MachineLocalDir();
 //   struct にメンバ + 既定値 / Load() に root.value(...) / Save() に root[...] =
 struct EditorGlobalSettings {
     Lang uiLanguage = Lang::Ja;
+    // 更新の自動確認 (M98d)。起動時に前回から 24 時間以上たっていれば GitHub Releases を見に行く
+    bool autoUpdateCheck = true;
+    int64_t lastUpdateCheckUnix = 0; // 最後に確認できた UTC の Unix 秒 (0 = 未確認)
 
     void Load();
     void Save() const;
