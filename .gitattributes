@@ -55,6 +55,7 @@ external/openssl/lib/*.lib binary
 *.lib binary
 *.dll binary
 *.exe binary
+*.ico binary
 *.pdf binary
 *.pyc binary
 *.rep binary

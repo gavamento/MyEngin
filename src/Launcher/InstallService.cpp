@@ -15,6 +15,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Sha256.h"
 #include "Engine/Platform/ZipExtract.h"
+#include "Launcher/LauncherSelf.h"
 
 namespace mye {
 
@@ -327,6 +328,19 @@ void LauncherJob::StartUninstall(const std::wstring& installDir)
     Launch(Kind::Uninstall, [this, installDir] {
         InstallOutcome r = UninstallEngine(
             installDir, [this](InstallStage stage, uint64_t done, uint64_t total) { SetProgress(stage, done, total); });
+        std::lock_guard<std::mutex> lock(mutex_);
+        install_ = std::move(r);
+        hasInstall_ = true;
+        stage_ = InstallStage::Idle;
+    });
+}
+
+void LauncherJob::StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root)
+{
+    Launch(Kind::SelfUpdate, [this, source, release, root] {
+        InstallOutcome r = DownloadLauncherUpdate(
+            source, release, root,
+            [this](InstallStage stage, uint64_t done, uint64_t total) { SetProgress(stage, done, total); }, &cancel_);
         std::lock_guard<std::mutex> lock(mutex_);
         install_ = std::move(r);
         hasInstall_ = true;

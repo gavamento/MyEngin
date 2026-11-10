@@ -12,6 +12,8 @@ namespace mye {
 namespace {
 
 constexpr const wchar_t* kClassName = L"MyEngineWindowClass";
+// build\res\AppIcon.rc の ICON の id と揃える
+constexpr WORD kAppIconResourceId = 1;
 constexpr LONG kMaxTrackSize = 16384; // 窓の外形の上限 (D3D11 のテクスチャ上限と同じ)
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -62,6 +64,10 @@ bool Win32Window::Create(const WindowDesc& desc)
     wc.lpfnWndProc = WndProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    // exe に埋めたアイコン (build\res\AppIcon.rc の id 1、M98c)。持たない exe (Runtime / テスト) は null = 既定のアイコン
+    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(kAppIconResourceId));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(kAppIconResourceId), IMAGE_ICON,
+                                               GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
     wc.lpszClassName = kClassName;
     static ATOM classAtom = RegisterClassExW(&wc);
     MYE_CHECKF(classAtom != 0, "RegisterClassExW failed (%lu)", GetLastError());

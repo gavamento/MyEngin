@@ -5,9 +5,11 @@
   <ItemGroup>
     <ClCompile Include="..\src\Launcher\InstallService.cpp" />
     <ClCompile Include="..\src\Launcher\LauncherMain.cpp" />
+    <ClCompile Include="..\src\Launcher\LauncherSelf.cpp" />
     <ClCompile Include="..\src\Launcher\LauncherSelfTest.cpp" />
     <ClCompile Include="..\src\Launcher\LauncherUi.cpp" />
     <ClInclude Include="..\src\Launcher\InstallService.h" />
+    <ClInclude Include="..\src\Launcher\LauncherSelf.h" />
     <ClInclude Include="..\src\Launcher\LauncherSelfTest.h" />
     <ClInclude Include="..\src\Launcher\LauncherUi.h" />
   </ItemGroup>

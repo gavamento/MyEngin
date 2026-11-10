@@ -33,6 +33,10 @@
       <Command>copy /Y "$(RepoRoot)external\nethost\nethost.dll" "$(OutDir)" &gt;nul</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
+  <!-- exe とウィンドウのアイコン (M98c)。絵は tools\gen_app_icon.ps1 が生成するメビウスの輪 -->
+  <ItemGroup>
+    <ResourceCompile Include="res\AppIcon.rc" />
+  </ItemGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\Editor\App\ChildProcess.cpp" />

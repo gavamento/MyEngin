@@ -13,7 +13,7 @@
 |---|---|---|
 | M98a | 完了 | miniz、HttpClient / Sha256 / ZipExtract / EngineRelease、`update` スイート |
 | M98b | 完了 | Launcher プロジェクト、インストール・一覧・起動・削除、`--release-source` |
-| M98c | 未着手 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
+| M98c | 完了 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
 | M98d | 未着手 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
 | M98e | 未着手 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
 
@@ -24,6 +24,10 @@
 - 0.86 は `ParseEngineVersion` で [0, 86, 0, 0] になり、0.6.8.22 より新しいと判定される (順序は正しい)。asset 名は `MyEngine-0.86-win64.zip`
 
 ## 申し送り
+
+- M98c: アイコンは `tools\gen_app_icon.ps1` (System.Drawing) が `buildes\MyEngine.ico` を生成 (16〜256 の PNG 格納 ICO、RotY 2.6 / RotX 0.9)。`buildes\AppIcon.rc` を Editor / Launcher が共有し、Win32Window とスプラッシュの窓クラスが id 1 を読む。Runtime / Server には付けていない (ゲーム側の exe なので)
+- M98c: Launcher の自己更新は Release の asset `MyEngineLauncher.exe` と `MyEngineLauncher.exe.sha256` を使う (M98e の release.yml で両方を出すこと)。実行中の exe を .old.exe へ rename できることは実機で確認済み
+- M98c: 初回インストール後だけ Setup.ps1 を `powershell.exe -NoExit ... -NoLaunch` で別窓に出す。版ごとの行にも手動の Setup ボタン
 
 - M98b: Launcher は exe 単体で動く (CRT 静的、import は Windows 標準 DLL だけ。d3dcompiler_47 は遅延)。Release で約 1.8 MB
 - M98b: ImGui の描画先クリアは `SwapChain::BindAndClearBackbuffer` に足した (Launcher に生の D3D 型を持たせないため)。`src\Launcher` は規則 16 の検査対象に入れた

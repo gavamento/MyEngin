@@ -23,6 +23,7 @@
 #include "Engine/Renderer/Device/SwapChain.h"
 #include "Engine/Renderer/ImGui/ImGuiRenderer.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
+#include "Launcher/LauncherSelf.h"
 #include "Launcher/LauncherSelfTest.h"
 #include "Launcher/LauncherUi.h"
 
@@ -147,11 +148,15 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     st.options.launchProject = args.launchProject;
 
     const HANDLE instanceMutex = CreateMutexW(nullptr, FALSE, kSingleInstanceMutex);
-    if (instanceMutex && GetLastError() != ERROR_ALREADY_EXISTS) {
+    const bool firstInstance = instanceMutex && GetLastError() != ERROR_ALREADY_EXISTS;
+    const HRESULT coInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // ShellExecute / ショートカット用
+    if (firstInstance) {
         mye::CleanupStaleInstallWork(st.options.root);
+        mye::CleanupOldLauncherFiles(st.options.root);
+        // ダウンロードしたその場から開かれても、次からはスタートメニューで開けるように自分を置き場へ写す。
+        // 検証 (--install-root / --screenshot) ではスタートメニューを汚さない
+        mye::PlaceLauncherCopy(st.options.root, args.installRoot.empty() && args.screenshot.empty());
     }
-
-    const HRESULT coInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // ShellExecute 用
     mye::Win32Window window;
     mye::GraphicsDevice device;
     mye::SwapChain swapChain;

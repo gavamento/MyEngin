@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Platform/Sha256.h"
 #include "Launcher/InstallService.h"
+#include "Launcher/LauncherSelf.h"
 
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "miniz/miniz.h"
@@ -243,6 +245,53 @@ bool RunLauncherSelfTest()
         WriteText(fs::path(DownloadsDir(root)) / L"x.zip.1.part", "partial");
         CleanupStaleInstallWork(root);
         check(!HasLeftovers(root) && ScanInstalledEngines(root).size() == 1, "cleanup: removes leftovers only");
+    }
+
+    // 10. Launcher 自身: 置き場へ写す・新しい版の取得と入れ替え
+    {
+        const std::wstring selfRoot = (tmp / L"selfroot").wstring();
+        PlaceLauncherCopy(selfRoot, false);
+        const fs::path placed = fs::path(LauncherDir(selfRoot)) / kLauncherExeName;
+        check(fs::exists(placed) && PlacedLauncherVersion(selfRoot).valid
+                  && CompareEngineVersion(PlacedLauncherVersion(selfRoot), CurrentEngineVersion()) == 0,
+              "self: the running exe is copied to the Launcher folder with its version");
+
+        // 新しい版の Launcher (中身は何でもよい) を取得元に置く
+        const fs::path src = tmp / L"src_self";
+        fs::create_directories(src);
+        WriteText(src / kLauncherExeName, "new-launcher-bytes");
+        const std::string hex = Sha256Hex("new-launcher-bytes");
+        WriteText(src / L"MyEngineLauncher.exe.sha256", hex + "  MyEngineLauncher.exe");
+        const std::string json = R"({ "tag_name": "v99.0", "assets": [
+            { "name": "MyEngineLauncher.exe", "browser_download_url": "MyEngineLauncher.exe" },
+            { "name": "MyEngineLauncher.exe.sha256", "browser_download_url": "MyEngineLauncher.exe.sha256" } ] })";
+        std::vector<ReleaseInfo> list;
+        std::string error;
+        ParseGitHubReleases(json, list, error);
+        check(!list.empty() && LauncherUpdateAvailable(list.front()), "self: a newer Launcher in the release is detected");
+        const InstallOutcome d = DownloadLauncherUpdate(ResolveReleaseSource(src.wstring()), list.front(), selfRoot,
+                                                        InstallProgressFn{}, nullptr);
+        check(d.ok, "self: the new Launcher is downloaded and verified");
+        check(ApplyLauncherUpdate(selfRoot, "99.0", false, error), "self: the new Launcher is swapped in");
+        std::ifstream f(placed, std::ios::binary);
+        std::string now((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+        check(now == "new-launcher-bytes" && PlacedLauncherVersion(selfRoot).text == "99.0",
+              "self: the placed Launcher and its version are the new ones");
+        // 置いてある方が新しいなら古い exe で上書きしない
+        PlaceLauncherCopy(selfRoot, false);
+        std::ifstream f2(placed, std::ios::binary);
+        std::string after((std::istreambuf_iterator<char>(f2)), std::istreambuf_iterator<char>());
+        f2.close();
+        check(after == "new-launcher-bytes", "self: an older Launcher does not overwrite a newer placed one");
+        CleanupOldLauncherFiles(selfRoot);
+        check(!fs::exists(fs::path(LauncherDir(selfRoot)) / L"MyEngineLauncher.old.exe"), "self: the old exe is cleaned up");
+
+        WriteText(src / L"MyEngineLauncher.exe.sha256", std::string(64, '0') + "  MyEngineLauncher.exe");
+        const InstallOutcome bad = DownloadLauncherUpdate(ResolveReleaseSource(src.wstring()), list.front(), selfRoot,
+                                                          InstallProgressFn{}, nullptr);
+        check(!bad.ok && !fs::exists(fs::path(LauncherDir(selfRoot)) / L"MyEngineLauncher.new.exe"),
+              "self: a Launcher with a wrong SHA-256 is discarded");
     }
 
     fs::remove_all(tmp, ec);

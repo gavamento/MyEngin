@@ -918,6 +918,12 @@ MYE_STR(Launcher_UpdateMode,    "Updating MyEngine. The editor reopens %s when d
                                 "MyEngine を更新しています。終わるとエディタで %s を開き直します。")
 MYE_STR(Launcher_InstallPlace,  "Installed to: %s (about 400 MB per version)",
                                 "インストール先: %s (1 版あたり約 400 MB)")
+MYE_STR(Launcher_RunSetup,       "Run setup (installs missing VC++ / .NET 8 / Git)",
+                                "セットアップを実行 (足りない VC++ / .NET 8 / Git を入れる)")
+MYE_STR(Launcher_SelfUpdateAvail, "A newer Launcher (%s) is available.", "新しい Launcher (%s) があります。")
+MYE_STR(Launcher_SelfUpdate,     "Update the Launcher",     "Launcher を更新")
+MYE_STR(Launcher_SelfUpdateFailed, "Could not update the Launcher: %s",
+                                "Launcher を更新できませんでした: %s")
 
 // ---- オーディオミキサー (M47b) ----
 MYE_STR(Mixer_Asset,          "mixer asset",   "ミキサーアセット")

@@ -66,6 +66,7 @@ public:
         Check,
         Install,
         Uninstall,
+        SelfUpdate, // Launcher 自身の新しい版を落とす (入れ替えは画面側が終了直前に行う)
     };
 
     LauncherJob() = default;
@@ -78,6 +79,7 @@ public:
     void StartCheck(const ReleaseSource& source, bool includePrerelease);
     void StartInstall(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root);
     void StartUninstall(const std::wstring& installDir);
+    void StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root);
     void Cancel() { cancel_.store(true); }
 
     void Progress(InstallStage& stage, uint64_t& done, uint64_t& total) const;

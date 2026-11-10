@@ -104,6 +104,8 @@ void RegisterSplashClass()
     wc.lpfnWndProc = SplashWndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    // タスクバーに出る最初の窓なので exe のアイコン (build\res\AppIcon.rc の id 1、M98c) を付ける
+    wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(1));
     wc.lpszClassName = kSplashClass;
     RegisterClassExW(&wc);
     registered = true;

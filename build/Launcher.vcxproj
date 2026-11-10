@@ -44,13 +44,19 @@
       <AdditionalOptions>/IGNORE:4199 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
+  <!-- exe とウィンドウのアイコン (M98c)。絵は tools\gen_app_icon.ps1 が生成するメビウスの輪 -->
+  <ItemGroup>
+    <ResourceCompile Include="res\AppIcon.rc" />
+  </ItemGroup>
   <!-- BEGIN FILES (tools\gen_project_files.ps1 が再生成する。手編集しない) -->
   <ItemGroup>
     <ClCompile Include="..\src\Launcher\InstallService.cpp" />
     <ClCompile Include="..\src\Launcher\LauncherMain.cpp" />
+    <ClCompile Include="..\src\Launcher\LauncherSelf.cpp" />
     <ClCompile Include="..\src\Launcher\LauncherSelfTest.cpp" />
     <ClCompile Include="..\src\Launcher\LauncherUi.cpp" />
     <ClInclude Include="..\src\Launcher\InstallService.h" />
+    <ClInclude Include="..\src\Launcher\LauncherSelf.h" />
     <ClInclude Include="..\src\Launcher\LauncherSelfTest.h" />
     <ClInclude Include="..\src\Launcher\LauncherUi.h" />
   </ItemGroup>

@@ -16,6 +16,7 @@
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
+#include "Launcher/LauncherSelf.h"
 
 #include "imgui.h"
 
@@ -125,6 +126,17 @@ void DrawLatest(LauncherState& st)
     ImGui::PopFont();
 
     const bool busy = st.job.Busy();
+    if (st.checkDone && st.latest.found && !st.options.updateMode && LauncherUpdateAvailable(st.latest.release)) {
+        ImGui::TextColored(themeColor::Warning, "%s",
+                           Format1(StrId::Launcher_SelfUpdateAvail, st.latest.release.version.text).c_str());
+        ImGui::SameLine();
+        ImGui::BeginDisabled(busy);
+        const std::string label = std::string(ICON_FA_ROTATE " ") + Tr(StrId::Launcher_SelfUpdate);
+        if (ImGui::SmallButton(label.c_str())) {
+            st.job.StartSelfUpdate(st.options.source, st.latest.release, st.options.root);
+        }
+        ImGui::EndDisabled();
+    }
     if (!st.checkDone) {
         ImGui::TextDisabled("%s", Tr(StrId::Launcher_Checking));
         return;
@@ -207,6 +219,16 @@ void DrawInstalled(LauncherState& st)
             ImGui::SetTooltip("%s", Tr(StrId::Launcher_Launch));
         }
         ImGui::SameLine();
+        if (ImGui::Button(ICON_FA_WRENCH)) {
+            std::string error;
+            if (!RunSetupScript(e.dir, error)) {
+                SetMessage(st, Format1(StrId::Launcher_LaunchFailed, error), true);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", Tr(StrId::Launcher_RunSetup));
+        }
+        ImGui::SameLine();
         if (ImGui::Button(ICON_FA_FOLDER_OPEN)) {
             ShellExecuteW(nullptr, L"open", e.dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
         }
@@ -277,19 +299,38 @@ bool LauncherTick(LauncherState& st)
     }
     InstallOutcome outcome;
     if (st.job.TakeInstallResult(outcome)) {
+        const LauncherJob::Kind kind = st.job.CurrentKind();
+        // この機械で初めて入れた版なら依存の導入 (Setup.ps1) も走らせる。エディタからの更新では入っている前提
+        const bool firstInstall = st.installed.empty();
         Rescan(st);
+        if (kind == LauncherJob::Kind::SelfUpdate && outcome.ok) {
+            std::string error;
+            if (ApplyLauncherUpdate(st.options.root, outcome.version, true, error)) {
+                return false; // 新しい Launcher が起動した
+            }
+            SetMessage(st, Format1(StrId::Launcher_SelfUpdateFailed, error), true);
+            return true;
+        }
+        if (kind == LauncherJob::Kind::Install && outcome.ok && !outcome.alreadyInstalled && firstInstall
+            && !st.options.updateMode) {
+            std::string error;
+            if (!RunSetupScript(outcome.installDir, error)) {
+                MYE_LOG_WARN("launcher: setup did not start: %s", error.c_str());
+            }
+        }
         if (outcome.cancelled) {
             SetMessage(st, Tr(StrId::Launcher_Cancelled), false);
         } else if (!outcome.ok) {
-            const StrId id = st.job.CurrentKind() == LauncherJob::Kind::Uninstall ? StrId::Launcher_DeleteFailed
-                                                                                  : StrId::Launcher_InstallFailed;
+            const StrId id = kind == LauncherJob::Kind::Uninstall    ? StrId::Launcher_DeleteFailed
+                           : kind == LauncherJob::Kind::SelfUpdate ? StrId::Launcher_SelfUpdateFailed
+                                                                   : StrId::Launcher_InstallFailed;
             SetMessage(st, Format1(id, outcome.error), true);
-        } else if (st.job.CurrentKind() == LauncherJob::Kind::Install) {
+        } else if (kind == LauncherJob::Kind::Install) {
             SetMessage(st, Format1(StrId::Launcher_InstallDone, outcome.version), false);
         } else {
             SetMessage(st, std::string(), false);
         }
-        if (st.options.updateMode && !st.updateFlowDone && st.job.CurrentKind() == LauncherJob::Kind::Install) {
+        if (st.options.updateMode && !st.updateFlowDone && kind == LauncherJob::Kind::Install) {
             if (outcome.ok) {
                 return FinishUpdateFlow(st);
             }
