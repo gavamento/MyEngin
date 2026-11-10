@@ -16,7 +16,7 @@
 | M98c | 完了 | Launcher の自己配置 (LOCALAPPDATA + スタートメニュー)、自己更新、Setup.ps1 の実行 |
 | M98d | 完了 | エディタの UpdateService、Help メニュー、About、トースト、設定、Launcher への引き渡し |
 | M98e | 完了 (v0.86 公開済み) |
-| M98f | 完了 | Defender 対策 (ダウンロードの印とスキャン、自己複製をやめる、zip から Launcher を外す)、0.86.1 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
+| M98f | 完了 (v0.86.1 公開済み) | Defender 対策 (ダウンロードの印とスキャン、自己複製をやめる、zip から Launcher を外す)、0.86.1 | make_dist.ps1 の拡張、release.yml、README / engine_spec / ADR-037 / docs\release.md、版 0.86 への統一と `v0.86` の公開 (ユーザー指示済み) |
 
 ## ユーザーの追加指示 (2026-11-10、M98a の後)
 
@@ -25,6 +25,9 @@
 - 0.86 は `ParseEngineVersion` で [0, 86, 0, 0] になり、0.6.8.22 より新しいと判定される (順序は正しい)。asset 名は `MyEngine-0.86-win64.zip`
 
 ## 申し送り
+
+- M98f: v0.86.1 公開 (`5ff1b15`、run 42834330214 success)。GitHub の latest リンクから落とした 0.86.1 の Launcher で、GitHub から 60 秒でインストール。**Defender の新しい検知なし** (最後の検知は 22:40 の v0.86 同梱の旧 Launcher)。展開物に ZoneId=3、zip に Launcher なし、自己コピーなし、場所の記録あり。エディタの起動で SmartScreen の確認が出る (想定どおり)
+- 残り: v0.86 の Release (Defender に覚えられた Launcher を含む) の扱い、試験で作られたスタートメニューのショートカットの削除 (ユーザー判断)
 
 - M98f (ユーザー判断: 方針 1 = IAttachmentExecute、版は 0.86.1、自己配置はボタン): ダウンロードを Attachment Manager で保存 (MOTW + AV スキャン)、展開物へ印を引き継ぐ、Setup.ps1 -NoUnblock、起動時の自己コピーとスタートメニュー登録をやめて場所の記録 (launcher_location.json) だけにする、zip から Launcher を外す。2 回目の実走 (新しい Launcher + v0.86 の zip) では新しい Launcher 自体は止められず、v0.86 の zip に同梱の旧 Launcher が展開時に検知された
 - M98f: 0.86 の e2e 試験 (環境変数で置き場を差し替え) でユーザーの実際のスタートメニューに一時フォルダを指すショートカットが作られていた。削除はユーザーの承認待ち
