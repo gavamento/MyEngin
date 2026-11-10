@@ -241,6 +241,7 @@ Frame (EngineLoop)
 ```
 Tick (RunOneTick, TickRunner.cpp)
   ·    Tick gate (TimeControl::Advance: pause / hit-stop / slow), feel ages advance (ungated, §10.15)
+  ·    CharacterInput → CharacterController moveInput / jumpSpeed (M97a, gated; §11.3)
   3    Script layer: Start for newly created scripts → Update
   3.4  Acoustic propagation, then agent AI that consumes it (M65a / M65f)
   3.5  Animation: resolve LocalTransform before the hierarchy is flattened
@@ -3526,6 +3527,42 @@ Two pieces are what make this *verifiable* rather than merely present:
 running it with `--local-players 2` also pins "lanes beyond `playerCount` stay zero" in the same
 hash chain. Forcing every entity to read lane 0 makes the pair fail at tick 0, and `--hash-diff`
 names the offending `PlayerInput.axes` / `heldBits` / `pressedBits` fields directly.
+
+**Built-in character input (M97a).** `CharacterInputComponent` drives the `CharacterController` on
+the same entity from an input lane without a script. `UpdateCharacterInput`
+(`Engine/Loop/CharacterInputSystem.cpp`) runs once per tick after action evaluation and **before
+the script layer**, inside the tick gate, and writes `moveInput` and `jumpSpeed` (and, in
+camera-relative mode, the yaw of `LocalTransform`). Entities are visited in ascending entity index
+because consuming a buffered press writes shared sim state.
+
+- **Two input sources, summed.** Direct keys stored on the component (`keyForward` / `keyBack` /
+  `keyLeft` / `keyRight` / `keyJump`, virtual-key codes, default WASD + Space, picked by key name in
+  the Inspector) and named entries of the project-wide map `assets\input\actions.json`
+  (`moveXAxis` / `moveYAxis` / `jumpAction`, default `MoveX` / `MoveY` / `Jump`; gamepad sticks and
+  jump buffering come from here). Each axis is `clamp(keys + axis, -1, 1)`. Both are on by default,
+  so moving a control to another key means changing the key **and** clearing the matching name; an
+  empty name disables that source. Direct keys read the lane's recorded `InputSnapshot`, so replay
+  and verification see the same values.
+- **Modes** (`charinputmode`): `kWorldAxes3D` (left/right → world X, forward/back → world Z),
+  `kCameraRelative3D` (relative to the yaw of `cameraEntity`, or of the primary camera chosen by
+  the renderer's rule when that is null; the body turns toward the movement at `turnSpeedDeg`
+  unless the entity has a parent; falls back to world axes when there is no camera) and
+  `kSideScroll2D` (left/right only, for a `plane2D` controller). The camera pose is composed from
+  the `LocalTransform` chain, never from `WorldMatrix`, which rendering also updates.
+- **Jump** fires when the controller was grounded on the previous tick and either the direct key
+  went down this tick (edge kept in `jumpKeyWasDown`, a hashed sim field) or the action reports
+  `kActionPressed` / `kActionBuffered`; a buffered press is consumed when it fires. A press in the
+  air does nothing unless the action has `bufferTicks`.
+- **Who wins.** The system runs before scripts, so a script calling `CharacterMove` /
+  `CharacterJump` in the same tick overrides it. NavMeshAgent, GridAgent2D, the acoustic agent and
+  root motion write `moveInput` later in the tick and therefore also win; combining them with
+  CharacterInput on one entity is not supported and nothing detects it.
+- **Gate.** The system does not run while the tick gate is closed (pause, hit-stop), so a jump
+  pressed and released during a pause is dropped rather than fired on resume. A direct jump key
+  that is still held when the gate reopens counts as pressed on that tick.
+
+The component is opt-in (TypeId 99, snapshot v80); scenes without it are bit-identical to before.
+Regression: `MYE_SELFTEST_ONLY=characterinput`.
 
 **Raw mouse delta and cursor lock (M64a).** `InputSnapshot` grew two `int32` fields,
 `mouseDeltaX` / `mouseDeltaY`, taking it from 64 to 72 bytes and bumping the `.rep`, snapshot-blob

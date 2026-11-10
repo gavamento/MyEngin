@@ -16,7 +16,9 @@ void AddComponentWithRequirements(World& world, EntityID e, ComponentTypeId type
 {
     world.AddComponentRaw(e, type);
     // NavMeshAgent は CharacterController に速度を渡して歩く (M82 spec 2. #8)。無いと動かないので同時に足す
-    if (std::strcmp(ComponentRegistry::Get().Desc(type).name, "NavMeshAgent") == 0
+    // CharacterInput (M97a) も CharacterController の moveInput / jumpSpeed へ書くだけなので同じ扱い
+    const char* name = ComponentRegistry::Get().Desc(type).name;
+    if ((std::strcmp(name, "NavMeshAgent") == 0 || std::strcmp(name, "CharacterInput") == 0)
         && !world.HasComponent(e, CharacterControllerComponent::sTypeId)) {
         world.AddComponentRaw(e, CharacterControllerComponent::sTypeId);
     }

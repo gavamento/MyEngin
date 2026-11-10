@@ -28,6 +28,7 @@
 #include "Engine/Engine/AI/BlackboardLibrary.h"
 #include "Engine/Engine/Feel/FeelLibrary.h"
 #include "Engine/Engine/Navigation/NavMeshAsset.h"
+#include "Engine/Platform/InputActions.h" // M97a: キー名の表 (CharacterInput のキー欄)
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Asset/AssetKeyResolver.h" // M80j: guid:// 登録名 → クック元パス (スキンの骨ウェイト取得)
 #include "Engine/Engine/Asset/FbxLoader.h"   // M90e: LOD 設定の適用でモデルのメッシュを登録し直す
@@ -409,7 +410,13 @@ static_assert(std::size(kColliderShapeLabels) == collidershape::kCount
               && std::size(kColliderShapeJa) == collidershape::kCount);
 static_assert(std::size(kLightTypeLabels) == lighttype::kCount && std::size(kLightTypeJa) == lighttype::kCount);
 static_assert(std::size(kPartBoundsShapeLabels) == 2 && partboundsshape::kSphere == 1);
+// M97a: CharacterInput.mode (charinputmode:: と同じ並び)
+constexpr const char* kCharInputModeLabels[] = { "World Axes 3D", "Camera Relative 3D", "Side Scroll 2D" };
+constexpr const char* kCharInputModeJa[] = { "3D ワールド軸", "3D カメラ相対", "2D 横スクロール" };
+static_assert(std::size(kCharInputModeLabels) == charinputmode::kCount
+              && std::size(kCharInputModeJa) == charinputmode::kCount);
 constexpr EnumFieldLabels kEnumFields[] = {
+    { "CharacterInput", "mode", kCharInputModeLabels, charinputmode::kCount, kCharInputModeJa },
     // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す (これらは meshAsset を
     // 併せて指す必要がある)
     { "Collider", "shape", kColliderShapeLabels, collidershape::kCount, kColliderShapeJa },
@@ -508,6 +515,61 @@ bool DrawSkeletonJointCombo(const char* label, char* joint, const SkinnedModel& 
         ImGui::EndCombo();
     }
     return changed;
+}
+
+// M97a: 値が仮想キーコードの Int32 欄 (キー名のコンボで選ばせる)
+bool IsKeyCodeField(const char* component, const char* field)
+{
+    if (component == nullptr || std::strcmp(component, "CharacterInput") != 0) {
+        return false;
+    }
+    constexpr const char* kKeyFields[] = { "keyForward", "keyBack", "keyLeft", "keyRight", "keyJump" };
+    for (const char* name : kKeyFields) {
+        if (std::strcmp(field, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 仮想キーコードをキー名のコンボで選ぶ。項目は「なし」+ VkNameTable.inl に載っているキー (actions.json と同じ名前)。
+// 表に無いコード (手書きのシーンや別バージョン) は黙って潰さず、"0xNN" の項目を足して選択中にする。
+// Combo を使うのは、終わった後の項目状態が Combo 自身になり、呼び出し側の HandleEditUndoMulti がそのまま効くから
+bool DrawKeyCodeCombo(const char* label, int& vk)
+{
+    constexpr int kVkCount = 256;
+    const char* labels[kVkCount + 1];
+    int codes[kVkCount + 1];
+    int count = 0;
+    labels[count] = Tr(StrId::Insp_NoneItem);
+    codes[count] = 0;
+    ++count;
+    int index = (vk <= 0 || vk >= kVkCount) ? 0 : -1;
+    for (int code = 1; code < kVkCount; ++code) {
+        const char* name = InputActions::VkNameInTable(static_cast<uint8_t>(code));
+        if (name == nullptr) {
+            continue;
+        }
+        if (code == vk) {
+            index = count;
+        }
+        labels[count] = name;
+        codes[count] = code;
+        ++count;
+    }
+    char unlistedLabel[8];
+    if (index < 0) {
+        std::snprintf(unlistedLabel, sizeof(unlistedLabel), "0x%02X", vk);
+        labels[count] = unlistedLabel;
+        codes[count] = vk;
+        index = count;
+        ++count;
+    }
+    if (ImGui::Combo(label, &index, labels, count) && index >= 0 && index < count && codes[index] != vk) {
+        vk = codes[index];
+        return true;
+    }
+    return false;
 }
 
 const EnumFieldLabels* FindEnumLabels(const char* component, const char* field)
@@ -2406,6 +2468,8 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
                 v = layers.At(index).id;
                 changed = true;
             }
+        } else if (IsKeyCodeField(componentName, field.name)) {
+            changed = DrawKeyCodeCombo(label, *static_cast<int*>(p));
         } else if (const EnumFieldLabels* ef = FindEnumLabels(componentName, field.name)) {
             int v = *static_cast<int*>(p);
             if (v < 0 || v >= ef->count) {

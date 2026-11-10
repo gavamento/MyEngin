@@ -159,6 +159,8 @@
     <ClCompile Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHub.cpp" />
     <ClCompile Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Loop\CharacterInputSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Loop\CharacterInputSystem.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Loop\DeviceFatal.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Loop\DeviceRecovery.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.cpp" />
@@ -533,6 +535,8 @@
     <ClInclude Include="..\src\Engine\Engine\HotReload\DllReloaderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHub.h" />
     <ClInclude Include="..\src\Engine\Engine\HotReload\ReloadHubSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Loop\CharacterInputSelfTest.h" />
+    <ClInclude Include="..\src\Engine\Engine\Loop\CharacterInputSystem.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceFatal.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecovery.h" />
     <ClInclude Include="..\src\Engine\Engine\Loop\DeviceRecoverySelfTest.h" />

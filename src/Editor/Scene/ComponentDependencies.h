@@ -12,7 +12,7 @@ namespace mye {
 
 class World;
 
-// type を e に足し、type が必須とする相棒 (NavMeshAgent -> CharacterController) が無ければそれも足す。
+// type を e に足し、type が必須とする相棒 (NavMeshAgent / CharacterInput -> CharacterController) が無ければそれも足す。
 // どちらも AddComponentRaw なので構造変更の確定 (ApplyStructuralChanges) は呼び出し側。
 // 呼び出し側が 1 つの Undo レコードで囲めば、相棒も同じ 1 Undo で戻る
 void AddComponentWithRequirements(World& world, EntityID e, ComponentTypeId type);

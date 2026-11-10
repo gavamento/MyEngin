@@ -2726,6 +2726,53 @@ struct DisturbanceSourceComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// CharacterInputComponent::mode の番号。フィールドは int32_t のまま (シーン JSON と .rep に整数で載るので値は変えない)
+namespace charinputmode {
+inline constexpr int32_t kWorldAxes3D = 0;      // 左右 → ワールド X、前後 → ワールド Z
+inline constexpr int32_t kCameraRelative3D = 1; // カメラの向き (yaw) を基準に動き、進む方へ体を向ける
+inline constexpr int32_t kSideScroll2D = 2;     // 左右 → ワールド X だけ (plane2D の CharacterController 用)
+inline constexpr int32_t kCount = 3;
+} // namespace charinputmode
+
+// CharacterInputComponent の直接キーの既定値 (仮想キーコード。VkNameTable.inl と同じ番号)
+namespace charinputkey {
+inline constexpr int32_t kNone = 0;
+inline constexpr int32_t kDefaultForward = 0x57; // W
+inline constexpr int32_t kDefaultBack = 0x53;    // S
+inline constexpr int32_t kDefaultLeft = 0x41;    // A
+inline constexpr int32_t kDefaultRight = 0x44;   // D
+inline constexpr int32_t kDefaultJump = 0x20;    // Space
+} // namespace charinputkey
+
+// ---- キャラクターの入力操作 (M97a、TypeId=99) ----
+// スクリプトを書かずにプレイヤーを動かす口: 入力レーン playerIndex のキーと actions.json の軸 / アクションを読み、
+// 同じエンティティの CharacterController の moveInput / jumpSpeed へ毎 tick 書く (CharacterInputSystem)。
+// CharacterController が無ければ何もしない。
+// 入力は 2 系統の合成: 直接キー (key*。このコンポーネントが持つ) と、名前で引く actions.json の軸 / アクション
+// (パッドと先行入力はこちら)。**両方が既定で有効**なので、キーを完全に別のものへ移すときは軸名も空にする
+// (空の名前 = その系統を使わない)。
+// スクリプト層より前に書くので、同じ tick にスクリプトが CharacterMove / CharacterJump を呼べばそちらが勝つ。
+// NavMeshAgent / GridAgent2D / Agent / ルートモーションも後段で moveInput を書くので、併用するとそちらが勝つ。
+// hash 対象 (jumpKeyWasDown はエンジンが書く sim 状態)
+struct CharacterInputComponent {
+    int32_t mode = charinputmode::kWorldAxes3D;
+    int32_t playerIndex = 0;      // 入力レーン。範囲外 (負 / playerCount 以上) は無入力
+    float moveSpeed = 4.0f;       // [m/s]
+    float jumpSpeed = 5.0f;       // [m/s] ジャンプの初速。0 以下 = ジャンプしない
+    float turnSpeedDeg = 720.0f;  // [度/秒] kCameraRelative3D だけ: 進む方へ向く速さ。0 以下 = 向きを変えない
+    EntityID cameraEntity = kNullEntity; // kCameraRelative3D の基準。無効ならシーンの主カメラ
+    int32_t keyForward = charinputkey::kDefaultForward; // 仮想キーコード [1,255]。それ以外 = 割り当てなし
+    int32_t keyBack = charinputkey::kDefaultBack;
+    int32_t keyLeft = charinputkey::kDefaultLeft;
+    int32_t keyRight = charinputkey::kDefaultRight;
+    int32_t keyJump = charinputkey::kDefaultJump;
+    char moveXAxis[64] = "MoveX";  // actions.json の軸の名前 (左右)
+    char moveYAxis[64] = "MoveY";  // 同上 (前後)
+    char jumpAction[64] = "Jump";  // actions.json のアクションの名前
+    uint32_t jumpKeyWasDown = 0;   // 前回の評価で keyJump が押されていたか (エンジンが書く。押した瞬間の検出用)
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

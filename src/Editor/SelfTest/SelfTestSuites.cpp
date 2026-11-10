@@ -42,6 +42,7 @@
 #include "Engine/Engine/Feel/FeelSystemSelfTest.h"
 #include "Engine/Engine/Disturbance/DisturbanceFieldSelfTest.h"
 #include "Engine/Engine/Feel/SpringFollowSelfTest.h"
+#include "Engine/Engine/Loop/CharacterInputSelfTest.h"
 #include "Engine/Engine/AI/BehaviorTreeSelfTest.h"
 #include "Engine/Engine/Acoustic/AcousticSelfTest.h"
 #include "Engine/Engine/Animation/AnimatorControllerSelfTest.h"
@@ -249,6 +250,7 @@ const SelfTestSuite kSuites[] = {
     { "feelsystem", mye::RunFeelSystemSelfTest, SelfTestTier::Fast, "M94c (手触り): 再生中の手触り (経過・置換・評価・内容ゲート)" },
     { "feellibrary", mye::RunFeelLibrarySelfTest, SelfTestTier::Fast, "M94d (手触り): .feel.json の往復・名前の解決・FeelTrigger" },
     { "springfollow", mye::RunSpringFollowSelfTest, SelfTestTier::Fast, "M94g (手触り): ばね追従 (瞬間移動・収束・空間変換・回転)" },
+    { "characterinput", mye::RunCharacterInputSelfTest, SelfTestTier::Fast, "M97a: 入力 → CharacterController (移動方式・キーの変更・ジャンプ・レーン)" },
     { "disturbance", mye::RunDisturbanceFieldSelfTest, SelfTestTier::Fast, "M96: かき乱しフィールド (静止・減衰と復元・注入の境界・源の速度・波紋・寿命・短い並走・復元後の通番・巨大な速度・格子外の風)" },
     { "disturbancelong", mye::RunDisturbanceFieldLongSelfTest, SelfTestTier::Full, "M96: かき乱しフィールドの重い項目 (128x128 を 600 tick・1200 tick の復元・10000 tick の波紋・600 tick 並走と焼き込みハッシュ・スナップショット往復・ソルバ・Volume の浮力と風と並走と往復・草・追従・粒子・地形)" },
 };

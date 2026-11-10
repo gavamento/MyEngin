@@ -39,6 +39,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // M80g: 接着の破断・塊の分離
 #include "Engine/Engine/Animation/PartFollowSystem.h"
 #include "Engine/Engine/Animation/TwoBoneIkSystem.h"
+#include "Engine/Engine/Loop/CharacterInputSystem.h"
 #include "Engine/Engine/Loop/PlayerInputSystem.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsDebugDraw.h"
@@ -423,6 +424,13 @@ void RunOneTick(TickServices& ts)
     // v31 (M94h): IsSimStepping の答え。スクリプト層 (フェーズ 3 / 5) はこの tick のゲートの結果を読む
     scriptHost.SetSimStepping(stepSim);
     managedHost.SetSimStepping(stepSim);
+    // M97a: 入力 → CharacterController (CharacterInput、存在ゲート)。**スクリプト層より前**に moveInput / jumpSpeed を
+    // 書く = スクリプトが同じ tick に CharacterMove / CharacterJump で上書きできる。物理と同じゲート対象
+    // (止まっている間に書いた jumpSpeed が再開の tick で発火しないようにする)
+    if (stepSim) {
+        UpdateCharacterInput(scene.GetWorld(), inputActions, ctx.inputs, scene.InputBuffer(), ctx.playerCount,
+                             ctx.fixedDt);
+    }
     // ---- BT のイベントの配達 (M85e): スクリプト層より前 ----
     // tick N に積まれた分を tick N+1 の頭で配る。こうしないと BT より前に走るスクリプトが読めない。
     // 一時停止中 (stepSim が偽) は配らない (配送待ちは残る)
