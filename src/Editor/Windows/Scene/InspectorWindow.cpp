@@ -410,13 +410,7 @@ static_assert(std::size(kColliderShapeLabels) == collidershape::kCount
               && std::size(kColliderShapeJa) == collidershape::kCount);
 static_assert(std::size(kLightTypeLabels) == lighttype::kCount && std::size(kLightTypeJa) == lighttype::kCount);
 static_assert(std::size(kPartBoundsShapeLabels) == 2 && partboundsshape::kSphere == 1);
-// M97a: CharacterInput.mode (charinputmode:: と同じ並び)
-constexpr const char* kCharInputModeLabels[] = { "World Axes 3D", "Camera Relative 3D", "Side Scroll 2D" };
-constexpr const char* kCharInputModeJa[] = { "3D ワールド軸", "3D カメラ相対", "2D 横スクロール" };
-static_assert(std::size(kCharInputModeLabels) == charinputmode::kCount
-              && std::size(kCharInputModeJa) == charinputmode::kCount);
 constexpr EnumFieldLabels kEnumFields[] = {
-    { "CharacterInput", "mode", kCharInputModeLabels, charinputmode::kCount, kCharInputModeJa },
     // M60f: 3 (Mesh) / 4 (Terrain) / 5 (Convex) までコンボに出す (これらは meshAsset を
     // 併せて指す必要がある)
     { "Collider", "shape", kColliderShapeLabels, collidershape::kCount, kColliderShapeJa },
@@ -2467,6 +2461,22 @@ bool InspectorWindow::DrawField(EngineContext& ctx, const char* componentName, v
             if (ImGui::Combo(label, &index, labels, count) && index < layers.Count() && layers.At(index).id != v) {
                 v = layers.At(index).id;
                 changed = true;
+            }
+        } else if (componentName && std::strcmp(componentName, "CharacterInput") == 0
+                   && std::strcmp(field.name, "mode") == 0) {
+            // M97a: 移動方式。**並び順 = 値 0..2** (charinputmode::)。種類を足したらラベルも足す
+            static_assert(charinputmode::kWorldAxes3D == 0 && charinputmode::kCameraRelative3D == 1
+                          && charinputmode::kSideScroll2D == 2 && charinputmode::kCount == 3);
+            const char* labels[charinputmode::kCount] = { Tr(StrId::Insp_CharInputWorldAxes3D),
+                                                          Tr(StrId::Insp_CharInputCameraRelative3D),
+                                                          Tr(StrId::Insp_CharInputSideScroll2D) };
+            int v = *static_cast<int*>(p);
+            if (v < 0 || v >= charinputmode::kCount) {
+                v = -1; // 未知の値は黙って 0 へ潰さない (別バージョンのシーンを開いたとき)
+            }
+            changed = ImGui::Combo(label, &v, labels, charinputmode::kCount);
+            if (changed) {
+                *static_cast<int*>(p) = v;
             }
         } else if (IsKeyCodeField(componentName, field.name)) {
             changed = DrawKeyCodeCombo(label, *static_cast<int*>(p));
