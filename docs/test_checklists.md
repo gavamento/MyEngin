@@ -975,7 +975,7 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 
 ## M99: カリングの拡充
 
-自動: `tools\cull_verify.bat` (視錐台 ON/OFF の全画素一致、カメラ固定、`counts` の構成間一致。Release ビルド後に回す)、`MYE_SELFTEST_ONLY=distancecull,enginecli,simsnapshot,renderstats`。仕組みは [ADR-038](adr/ADR-038-culling.md) / engine_spec §6.14。ここは画面とエディタの操作でしか確かめられない項目。
+自動: `tools\cull_verify.bat` (視錐台 ON/OFF の全画素一致、カメラ固定、画面サイズ / 距離カリングの撮影の run 間一致、`counts` の構成間一致。Release ビルド後に回す)、`MYE_SELFTEST_ONLY=distancecull,enginecli,simsnapshot,renderstats`。仕組みは [ADR-038](adr/ADR-038-culling.md) / engine_spec §6.14。ここは画面とエディタの操作でしか確かめられない項目。
 
 ### スイッチと保存 (Rendering > カリング / Project Settings > Rendering > カリング)
 

@@ -23,8 +23,8 @@
 | sub-08 | OK | 1 | 565a1d26 | カメラ固定 + 理由別表示 (+ CPU プールを cullFrustum へ、exempt の実経路確認) |
 | sub-09 | OK | 1 | 3f97eb03 | 文書 (engine_spec §6.14/§6.6、ADR-038 確定、test_checklists) + cull_verify.bat + 通し検証 |
 | sub-10 | OK | 1 | afdec5b5 | cull_verify を CI に載せる (ユーザー判断で追加) + --no-audio を揃える |
-| sub-11 | OK | 2 | (このコミット) | デバッグ線を定数どおりの色で描く (カリング枠 + HZB 赤 + DebugDrawLine + ナビ線、ユーザー判断)。round 1 REWORK: 全色の表と shot_verify 再実行。判定式は planner の誤りで α 混合 95% に変更 |
-| sub-12 | 未着手 | 0 | | 画面サイズ・距離カリングの撮影の run 間一致を cull_verify に入れる (揺れは coder の測り違いと判明、縮小) |
+| sub-11 | OK | 2 | 422603ea | デバッグ線を定数どおりの色で描く (カリング枠 + HZB 赤 + DebugDrawLine + ナビ線、ユーザー判断)。round 1 REWORK: 全色の表と shot_verify 再実行。判定式は planner の誤りで α 混合 95% に変更 |
+| sub-12 | OK | 1 | (このコミット) | 画面サイズ・距離カリングの撮影の run 間一致を cull_verify に入れる (揺れは coder の測り違いと判明、縮小) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -66,4 +66,5 @@
 - 番号 (M99 後): ABI v35 = 202、SimSnapshot v82、TypeId 100、ADR-038、check_rules 規則 18
 - sub-10: CI 上の実走は master の CI が緑に戻るまで観測できない。緑に戻ったら cull_verify の step のログを確かめる
 - sub-11: 原因はトーンマップ。線と塗りを ResolvePost 後の LDR へ移した。golden nav/perception/bt を差分表付きで更新。未検証: PixelPerfectCamera2D の低解像度経路、Editor の Scene View / Game View の線の色 (ユーザー目視)
+- sub-12: run 間の画素一致 (B 画面サイズ / D 距離) を cull_verify 2b に追加、CI でも走る。CI 所要時間の増分 約 35〜40 秒は推算 (同条件の前後計測なし)
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。

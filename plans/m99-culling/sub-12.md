@@ -1,8 +1,8 @@
 # sub-12: 画面サイズ・距離カリングの撮影の決定性を回帰に入れる
 
 - 依存: sub-11
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミットは司会)
+- 往復: 1
 
 ## 経緯
 sub-11 round 1 で「画面サイズ + 枠表示の撮影が実行ごとに違う」と報告され、切り分けのために sub-12 を切った。ところが sub-11 round 2 で、これは coder の測り違いだったと訂正された (線あり − 線なしの差を揺れと見誤った。`--warp` で同じ条件の撮影を 2 回撮ると差 0)。そこで切り分けは不要になり、**縮小して残す**ことにした。
@@ -39,5 +39,7 @@ spec 受け入れ条件 17。
 - `tools\check_rules.ps1` (pwsh)
 
 ## 実装メモ (coder が追記)
+round 1: cull_verify.bat に 2b (`:repeat`) を追加。(B) 画面サイズ / (D) 距離を同じ引数で 2 回撮って tol 0 で比較し、culledScreenSize / culledDistance > 0 を cull_counts.ps1 の新スイッチ -Positive で確認する。run 間の画素は一致 (差 0)。SKIP 時 184 秒 (増分は約 35〜40 秒)、フル 359 秒、どちらも PASS。2 回目だけ `--cull-min-screen-size 0.2` に変えると exit 1。check_rules 0 error。engine_spec §6.14 と test_checklists に 1 行ずつ追記。
 
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-11)。受け入れ 1 (2b を MYE_CULL_SKIP_CONFIGS の判定より前に置き CI でも走る。SKIP 17 checks PASS 184 秒、フル 27 checks PASS 359 秒。B・D とも diffPixels 0、culledScreenSize 1894 / culledDistance 7 で空振りなし)、2 (2 回目の B だけ閾値を変える一時改変で exit 1、改変は戻した)、3 (engine_spec §6.14 Verification と test_checklists に 1 行ずつ)、4 (check_rules 0 error) を確認。差分は git diff --stat で予定のファイルだけ。[追加] -Positive と shot-frame 10 は採用。nit: 増分の 35〜40 秒は推算 (前後を同条件で測っていない)。D の失敗注入は同じ :repeat 経路なので不要。

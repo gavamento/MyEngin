@@ -6,6 +6,7 @@
 #     cull_counts.ps1 -A a.json -B b.json -Ignore culledNonMesh … 指定した欄を除く (基点 exe の dump は M99 の新しい欄を持たない)
 #     cull_counts.ps1 -A a.json -B b.json -Only culled -View 1  … viewKey 1 の culled だけ比べる
 #     cull_counts.ps1 -A a.json -B b.json -ExpectDiff           … 差があれば exit 0 (「カットで本当に値が動く」ことの確認用)
+#     cull_counts.ps1 -A a.json -B a.json -Only culledScreenSize -Positive … A の対象欄のどれかが 0 より大きければ exit 0
 #   exit 0 = 期待どおり、1 = 期待と違う、2 = 引数・ファイルの不備
 param(
     [Parameter(Mandatory = $true)][string]$A,
@@ -15,7 +16,8 @@ param(
     [int]$View = -1,
     [switch]$ExpectDiff,
     [switch]$Greater,
-    [switch]$Zero
+    [switch]$Zero,
+    [switch]$Positive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -84,6 +86,16 @@ if ($Zero) {
         exit 1
     }
     Write-Host "[cull_counts] all zero ($($keys.Count) fields): $A"
+    exit 0
+}
+if ($Positive) {
+    # A の対象欄のどれかが 0 より大きいこと (落とす設定が本当に何かを落としている確認用)
+    $positiveKeys = @($keys | Where-Object { $ma.Contains($_) -and [double]$ma[$_] -gt 0 })
+    if ($positiveKeys.Count -eq 0) {
+        Write-Host "[cull_counts] expected a value > 0 but all are 0: $A"
+        exit 1
+    }
+    Write-Host "[cull_counts] positive ($(($positiveKeys | ForEach-Object { "$_=$($ma[$_])" }) -join ', ')): $A"
     exit 0
 }
 if ($Greater) {

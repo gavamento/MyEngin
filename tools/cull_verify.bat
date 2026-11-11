@@ -5,6 +5,8 @@ rem        既定ベンチ / --culling-demo / --culling-2d-demo / --particle-dem
 rem        既定ベンチでは drawCalls が OFF で増え、culled が OFF で 0 になることも見る
 rem   2. カリング用カメラの固定: --cull-freeze-frame 10 に --render-bench-cut-frame 20 を重ねても culled がカット無しの値と一致する
 rem        (固定が効いていないと、カットした視点の値に動く。カットで値が動くことも確かめて検査が空振りしないようにする)
+rem   2b. run 間の画素一致: 画面サイズ (--cull-min-screen-size 0.02 --cull-debug) と距離 (--culling-distance-demo --cull-max-distance 40) を
+rem        同じ引数で 2 回撮って tol 0 で比べる。culledScreenSize / culledDistance > 0 も見る (落とす物が無いと一致しても無意味)
 rem   3. counts の機械比較 (tools\cull_counts.ps1): Release --warp を基準に、Release 実 GPU と Debug 実 GPU の counts が完全一致する
 rem        既定ベンチ / --culling-demo / --culling-2d-demo / --culling-distance-demo / 既定ベンチ + --cull-min-screen-size 0.02
 rem   4. (任意) M99 前の exe との counts 比較: MYE_CULL_BASE_ROOT に基点のチェックアウト (Release ビルド済み) を渡す。
@@ -80,6 +82,10 @@ call :dump %OUT%\nofreeze_cut.json 30 --render-bench-demo --render-bench-cut-fra
 call :check_only %OUT%\freeze_nocut.json %OUT%\freeze_cut.json 1 "%FREEZE_FIELDS%"
 call :check_only_diff %OUT%\freeze_nocut.json %OUT%\nofreeze_cut.json 1 culled
 
+echo === 2b. run-to-run pixel match (same args twice, tol 0) ===
+call :repeat size 10 --render-bench-demo --cull-min-screen-size 0.02 --cull-debug culledScreenSize
+call :repeat distance 10 --culling-distance-demo --cull-max-distance 40 culledDistance
+
 if defined MYE_CULL_SKIP_CONFIGS goto :skip_configs
 echo === 3. counts: Release --warp vs Release (GPU) vs Debug (GPU) ===
 call :config_counts bench 3 --render-bench-demo
@@ -109,7 +115,7 @@ if not %FAILED%==0 (
     echo [FAIL] culling verify: %FAILED% of %CHECKS% check^(s^) failed ^(runtime log: %LOG%, images / json: %OUT%^)
     exit /b 1
 )
-echo [PASS] culling verify ^(%CHECKS% checks, frustum on/off pixel match at tol 0, frozen camera, counts^)
+echo [PASS] culling verify ^(%CHECKS% checks, frustum on/off pixel match at tol 0, frozen camera, run-to-run match, counts^)
 exit /b 0
 
 rem -------------------------------------------------------------------- :collect
@@ -152,6 +158,52 @@ for %%M in (on off) do (
     )
 )
 %REL%\Editor.exe --img-diff %OUT%\%NAME%_on.png %OUT%\%NAME%_off.png --tol 0 --diff-out %OUT%\%NAME%.diff.png
+if !ERRORLEVEL! NEQ 0 set /a FAILED+=1
+goto :eof
+
+rem -------------------------------------------------------------------- :repeat
+rem %1 = 名前 / %2 = 撮影フレーム / %3.. = 追加引数 / 最後 = 0 より大きいはずの欄名。同じ引数で 2 回撮って全画素を比べる
+rem (counts が同じでも落ちた物の集合が違えば絵は変わる。画面サイズカリングはビュー別の履歴を持つ)
+:repeat
+set NAME=%1
+set SHOTFRAME=%2
+shift
+shift
+set REPEAT_FIELD=
+set EXTRA=
+:repeat_loop
+if "%~2"=="" goto :repeat_run
+set EXTRA=!EXTRA! %1
+shift
+goto :repeat_loop
+:repeat_run
+set REPEAT_FIELD=%1
+set /a RUNFRAMES=%SHOTFRAME%+3
+set /a CHECKS+=1
+echo === repeat: %NAME% ===
+for %%N in (1 2) do (
+    set IMG=%OUT%\repeat_%NAME%_%%N.png
+    set JSON=%OUT%\repeat_%NAME%_%%N.json
+    if exist "!IMG!" del /q "!IMG!"
+    if exist "!JSON!" del /q "!JSON!"
+    %RT% %WARP% %COMMON% --frames !RUNFRAMES! --shot-frame %SHOTFRAME% !EXTRA! --render-stats-dump "!JSON!" --screenshot "!IMG!" >> %LOG% 2>&1
+    if !ERRORLEVEL! NEQ 0 (
+        echo [cull_verify] repeat %NAME% ^(run %%N^): runtime exited with an error
+        set /a FAILED+=1
+        goto :eof
+    )
+    if not exist "!IMG!" (
+        echo [cull_verify] repeat %NAME% ^(run %%N^): no screenshot was written
+        set /a FAILED+=1
+        goto :eof
+    )
+)
+%REL%\Editor.exe --img-diff %OUT%\repeat_%NAME%_1.png %OUT%\repeat_%NAME%_2.png --tol 0 --diff-out %OUT%\repeat_%NAME%.diff.png
+if !ERRORLEVEL! NEQ 0 set /a FAILED+=1
+rem 空振り防止: この設定が実際に何かを落としていること
+set /a CHECKS+=1
+if not exist "%OUT%\repeat_%NAME%_1.json" (set /a FAILED+=1 & goto :eof)
+%COUNTS% -A %OUT%\repeat_%NAME%_1.json -B %OUT%\repeat_%NAME%_1.json -Only %REPEAT_FIELD% -Positive
 if !ERRORLEVEL! NEQ 0 set /a FAILED+=1
 goto :eof
 
