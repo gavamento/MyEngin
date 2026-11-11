@@ -112,7 +112,7 @@
 - トレイル: 点列の AABB を幅の半分だけ広げて判定。
 - SpriteRenderer (3D ビルボード): 位置を中心、`0.5·|size|` × max(1, ワールド行列の最大軸スケール) を半径とする球の外接箱で判定 (描画は size をそのまま使いワールドのスケールを掛けないので、縮小スケールで半径を縮めると見えている物を落とす。sub-04 で修正)。
 - デカール: 投影ボックス (ワールド行列 × デカールの単位箱。実際の単位箱は `FillDecalTransform` で確かめる) で判定。engine_spec §6.6 の「No frustum culling」の行を消す。
-- Sprite2D / Line2D / SpriteShape2D: `OrthoWorldBounds` の矩形と項目のワールド矩形 (XY) を比べ、z は既存のタイルマップと同じ扱い。回転・スケールは 4 隅 / 点列を変換した外接矩形で扱う。透視カメラなどで `OrthoWorldBounds` が false なら落とさない。Parallax の繰り返し項目とマスクは落とさない。残る項目の描画順は変えない。
+- Sprite2D / Line2D / SpriteShape2D (判定は Resolve 後の Emit 側。項目は items_ に残し、頂点を作らない。表示範囲の箱に 1 % + pixelSnapUnit の余裕。SpriteShape の張り出しは `profile.height/2 × マイター上限`): `OrthoWorldBounds` の矩形と項目のワールド矩形 (XY) を比べ、z は既存のタイルマップと同じ扱い。回転・スケールは 4 隅 / 点列を変換した外接矩形で扱う。透視カメラなどで `OrthoWorldBounds` が false なら落とさない。Parallax の繰り返し項目とマスクは落とさない。残る項目の描画順は変えない。
 
 **4.1.6 局所影の画面外キャスター**
 - 影を落とす点光源・スポットが選ばれたフレームでも、視錐台で落とした不透明物を画面外キャスターとして集める (今は平行光があるときだけ)。
@@ -123,7 +123,7 @@
 **4.1.7 デバッグ機能 (どれもセッション限り。保存しない)**
 - カリング用カメラの固定: Rendering > カリング の「カリング用カメラを固定」。ON にした瞬間のビュー別 (1..3) のカメラ (非ジッタの view-proj、位置、`proj._22`、正射影か) を控え、以後そのビューの視錐台・距離・画面サイズの判定はその控えで行う。描画カメラ・ライト選別・CSM・オクルージョンは今のカメラのまま (D18)。固定中は控えた視錐台を線で描く。CLI `--cull-freeze-frame N` (撮影の N フレーム目で固定。`--render-bench-cut-frame` と組んで検証する)。
 - 理由別の枠表示: Rendering > カリング の「落とした物を表示」と CLI `--cull-debug`。落としたメッシュのワールド AABB を理由別の色で線描きする (視錐台・距離・画面サイズ・オクルージョン。色は名前付き定数、凡例はメニューのツールチップ)。オクルージョンの箱は既存の `OcclusionDebugBoxes` を使う (`--hzb-debug-max` が無くても集める)。描く箱は上限 (例 4096) を設け、超えた数を表示する。
-- 理由別の数: `prof::RenderStats` に `culledDistance`、`culledScreenSize`、`culledNonMesh` (4.1.5 の経路で落とした項目数)、`unculledGpuEmitters` (上界を持てず判定しなかった GPU エミッタ数) を足す。既存の `culled` は「視錐台で落としたメッシュ数」のまま意味を変えない。Profiler の表と `--render-stats-dump` の `counts` に出す。
+- 理由別の数: `prof::RenderStats` に `culledDistance`、`culledScreenSize`、`culledNonMesh` (メッシュ以外で視錐台により落とした項目数。4.1.5 の経路に加え、既存の CPU パーティクルのプールとタイルマップのチャンクも数える。地形のチャンクは数えない。sub-05 round 1 で確定)、`unculledGpuEmitters` (上界を持てず判定しなかった GPU エミッタ数) を足す。既存の `culled` は「視錐台で落としたメッシュ数」のまま意味を変えない。Profiler の表と `--render-stats-dump` の `counts` に出す。
 
 **4.1.8 計測 (BVH の採否)**
 - `--render-stats-dump` の `cpuMs` に `CollectDrawables` のステージ 1 / 2 / 3 の CPU 時間 (参考値) を足す。
@@ -205,3 +205,4 @@
 - 2026-11-11 (sub-02 round 1、coder の質問への回答): `--no-size-culling` と `--cull-min-screen-size` の併記は OFF が勝つ規則を 4.1.1 に追記。視錐台 ON/OFF の全画素一致は RenderSystem を回す selftest の先例が無いため、Runtime.exe の撮影 + img-diff (tol 0) を回すスクリプト `tools\cull_verify.bat` を sub-09 で作り、受け入れ条件 14 に足した。
 - 2026-11-11 (sub-03 round 1): 既知の制限 2 件と `flow_title` の切り分けを 7. に追記。sub-09 の作業に反映。
 - 2026-11-11 (sub-04 round 1、coder の逸脱・追加を仕様側の誤りとして採用): SpriteRenderer の半径を max(1, スケール) に、GPU エミッタの「上界を持てない」条件に衝突 2 種を、安定待ちの基準を「原点の移動」から「上界の変化」に変えた (4.1.5)。
+- 2026-11-11 (sub-05 round 1): 2D の判定位置・余裕・SpriteShape の張り出しを実装に合わせて 4.1.5 に記録 (縁スプライトの厚みは帯の厚みに使われていなかった = 仕様の誤り)。`culledNonMesh` の数え方を「メッシュ以外の視錐台による落とし全部 (CPU プール・タイルチャンク込み、地形除く)」に確定。sub-04 で数えていない CPU プールは sub-08 で足す。

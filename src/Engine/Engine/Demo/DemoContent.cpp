@@ -802,4 +802,168 @@ void BuildTwoDShowcaseScene(EngineContext& ctx, bool night, bool stress){
     w.ApplyStructuralChanges();
 }
 
+// ---- M99e: --culling-2d-demo (2D の視錐台カリングの検証) ----
+// 正射影カメラ (原点、orthoSize 5 = 高さ 10 / 16:9 で幅約 17.8) の画面内外に、Sprite2D (回転・拡大つきを含む) / Sliced / Tiled /
+// Line2D / SpriteShape2D / タイルマップ / Parallax2D / SpriteMask2D を置く。外すと困る物 (画面端に掛かる回転スプライト、
+// 両端が画面外の長い線、視差の繰り返し、マスク) と、落ちてよい物 (遠くの同種) を並べる。資産は --2d-demo と同じ
+void BuildCulling2DShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    World& w = s.GetWorld();
+    s.SetName("culling_2d_showcase");
+
+    constexpr float kOrthoSize = 5.0f;
+    constexpr float kRollDeg = 45.0f;
+    const AssetID crate{ kTwoDCrateGuid };
+
+    GameObject camera = s.CreateGameObject("Main Camera");
+    camera.SetLocalPosition(0.0f, 0.0f, -10.0f);
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->orthographic = true;
+        cam->orthoSize = kOrthoSize;
+    }
+    {
+        auto* fx = camera.AddComponent<CameraPostFxComponent>();
+        fx->tonemapMode = 0;
+        fx->bloomOn = false;
+        fx->fxaaOn = false;
+    }
+
+    // 色を変えた箱を 1 個置く (位置・拡大・回転・order)。orderInLayer は重なりの順を固定する
+    int32_t order = 0;
+    const auto addCrate = [&](const char* name, float x, float y, float scaleX, float scaleY, float rollDeg,
+                              const DirectX::XMFLOAT4& color) {
+        GameObject g = s.CreateGameObject(name);
+        g.SetLocalPosition(x, y, 0.0f);
+        g.SetLocalScale(scaleX, scaleY, 1.0f);
+        g.SetLocalRotationEuler(0.0f, 0.0f, rollDeg);
+        auto* sp = g.AddComponent<Sprite2DComponent>();
+        sp->sprite = crate;
+        sp->color = color;
+        sp->orderInLayer = order++;
+        return g;
+    };
+
+    // ---- 視差背景 (画面の外に置く。factor 0.5 で繰り返しが画面を覆う = 落とさない) ----
+    {
+        GameObject bg = s.CreateGameObject("Parallax Far");
+        bg.SetLocalPosition(40.0f, 3.0f, 0.0f);
+        auto* sp = bg.AddComponent<Sprite2DComponent>();
+        sp->sprite = AssetID{ kTwoDBgFarGuid };
+        sp->orderInLayer = -100;
+        auto* pr = bg.AddComponent<Parallax2DComponent>();
+        pr->factor = { 0.5f, 0.5f };
+        pr->repeatX = true;
+    }
+
+    // ---- タイルマップ (チャンク 16 x 16。左の 2 枚が画面に掛かり、右は外) ----
+    {
+        GameObject level = s.CreateGameObject("Level");
+        level.SetLocalPosition(-8.0f, -5.0f, 0.0f);
+        level.AddComponent<TilemapComponent>()->tilemap = AssetID{ kTwoDTilemapGuid };
+    }
+
+    // ---- Sprite2D: 画面内 / 外 ----
+    addCrate("In Center", 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, { 1.0f, 1.0f, 1.0f, 1.0f });
+    addCrate("In Right", 5.0f, 2.0f, 1.0f, 1.0f, 0.0f, { 1.0f, 0.6f, 0.6f, 1.0f });
+    addCrate("Out Right", 30.0f, 0.0f, 1.0f, 1.0f, 0.0f, { 0.6f, 1.0f, 0.6f, 1.0f });
+    addCrate("Out Top", 0.0f, 14.0f, 1.0f, 1.0f, 0.0f, { 0.6f, 0.6f, 1.0f, 1.0f });
+    addCrate("Out Bottom Left", -25.0f, -12.0f, 1.0f, 1.0f, 0.0f, { 1.0f, 1.0f, 0.4f, 1.0f });
+    // 回転 45 度・拡大 3 倍 (一辺 3 の菱形)。中心は画面の右の外 (x 10.7) だが、尖った角は画面へ入る。
+    // ローカル軸のままの外接矩形 (x 9.2 以上) で判定すると画面の外になって落としてしまう = 回転を見ている証拠
+    addCrate("Rotated Edge", 10.7f, 0.0f, 3.0f, 3.0f, kRollDeg, { 1.0f, 0.8f, 0.3f, 1.0f });
+    // 同じ菱形をもっと遠くへ (角も画面の外 = 落ちる)
+    addCrate("Rotated Far", 14.0f, 0.0f, 3.0f, 3.0f, kRollDeg, { 0.5f, 0.9f, 1.0f, 1.0f });
+    // 細長い箱を回して左下の角へ掛ける
+    addCrate("Rotated Corner", -9.0f, -4.6f, 4.0f, 1.5f, 30.0f, { 0.8f, 0.5f, 1.0f, 1.0f });
+
+    // ---- Sliced / Tiled ----
+    {
+        GameObject g = addCrate("Sliced In", 4.0f, -3.0f, 1.0f, 1.0f, 0.0f, { 0.5f, 1.0f, 0.8f, 1.0f });
+        auto* sp = g.GetComponent<Sprite2DComponent>();
+        sp->drawMode = 1;
+        sp->size = { 4.0f, 2.0f };
+    }
+    {
+        GameObject g = addCrate("Sliced Out", 40.0f, 3.0f, 1.0f, 1.0f, 0.0f, { 0.5f, 1.0f, 0.8f, 1.0f });
+        auto* sp = g.GetComponent<Sprite2DComponent>();
+        sp->drawMode = 1;
+        sp->size = { 4.0f, 2.0f };
+    }
+    {
+        GameObject g = addCrate("Tiled Out", -40.0f, 0.0f, 1.0f, 1.0f, 0.0f, { 1.0f, 0.7f, 0.9f, 1.0f });
+        auto* sp = g.GetComponent<Sprite2DComponent>();
+        sp->drawMode = 2;
+        sp->size = { 6.0f, 6.0f };
+    }
+    // flip + pivot: 画面の端 (左) に半分だけ掛かる
+    {
+        GameObject g = addCrate("Flipped Edge", -9.2f, 3.5f, 2.0f, 2.0f, 0.0f, { 1.0f, 1.0f, 1.0f, 1.0f });
+        auto* sp = g.GetComponent<Sprite2DComponent>();
+        sp->flipX = true;
+        sp->flipY = true;
+    }
+
+    // ---- Line2D ----
+    const auto addLine = [&](const char* name, float x, float y, float x0, float y0, float x1, float y1, float width,
+                             const DirectX::XMFLOAT4& color) {
+        GameObject g = s.CreateGameObject(name);
+        g.SetLocalPosition(x, y, 0.0f);
+        auto* line = g.AddComponent<Line2DComponent>();
+        line->pointCount = 2;
+        line->points[0] = { x0, y0 };
+        line->points[1] = { x1, y1 };
+        line->width = width;
+        line->color = color;
+        line->orderInLayer = order++;
+    };
+    addLine("Line In", 0.0f, -3.5f, -3.0f, 0.0f, 3.0f, 0.5f, 0.2f, { 1.0f, 0.4f, 0.2f, 1.0f });
+    addLine("Line Out", 0.0f, 20.0f, -3.0f, 0.0f, 3.0f, 0.0f, 0.2f, { 0.2f, 1.0f, 0.4f, 1.0f });
+    // 両端が画面の外で、真ん中が画面を横切る (点が 1 つも画面に無い)
+    addLine("Line Across", 0.0f, 4.0f, -30.0f, 0.0f, 30.0f, 0.0f, 0.15f, { 0.3f, 0.6f, 1.0f, 1.0f });
+    addLine("Line Far Left", -40.0f, 0.0f, -2.0f, 0.0f, 2.0f, 1.0f, 0.1f, { 1.0f, 1.0f, 1.0f, 1.0f });
+
+    // ---- SpriteShape2D (丘) ----
+    const auto addHill = [&](const char* name, float x, float y) {
+        GameObject hill = s.CreateGameObject(name);
+        hill.SetLocalPosition(x, y, 0.0f);
+        auto* shape = hill.AddComponent<SpriteShape2DComponent>();
+        shape->profile = AssetID{ kTwoDHillProfileGuid };
+        shape->closed = true;
+        shape->smooth = true;
+        shape->orderInLayer = order++;
+        const DirectX::XMFLOAT2 points[] = { { -2.5f, 0.0f }, { -1.5f, 0.7f }, { 0.0f, 1.3f },
+                                             { 1.5f, 0.7f },  { 2.5f, 0.0f },  { 0.0f, -0.6f } };
+        shape->pointCount = static_cast<int32_t>(std::size(points));
+        std::copy(std::begin(points), std::end(points), shape->points);
+    };
+    addHill("Hill In", -3.0f, 1.5f);
+    addHill("Hill Edge", 9.5f, -2.0f); // 画面の右端に半分掛かる
+    addHill("Hill Out", 60.0f, 0.0f);
+
+    // ---- SpriteMask2D (マスクは落とさない。画面の外のマスクも描画リストへ載る) ----
+    {
+        GameObject mask = s.CreateGameObject("Mask In");
+        mask.SetLocalPosition(-6.0f, -1.0f, 0.0f);
+        mask.SetLocalScale(2.0f, 2.0f, 1.0f);
+        auto* mk = mask.AddComponent<SpriteMask2DComponent>();
+        mk->sprite = crate;
+        mk->orderInLayer = order++;
+        GameObject masked = addCrate("Masked In", -6.0f, -1.0f, 4.0f, 4.0f, 0.0f, { 1.0f, 0.3f, 0.3f, 1.0f });
+        masked.GetComponent<Sprite2DComponent>()->maskInteraction = 1; // VisibleInside = マスクの内側だけ
+    }
+    {
+        GameObject mask = s.CreateGameObject("Mask Out");
+        mask.SetLocalPosition(35.0f, 5.0f, 0.0f);
+        auto* mk = mask.AddComponent<SpriteMask2DComponent>();
+        mk->sprite = crate;
+        mk->orderInLayer = order++;
+        GameObject masked = addCrate("Masked Out", 35.0f, 5.0f, 4.0f, 4.0f, 0.0f, { 1.0f, 0.3f, 0.3f, 1.0f });
+        masked.GetComponent<Sprite2DComponent>()->maskInteraction = 1;
+    }
+
+    w.ApplyStructuralChanges();
+}
+
 } // namespace mye

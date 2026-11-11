@@ -12,11 +12,13 @@
 
 #include "Engine/Core/Asset/AssetGuidResolver.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Physics/Collider/Shape2DLibrary.h"
 #include "Engine/Engine/Rendering/Sprite2D/Line2DGeometry.h"
 #include "Engine/Engine/Rendering/Sprite2D/SpriteLibrary.h"
+#include "Engine/Engine/Rendering/Sprite2D/SpriteShape.h"
 #include "Engine/Engine/Scene/SortingLayers.h"
 #include "Engine/Engine/Tilemap/TilemapSystem.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -38,6 +40,8 @@ constexpr int kMaxPiecesPerAxis = 700;
 constexpr float kTileCountEpsilon = 1.0e-4f;
 // 視錐台の逆行列が特異とみなす行列式の下限 (これ未満はチャンクを切らない)
 constexpr float kMinFrustumDeterminant = 1.0e-20f;
+// 視錐台の箱へ足す余裕 (箱の大きさに対する比)。TAA のジッタ・浮動小数点の誤差で境界の物を落とさない
+constexpr float kCullMarginRatio = 0.01f;
 // 法線を回すワールド行列の軸の長さの下限 (これ未満の軸は回さない)
 constexpr float kMinAxisLength = 1.0e-6f;
 
@@ -138,6 +142,80 @@ bool Sprite2DRenderer::OrthoWorldBounds(const XMFLOAT4X4* view, const XMFLOAT4X4
         }
     }
     return true;
+}
+
+bool Sprite2DRenderer::AabbOutsideBounds(const XMFLOAT3& boxMin, const XMFLOAT3& boxMax, const XMFLOAT3& boundsMin,
+                                         const XMFLOAT3& boundsMax)
+{
+    return boxMin.x > boundsMax.x || boxMax.x < boundsMin.x || boxMin.y > boundsMax.y || boxMax.y < boundsMin.y
+           || boxMin.z > boundsMax.z || boxMax.z < boundsMin.z;
+}
+
+void Sprite2DRenderer::SliceLocalRect(float pivotX, float pivotY, float sizeX, float sizeY, float out[4])
+{
+    out[0] = -pivotX * sizeX;
+    out[1] = -pivotY * sizeY;
+    out[2] = out[0] + sizeX;
+    out[3] = out[1] + sizeY;
+}
+
+void Sprite2DRenderer::SpriteLocalRect(const Sprite2DComponent& sp, const Resolved& r, float out[4])
+{
+    if (!r.missing && (sp.drawMode == 1 || sp.drawMode == 2)) {
+        SliceLocalRect(r.pivot[0], r.pivot[1], sp.size.x, sp.size.y, out);
+    } else {
+        std::copy(r.local, r.local + 4, out);
+    }
+    // flip は pivot まわりの鏡映 (AddQuad が位置の符号を反転する)
+    if (sp.flipX) {
+        const float x0 = out[0];
+        out[0] = -out[2];
+        out[2] = -x0;
+    }
+    if (sp.flipY) {
+        const float y0 = out[1];
+        out[1] = -out[3];
+        out[3] = -y0;
+    }
+}
+
+bool Sprite2DRenderer::LocalRectOutsideFrustum(const XMFLOAT4X4& m, float x0, float y0, float x1, float y1) const
+{
+    if (!cullActive_) {
+        return false;
+    }
+    const float xs[4] = { x0, x1, x1, x0 };
+    const float ys[4] = { y0, y0, y1, y1 };
+    XMFLOAT3 lo = { 0.0f, 0.0f, 0.0f };
+    XMFLOAT3 hi = { 0.0f, 0.0f, 0.0f };
+    for (int i = 0; i < 4; ++i) {
+        // ローカル (x, y, 0) × ワールド行列 (行ベクトル規約)。回転・非一様スケール・せん断でも 4 隅の外接で足りる
+        const XMFLOAT3 p = { xs[i] * m._11 + ys[i] * m._21 + m._41, xs[i] * m._12 + ys[i] * m._22 + m._42,
+                             xs[i] * m._13 + ys[i] * m._23 + m._43 };
+        if (i == 0) {
+            lo = p;
+            hi = p;
+        } else {
+            lo = { (std::min)(lo.x, p.x), (std::min)(lo.y, p.y), (std::min)(lo.z, p.z) };
+            hi = { (std::max)(hi.x, p.x), (std::max)(hi.y, p.y), (std::max)(hi.z, p.z) };
+        }
+    }
+    return AabbOutsideBounds(lo, hi, cullMin_, cullMax_);
+}
+
+bool Sprite2DRenderer::WorldRectOutsideFrustum(float minX, float minY, float maxX, float maxY, float z) const
+{
+    return cullActive_ && AabbOutsideBounds({ minX, minY, z }, { maxX, maxY, z }, cullMin_, cullMax_);
+}
+
+void Sprite2DRenderer::ReportCulled() const
+{
+    if (culledCount_ == 0) {
+        return;
+    }
+    prof::RenderStats delta;
+    delta.culledNonMesh = culledCount_;
+    prof::AddRenderStats(delta);
 }
 
 void Sprite2DRenderer::NormalTransform(const XMFLOAT4X4& m, bool flipX, bool flipY, float out[4])
@@ -315,10 +393,12 @@ bool Sprite2DRenderer::BuildSliceQuads(const SliceInput& in, std::vector<SliceQu
     if (!(in.sizeX > 0.0f) || !(in.sizeY > 0.0f)) {
         return false;
     }
-    const float left = -in.pivotX * in.sizeX;
-    const float bottom = -in.pivotY * in.sizeY;
-    const float right = left + in.sizeX;
-    const float top = bottom + in.sizeY;
+    float rectLocal[4];
+    SliceLocalRect(in.pivotX, in.pivotY, in.sizeX, in.sizeY, rectLocal);
+    const float left = rectLocal[0];
+    const float bottom = rectLocal[1];
+    const float right = rectLocal[2];
+    const float top = rectLocal[3];
 
     // border を矩形に収める (左右・上下の合計が矩形を超えたら右 / 上を削る)
     const float rw = in.rect[2];
@@ -428,6 +508,19 @@ void Sprite2DRenderer::EmitSprite(const Item& item, RenderResources& resources)
     Resolved r;
     if (!Resolve(sp.sprite, resources, true, r)) {
         return;
+    }
+    // 視差の項目は繰り返しで画面へ入るので判定しない
+    if (cullActive_ && item.parallax == nullptr) {
+        float local[4];
+        SpriteLocalRect(sp, r, local);
+        if (LocalRectOutsideFrustum(*item.world, local[0], local[1], local[2], local[3])) {
+            ++culledCount_;
+            // 法線 RT を作るかは「使える法線マップが 1 枚でもあるか」で決まる。落としても判定を変えない
+            if (!lightMeta_.empty() && sp.lit && anyNormalMap_) {
+                anyNormalReady_ = anyNormalReady_ || !ResolveNormalMap(sp.normalMap, resources).IsNull();
+            }
+            return;
+        }
     }
     // 視差: 描画位置だけをずらす (回転・スケール・当たりは変えない)
     XMFLOAT4X4 shifted = *item.world;
@@ -545,6 +638,22 @@ void Sprite2DRenderer::EmitLine(const Item& item, RenderResources& resources)
     if (!stroke && !fill) {
         return; // 描くものが無いときはテクスチャの読み込みも頼まない
     }
+    if (cullActive_) {
+        // 帯はマイターで半幅の kMiterLimit 倍まで張り出す。塗りは点列の内側
+        const float reach = stroke ? ln.width * 0.5f * line2d::kMiterLimit : 0.0f;
+        float lo[2] = { ln.points[0].x, ln.points[0].y };
+        float hi[2] = { lo[0], lo[1] };
+        for (int i = 1; i < n; ++i) {
+            lo[0] = (std::min)(lo[0], ln.points[i].x);
+            lo[1] = (std::min)(lo[1], ln.points[i].y);
+            hi[0] = (std::max)(hi[0], ln.points[i].x);
+            hi[1] = (std::max)(hi[1], ln.points[i].y);
+        }
+        if (LocalRectOutsideFrustum(*item.world, lo[0] - reach, lo[1] - reach, hi[0] + reach, hi[1] + reach)) {
+            ++culledCount_;
+            return;
+        }
+    }
     // texture が空 = 白。指定があって未ロードなら読み込みを頼んで、このフレームは描かない (パスが引けないものはマゼンタ)
     TextureLibrary& textures = resources.textures;
     AssetID texture = textures.White();
@@ -623,6 +732,22 @@ void Sprite2DRenderer::EmitShape(const Item& item, RenderResources& resources)
         shapeWorld_[i] = { p.x * m._11 + p.y * m._21 + m._41, p.x * m._12 + p.y * m._22 + m._42 };
     }
     const float z = m._43;
+    if (cullActive_) {
+        // 縁の帯は輪郭から最大 height / 2 * マイター上限まで張り出す。塗りは輪郭の内側
+        const float reach = 0.5f * profile->height * kSpriteShapeMaxMiterScale;
+        float lo[2] = { shapeWorld_[0].x, shapeWorld_[0].y };
+        float hi[2] = { lo[0], lo[1] };
+        for (const XMFLOAT2& p : shapeWorld_) {
+            lo[0] = (std::min)(lo[0], p.x);
+            lo[1] = (std::min)(lo[1], p.y);
+            hi[0] = (std::max)(hi[0], p.x);
+            hi[1] = (std::max)(hi[1], p.y);
+        }
+        if (WorldRectOutsideFrustum(lo[0] - reach, lo[1] - reach, hi[0] + reach, hi[1] + reach, z)) {
+            ++culledCount_;
+            return;
+        }
+    }
     const bool closed = spriteshape::IsClosedOutline(n, sh.closed);
     const bool lit = !lightMeta_.empty();
     const auto addVertex = [&](float x, float y, float u, float v) {
@@ -1099,6 +1224,7 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
                                              || minY + chunkH < boundsMin.y || origin.z > boundsMax.z
                                              || origin.z < boundsMin.z;
                         if (outside) {
+                            ++culledCount_;
                             const auto cached = tileCache_.find(ck);
                             if (cached != tileCache_.end()) {
                                 cached->second.lastUsed = tileFrame_;
@@ -1603,6 +1729,16 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     hasParallaxItem_ = false;
     hasCamera_ = false;
     hasOrtho_ = false;
+    culledCount_ = 0;
+    cullActive_ = frustumCulling_ && OrthoWorldBounds(view, proj, cullMin_, cullMax_);
+    if (cullActive_) {
+        // ジッタ・ピクセルスナップの分の余裕 (箱の大きさに対する比 + スナップ格子)
+        const XMFLOAT3 extent = { cullMax_.x - cullMin_.x, cullMax_.y - cullMin_.y, cullMax_.z - cullMin_.z };
+        const XMFLOAT3 margin = { extent.x * kCullMarginRatio + pixelSnapUnit_, extent.y * kCullMarginRatio + pixelSnapUnit_,
+                                  extent.z * kCullMarginRatio };
+        cullMin_ = { cullMin_.x - margin.x, cullMin_.y - margin.y, cullMin_.z - margin.z };
+        cullMax_ = { cullMax_.x + margin.x, cullMax_.y + margin.y, cullMax_.z + margin.z };
+    }
     CollectSprites(world, hasGroups);
     if (hasParallaxItem_ && view != nullptr) {
         // 視差の基準 = カメラのワールド位置 (view の逆行列の平行移動)
@@ -1622,6 +1758,7 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     CollectTilemaps(world, view, proj);
     if (items_.empty()) {
         tileCache_.clear();
+        ReportCulled();
         return list_;
     }
 
@@ -1665,6 +1802,7 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     for (auto it = tileCache_.begin(); it != tileCache_.end();) {
         it = (it->second.lastUsed == tileFrame_) ? std::next(it) : tileCache_.erase(it);
     }
+    ReportCulled();
     return list_;
 }
 

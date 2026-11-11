@@ -40,8 +40,7 @@ constexpr float kSamePointDist2 = 1.0e-10f;
 constexpr float kMinSegmentLength = 1.0e-6f;
 // スプライトの位相が 1 に十分近ければ 0 に戻す (端数のごく薄いクアッドを作らない)
 constexpr float kPhaseEpsilon = 1.0e-4f;
-// マイターの延長率の上限 (鋭い角で帯が飛び出さない)
-constexpr float kMaxMiterScale = 2.0f;
+constexpr float kMaxMiterScale = kSpriteShapeMaxMiterScale;
 // 1 三角形あたり格子セルを数える上限 (極端に小さい tile / 巨大な輪郭で止まらなくなるのを避ける)
 constexpr int64_t kMaxFillCellsPerTriangle = 4096;
 // 格子で切ったかけらの面積 (の 2 倍) がこれ以下なら、線や点に潰れたものとして捨てる

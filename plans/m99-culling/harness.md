@@ -14,8 +14,8 @@
 | sub-01 | OK | 1 | 877dc523 | 段別 CPU 時間・BVH 採否 → 見送り (ADR-038) |
 | sub-02 | OK | 1 | acc258b4 | 設定の土台 + 視錐台スイッチ |
 | sub-03 | OK | 1 | 2485dd6c | 局所影の画面外キャスター (--culling-demo) |
-| sub-04 | OK | 1 | (このコミット) | 3D 経路の視錐台 (GPU 粒子・トレイル・スプライト・デカール) |
-| sub-05 | 未着手 | 0 | | 2D 経路の視錐台 (sub-02 後、03/04 と並列可) |
+| sub-04 | OK | 1 | d276ed81 | 3D 経路の視錐台 (GPU 粒子・トレイル・スプライト・デカール) |
+| sub-05 | OK | 1 | (このコミット) | 2D 経路の視錐台 (--culling-2d-demo) |
 | sub-06 | 未着手 | 0 | | 距離カリング + RenderCulling |
 | sub-07 | 未着手 | 0 | | 画面サイズカリング |
 | sub-08 | 未着手 | 0 | | カメラ固定 + 理由別表示 |
@@ -46,4 +46,5 @@
 - sub-03: shot_verify の flow_title FAIL (文字行のみ、影の経路外) は sub-09 で基点 d52e91f3 と比べて切り分ける。nit: AllocateShadowAtlas のマスク計算の切り出し (任意)
 - 範囲外の別件: master の CI は M98e 以降 4 回連続 failure (run 42927691480 はビルド途中で exit 1)。最終報告でユーザーへ伝える
 - sub-04: nit: ParticleGpuBound を軽いヘッダへ分けると GpuParticleBackend.h の依存が細くなる (任意)。sub-08 は CPU パーティクルのプール判定を cullFrustum へ寄せる。Scene View の動く GPU エミッタは sub-09 の手動確認
+- sub-05: nit: Sliced/Tiled/SpriteShape の視錐台判定の単体テストなし (任意)。culledNonMesh の定義を「非メッシュの視錐台落ち全部」に確定、CPU プールの計上は sub-08。Scene View の 2D は sub-09 の手動確認
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。

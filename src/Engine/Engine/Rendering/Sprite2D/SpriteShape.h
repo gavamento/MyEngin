@@ -23,6 +23,8 @@ inline constexpr int kSpriteShapeSubdivisions = 8;
 inline constexpr float kDefaultSpriteShapeHeight = 1.0f;
 inline constexpr float kMinSpriteShapeHeight = 0.001f;
 inline constexpr float kMaxSpriteShapeHeight = 100.0f;
+// マイターの延長率の上限 (鋭い角で帯が飛び出さない)。縁の帯は輪郭から最大 height / 2 * この値まで張り出す
+inline constexpr float kSpriteShapeMaxMiterScale = 2.0f;
 // 衝突の辺の箱: 半厚 (線の両側へ) と z 方向の全厚。輪郭の線そのものが当たり面の中心
 inline constexpr float kSpriteShapeColliderHalfThickness = 0.1f;
 inline constexpr float kSpriteShapeColliderDepth = 1.0f;

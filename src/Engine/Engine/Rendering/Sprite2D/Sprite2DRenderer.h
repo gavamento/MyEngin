@@ -52,7 +52,8 @@ public:
     // 次の Collect から効く。Line2D / SpriteShape2D / タイルは対象外
     void SetPixelSnapUnit(float unit) { pixelSnapUnit_ = unit; }
 
-    // false ならタイルのチャンクを画面外でも切らない (RenderSystem::enableFrustumCulling。次の Collect から効く)
+    // false ならタイルのチャンク・スプライト・線・シェイプを画面外でも切らない
+    // (RenderSystem::enableFrustumCulling。次の Collect から効く)
     void SetFrustumCulling(bool enabled) { frustumCulling_ = enabled; }
 
     // 正射影のとき、カメラの視錐台 (直方体) を囲むワールドの AABB (view / proj は行ベクトル規約の行列)。
@@ -75,6 +76,14 @@ public:
     // pivot を原点にしたローカル矩形 {left, bottom, right, top} (ワールド単位、flip 適用前)。
     // 描画と Scene View のギズモが同じ寸法を使うための 1 本。texWidth / texHeight は全面スプライトのときだけ使う
     static void LocalRect(const SpriteDef& def, int texWidth, int texHeight, float out[4]);
+
+    // Sliced / Tiled のローカル矩形 {left, bottom, right, top} (pivot が原点、size がワールド寸法)。
+    // BuildSliceQuads と視錐台判定が同じ式を使う 1 本
+    static void SliceLocalRect(float pivotX, float pivotY, float sizeX, float sizeY, float out[4]);
+
+    // ワールド AABB が視錐台の箱 (OrthoWorldBounds) の外か。箱は呼び出し側が余裕を足して渡す。重なれば false
+    static bool AabbOutsideBounds(const DirectX::XMFLOAT3& boxMin, const DirectX::XMFLOAT3& boxMax,
+                                  const DirectX::XMFLOAT3& boundsMin, const DirectX::XMFLOAT3& boundsMax);
 
     // Tiled / Sliced が 1 スプライトに出す頂点数の上限 (超えた分は切って警告を 1 回出す)
     static constexpr uint32_t kMaxSpriteVertices = 4096;
@@ -182,6 +191,15 @@ private:
         bool missing = false;
     };
 
+    // Sprite2D の描画矩形 {left, bottom, right, top} (flip 適用後、ローカル)。EmitSprite の頂点と同じ範囲
+    static void SpriteLocalRect(const Sprite2DComponent& sp, const Resolved& r, float out[4]);
+    // ローカル XY の矩形 (z = 0) をワールド行列で運んだ外接 AABB が、視錐台の外か (cullActive_ のときだけ true になりうる)
+    bool LocalRectOutsideFrustum(const DirectX::XMFLOAT4X4& m, float x0, float y0, float x1, float y1) const;
+    // ワールド XY の範囲 (z 一定) が、視錐台の外か
+    bool WorldRectOutsideFrustum(float minX, float minY, float maxX, float maxY, float z) const;
+    // 落とした項目数を RenderStats (culledNonMesh) へ足す
+    void ReportCulled() const;
+
     AssetID EnsureMissingTexture(RenderResources& resources);
     bool Resolve(AssetID sprite, RenderResources& resources, bool allowMissing, Resolved& out);
     void EmitSprite(const Item& item, RenderResources& resources);
@@ -251,6 +269,10 @@ private:
     bool anyNormalReady_ = false;                        // 実際に法線マップのバッチを積んだ (積めなければ法線 RT を作らない)
     float pixelSnapUnit_ = 0.0f;                         // SetPixelSnapUnit の値
     bool frustumCulling_ = true;                         // SetFrustumCulling の値
+    bool cullActive_ = false;                            // この Collect で視錐台判定が効く (ON かつ正射影)
+    DirectX::XMFLOAT3 cullMin_ = { 0.0f, 0.0f, 0.0f };   // 視錐台の AABB (余裕込み)
+    DirectX::XMFLOAT3 cullMax_ = { 0.0f, 0.0f, 0.0f };
+    int culledCount_ = 0;                                // この Collect で落とした項目数 (RenderStats の culledNonMesh へ)
     uint64_t simTick_ = 0;                              // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点

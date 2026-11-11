@@ -860,6 +860,82 @@ bool RunSprite2DAssetSelfTest()
         device.Shutdown();
     }
 
+    // ---- (j) 正射影の視錐台で落とす項目 (M99e)。GPU を使わない部分だけ ----
+    {
+        GraphicsDevice device;
+        check(device.Init(true), "2D frustum culling test: WARP device init");
+        RenderResources resources;
+        resources.textures.Init(device);
+        Sprite2DRenderer renderer;
+        // カメラ (2, 0) から +Z を見る正射影 (表示範囲は x -2..6、y -2.25..2.25。箱の余裕は 1 % = x 0.08)
+        DirectX::XMFLOAT4X4 view;
+        DirectX::XMFLOAT4X4 proj;
+        DirectX::XMStoreFloat4x4(&view, DirectX::XMMatrixTranslation(-2.0f, 0.0f, 10.0f));
+        DirectX::XMStoreFloat4x4(&proj, DirectX::XMMatrixOrthographicLH(8.0f, 4.5f, 0.1f, 100.0f));
+        // sprite 未設定 = 内蔵マゼンタ (1 x 1 ワールド単位、pivot 中央)。world 行列を書いた Sprite2D を 1 個だけ持つ World を作る
+        const auto spriteCount = [&](const DirectX::XMMATRIX& m, bool cullOn, bool parallax) {
+            World w;
+            const EntityID e = w.CreateEntity("s");
+            w.AddComponent<Sprite2DComponent>(e);
+            if (parallax) {
+                w.AddComponent<Parallax2DComponent>(e);
+            }
+            DirectX::XMStoreFloat4x4(&w.GetComponent<WorldMatrixComponent>(e)->value, m);
+            renderer.SetFrustumCulling(cullOn);
+            return renderer.Collect(w, resources, &view, &proj).vertices.size() / 6;
+        };
+        const auto place = [](float x, float y, float scale, float rollDeg) {
+            return DirectX::XMMatrixScaling(scale, scale, 1.0f) * DirectX::XMMatrixRotationZ(DirectX::XMConvertToRadians(rollDeg))
+                   * DirectX::XMMatrixTranslation(x, y, 0.0f);
+        };
+        check(spriteCount(place(2.0f, 0.0f, 1.0f, 0.0f), true, false) == 1, "2D cull: a sprite inside the view is kept");
+        check(spriteCount(place(50.0f, 0.0f, 1.0f, 0.0f), true, false) == 0, "2D cull: a sprite far outside is dropped");
+        check(spriteCount(place(50.0f, 0.0f, 1.0f, 0.0f), false, false) == 1,
+              "2D cull: frustum culling OFF keeps the far sprite");
+        check(spriteCount(place(2.0f, 9.0f, 1.0f, 0.0f), true, false) == 0, "2D cull: a sprite above the view is dropped");
+        // 一辺 3 の菱形 (45 度・3 倍)。中心 x 7.8 は表示範囲 (x 6 まで) の外で、ローカル軸の外接矩形 (x 6.3 以上) も外だが、
+        // 左の角 (7.8 - 2.12 = 5.68) は画面に入る = 回転を考慮して残す
+        check(spriteCount(place(7.8f, 0.0f, 3.0f, 45.0f), true, false) == 1,
+              "2D cull: a 45 deg x3 sprite whose tip reaches the view edge is kept");
+        check(spriteCount(place(8.5f, 0.0f, 3.0f, 45.0f), true, false) == 0,
+              "2D cull: the same sprite with its tip outside is dropped");
+        // 視差の項目は繰り返しで画面へ入るので落とさない
+        check(spriteCount(place(50.0f, 0.0f, 1.0f, 0.0f), true, true) == 1, "2D cull: a Parallax2D sprite is never dropped");
+
+        // Line2D: 点が 1 つも画面に無くても、横切る線は残す。画面の外の線は落とす
+        const auto lineCount = [&](float x, float y, float x0, float x1) {
+            World w;
+            const EntityID e = w.CreateEntity("l");
+            w.AddComponent<Line2DComponent>(e);
+            auto* ln = w.GetComponent<Line2DComponent>(e);
+            ln->points[0] = { x0, 0.0f };
+            ln->points[1] = { x1, 0.0f };
+            w.GetComponent<WorldMatrixComponent>(e)->value._41 = x;
+            w.GetComponent<WorldMatrixComponent>(e)->value._42 = y;
+            renderer.SetFrustumCulling(true);
+            return renderer.Collect(w, resources, &view, &proj).vertices.size();
+        };
+        check(lineCount(2.0f, 0.0f, -1.0f, 1.0f) > 0, "2D cull: a Line2D inside the view is kept");
+        check(lineCount(0.0f, 0.0f, -30.0f, 30.0f) > 0, "2D cull: a Line2D crossing the view with both ends outside is kept");
+        check(lineCount(30.0f, 0.0f, -1.0f, 1.0f) == 0, "2D cull: a Line2D far outside is dropped");
+
+        // 透視カメラ / 行列なしは判定しない
+        {
+            DirectX::XMFLOAT4X4 persp;
+            DirectX::XMStoreFloat4x4(&persp, DirectX::XMMatrixPerspectiveFovLH(1.0f, 1.6f, 0.1f, 100.0f));
+            World w;
+            const EntityID e = w.CreateEntity("s");
+            w.AddComponent<Sprite2DComponent>(e);
+            w.GetComponent<WorldMatrixComponent>(e)->value._41 = 500.0f;
+            renderer.SetFrustumCulling(true);
+            check(renderer.Collect(w, resources, &view, &persp).vertices.size() == 6
+                      && renderer.Collect(w, resources).vertices.size() == 6,
+                  "2D cull: a perspective camera / no matrices never drops");
+        }
+        renderer.SetFrustumCulling(true);
+        device.Shutdown();
+    }
+
     fs::remove_all(root, ec);
 
     if (failCount == 0) {
