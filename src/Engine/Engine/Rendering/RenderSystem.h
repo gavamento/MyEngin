@@ -221,7 +221,7 @@ public:
     std::wstring assetsRoot;
 
     // スクリプトの DebugDrawLine (v7、M37)。EngineLoop が接続。非 null かつ非空で
-    // シーン描画後 (ポスプロ解決前) に深度テスト付きの線として重ねる
+    // ポスプロ解決後の LDR 目標へ、深度テスト付きの線として定数の色のまま重ねる
     const std::vector<DebugLineCmd>* debugLines = nullptr;
 
     // M82e: ナビメッシュの表示 (半透明の塗り + 輪郭線)。EngineLoop が接続し、描画フレームごとに
@@ -453,10 +453,10 @@ private:
     void UpdateDisturbanceField(World& world, GraphicsDevice& device, RenderResources& resources, FrameContext& f);
     void UpdateDisturbanceVolumes(World& world, GraphicsDevice& device, RenderResources& resources,
                                   FrameContext& f); // M96g: Volume (3D)
-    void DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
-                               RenderResources& resources, const FrameTarget& target,
-                               const CameraOverride* cameraOverride, ParticleSystem* particles, VfxRenderer* vfx,
-                               FrameContext& f);
+    void DrawParticlesAndVfx(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                             RenderResources& resources, const CameraOverride* cameraOverride,
+                             ParticleSystem* particles, VfxRenderer* vfx, FrameContext& f);
+    void DrawDebugOverlay(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target, FrameContext& f);
     void ResolvePost(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
                      IRenderPath& path, const FrameTarget& target, const CameraOverride* cameraOverride,
                      FrameContext& f);

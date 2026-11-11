@@ -814,12 +814,13 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     occlusionGpuMs_ = path.OcclusionGpuMs();         // (同上)
     f.occlusionBoxes = ((hzbDebugMip != 0 && hzbDebugMax) || f.view.occlusionBoxCollect != 0) ? &path.OcclusionDebugBoxes() : nullptr;
 
-    DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
+    DrawParticlesAndVfx(world, device, shaders, resources, cameraOverride, particles, vfx, f);
     if (groundFogBound_) {
         disturbancePass_.UnbindGroundFog(device); // 地面の霧の束縛は他のビューの描画へ残さない
         groundFogBound_ = false;
     }
     ResolvePost(world, device, shaders, resources, path, target, cameraOverride, f);
+    DrawDebugOverlay(device, shaders, target, f);
     if (drawLowRes) {
         // 低解像度 RT を整数倍で画面へ。深度は呼び出し側の後段 (ギズモ等) のために 1 へ戻しておく
         if (!pixelPerfectBlit_.IsReady()) {
@@ -2689,11 +2690,10 @@ void RenderSystem::UpdateAcousticVolume(GraphicsDevice& device, const FrameTarge
     }
 }
 
-// パスの後段: VFX (M29c) → パーティクル (M42 / M63d) → スクリプトの DebugDrawLine (M37)
-void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, ShaderManager& shaders,
-                                         RenderResources& resources, const FrameTarget& target,
-                                         const CameraOverride* cameraOverride, ParticleSystem* particles,
-                                         VfxRenderer* vfx, FrameContext& f)
+// パスの後段: Sprite2D (M94) → VFX (M29c) → パーティクル (M42 / M63d)。すべて HDR 中間へ描く
+void RenderSystem::DrawParticlesAndVfx(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                                       RenderResources& resources, const CameraOverride* cameraOverride,
+                                       ParticleSystem* particles, VfxRenderer* vfx, FrameContext& f)
 {
     RenderView& view = f.view;
     SceneLightData& lights = f.lights;
@@ -2772,21 +2772,30 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
             particles->Gpu().SetFieldGpu(view.disturbance, view.disturbanceVolumes);
         }
     }
+}
 
-    // ナビメッシュの半透明の塗り (M82e)。線より先 (塗りの上に輪郭と経路線が乗る)。
-    // 空のシーンではパスを Init もしない
+// ポスプロ解決の後に最終の LDR 目標へ重ねる: ナビメッシュの塗り (M82e) と、DebugDrawLine (v7、M37) を含む線パス。
+// HDR 中間へ描くとトーンマップで定数の色が変わる。深度は target.dsv (パスが描いた深度) で、解決は触らない
+void RenderSystem::DrawDebugOverlay(GraphicsDevice& device, ShaderManager& shaders, const FrameTarget& target,
+                                    FrameContext& f)
+{
+    RenderView& view = f.view;
+    // 深度 SRV が束縛されたままでも競合しないよう、書き込めない DSV があればそちらを使う
+    ID3D11DepthStencilView* dsv = (view.dsvReadOnly != nullptr) ? view.dsvReadOnly : target.dsv;
+    // 目標は TAA 解決済みでジッタが無いので、ジッタ前の射影で描く (深度はジッタ付きで書かれたが、線は手前へ寄せるので許容)
+    const XMFLOAT4X4& lineProj = view.projNoJitter;
+
+    // ナビメッシュの半透明の塗り。線より先 (塗りの上に輪郭と経路線が乗る)。空のシーンではパスを Init もしない
     if (navView != nullptr && !navView->FillVertices().empty()) {
         if (!navFillPass_.IsReady()) {
             navFillPass_.Init(device, shaders);
         }
         static_assert(sizeof(DebugFillVertex) == NavFillPass::kVertexStride);
         navFillPass_.Render(device, shaders, navView->FillVertices().data(),
-                            static_cast<uint32_t>(navView->FillVertices().size()), navView->FillSerial(), view.rtv,
-                            view.dsv, target.width, target.height, view.view, view.proj);
+                            static_cast<uint32_t>(navView->FillVertices().size()), navView->FillSerial(), target.rtv,
+                            dsv, target.width, target.height, view.view, lineProj);
     }
 
-    // スクリプトの DebugDrawLine (v7、M37): シーン空間の線を深度テスト付きで重ねる。
-    // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く。ナビメッシュの輪郭線も同じ線パスで描く
     const bool hasNavLines = navView != nullptr && !navView->Lines().empty();
     const bool hasOccBoxes = f.occlusionBoxes != nullptr && !f.occlusionBoxes->empty();
     const bool hasCullBoxes = !cullDebugBoxes_.empty();
@@ -2840,8 +2849,8 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
                     linePass_.AddLine(c[i], c[4 + i], kCullFrozenFrustumRgba, true);
                 }
             }
-            linePass_.Render(device, shaders, view.rtv, view.dsv, target.width, target.height,
-                             view.view, view.proj);
+            linePass_.Render(device, shaders, target.rtv, dsv, target.width, target.height,
+                             view.view, lineProj);
         }
     }
 }
