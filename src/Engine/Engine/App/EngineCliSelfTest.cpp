@@ -283,7 +283,7 @@ bool RunEngineCliSelfTest()
     r = RunParse({});
     check(r.extras.renderBenchScale == 1, "the bench scale is 1 by default");
     {
-        // 実効値 = ファイルの値 && CLI。--no-occlusion はファイルを書き換えない
+        // 実効値 = ファイルの値 && CLI。--no-occlusion はファイルを書き換えない (ResolveCullingSettings 経由)
         namespace fs = std::filesystem;
         const fs::path dir = fs::temp_directory_path() / L"mye_cli_occlusion_selftest";
         std::error_code ec;
@@ -292,7 +292,9 @@ bool RunEngineCliSelfTest()
         const std::wstring root = dir.wstring();
         auto effective = [&](bool noOcclusionFlag) {
             const ParseRun p = noOcclusionFlag ? RunParse({ L"--no-occlusion" }) : RunParse({});
-            return ResolveOcclusionCulling(root, p.config.occlusionCulling);
+            CullingCliOverrides cli = p.config.cullingCli;
+            cli.occlusion = p.config.occlusionCulling; // EngineLoop と同じ組み立て
+            return ResolveCullingSettings(root, cli).occlusion;
         };
         SaveOcclusionCullingSetting(root, false);
         check(!effective(false), "occlusion: file false, no flag -> off");

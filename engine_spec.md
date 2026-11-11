@@ -3,7 +3,7 @@
 - **Engine Name**: MyEngine
 - **Version**: 0.86.1 (エンジンの版 `kEngineVersion`。GitHub Releases の `v0.86.1`、M98)
 - **Author**: Gavament
-- **Last Updated**: 2026-10-12
+- **Last Updated**: 2026-11-11
 
 ---
 
@@ -431,6 +431,7 @@ attenuate.
 | GPU occlusion culling | Implemented | Two-phase, max-Z pyramid per view, Deferred and Forward opaque, default on. See §6.14 (M90b / M90c) |
 | Shadow caster and skin culling | Implemented | Per-cascade culling that no longer drops off-screen casters, and a conservative skinned AABB. See §6.14 (M90d) |
 | Distant animation throttling (URO) | Implemented | Render-side only; far skinned meshes rebuild their bone palette every 2 / 4 / 8 ticks. See §6.14 (M90f) |
+| Culling switches, distance and screen-size culling | Implemented | Frustum / occlusion / distance / screen-size culling are separate project settings; per-object distances through `RenderCulling`; frustum tests on GPU particles, trails, billboards, decals and 2D; off-screen casters in the local-light atlas; a frozen culling camera and per-reason debug boxes. Frustum and occlusion default on, distance on (no distance set = nothing dropped), screen size off. See §6.14 (M99) |
 | Reflection probe capture | Implemented | See §6.9. Explicit bake only; nothing consumes it until M56f |
 | Volumetric fog (froxel) | Implemented | 160x90x64 view grid + local lights + shadow atlas, temporally reprojected. Composited on opaque / transparent / terrain / sky / CPU particles in both paths, default off (§6.1) |
 
@@ -634,7 +635,6 @@ holds inside an oriented box. The box is the entity's world matrix applied to th
 | **Normals blend in encoded space** | The hardware lerps the `*0.5+0.5` encoding, and the light pass renormalizes. This is exact for the endpoints and close enough in between; it is not a slerp. |
 | **No decals on transparent surfaces** | Transparent geometry never reaches the G-Buffer, so there is nothing for the projector to land on. |
 | **Sampler is LINEAR/CLAMP** | The reservation for M56 adds no new sampler states, and CLAMP is what keeps a decal from bleeding its opposite edge. `uvScale`/`uvOffset` therefore select an atlas sub-rect rather than tiling. |
-| **No frustum culling** | Off-screen decals still rasterize their 12 triangles. Decal counts are expected to be small; this becomes worth fixing only when it shows up in a profile. |
 
 ### 6.7 Hierarchical Z-Buffer (M56c)
 
@@ -1012,6 +1012,7 @@ Everything here is a render-side optimisation. None of it enters the simulation 
 `.rep` format and the scene JSON are unchanged, and a frame's draw decisions depend only on the tick and the per-view render history, never on wall-clock
 time or the render frame count. The reasoning, rejected alternatives and measurements are in
 [docs/adr/ADR-029-render-optimization.md](docs/adr/ADR-029-render-optimization.md); the simulation-side parallelism is §5.4 / ADR-028.
+M99 (below) keeps the same promise, with one exception: the new `RenderCulling` component (TypeId 100, SimSnapshot v82, `kComponentNoHash`, so it never enters the world hash); the ABI stays at v35. Its reasoning is in [docs/adr/ADR-038-culling.md](docs/adr/ADR-038-culling.md).
 
 **Measurement (M90a).** `GpuTimer`s cover GBuffer, Forward opaque, CSM, the local-shadow atlas, occlusion and one `RenderSystem::Render` call (one view),
 all shown in the ProfilerWindow. `prof::RenderStats` is kept per view (viewKey) as well as cumulative; shadow draws / triangles have their own columns, and there are
@@ -1048,7 +1049,7 @@ render serial skips, or the device is lost. If a pyramid or buffer cannot be cre
 (5 planes, without the light-side near plane) and the CSM raster state clamps depth instead of clipping, so an off-screen caster still shadows the screen. The CSM fit is
 unchanged. A skinned mesh gets a conservative model-space AABB — per-bone vertex envelopes over every key time of every clip (plus 1/30 s steps and the bind pose), plus a margin of
 half the longest side — cached per (model, mesh) and invalidated by registration revision; a ragdoll-driven mesh is always visible. Off-screen skins evaluate their palette only when
-a cascade needs them. The local-light shadow atlas still sees on-screen casters only.
+a cascade needs them. Since M99 the local-light shadow atlas sees off-screen casters as well (see **Local-light shadow atlas** below).
 
 **URO and palette cache (M90f).** A skinned mesh whose bounding sphere covers less than 5% / 2% / 0.8% of the screen height rebuilds its bone palette every 2 / 4 / 8 ticks instead of every
 tick (nearer ones every tick; ragdoll or a blended pose never throttles), and reuses the previous palette in between with no interpolation. The update tick is
@@ -1058,16 +1059,70 @@ skin culling run in parallel into pre-allocated slots that are joined in index o
 never throttled. Both LOD hysteresis and the URO window depend on which ticks this run rendered; after a seek, rewind, scene change or device recovery `RenderSystem::ResetRenderHistory()` drops them, and
 far characters may then differ from continuous playback by up to `interval - 1` ticks of pose (visual only). `--no-uro`, `enableAnimUro` and the Rendering menu turn it off.
 
-**Switches and the project setting.** Occlusion is on by default and is stored in `assets\project_settings.json` as `"rendering": {"occlusionCulling": bool}`; a missing key or an unreadable file means `true`
-(an unreadable file is not overwritten, and other keys such as `rayTracingTags` are preserved). Editor and Runtime read it at start-up. **Precedence:** `--no-occlusion` overrides the file for that run and never writes it; there is no CLI flag to
-force occlusion on over a file that says `false`. Switching it in the editor's Rendering menu saves the chosen value to the file, even if the editor was started with `--no-occlusion`. URO, `lodBias`
-and the forced stage are per-launch and not saved. There is no in-game option screen or GameLogic API for these (the ABI does not change).
+**Switches and the project setting (M90b, M99b).** Four kinds of culling are switched separately. Their settings live in `assets\project_settings.json` under `"rendering"`:
+
+| Kind | Key | Missing key / unreadable file | CLI (this run only, never saved) |
+|---|---|---|---|
+| Frustum | `frustumCulling` (bool) | on | `--no-frustum-culling` |
+| Occlusion | `occlusionCulling` (bool) | on | `--no-occlusion` |
+| Distance | `distanceCulling` (bool) | on (with no distance set, nothing is dropped) | `--no-distance-culling` |
+| Screen size | `sizeCulling` (bool) | **off** | `--no-size-culling` |
+| Screen-size threshold | `minScreenSize` (float, 0 < x <= 1) | 0.005 | `--cull-min-screen-size F` (F in (0, 1]; also turns size culling on for the run) |
+| Default max draw distance | `defaultMaxDrawDistance` (float, m, 0 = unlimited) | 0 | `--cull-max-distance D` |
+| Per-tag distance | `tagCullDistances` (`[{"tag": 3, "distance": 50.0}]`, tag 0..63, distance > 0) | empty | none |
+
+**Precedence:** the effective value of a switch is *the file's value AND no CLI `--no-*`*. No CLI flag turns a switch on over a file that says `false`, except `--cull-min-screen-size`, which turns size culling on for that run (and `--no-size-culling` still wins when both are given). The CLI numbers override the file's numbers. Nothing from the CLI is written back. One function (`ResolveCullingSettings`) computes this, and the Editor, the Runtime and the self-tests all use it. A value that is out of range or of the wrong type falls back to its default with one log line. An unreadable file is not overwritten, and other keys in `"rendering"` and other sections (for example `rayTracingTags`) are preserved. The Editor and the Runtime read the file at start-up. Changing a switch in the editor (Rendering > Culling, or Project Settings > Rendering > Culling) applies to the running `RenderSystem` at once (Play included, because it is render-only) **and** saves the file immediately, even if the editor was started with a `--no-*` flag; number fields save when the edit ends. URO, `lodBias` and the forced LOD stage are per-launch and not saved. There is no in-game option screen or GameLogic API for any of these (the ABI does not change).
+
+**Frustum switch (M99b).** "There is a camera" (`cameraFound`) and "drop what the frustum rejects" used to be one flag; they are separate now. With frustum culling off, the test is still computed but nothing is dropped, and everything else behaves as when it is on: LOD stages, URO, terrain gathering, light selection, the light-side culling of CSM and the atlas, **the CSM fit AABB** (built only from objects inside the frustum) and the velocity history (an object outside the frustum is not recorded in `prevRender`). The invariant is therefore: **under the same fixed capture conditions, frustum on and off give pixel-identical pictures and only `drawCalls` grows** (`culled` is 0 when off). `tools\cull_verify.bat` runs this as a regression. The switch applies to meshes, the CPU particle pools, tilemap chunks and the paths listed under *Frustum tests on more paths*; **terrain is not covered** (its chunk selection and culling are one step, so it is always tested).
+
+**Distance culling (M99f).** A mesh is dropped when the distance from the camera position to the nearest point of its world AABB (padding included; a skin uses its all-poses box) exceeds its effective maximum distance. The distance is spherical and measured from the camera position even for an orthographic camera (a plane distance would make objects at the screen edge pop in and out as the camera turns); a camera inside the box gives 0. The effective maximum is the **smallest value above 0** among the object's `RenderCulling.maxDrawDistance`, the `tagCullDistances` of every tag it carries and `defaultMaxDrawDistance` (the same rule as overlapping Unreal Cull Distance Volumes); if all are 0 the object is not tested. Tags are read through `Tags::EffectiveMask` (self plus ancestors), and `RenderCulling` is looked up on the entity and then up its ancestors with **the nearest one winning** and both its fields taken as a whole (the same rule as `ResolveRtScope`), because FBX / glTF models split their meshes into descendants. The ancestor walk happens only when the world has a `RenderCulling` or some tag distance is set. An object without a box (`alwaysVisible`, for example a ragdoll-driven skin) is never dropped. A dropped object casts no shadow either: it stays out of the CSM / atlas casters, out of the CSM fit and out of the occlusion test. Distance culling applies to views 1 (Runtime) and 3 (Game View). The Scene View (2) is left alone unless *Rendering > Culling > Apply Game Culling to Scene View* (this session only, not saved) is on, so distant objects stay selectable while editing; view 0 (previews, probe bakes) never gets it. There is no hysteresis (the distance depends only on the camera position).
+
+**`RenderCulling` component (M99f).** `RenderCullingComponent` (TypeId 100, `kComponentNoHash`, SimSnapshot v82, offered in the Inspector's Add Component): `maxDrawDistance` (float 0..100000 m, 0 = no limit from this object) and `exemptFromSizeCulling` (bool). It affects the MeshRenderers of its entity and of its descendants. The renderer is its only reader, so adding it changes no hash, and scenes without it are bit-identical.
+
+**Screen-size culling (M99g).** `s = BoxScreenSize(world AABB, camera position, proj._22, orthographic)` is the bounding-sphere height as a fraction of the screen height: the formula LOD and URO use, but **without `lodBias`**. A mesh with `s < minScreenSize` is dropped. Against flicker, an object dropped for size on the previous frame *in the same view* stays dropped while `s < minScreenSize × 1.1`. The history is per view (1..3), is cleared by `ResetRenderHistory()` and by a size change, is written for every candidate whatever reason dropped it, and with no history the threshold alone decides. A threshold of 0 or less tests nothing. Objects with `RenderCulling.exemptFromSizeCulling`, and `alwaysVisible` objects, are never dropped. Views and shadows are handled as for distance. Reasons are tried in the order frustum, distance, screen size, and only the first that fires is counted; with frustum culling off, an object outside the frustum is still counted under distance or screen size if it fails those.
+
+**Frustum tests on more paths (M99d, M99e).** These drop *drawing* only; simulation and particle updates are not stopped. Every dropped item is counted in `culledNonMesh`, which also includes the CPU particle pools and tilemap chunks (terrain chunks are not counted).
+
+| Path | Test |
+|---|---|
+| GPU particles | per emitter, against an analytic bound from the descriptor: shape extent + `speedMax·T + ½·|g+w|·T²` (T = `lifetimeMax`) + the billboard expansion with `sizeMax` (the formula of `ParticleBillboardExpand`). An emitter whose bound cannot be trusted is **always drawn** and counted in `unculledGpuEmitters`: turbulence, disturbance-field influence, velocity inheritance, depth collision, analytic-floor collision, a bound that changed within the last `ceil(T/dt)+2` ticks (moved, scaled or edited; a brand-new emitter has no old particles and does not wait), and world-space emitters whose origin moved within T. A dropped emitter skips its pre-draw sort and its draw |
+| Trails | the point list's AABB widened by half the width |
+| SpriteRenderer (3D billboards) | a sphere of radius `0.5·\|size\|·max(1, largest world axis scale)` around the position (the draw uses `size` as it is, so a shrinking scale must not shrink the radius) |
+| Decals | the projection box: world matrix × the unit box |
+| Sprite2D / Line2D / SpriteShape2D | on the Emit side after Resolve: the item's world rectangle (rotation and scale through the transformed corners / points; SpriteShape adds `profile.height/2 × miter limit`) against `OrthoWorldBounds`, with 1% + `pixelSnapUnit` of margin. The item stays in `items_` and only its vertices are not built, so the draw order of the rest is unchanged. Nothing is dropped when the camera is perspective, there is no matrix, or the item has a Parallax repeat; masks are never dropped |
+
+TextMesh (its extent is known only after layout), water (one huge plane) and 2D masks (an off-screen mask can affect on-screen sprites) have no frustum test.
+
+**Local-light shadow atlas (M99c).** The atlas used to draw on-screen casters only. Now, whenever a shadow-casting point or spot light is selected, the opaque objects dropped by the frustum are collected as off-screen casters (before, only when a sun shadow existed), and each tile draws "on-screen casters + off-screen casters" tested against the tile's own frustum. The face-culling box includes the off-screen casters' boxes (a face is skipped only when it touches neither the scene box nor any off-screen caster), and the CSM fit is unchanged. An off-screen skin evaluates its palette only when a tile or a cascade needs it, through the same palette cache as CSM. Objects dropped by distance or screen size are not added. With this, scenes with local shadows also give frustum on/off pixel identity (`--culling-demo` differed by 12360 pixels before the change).
+
+**Debugging (M99h).** Both options are per session and never saved.
+
+- *Freeze Culling Camera* (Rendering > Culling; CLI `--cull-freeze-frame N` freezes at frame N, normally paired with `--render-bench-cut-frame`). For each view (1..3) the camera of the **first render after it is turned on** is kept (non-jittered view-projection, position, `proj._22`, orthographic or not; a view without a camera keeps nothing), and from then on that view's frustum, distance and screen-size decisions use the kept camera. It also governs the 2D visible-range test, GPU / CPU particles, trails, billboards and decals (the parallax reference stays the current camera). The drawing camera, LOD, URO, light selection, CSM, occlusion and terrain keep using the current camera (the occlusion pyramid is built from the current depth; a second pyramid for the kept viewpoint was judged not worth it, ADR-038 D18). While frozen, the kept frustum is drawn as white lines.
+- *Show Culled Objects* (Rendering > Culling; CLI `--cull-debug`): the world AABBs of dropped meshes are drawn as lines coloured by reason: yellow = frustum, blue = distance, green = screen size, red = occlusion. The colours are named constants at the top of `RenderSystem.cpp` and the menu tooltip is the legend. The occlusion boxes come from `OcclusionDebugBoxes` and are collected without `--hzb-debug-max`; they cost a GPU readback while the option is on. At most **4096** boxes are drawn across all reasons; the number beyond that is shown in the menu and logged once.
+- *Counts*: `prof::RenderStats` has `culledDistance`, `culledScreenSize`, `culledNonMesh` (non-mesh items dropped by the frustum) and `unculledGpuEmitters`. They are shown in the Profiler (a per-view line that also has `occluded`) and in the `counts` of `--render-stats-dump`. The existing `culled` is still "meshes dropped by the frustum" and its meaning did not change.
+
+**Bench scale and the BVH decision (M99a).** `--render-bench-scale K` (1..32) multiplies the bench grid (61 × 60 = 3660 objects) by K for measurement; K = 1 is the old scene entity for entity. The dump's `cpuMs` has `collectTotal` / `collectStage1` / `collectStage2` / `collectFrustum` / `collectStage3` (reference values). A BVH was **not adopted**: at K = 16 (58586 objects) the frustum test is 0.477 ms (3.7% of `CollectDrawables`) and the serial ECS walk (stage 1) is 62%, so the most a BVH could remove is that 0.477 ms (the test exits at the first plane that rejects, so a scene that drops more is cheaper still). Numbers and method: ADR-038.
+
+**Known limits (M99, not fixed).** (a) A frame with no on-screen opaque object at all (`hasScene == false`) builds no local-light atlas, so an off-screen caster's local shadow does not appear either (frustum on and off behave the same). (b) `ShadowAtlas::Render` tests each object with the mesh's *bind-pose* AABB, so a part of a skin that leaves its bind box can be missing from a local shadow (on-screen skins too, since M90); the selection of off-screen casters uses the all-poses box, which contains the bind pose, so it never discards something the atlas would have drawn. Also: terrain, TextMesh, water and 2D masks have no frustum switch; the Scene View is excluded from distance and screen-size culling by default; with a frozen camera the occlusion test still uses the current camera.
+
+**Verification (M99i).** `tools\cull_verify.bat` (Release `Runtime.exe` with `--warp --font-embedded --no-fxaa`, `Editor.exe --img-diff --tol 0`) checks:
+
+- frustum on / off pixel identity for the default bench, `--culling-demo`, `--culling-2d-demo`, `--particle-demo` (CPU and GPU back ends), `--2d-demo` (day and night) and `--render-demo` (Forward and Deferred), and for the default bench that `culled` is 0 and `drawCalls` is higher when off;
+- the frozen camera: `--cull-freeze-frame 10 --render-bench-cut-frame 20` gives the same `culled` (and the other culling counts) as the same freeze without the cut, while a cut without the freeze does move `culled`;
+- `counts` equality between Release `--warp`, Release and Debug on the real GPU for the default bench, `--culling-demo`, `--culling-2d-demo`, `--culling-distance-demo` and the default bench with `--cull-min-screen-size 0.02` (`tools\cull_counts.ps1` compares the JSON `counts` field by field).
+
+`MYE_CULL_SKIP_CONFIGS=1` skips the multi-configuration part (no GPU or no Debug build); `MYE_CULL_BASE_ROOT=<dir>` also compares the default bench with a pre-M99 build. Unit tests: `DistanceCullSelfTest` (the decision functions and `RenderCulling`), `EngineCliSelfTest` (CLI and the effective-value rule), `SimSnapshotSelfTest` (v82). Manual items: the M99 section of [docs/test_checklists.md](docs/test_checklists.md).
 
 | Option | Meaning |
 |---|---|
 | `--render-stats-dump <file>` | write per-view statistics at `--shot-frame` and exit (fixed capture conditions) |
 | `--render-bench-demo`, `--render-bench-unique-demo`, `--render-bench-cut-frame N` | the bench scenes and the render-side camera cut |
 | `--no-occlusion` | occlusion off for this run (not saved) |
+| `--no-frustum-culling`, `--no-distance-culling`, `--no-size-culling` | that kind off for this run (not saved) |
+| `--cull-max-distance D`, `--cull-min-screen-size F` | default max draw distance D m (0 = unlimited) / screen-size culling on with threshold F in (0, 1], this run only |
+| `--cull-freeze-frame N`, `--cull-debug` | freeze the culling camera at frame N / draw dropped objects' boxes by reason |
+| `--render-bench-scale K` | multiply the `--render-bench-demo` grid by K (1..32) |
+| `--culling-demo`, `--culling-distance-demo`, `--culling-2d-demo` | code-generated verification scenes (local-light shadows with off-screen casters; distance and screen-size cases; 2D) |
 | `--hzb-debug N`, `--hzb-debug-max` | pyramid level view; `-max` shows the occlusion max-Z pyramid and culled boxes |
 | `--lod-bias F`, `--lod-force N` | global LOD bias and forced stage |
 | `--no-uro` | disable the distant-animation throttle |
@@ -3247,6 +3302,8 @@ showcase would have re-recorded goldens shared with other in-flight branches, an
 
 Two further shots (M94w) are the side-scrolling 2D showcase: `2d` (`--2d-demo`, frame 3, day) and `2d_lights` (`--2d-demo --2d-night`, frame 120, two spot lights with shadows and a normal-mapped hero, with the enemy mid-jump) — 32 shots in all, `MYE_SHOT_SKIP_2D` skips both. The earlier shots did not move across the M94 lane: 29 are at maxDiff 0, and `demo_terrain_deferred` equals its pre-M94 picture exactly (its own maxDiff 5 against the golden is a WARP-version difference that predates M94), which is the mechanical evidence that every 2D addition is a presence-gated opt-in.
 
+**Culling regression (M99i).** `tools\cull_verify.bat` is the culling counterpart of the screenshot regression and is run the same way (Release, `--warp --font-embedded --no-fxaa`, after the build). It shoots every scene twice, with frustum culling on and with `--no-frustum-culling`, and requires `Editor.exe --img-diff --tol 0` to find no pixel different, because culling must not change a picture. Where this document says a path is covered by it, this is the test: see §6.14 *Verification*.
+
 Eight shots are **not** taken at frame 3: `physics` (M59l), `joints` (M60k), `fog` (M57追補),
 the two particle backends (M63a) and the two acoustic paths (M65e) all shoot frame 120, and
 `demo_render_rtrefl_restir` (M67g) shoots frame 40.
@@ -3941,7 +3998,7 @@ Kept verbatim, because the completion criteria it set are still the ones the pro
 
 The order was intentional: implementing the reload foundation in M3 first accelerated subsequent particle development through dogfooding.
 
-### 12.2 What was actually built (M0-M96)
+### 12.2 What was actually built (M0-M99)
 
 **2026-07-19 → 2026-11-05, over 600 commits.** The primary source is `git log`; the prefix on each
 commit subject names the milestone. Grouped by system rather than by number, because the numbers
@@ -3977,6 +4034,7 @@ interleave — several tracks ran in parallel and a few milestones were revisite
 | Action combat foundations | M95 | Hit stop (`pauseTicks`), part overlap / sphere sweep queries, interruptible controller transitions, CC-vs-CC push-out with contact reports, vertical root motion, event times in seconds / frames; ABI v32 = 193, SimSnapshot v66-v68, controller v3, ADR-034 (§10.14). Plus the three-layer selftest (`MYE_SELFTEST_ONLY`, `--selftest-list`, `--selftest-full`; §11.3) |
 | Disturbance field | M96 | A sim-owned grid field (2D ground layer or 3D volume, up to 4) with flow / density / trail / ripple channels, driven by `DisturbanceSourceComponent`, queued impulses (`FieldAddImpulse`, the animation event `disturb`) and uniform wind, solved as a stable-fluids reduction (semi-Lagrangian advection, fixed-iteration Jacobi projection, keep-rate decay, no CRT transcendentals: check_rules rule 18), row-parallel with jobs A/B proof, optionally following a target or the terrain relief. Read by ray-marched ground fog (also in Forward without a skybox), froxel volume fog, grass, water ripples, CPU / GPU particles and terrain trails, and by scripts through `FieldSample`; content-gated hashing keeps other scenes' hash streams unchanged (§10.16, **ABI v35**, 200 -> 202 slots, SimSnapshot v76, TypeId 96 / 97, ADR-036) |
 | Distribution and updates | M98 | GitHub Releases published from a version tag (`release.yml`), `MyEngineLauncher.exe` that installs versions side by side under `%LOCALAPPDATA%\MyEngine\Engine\` with SHA-256 and zip-slip checks and updates itself, the editor's daily update check / Help menu / About handing over to the launcher, the Möbius app icon; first public version **0.86**, then **0.86.1** (downloads marked and scanned through the Attachment Manager, no automatic self-copy, the launcher no longer inside the zip) (§10.17, ABI / SimSnapshot unchanged, ADR-037) |
+| Culling | M99 | The existing frustum and GPU occlusion culling became four independent project settings (frustum / occlusion / distance / screen size) with CLI overrides, and frustum on/off is a pixel-identical A/B (`tools\cull_verify.bat`); **distance culling** (per object through the new `RenderCulling` component, per tag, project default; the smallest positive value wins) and **screen-size culling** (LOD's screen-height formula, 10% hysteresis, default off) for meshes, shadows included; frustum tests on GPU particles (analytic bound from the descriptor), trails, billboards, decals and Sprite2D / Line2D / SpriteShape2D; off-screen casters in the local-light shadow atlas; a frozen culling camera and per-reason debug boxes with per-reason counts; a measured decision not to build a BVH (frustum test 0.477 ms of 12.7 ms at 58k objects). ABI unchanged at v35, TypeId 100, SimSnapshot v82, ADR-038 (§6.14) |
 | Hardening, documentation and dogfooding close-out | M93 (maintenance line a-g, GitHub side, merged 2026-11-05) | (a) the C# host compares the API table's `version` with the mirror's `kExpectedApiVersion` at `Bootstrap.Initialize` and refuses a stale `MyeScripting.dll` (rule 11-e); (b) §6.3's rendering boundary rewritten to match the implementation and frozen by rule 16 (26-file allow list, a ratchet); (c) the review ledger `docs/rev/oversights.md` §8 with the status of all 55 fix requirements, plus the small fixes (`AdjustWindowRectExForDpi` / `WM_DPICHANGED`, NaN-safe `Clamp01` / histogram bins / modal damping, cascade-split and exposure-speed guards); (d) README / AGENTS / feature guide refreshed, 100+ machine-specific absolute paths removed from docs, rule 17 warns if they return; (e) the last five dogfooding findings: `--debug-draw-log`, `builtin://wheel`, the missing-`PhysicsEnvironment` warning, `SendScriptMessage` / `onMessage` (**ABI v33**, 193 → 194 slots after the merge; the CharacterController contact events of this line were dropped in favour of M95's opt-in `reportContacts`); (f) document-level Undo for the Animator Controller, Animation Preview and Audio Mixer windows (`UndoDocOp`, `DocUndoRecorder`); (g) the three largest sources split into per-responsibility translation units by pure code motion — `DemoContent.cpp` → `DemoContent{Render,Animation,Flow,Physics,Vfx,Audio,Ui,Ai,Compute}.cpp`, `PhysicsSystem.cpp` → `PhysicsCharacters.cpp` / `PhysicsMaterials.cpp` / `PhysicsBodyOps.cpp` (+ `PhysicsSystemInternal.h`, `RaycastWorld` into `PhysicsQueries.cpp`), `InspectorWindow.cpp` → `InspectorWindowAssets.cpp` / `InspectorWindowNav.cpp` (the physics and inspector splits were redone on the merged code) |
 
 **A note on the numbering.** M17-M25 and M30-M31 have no commits of their own: they were finished
@@ -3996,7 +4054,7 @@ to the physics roadmap.
 | M86 (Smart Objects) | **Unstarted, designed.** `SmartObjectComponent` with slots, a reservation table in the snapshot and hash, four behaviour-tree nodes, one ABI bump. Plan: `plans\ai-roadmap-m83-m86.md` |
 | Engine MCP server (M87) | **Unstarted, design settled.** Engine index dump, a stdio JSON-RPC server with search / describe, structured verify jobs, notes. Plan: `plans\エンジンMCPサーバ.md` |
 | Sequencer | **Unstarted.** A tick-based sequencer. (Blend trees, two-bone IK, root motion and animation events shipped as M89; mesh LOD and GPU occlusion culling as M90.) No plan file yet |
-| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (after M96: ABI v35 = 202, TypeId 97, SimSnapshot v76, ADR-036; before it, after the 2026-11-05 merges: ABI v34 = 200, TypeId 95, SimSnapshot v69, ADR-035). Plan files that name a specific future number are stale on that point |
+| Numbering | ABI version, component TypeId and ADR numbers are **taken from the current tail when a milestone starts** (after M99: ABI v35 = 202, TypeId 100, SimSnapshot v82, ADR-038; after M96: ABI v35 = 202, TypeId 97, SimSnapshot v76, ADR-036; before it, after the 2026-11-05 merges: ABI v34 = 200, TypeId 95, SimSnapshot v69, ADR-035). Plan files that name a specific future number are stale on that point |
 | Dogfooding backlog | **Closed.** All 20 findings in [`docs/dogfooding.md`](docs/dogfooding.md) are settled: `--debug-draw-log` (11), `builtin://wheel` (13), the missing-`PhysicsEnvironment` warning (19) and `SendScriptMessage` / `onMessage` (20, ABI v33) shipped in M93e; CharacterController contacts (17) shipped in M95 (`reportContacts` / `collideCharacters`, ADR-034) |
 
 ---
@@ -4040,7 +4098,8 @@ ADR-027 skeletal pose program (M89) /
 **ADR-034 CCs exchange no momentum: priority push-out from the start-of-tick pose plus contact reports** (§10.14).
 **ADR-035 game feel: store what was played, derive what is shown** (§10.15; written as ADR-031 on the GitHub side) /
 **ADR-036 disturbance field: the simulation owns the field, fog / grass / water / particles / trails only read it** (§10.16) /
-**ADR-037 distribution and updates: versioned zips on GitHub Releases, only the launcher swaps installs** (§10.17).
+**ADR-037 distribution and updates: versioned zips on GitHub Releases, only the launcher swaps installs** (§10.17) /
+**ADR-038 culling: four independent switches, distance and screen-size culling, a frustum test on every draw path, no BVH** (§6.14).
 
 ---
 

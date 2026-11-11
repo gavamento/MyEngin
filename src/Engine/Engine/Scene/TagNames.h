@@ -64,8 +64,6 @@ bool SaveRtTagRules(const std::wstring& assetsRoot, const RtTagRules& rules);
 // キーが無い / 読めない = true。実効値はこの値 && CLI の --no-occlusion が無いこと (CLI は書き戻さない)
 bool LoadOcclusionCullingSetting(const std::wstring& assetsRoot);
 bool SaveOcclusionCullingSetting(const std::wstring& assetsRoot, bool enabled);
-// 実効値 = ファイルの値 && CLI。EngineLoop と selftest が同じ式を使う
-bool ResolveOcclusionCulling(const std::wstring& assetsRoot, bool cliOcclusionCulling);
 
 // "0,3,5" のようなタグ番号のカンマ区切りをビット集合へ (CLI の --rt-receiver-tags 用)。
 // 範囲外・数字以外を含むなら false (out は触らない)。空文字列は 0 = 制限なし

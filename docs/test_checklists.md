@@ -972,3 +972,39 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 未保存の変更がある状態で「更新して再起動」→ 保存の確認 → Launcher が新しい版を入れて同じプロジェクトでエディタが開き直す
 - [ ] リポジトリからビルドしたエディタでは「更新して再起動」が押せず、git で更新する案内が出る
 - [ ] 起動スプラッシュの下部で、長いプロジェクトのパスやログが折り返さず「…」で省略され、段階名と重ならない
+
+## M99: カリングの拡充
+
+自動: `tools\cull_verify.bat` (視錐台 ON/OFF の全画素一致、カメラ固定、`counts` の構成間一致。Release ビルド後に回す)、`MYE_SELFTEST_ONLY=distancecull,enginecli,simsnapshot,renderstats`。仕組みは [ADR-038](adr/ADR-038-culling.md) / engine_spec §6.14。ここは画面とエディタの操作でしか確かめられない項目。
+
+### スイッチと保存 (Rendering > カリング / Project Settings > Rendering > カリング)
+
+- [ ] Rendering > カリング に 視錐台 / GPU オクルージョン / 距離 / 画面サイズ の 4 つのスイッチがあり、既存の「GPU オクルージョン」の項目はここへ移っている。各スイッチを切り替えた瞬間に Scene View / Game View の描画が変わる (Profiler の `drawCalls` と理由別の数が動く)
+- [ ] 視錐台を OFF にしても絵は変わらず、Profiler の `drawCalls` だけ増える。ON に戻すと元に戻る
+- [ ] 各スイッチと Project Settings の値 (最小画面サイズ・既定の最大描画距離・タグ別の距離) を変えたあとエディタを閉じて開き直すと、値が `assets\project_settings.json` から戻る。数値欄は編集を終えたときに保存される (入力の途中では書かれない)
+- [ ] `--no-frustum-culling` などの CLI で起動した直後は、その種類が OFF で表示され、メニューを操作しない限り `project_settings.json` が変わらない。メニューで切り替えたときだけ保存される
+- [ ] Project Settings のカリングの区切りに「Runtime は起動時に読む」旨の注記が出る。タグ別の距離の表に、名前のあるタグと距離を設定済みのタグが行で出て、0 = 設定なしと分かる。英語 / 日本語の両方で文字が欠けない
+- [ ] 距離・画面サイズを変えて Runtime.exe (Editor を閉じて) を起動すると、保存した値で落ちる
+
+### Scene View / Game View
+
+- [ ] 既定では Scene View は距離・画面サイズで物を落とさない (遠くの物が消えず、選べる)。「Scene View にもゲームのカリングを掛ける」を ON にすると Game View と同じに落ちる。このトグルはエディタを閉じると保存されずに OFF へ戻る
+- [ ] Game View と Runtime は距離・画面サイズで物を落とす。落ちた物の影も消える
+- [ ] `RenderCulling` (Add Component) の「最大描画距離」「画面サイズカリングの対象外」が日本語名で出て、子孫のメッシュにも効く。プレハブの上書きとして保存される
+- [ ] Scene View で動いている GPU パーティクルのエミッタ (Play 中、または Play 前の静止状態) が、画面の端へ動かしても端で消えたり欠けたりしない。端から出きったら描画が止まり (Profiler の `culledNonMesh` が増える)、入り直すと粒子が途切れずに見える (描画だけを止め、粒子の更新は止めない)
+- [ ] Scene View の 2D モードで、画面端に掛かる Sprite2D・Line2D・SpriteShape2D が端で消えたり欠けたりしない (パンして端へ寄せる。拡大縮小しても同じ)
+
+### カメラの固定と枠表示
+
+- [ ] Rendering > カリング の「カリング用カメラを固定」を ON にして Scene View のカメラを動かすと、固定した視点の外へ出た物が (描画カメラの視界内でも) 消え、固定した視錐台が白い線で見える。OFF にすると全部戻り、白い線も消える
+- [ ] Game View と Scene View でそれぞれ固定でき、片方を動かしても他方の控えが変わらない
+- [ ] 「落とした物を表示」を ON にすると、落とした物の箱が理由別の色で出る (視錐台 = 黄、距離 = 青、画面サイズ = 緑、オクルージョン = 赤)。メニューのツールチップが凡例になっている
+- [ ] **距離の青が、床・空・他の色の枠と見分けられる** (sub-08 で薄く見えた。見分けにくければ `RenderSystem.cpp` 冒頭の `kCullBoxDistanceRgba` を濃くする)
+- [ ] 箱が 4096 を超えるシーン (`--render-bench-demo --render-bench-scale 4`) で、描かなかった数がメニューに出る
+- [ ] Profiler にビュー別の理由別の行 (視錐台 / 距離 / 画面サイズ / オクルージョン / 非メッシュ / 判定しなかった GPU エミッタ) が出る
+
+### 回帰
+
+- [ ] `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` が全スイート PASS する (`disturbancelong` の「final hash at tick 600 equals the baked value」は基点 `d52e91f3` でも FAIL する別件)
+- [ ] `tools\cull_verify.bat` が PASS する (Release と Debug をビルドした後。CI 相当は `MYE_CULL_SKIP_CONFIGS=1`)
+- [ ] `tools\check_rules.ps1` が 0 error、`tools\replay_verify.bat` が全ジョブ PASS、`tools\shot_verify.bat` が PASS する (`flow_title` の差 (diffPixels=944) は M99 着手前の基点 `d52e91f3` でも同じに出る別件)

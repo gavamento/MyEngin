@@ -197,7 +197,10 @@
 - GPU パーティクルの解析的上界が、衝突・`stretchMax`・`prewarmTime`・ワールド空間の原点移動で外れる可能性。外れる条件のエミッタは「常に描く」側へ倒す (落としすぎより描きすぎ)。
 - 2D の描画順: 落とした項目を抜いても残りの順序キーが変わらないこと (ソートが安定でないと絵が変わる)。
 - 既知の制限 (M99 では直さない。sub-03 round 1 で判明、どちらも視錐台 ON/OFF で同じ挙動): (a) 画面内に不透明の物が 1 つも無い (`hasScene == false`) フレームは局所影アトラスを作らないので、画面外キャスターの影も出ない。(b) `ShadowAtlas::Render` は各物をメッシュの bind 姿勢の AABB でタイル判定するので、スキンの姿勢が bind の箱の外へ出た部分は局所影で欠けうる (画面内のスキンも同じ、M90 からの挙動)。画面外キャスターの選別に使う全姿勢の箱は bind 姿勢を含む (engine_spec §6.14) ので、選別で落ちてアトラスが描くはずの物を失うことはない。どちらも sub-09 で engine_spec §6.14 の制限に書く。
-- `flow_title` の shot_verify FAIL (diffPixels 944、画面下の操作説明の文字行、影付きライト 0 のシーン): sub-03 の経路は通らない。M99 の前からかは未確認。sub-09 で基点 `d52e91f3` の exe でも同じ差が出るかを確かめ、出所を切り分ける。
+- `flow_title` の shot_verify FAIL (diffPixels 944、画面下の操作説明の文字行): sub-09 で基点 `d52e91f3` の exe でも同じ差 (maxDiff 62、worst pixel (278,469)) と確認。**M99 と無関係の既存 FAIL**。golden は更新しない。
+- `--selftest-full` の `disturbancelong` FAIL (tick 600 の hash が焼いた値と違う): sub-09 で基点 `d52e91f3` でも同じ hash で FAIL と確認。**M99 と無関係の既存 FAIL** (M96 のスイート)。受け入れ条件 14 の「`--selftest-full` PASS」はこの 1 スイートを除いて満たす。
+- `Runtime.exe --screenshot` を `--frames` 無しで使うと終了しない: 基点でも同じ既存の挙動 (EngineLoop は maxFrames > 0 でしかループを抜けない)。M99 では変えない。
+- CI への `tools\cull_verify.bat` (`MYE_CULL_SKIP_CONFIGS=1`、WARP のみ約 2 分 40 秒) の組み込みは M99 では行わない: master の CI が M98e 以降ビルド段で failure のままで、載せた結果を観測できないため。CI が緑に戻ったら `shot_verify` の次に 1 行足す (申し送り)。
 
 ## 8. 変更履歴
 
@@ -210,3 +213,4 @@
 - 2026-11-11 (sub-06 round 1、coder の質問を受けて planner の誤りとして修正): タグを自分の mask だけで引くとした sub-06 本文は、`Tags.h` の「描画は EffectiveMask」という既存の規則に反していた。タグは EffectiveMask、`RenderCulling` は自分 → 祖先の最初の 1 個 (RtScope と同じ) に変更 (4.1.3 / 4.2)。sub-07 の除外フラグも同じ解決を使う。
 - 2026-11-11 (sub-07 round 1): 画面サイズの履歴は理由の計上と独立に全候補へ書くこと、閾値 0 以下は判定しないことを 4.1.4 に記録。
 - 2026-11-11 (sub-08 round 1): 固定の控えを取る時点、枠の上限の共有、固定が非メッシュ経路にも効くことを 4.1.7 に記録。
+- 2026-11-11 (sub-09 round 1): 既存 FAIL 2 件 (flow_title、disturbancelong) は基点でも同じと確認し、受け入れ条件 8 / 14 の例外として 7. に記録。`--frames` 無しの撮影が終わらない件は既存挙動。cull_verify の CI 組み込みは見送り (CI が赤のため)。

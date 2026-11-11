@@ -209,11 +209,6 @@ bool LoadOcclusionCullingSetting(const std::wstring& assetsRoot)
     return true;
 }
 
-bool ResolveOcclusionCulling(const std::wstring& assetsRoot, bool cliOcclusionCulling)
-{
-    return LoadOcclusionCullingSetting(assetsRoot) && cliOcclusionCulling;
-}
-
 bool SaveOcclusionCullingSetting(const std::wstring& assetsRoot, bool enabled)
 {
     // "rendering" 内の将来のキーを壊さないよう、既存オブジェクトを残して 1 キーだけ差し替える
