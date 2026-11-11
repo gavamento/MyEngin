@@ -1875,7 +1875,7 @@ bool RunAnimatorControllerSelfTest()
         mid.nameHash = HashStr("Mid");
         mid.tick = 30;
         ctrl.clipEvents.push_back({ "Walk", HashStr("Walk"), { mid } });
-        const uint64_t ctrlHash = ctrlLib.Register(L"hitstop.controller.json", ctrl);
+        const uint64_t hitStopCtrlHash = ctrlLib.Register(L"hitstop.controller.json", ctrl);
 
         Scene s;
         World& world = s.GetWorld();
@@ -1883,7 +1883,7 @@ bool RunAnimatorControllerSelfTest()
         const auto makeRig = [&](const char* name, bool withCc) {
             GameObject actor = s.CreateGameObjectTracked(name);
             AnimatorControllerComponent* a = actor.AddComponent<AnimatorControllerComponent>();
-            a->controller = AssetID{ ctrlHash };
+            a->controller = AssetID{ hitStopCtrlHash };
             a->applyRootMotion = true;
             if (withCc) {
                 actor.AddComponent<CharacterControllerComponent>();
@@ -1896,19 +1896,19 @@ bool RunAnimatorControllerSelfTest()
         auto [ccActor, ccBody] = makeRig("HitStopCc", true);
         auto [trActor, trBody] = makeRig("HitStopTr", false);
         world.ApplyStructuralChanges();
-        AnimatorControllerSystem sys;
+        AnimatorControllerSystem hsSys;
         const auto ac = [&] { return ccActor.GetComponent<AnimatorControllerComponent>(); };
         const auto layer = [&]() -> const SkinnedMeshComponent::PoseLayer& {
             return ccBody.GetComponent<SkinnedMeshComponent>()->poseLayers[0];
         };
         const auto mids = [&] {
             int n = 0;
-            for (const AnimEventFired& f : sys.FiredEvents()) {
+            for (const AnimEventFired& f : hsSys.FiredEvents()) {
                 n += (f.nameHash == HashStr("Mid") && f.entity == ccActor.Id()) ? 1 : 0;
             }
             return n;
         };
-        const auto step = [&] { sys.Update(world, ctrlLib, animLib, &res.skinnedModels); };
+        const auto step = [&] { hsSys.Update(world, ctrlLib, animLib, &res.skinnedModels); };
 
         // 位置 29 まで進める (次の 1 tick で 30 のイベントに届く位置で止める)
         int guard = 0;
@@ -1922,7 +1922,7 @@ bool RunAnimatorControllerSelfTest()
         const uint32_t phase0 = ac()->statePhase;
         const int32_t entered0 = ac()->stateEntered;
         const int32_t transTick0 = ac()->transitionTick;
-        const uint32_t timeQ0 = layer().timeQ;
+        const int32_t timeQ0 = layer().timeQ;
         const XMFLOAT3 trPos0 = trActor.GetComponent<LocalTransform>()->position;
         const XMFLOAT4 rot0 = ccActor.GetComponent<LocalTransform>()->rotation;
         ac()->pauseTicks = 5;
@@ -1945,7 +1945,7 @@ bool RunAnimatorControllerSelfTest()
                         && a->rootMotionDeltaRotation.w == 1.0f && cc->moveInput.x == 0.0f && cc->moveInput.z == 0.0f
                         && trPos.x == trPos0.x && trPos.y == trPos0.y && trPos.z == trPos0.z
                         && ccActor.GetComponent<LocalTransform>()->rotation.y == rot0.y;
-            eventless = eventless && sys.FiredEvents().empty();
+            eventless = eventless && hsSys.FiredEvents().empty();
             counts = counts && a->pauseTicks == 4 - i;
         }
         check(frozen, "M95: during the pause time, phase, entered flag, transition counter and pose layers do not move");
@@ -2238,8 +2238,8 @@ bool RunAnimatorControllerSelfTest()
             world.ApplyStructuralChanges();
             RigidbodyComponent* rb = rbRig.actor.GetComponent<RigidbodyComponent>(); // 構造変更の後に引く
             rb->isSleeping = true;
-            AnimatorControllerSystem sys;
-            sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            AnimatorControllerSystem rmSys;
+            rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
             const CharacterControllerComponent* cc = ccRig.actor.GetComponent<CharacterControllerComponent>();
             check(cc->useVerticalInput && std::fabs(cc->verticalInput - 2.0f) < 1e-3f && std::fabs(cc->moveInput.z + 1.2f) < 1e-3f
                       && !offRig.actor.GetComponent<CharacterControllerComponent>()->useVerticalInput,
@@ -2258,10 +2258,10 @@ bool RunAnimatorControllerSelfTest()
             Scene s;
             Rig r = makeRig(s, withY, true);
             s.GetWorld().ApplyStructuralChanges();
-            AnimatorControllerSystem sys;
+            AnimatorControllerSystem rmSys;
             float maxY = 0.0f;
             for (int t = 0; t < 60; ++t) {
-                sys.Update(s.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
+                rmSys.Update(s.GetWorld(), ctrlLib, animLib, &res.skinnedModels);
                 maxY = std::max(maxY, r.actor.GetComponent<LocalTransform>()->position.y);
             }
             check(std::fabs(maxY - 1.0f) < 1e-3f && std::fabs(r.actor.GetComponent<LocalTransform>()->position.y) < 1e-3f,
@@ -2275,13 +2275,13 @@ bool RunAnimatorControllerSelfTest()
             r.actor.SetLocalPosition(0.0f, 10.0f, 0.0f);
             r.actor.AddComponent<CharacterControllerComponent>();
             world.ApplyStructuralChanges();
-            AnimatorControllerSystem sys;
+            AnimatorControllerSystem rmSys;
             PhysicsSystem phys;
             const LocalTransform* lt = r.actor.GetComponent<LocalTransform>();
             const CharacterControllerComponent* cc = r.actor.GetComponent<CharacterControllerComponent>();
             float maxY = 0.0f;
             for (int t = 0; t < 60; ++t) {
-                sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
                 phys.Update(world, 1.0f / 60.0f);
                 maxY = std::max(maxY, lt->position.y);
             }
@@ -2289,14 +2289,14 @@ bool RunAnimatorControllerSelfTest()
                   "M95 rootMotionY: a CharacterController rises 1 m and returns to its height by the clip's vertical motion");
             // 非ループのクリップが終端に張り付いたら AnimatorPlay しなくても縦入力は止まり、重力へ戻る
             const float vEnd = cc->velocity.y;
-            sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+            rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
             const bool flagOff = !cc->useVerticalInput;
             phys.Update(world, 1.0f / 60.0f);
             check(flagOff && cc->velocity.y < 0.0f && std::fabs(cc->velocity.y - (vEnd - 9.81f / 60.0f)) < 1e-3f,
                   "M95 rootMotionY: a non-looping clip stuck at its end stops driving and gravity returns without AnimatorPlay");
             AnimatorPlay(world, r.actor.Id(), 1, 0, ctrlLib);
             for (int t = 0; t < 12; ++t) {
-                sys.Update(world, ctrlLib, animLib, &res.skinnedModels);
+                rmSys.Update(world, ctrlLib, animLib, &res.skinnedModels);
                 phys.Update(world, 1.0f / 60.0f);
             }
             check(cc->velocity.y < -1.0f && lt->position.y < 9.95f,

@@ -367,10 +367,10 @@ bool RunTagSelfTest()
                       && SaveCullingFlag(projectRoot, CullingFlag::Size, true) && SaveMinScreenSize(projectRoot, 0.02f)
                       && SaveDefaultMaxDrawDistance(projectRoot, 120.5f) && SaveTagCullDistances(projectRoot, tags),
                   "CullingSettings: every key saves");
-            const CullingSettings rt = LoadCullingSettings(projectRoot);
-            check(!rt.frustum && !rt.occlusion && !rt.distance && rt.size && rt.minScreenSize == 0.02f
-                      && rt.defaultMaxDrawDistance == 120.5f && rt.tagDistance[3] == 50.0f
-                      && rt.tagDistance[10] == 7.5f && rt.tagDistance[4] == 0.0f,
+            const CullingSettings roundTrip = LoadCullingSettings(projectRoot);
+            check(!roundTrip.frustum && !roundTrip.occlusion && !roundTrip.distance && roundTrip.size
+                      && roundTrip.minScreenSize == 0.02f && roundTrip.defaultMaxDrawDistance == 120.5f && roundTrip.tagDistance[3] == 50.0f
+                      && roundTrip.tagDistance[10] == 7.5f && roundTrip.tagDistance[4] == 0.0f,
                   "CullingSettings: the 7 keys round-trip");
             {
                 const nlohmann::json j = readJson();

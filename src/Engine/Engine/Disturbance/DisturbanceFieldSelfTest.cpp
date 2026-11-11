@@ -2198,7 +2198,9 @@ bool RunDisturbanceFieldImpl(bool heavy)
             // 約 960 m/s の速度を注入していたのが切られ、2D の流れが変わった (0x0D0CBC4DCBEE185E → 0x67C1AB58E919A515)。
             // 霧のノイズ: DisturbanceFieldComponent がノイズの欄で 104 → 160 B に伸び、World のカラムの生バイトが変わった
             // (0x67C1AB58E919A515 → 下の値。sim の式は変えていない)。--field-bench の Debug / Release が同じ値を出す
-            constexpr uint64_t kBakedFinalHash = 0xE5C12D3A6452D219ull;
+            // M96t〜v: 霧の嵩チャネル (保存の移流と重力)・コライダーでの押しのけ・押しのけの余白と強さの欄が
+            // DisturbanceFieldComponent と sim に入った (0xE5C12D3A6452D219 → 下の値)。Debug / Release が同じ値を出す
+            constexpr uint64_t kBakedFinalHash = 0xF37D0323362CEF1Dull;
             check(finalHash == kBakedFinalHash, "determinism: the final hash at tick 600 equals the baked value (Debug == Release)");
         }
     }
