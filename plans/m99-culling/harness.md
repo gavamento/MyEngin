@@ -6,11 +6,12 @@
   2. 「プロジェクト設定でカリングのON/OFFを変えられるように」
   3. 「追加でカリングで足りない機能あれば追加したい」
 - 開始: 2026-11-11 / 基点コミット: d52e91f3103eacf6e5e07e4f44b8572063e1a166
-- フェーズ: レビュー
+- フェーズ: 完了 (2026-11-11)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
+| 3 | PASS | 4/5/5/4 | なし (round 2 #1 = 枠の色は sub-11 で解消。PixelPerfect 低解像度経路・Scene/Game View・debug layer も reviewer が確認) |
 | 2 | PASS | 4/5/4/4 | minor 1 (枠の色が淡い、ユーザーの目視判断待ち)。#1 #3 は解消 |
 | 1 | PASS | 4/5/4/4 | minor 3 (履歴の「サイズ変更で捨てる」記述が未実装 / 枠の色が淡く化ける / sub-10 の --no-audio は既に付いている) |
 | sub-01 | OK | 1 | 877dc523 | 段別 CPU 時間・BVH 採否 → 見送り (ADR-038) |
@@ -24,7 +25,7 @@
 | sub-09 | OK | 1 | 3f97eb03 | 文書 (engine_spec §6.14/§6.6、ADR-038 確定、test_checklists) + cull_verify.bat + 通し検証 |
 | sub-10 | OK | 1 | afdec5b5 | cull_verify を CI に載せる (ユーザー判断で追加) + --no-audio を揃える |
 | sub-11 | OK | 2 | 422603ea | デバッグ線を定数どおりの色で描く (カリング枠 + HZB 赤 + DebugDrawLine + ナビ線、ユーザー判断)。round 1 REWORK: 全色の表と shot_verify 再実行。判定式は planner の誤りで α 混合 95% に変更 |
-| sub-12 | OK | 1 | (このコミット) | 画面サイズ・距離カリングの撮影の run 間一致を cull_verify に入れる (揺れは coder の測り違いと判明、縮小) |
+| sub-12 | OK | 1 | 30e7b7ac | 画面サイズ・距離カリングの撮影の run 間一致を cull_verify に入れる (揺れは coder の測り違いと判明、縮小) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -67,4 +68,5 @@
 - sub-10: CI 上の実走は master の CI が緑に戻るまで観測できない。緑に戻ったら cull_verify の step のログを確かめる
 - sub-11: 原因はトーンマップ。線と塗りを ResolvePost 後の LDR へ移した。golden nav/perception/bt を差分表付きで更新。未検証: PixelPerfectCamera2D の低解像度経路、Editor の Scene View / Game View の線の色 (ユーザー目視)
 - sub-12: run 間の画素一致 (B 画面サイズ / D 距離) を cull_verify 2b に追加、CI でも走る。CI 所要時間の増分 約 35〜40 秒は推算 (同条件の前後計測なし)
+- review-3 の観察 (指摘外): 線は非ジッタ射影 / 深度はジッタ付きで半画素ずれ (コメントで許容、時間方向は未確認)。Debug + debug layer の nav で [d3d] WARN 46 件 (PS Slot 8/9 サンプラー未束縛、出所と基点比較は未確認)
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。
