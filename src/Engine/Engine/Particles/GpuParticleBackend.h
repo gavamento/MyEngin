@@ -7,6 +7,7 @@
 #include "Engine/Core/Util/Random.h"
 #include "Engine/Engine/Particles/GpuAliveEstimator.h"
 #include "Engine/Engine/Particles/IParticleBackend.h"
+#include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Renderer/Device/GpuTimer.h"
 #include "Engine/Renderer/Passes/DisturbanceFieldPass.h"
 #include "Engine/Renderer/Passes/DisturbanceVolumePass.h"
@@ -100,6 +101,13 @@ private:
                                             0.0f, 1.0f, 0.0f, 0.0f,
                                             0.0f, 0.0f, 1.0f, 0.0f,
                                             0.0f, 0.0f, 0.0f, 1.0f };
+        // 描画用の上界 (ParticleGpuBound)。Update が毎 tick 作り直し、Render が視錐台判定に使う。
+        // 上界が前 tick と変わった間は、変わる前に放出された粒子が残るので判定に使わない
+        ParticleGpuBound bound;
+        bool boundKnown = false;        // 前 tick の bound が入っているか (false = 新規 = 過去の放出が無い)
+        int32_t boundStableTicks = 0;   // bound が変わらず続いた tick 数
+        bool boundUsable = false;       // 上界を持ち、かつ過去の放出が全部死んでいる
+        bool viewCulled = false;        // 今の Render でこのエミッタを視錐台の外として落とした
         Pcg32 rng;
         ParticleEmitterComponent descCache;
         bool firstDispatch = true;
@@ -141,6 +149,9 @@ private:
     // (歪み専用のエミッタは 1 バイトも余分に確保しない)
     bool EnsureSortResources(GraphicsDevice& device, GpuEmitter& em);
     void SortEmittersForDraw(GraphicsDevice& device, const RenderView& view);
+    // 視錐台の外のエミッタに viewCulled を立て、落とした数と上界を持てず判定できなかった数を統計へ足す。
+    // view.cullFrustum が null なら何も落とさない (統計も足さない)
+    void MarkCulledEmitters(const RenderView& view, float renderOffsetX);
     // 1 エミッタの 1 tick ぶん (放出計画 → EmitData 生成 → emit Dispatch → sim Dispatch → 記帳)。
     // CPU 側 {EmitParticles → Simulate → KillDead} の 1 回分に対応し、プリウォームが誕生 tick に
     // k 回先回しで呼ぶ。戻り値 false = この tick は GPU 作業をしなかった (統計に足さない)。

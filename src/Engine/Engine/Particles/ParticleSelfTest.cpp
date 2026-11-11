@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem> // M66h: 設定ファイルの不変検査
 #include <fstream>
+#include <limits>
 #include <iterator> // M42追補: std::size (ソート網の入力表) / M66h: istreambuf_iterator
 #include <string>
 #include <vector>
@@ -2467,6 +2468,138 @@ bool RunParticleSelfTest()
         check(after.find("particleCompareMode") != std::string::npos,
               "m66h: an explicit save does not delete the dead personal keys either");
         fs::remove_all(dir, ec);
+    }
+
+    // ---- (M99) GPU エミッタの描画用の上界 (ParticleGpuBound) ----
+    // CPU バックエンドで同じ記述子を回し、全粒子が上界の球に入ること。GPU は同じ放出・同じ式で動く。
+    // 形状 4 種 x ワールド / ローカル x 力あり / なし。ワールド空間は回転 + スケールしたエミッタで回す
+    {
+        bool allInside = true;
+        bool allBounded = true;
+        bool sawParticles = true;
+        float tightest = 1.0e9f; // 最大距離 / 半径の最小 (上界が桁違いに緩くないこと)
+        for (int shape = 0; shape < 4; ++shape) {
+            for (int space = 0; space < 2; ++space) {
+                for (int force = 0; force < 2; ++force) {
+                    Scene s;
+                    GameObject go = s.CreateGameObjectTracked("Bound");
+                    auto* e = go.AddComponent<ParticleEmitterComponent>();
+                    e->shape = shape;
+                    e->shapeRadius = 0.7f;
+                    e->boxExtents = { 0.4f, 1.2f, 0.8f };
+                    e->emitFrom = (shape + space) % 3;
+                    e->rate = 600.0f;
+                    e->maxParticles = 4000;
+                    e->lifetimeMin = 0.4f;
+                    e->lifetimeMax = 1.5f;
+                    e->speedMin = 1.0f;
+                    e->speedMax = 4.0f;
+                    e->subframeEmission = (force == 1);
+                    e->simulationSpace = space;
+                    e->seed = 7u + static_cast<uint32_t>(shape);
+                    if (force == 0) {
+                        e->gravity = { 0.0f, 0.0f, 0.0f };
+                    } else {
+                        e->gravity = { 0.0f, -9.8f, 0.0f };
+                        e->wind = { 2.0f, 0.0f, -1.5f };
+                    }
+                    s.GetWorld().ApplyStructuralChanges();
+                    World& w = s.GetWorld();
+                    auto* wm = w.GetComponent<WorldMatrixComponent>(go.Id());
+                    const float c = std::cos(0.7f);
+                    const float sn = std::sin(0.7f);
+                    wm->value._11 = 1.5f * c;  wm->value._12 = 1.5f * sn;
+                    wm->value._21 = -1.5f * sn; wm->value._22 = 1.5f * c;
+                    wm->value._33 = 1.5f;
+                    SetWorldPos(w, go.Id(), 3.0f, 2.0f, -4.0f);
+
+                    const ParticleGpuBound b = ComputeParticleGpuBound(*e, wm->value, kDt);
+                    allBounded = allBounded && b.bounded;
+                    CpuParticleBackend cpu;
+                    float maxDist = 0.0f;
+                    for (int t = 0; t < 200; ++t) {
+                        cpu.Update(w, kDt);
+                        const CpuParticleBackend::EmitterPool& pool = cpu.Pools()[0];
+                        for (uint32_t i = 0; i < pool.alive; ++i) {
+                            const float dx = pool.px[i] - b.center.x;
+                            const float dy = pool.py[i] - b.center.y;
+                            const float dz = pool.pz[i] - b.center.z;
+                            const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                            maxDist = std::max(maxDist, dist);
+                            allInside = allInside && dist <= b.radius;
+                        }
+                    }
+                    sawParticles = sawParticles && maxDist > 0.0f;
+                    if (b.radius > 0.0f) {
+                        tightest = std::min(tightest, maxDist / b.radius);
+                    }
+                }
+            }
+        }
+        check(allBounded, "m99: every plain descriptor has a bound");
+        check(sawParticles, "m99: the bound probes actually emitted particles");
+        check(allInside, "m99: the bound sphere contains every live particle (4 shapes x 2 spaces x force on/off)");
+        check(tightest > 0.05f, "m99: the bound is not absurdly loose");
+    }
+    {
+        ParticleEmitterComponent d;
+        XMFLOAT4X4 id;
+        XMStoreFloat4x4(&id, XMMatrixIdentity());
+        check(ComputeParticleGpuBound(d, id, kDt).bounded, "m99: default descriptor is bounded");
+        auto unbounded = [&](auto mutate) {
+            ParticleEmitterComponent x;
+            mutate(x);
+            return !ComputeParticleGpuBound(x, id, kDt).bounded;
+        };
+        check(unbounded([](ParticleEmitterComponent& x) { x.turbulence = 0.5f; }), "m99: turbulence has no bound");
+        check(unbounded([](ParticleEmitterComponent& x) { x.fieldInfluence = 1.0f; }),
+              "m99: field influence has no bound");
+        check(unbounded([](ParticleEmitterComponent& x) { x.velocityInheritance = 1.0f; }),
+              "m99: velocity inheritance has no bound");
+        check(unbounded([](ParticleEmitterComponent& x) { x.depthCollision = true; }),
+              "m99: depth collision has no bound");
+        check(unbounded([](ParticleEmitterComponent& x) { x.collisionFloor = true; }),
+              "m99: the analytic floor has no bound");
+        check(unbounded([](ParticleEmitterComponent& x) { x.speedMax = std::numeric_limits<float>::infinity(); }),
+              "m99: a non-finite bound is rejected");
+
+        // 上界が変わる条件: 移動 / スケール / 記述子の変更で別物になり、同じ値なら同じ
+        ParticleGpuBound a = ComputeParticleGpuBound(d, id, kDt);
+        XMFLOAT4X4 moved = id;
+        moved._41 = 0.5f;
+        XMFLOAT4X4 scaled = id;
+        scaled._11 = scaled._22 = scaled._33 = 2.0f;
+        ParticleEmitterComponent faster = d;
+        faster.speedMax += 1.0f;
+        check(ParticleGpuBoundSame(a, ComputeParticleGpuBound(d, id, kDt)), "m99: the same input gives the same bound");
+        check(!ParticleGpuBoundSame(a, ComputeParticleGpuBound(d, moved, kDt)), "m99: moving the emitter changes the bound");
+        check(!ParticleGpuBoundSame(a, ComputeParticleGpuBound(d, scaled, kDt)), "m99: scaling the emitter changes the bound");
+        check(!ParticleGpuBoundSame(a, ComputeParticleGpuBound(faster, id, kDt)), "m99: editing the descriptor changes the bound");
+        d.simulationSpace = 1;
+        check(ParticleGpuBoundSame(ComputeParticleGpuBound(d, id, kDt), ComputeParticleGpuBound(d, moved, kDt)),
+              "m99: a local-space bound does not depend on where the emitter is");
+        check(ParticleGpuBoundSettleTicks(d, kDt) >= static_cast<int32_t>(d.lifetimeMax / kDt),
+              "m99: the settle time covers the longest lifetime");
+
+        // 視錐台との判定 (90 度の透視、z=10 で半幅 10)
+        XMFLOAT4X4 vp;
+        XMStoreFloat4x4(&vp, XMMatrixPerspectiveFovLH(XM_PIDIV2, 1.0f, 0.1f, 100.0f));
+        const Frustum fr = BuildFrustum(vp);
+        ParticleEmitterComponent p;
+        p.simulationSpace = 0;
+        XMFLOAT4X4 at = id;
+        at._41 = 0.0f; at._43 = 10.0f;
+        check(ParticleGpuBoundVisible(fr, ComputeParticleGpuBound(p, at, kDt), p, at, 0.0f),
+              "m99: an emitter ahead of the camera is visible");
+        at._41 = 80.0f;
+        check(!ParticleGpuBoundVisible(fr, ComputeParticleGpuBound(p, at, kDt), p, at, 0.0f),
+              "m99: an emitter far to the side is culled");
+        p.simulationSpace = 1;
+        check(!ParticleGpuBoundVisible(fr, ComputeParticleGpuBound(p, at, kDt), p, at, 0.0f),
+              "m99: a local-space emitter far to the side is culled through its world matrix");
+        at._41 = 0.0f;
+        check(ParticleGpuBoundVisible(fr, ComputeParticleGpuBound(p, at, kDt), p, at, 0.0f),
+              "m99: a local-space emitter ahead of the camera is visible");
     }
 
     if (failCount == 0) {

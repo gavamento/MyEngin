@@ -826,6 +826,107 @@ inline void TransformAabbToWorld(const DirectX::XMFLOAT4X4& m, const DirectX::XM
     outMax = mx;
 }
 
+// ---- GPU パーティクルの描画用の上界 (M99) ----
+// GPU の粒子位置は読み戻さないので、記述子から「粒子が取りうる位置の球」を解析的に求める。
+// 描画専用 (ハッシュ非関与)。球の中心は、ワールド空間ならエミッタの原点、ローカル空間ならローカル原点。
+// bounded = false の記述子は上界を持てない (常に描く)。
+struct ParticleGpuBound {
+    bool bounded = false;
+    DirectX::XMFLOAT3 center = {};
+    float radius = 0.0f;
+    float expand = 0.0f; // ParticleBillboardExpand と同じ張り出し (サイズは sizeMax 側)
+};
+
+// 上界の式が成り立たない要素は常に描く側へ倒す。
+// 乱流 / 場 / 速度継承は式の外から速度を足す。深度衝突と解析床は位置を押し戻す / 持ち上げるので原点から離れうる
+inline bool ParticleGpuBoundSupported(const ParticleEmitterComponent& d)
+{
+    return d.turbulence == 0.0f && d.fieldInfluence == 0.0f && d.velocityInheritance == 0.0f
+        && !d.depthCollision && !d.collisionFloor;
+}
+
+// 粒子の最大の生存時間 [s]。寿命の下限 0.01 と、サブフレーム放出の前倒し + 死亡判定の 1 tick を含める
+inline float ParticleGpuBoundLifetime(const ParticleEmitterComponent& d, float dt)
+{
+    return std::max({ 0.01f, d.lifetimeMin, d.lifetimeMax }) + 3.0f * dt;
+}
+
+// world = 描画に使うエミッタのワールド行列 (ワールド空間のとき原点と基底スケールを読む)、dt = 1 tick の秒数
+inline ParticleGpuBound ComputeParticleGpuBound(const ParticleEmitterComponent& d,
+                                                const DirectX::XMFLOAT4X4& world, float dt)
+{
+    ParticleGpuBound b;
+    if (!ParticleGpuBoundSupported(d)) {
+        return b;
+    }
+    const bool local = ParticleIsLocalSpace(d);
+
+    // 放出位置のずれ。ワールド空間では基底 (回転 * スケール) が掛かるので、回転に依らない
+    // フロベニウスノルムで上から押さえる (どの向きに回っても同じ値 = 回転だけでは上界は変わらない)
+    float shapeExtent = 0.0f;
+    switch (d.shape) {
+    case 1: // sphere
+    case 2: // cone (底円盤)
+        shapeExtent = std::fabs(d.shapeRadius);
+        break;
+    case 3: // box
+        shapeExtent = std::sqrt(d.boxExtents.x * d.boxExtents.x + d.boxExtents.y * d.boxExtents.y
+                                + d.boxExtents.z * d.boxExtents.z);
+        break;
+    default:
+        break;
+    }
+    float basisNorm = 1.0f;
+    if (!local) {
+        basisNorm = std::sqrt(world._11 * world._11 + world._12 * world._12 + world._13 * world._13
+                              + world._21 * world._21 + world._22 * world._22 + world._23 * world._23
+                              + world._31 * world._31 + world._32 * world._32 + world._33 * world._33);
+    }
+
+    const float life = ParticleGpuBoundLifetime(d, dt);
+    const float speed = std::max(std::fabs(d.speedMin), std::fabs(d.speedMax));
+    const float ax = d.gravity.x + d.wind.x;
+    const float ay = d.gravity.y + d.wind.y;
+    const float az = d.gravity.z + d.wind.z;
+    const float accel = std::sqrt(ax * ax + ay * ay + az * az);
+
+    b.radius = shapeExtent * basisNorm + speed * life + 0.5f * accel * life * life;
+    b.center = local ? DirectX::XMFLOAT3{ 0.0f, 0.0f, 0.0f }
+                     : DirectX::XMFLOAT3{ world._41, world._42, world._43 };
+    b.expand = ParticleBillboardExpand(d, std::max(std::fabs(d.sizeMin), std::fabs(d.sizeMax)));
+    b.bounded = std::isfinite(b.radius) && std::isfinite(b.expand) && std::isfinite(b.center.x)
+        && std::isfinite(b.center.y) && std::isfinite(b.center.z);
+    return b;
+}
+
+// 上界が前回と完全に同じか (1 ビットでも違えば false)。
+// 生きている粒子は過去の上界の下で放出されているので、上界が変わったら寿命ぶん経つまで使えない
+inline bool ParticleGpuBoundSame(const ParticleGpuBound& a, const ParticleGpuBound& b)
+{
+    return a.bounded == b.bounded && a.center.x == b.center.x && a.center.y == b.center.y
+        && a.center.z == b.center.z && a.radius == b.radius && a.expand == b.expand;
+}
+
+// 上界が変わらなくなってから、何 tick 経てば過去の放出が全部死ぬか
+inline int32_t ParticleGpuBoundSettleTicks(const ParticleEmitterComponent& d, float dt)
+{
+    return static_cast<int32_t>(std::ceil(ParticleGpuBoundLifetime(d, dt) / dt)) + 2;
+}
+
+// ローカル空間は球の箱を renderWorld で変換してから、ビルボードの張り出しで広げて判定する。
+// 可視判定の入口は CPU プールと同じ ParticlePoolVisible
+inline bool ParticleGpuBoundVisible(const Frustum& f, const ParticleGpuBound& b,
+                                    const ParticleEmitterComponent& d,
+                                    const DirectX::XMFLOAT4X4& renderWorld, float renderOffsetX)
+{
+    DirectX::XMFLOAT3 bmin = { b.center.x - b.radius, b.center.y - b.radius, b.center.z - b.radius };
+    DirectX::XMFLOAT3 bmax = { b.center.x + b.radius, b.center.y + b.radius, b.center.z + b.radius };
+    if (ParticleIsLocalSpace(d)) {
+        TransformAabbToWorld(renderWorld, bmin, bmax, bmin, bmax);
+    }
+    return ParticlePoolVisible(f, bmin, bmax, b.expand, renderOffsetX);
+}
+
 // ---- M63a: B群 (描画表現力) の共有純関数 ----
 // HLSL ミラーは assets\shaders\particle_billboard.hlsli。**機械照合は無い**ので必ず両方同時に
 // 変更すること (カーブ / カールノイズと同じ扱い — engine_spec.md 7.5)。

@@ -8,7 +8,7 @@
 spec 受け入れ条件 8, 12, 13, 14。
 - `engine_spec.md`: §6.14 に「切り替えとプロジェクト設定」を書き直し (4 種、キー、既定、CLI の優先)、距離・画面サイズ・追加経路・局所影 (「The local-light shadow atlas still sees on-screen casters only.」の文を直す)・デバッグを足し、CLI 表を更新。§6.6 の「No frustum culling」行を消す。機能一覧表 (:430-433 付近) と M99 の行を足す。契約番号 (TypeId / SimSnapshot) の記述を実コードに合わせる。
 - `docs\adr\ADR-038-culling.md`: sub-01 の計測節に加え、決定 (spec 2. の D2〜D18 の要点、却下した案と理由、公式情報の URL) を書く。
-- `docs\test_checklists.md`: カリングの手動確認項目 (各スイッチ、Scene View のトグル、固定、枠表示、Project Settings の保存)。
+- `docs\test_checklists.md`: カリングの手動確認項目 (各スイッチ、Scene View のトグル、固定、枠表示、Project Settings の保存、Scene View で動く GPU エミッタが画面端で消えないこと)。
 - `tools\cull_verify.bat` (新規): `Runtime.exe` で視錐台 ON と `--no-frustum-culling` を撮り、`Editor.exe` の img-diff `--tol 0` で照合する。対象は既定ベンチ・`--culling-demo`・`--culling-2d-demo`・`--particle-demo`・`--2d-demo`・`--render-demo`。撮影条件は `shot_verify.bat` に揃える (`--warp`・`--font-embedded`・`--no-fxaa`、`cache\` の保存済みシーンを先に消す)。`docs\test_checklists.md` と engine_spec の検証表に載せる。CI に載せるかは実行時間を測ってから決め、SELF_EVAL に書く。
 - `ResolveOcclusionCulling` (`TagNames.cpp`) は sub-02 から本番経路で使われていない。EngineCliSelfTest の旧検査を `ResolveCullingSettings` 側へ寄せて削除するか、残す理由をコメントに書く。
 - engine_spec §6.14 の制限に、spec 7. の既知の制限 2 件 (`hasScene == false` で局所影アトラスを作らない、アトラスのスキンは bind 箱で判定) を書く。

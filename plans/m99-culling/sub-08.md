@@ -11,6 +11,8 @@ spec 4.1.7 / 4.3 / 受け入れ条件 9 (と 2 の `--cull-freeze-frame` / `--cu
 - Profiler: 理由別の数 (`culled` / `culledDistance` / `culledScreenSize` / `occluded` / `culledNonMesh` / `unculledGpuEmitters`) をビュー別の表に出す (sub-02 で列を作っていれば値が入るだけ)。
 - ローカライズ英日。
 
+- **sub-04 からの申し送り**: GPU パーティクル・トレイル・スプライト・デカールの判定は `RenderView::cullFrustum` (CollectLights で設定、非ジッタ) と `FrameContext::frustum` から来る。固定の控えを差し込むのはそこ。CPU パーティクルのプール判定は `view.proj` から視錐台を作り直している (ジッタあり) ので、固定に従わせるにはここも `cullFrustum` へ寄せる。寄せた結果 CPU パーティクルの判定がジッタ無しに変わる場合は、`particle_cpu.png` と cull_verify の一致で確かめる。
+
 ## やらないこと (このサブでは)
 - オクルージョンの固定 (spec D18)
 - 4.1.5 の経路の枠表示 (メッシュだけ)

@@ -1042,6 +1042,7 @@ void RenderSystem::CollectLights(World& world, FrameContext& f)
         XMStoreFloat4x4(&vp, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
         frustum = BuildFrustum(vp);
     }
+    view.cullFrustum = f.frustumDrop ? &frustum : nullptr; // GPU パーティクル / VFX が描画だけを落とす判定に使う
 
     // ---- ライト (Directional/Point/Spot) ----
     // M54b: ここは候補を集めるだけで、カリング / 決定論ソート / 上限 kMaxLights の適用は
@@ -1207,13 +1208,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     // ---- デカール (M56a): メッシュとは別レーンで収集する (地形と同じ流儀) ----
     // DecalComponent は kComponentNoHash = 描画専用。ここで作るのは「投影ボックス 1 個
     // ぶんの描画指示」だけで sim には 1 バイトも触れない。
-    // ★視錐台カリングは v1 では**しない**。箱の外の受け面は PS 側の OBB 判定で
-    //   捨てられるので絵は正しく、デカールは数個の想定 (数が問題になるのは
-    //   「画面外の箱でも 12 三角形をラスタライズする」コストが見えてからでよい)。
+    // 投影ボックス (単位立方体 [-0.5,0.5]^3 を world で変換した箱) が視錐台の外なら落とす。
+    // 箱の外の受け面は PS の OBB 判定が捨てるので、落としても絵は変わらない。
     // ★AssetPreviewCache の専用 RenderSystem 用の元栓は要らない — プレビュー世界には
     //   デカールが 1 個も居ないので、下の収集が空リストを作り view.decals が
     //   「空 = 何もしない」に落ちる (地形は共有ワールドを見るので元栓が要った)
     decalList_.items.clear();
+    int decalsCulled = 0;
     {
         const ComponentTypeId req[] = { DecalComponent::sTypeId,
                                         WorldMatrixComponent::sTypeId };
@@ -1234,6 +1235,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 DecalRenderItem it;
                 if (!FillDecalTransform(w->value, it)) {
                     continue; // スケール 0 等で逆行列が作れない
+                }
+                if (frustumDrop
+                    && !AabbInFrustum(frustum, w->value, { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f })) {
+                    ++decalsCulled;
+                    continue;
                 }
                 it.color = SrgbToLinear(XMFLOAT3(d->color.x, d->color.y, d->color.z));
                 it.opacity = d->color.w;
@@ -1258,6 +1264,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         // 比較規則の正本は RenderTypes.h の DecalDrawOrderLess
         // (規則 7 のタイブレークつき。DecalSelfTest が検査する)
         std::sort(decalList_.items.begin(), decalList_.items.end(), DecalDrawOrderLess);
+    }
+    if (decalsCulled != 0) {
+        prof::RenderStats delta;
+        delta.culledNonMesh = decalsCulled;
+        prof::AddRenderStats(delta);
     }
     view.decals = &decalList_;
 

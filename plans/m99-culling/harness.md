@@ -13,8 +13,8 @@
 |---|---|---|---|---|
 | sub-01 | OK | 1 | 877dc523 | 段別 CPU 時間・BVH 採否 → 見送り (ADR-038) |
 | sub-02 | OK | 1 | acc258b4 | 設定の土台 + 視錐台スイッチ |
-| sub-03 | OK | 1 | (このコミット) | 局所影の画面外キャスター (--culling-demo) |
-| sub-04 | 未着手 | 0 | | 3D 経路の視錐台 |
+| sub-03 | OK | 1 | 2485dd6c | 局所影の画面外キャスター (--culling-demo) |
+| sub-04 | OK | 1 | (このコミット) | 3D 経路の視錐台 (GPU 粒子・トレイル・スプライト・デカール) |
 | sub-05 | 未着手 | 0 | | 2D 経路の視錐台 (sub-02 後、03/04 と並列可) |
 | sub-06 | 未着手 | 0 | | 距離カリング + RenderCulling |
 | sub-07 | 未着手 | 0 | | 画面サイズカリング |
@@ -45,4 +45,5 @@
 - sub-02: UI (Rendering > カリング、Project Settings のカリング欄) は画面で未確認 → 最終報告の未検証事項に載せる (ユーザーの目視)。nit: CullingCliOverrides の組み立てが EngineLoop と EngineCliSelfTest で重複 (任意)。ON/OFF 一致の回帰は sub-09 で tools\cull_verify.bat を作る
 - sub-03: shot_verify の flow_title FAIL (文字行のみ、影の経路外) は sub-09 で基点 d52e91f3 と比べて切り分ける。nit: AllocateShadowAtlas のマスク計算の切り出し (任意)
 - 範囲外の別件: master の CI は M98e 以降 4 回連続 failure (run 42927691480 はビルド途中で exit 1)。最終報告でユーザーへ伝える
+- sub-04: nit: ParticleGpuBound を軽いヘッダへ分けると GpuParticleBackend.h の依存が細くなる (任意)。sub-08 は CPU パーティクルのプール判定を cullFrustum へ寄せる。Scene View の動く GPU エミッタは sub-09 の手動確認
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。

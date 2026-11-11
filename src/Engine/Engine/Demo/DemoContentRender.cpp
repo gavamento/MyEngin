@@ -960,6 +960,79 @@ void BuildCullingShowcaseScene(EngineContext& ctx)
     } else {
         MYE_LOG_ERROR("[culling-demo] anim_test.glb could not be loaded (run tools\\gen_anim_test_gltf.ps1)");
     }
+
+    // ---- メッシュ以外の経路 (3D)。生成順が粒子 RNG のストリームなので、必ずここ (末尾) へ足す ----
+    // GPU エミッタは --particle-backend gpu のときだけ GPU 経路を通る。
+    // 画面外 (x = ±40 より外) の物は視錐台の外、画面内 (|x| < 20) の物は残る
+    auto gpuEmitter = [&](const char* name, float px, float py, float pz, float turbulence) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        auto* e = go.AddComponent<ParticleEmitterComponent>();
+        e->maxParticles = 2000;
+        e->rate = 120.0f;
+        e->turbulence = turbulence;
+        return go;
+    };
+    gpuEmitter("GpuEmitter_InView", -3.0f, 0.2f, 14.0f, 0.0f);       // 静止・判定できる・画面内
+    gpuEmitter("GpuEmitter_OffScreen", 60.0f, 0.2f, 10.0f, 0.0f);    // 静止・判定できる・画面外 = 落ちる
+    gpuEmitter("GpuEmitter_TurbulentInView", 4.0f, 0.2f, 14.0f, 0.6f); // 乱流 = 上界を持てない
+    gpuEmitter("GpuEmitter_TurbulentOffScreen", -70.0f, 0.2f, 10.0f, 0.6f);
+
+    // 画面内の回転台。トレイルの先端と、動くワールド空間のエミッタ (上界を持てない) を載せる。
+    // Rotator が無い環境ではどちらも静止し、トレイルは点が溜まらず描かれない
+    {
+        GameObject spinner = s.CreateGameObject("Spinner_InView");
+        spinner.SetLocalPosition(0.0f, 3.0f, 24.0f);
+        AttachScriptIfRegistered(s.GetWorld(), spinner.Id(), "Rotator");
+        GameObject tip = s.CreateGameObject("TrailTip_InView");
+        tip.SetParent(spinner);
+        tip.SetLocalPosition(4.5f, 0.0f, 0.0f);
+        auto* tr = tip.AddComponent<TrailRendererComponent>();
+        tr->duration = 2.0f;
+        tr->width = 0.55f;
+        tr->minVertexDistance = 0.01f;
+        GameObject moving = gpuEmitter("GpuEmitter_Moving", 0.0f, 0.0f, 0.0f, 0.0f);
+        moving.SetParent(spinner);
+        moving.SetLocalPosition(-2.5f, 0.0f, 0.0f);
+    }
+    // 画面外の回転台 (トレイルの全体が視錐台の外)
+    {
+        GameObject spinner = s.CreateGameObject("Spinner_OffScreen");
+        spinner.SetLocalPosition(70.0f, 3.0f, 10.0f);
+        AttachScriptIfRegistered(s.GetWorld(), spinner.Id(), "Rotator");
+        GameObject tip = s.CreateGameObject("TrailTip_OffScreen");
+        tip.SetParent(spinner);
+        tip.SetLocalPosition(4.5f, 0.0f, 0.0f);
+        auto* tr = tip.AddComponent<TrailRendererComponent>();
+        tr->duration = 2.0f;
+        tr->width = 0.55f;
+        tr->minVertexDistance = 0.01f;
+    }
+
+    // ビルボード (SpriteRenderer)
+    auto sprite = [&](const char* name, float px, float py, float pz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        auto* sp = go.AddComponent<SpriteRendererComponent>();
+        sp->color = { 1.0f, 0.55f, 0.25f, 1.0f };
+        sp->size = { 2.0f, 2.0f };
+        return go;
+    };
+    sprite("Sprite_InView", -8.0f, 4.0f, 14.0f);
+    sprite("Sprite_OffScreen", -60.0f, 4.0f, 10.0f);
+
+    // デカール (ローカル +Z が投影方向。pitch 90 = 真下へ投影)。床の上に 1 枚と、画面外に 1 枚
+    auto decal = [&](const char* name, float px, float pz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, 1.0f, pz);
+        go.SetLocalRotationEuler(90.0f, 0.0f, 0.0f);
+        go.SetLocalScale(4.0f, 4.0f, 4.0f);
+        auto* d = go.AddComponent<DecalComponent>();
+        d->color = { 0.95f, 0.42f, 0.12f, 0.85f };
+        return go;
+    };
+    decal("Decal_InView", 9.0f, 8.0f);
+    decal("Decal_OffScreen", 80.0f, 10.0f);
 }
 
 } // namespace mye

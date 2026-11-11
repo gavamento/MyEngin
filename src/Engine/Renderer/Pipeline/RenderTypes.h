@@ -480,6 +480,9 @@ struct RenderView {
     // ---- 視錐台カリング (末尾 append。1 = 従来どおり) ----
     // 0 = CPU パーティクルのプールを視錐台で落とさない (--no-frustum-culling。描かれる画素は 1 と同じ)
     int32_t frustumCulling = 1;
+    // GPU パーティクル・トレイル・ビルボードが落とす判定に使う視錐台 (非ジッタ)。非所有 (RenderSystem のフレーム文脈を指す)。
+    // null = 落とさない (カメラ無し / 視錐台カリング OFF / RenderSystem を通らないビュー)
+    const struct Frustum* cullFrustum = nullptr;
 };
 
 // --hzb-debug-max 用: GPU オクルージョンが隠れていると判定した項目のワールド AABB

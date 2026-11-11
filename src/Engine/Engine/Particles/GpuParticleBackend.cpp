@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Particles/ParticleCurves.h"
 #include "Engine/Renderer/Device/GpuBufferUtil.h" // M46a: バッファ生成ヘルパ
@@ -392,6 +394,24 @@ void GpuParticleBackend::Update(World& world, float dt)
         // M61g: Render 用ワールド行列キャッシュ (descCache と同じ扱い。CPU 側 renderWorld の
         // ミラー)。ローカル空間の VS 変換に使う — 常時コピーで空間切り替えに即応する
         em.renderWorld = wm->value;
+
+        // 描画用の上界 (視錐台判定)。上界が変わった tick から寿命ぶんは、変わる前の放出が残るので使わない。
+        // 新規エミッタには過去の放出が無いので、最初の tick から使える
+        {
+            const ParticleGpuBound nb = ComputeParticleGpuBound(*desc, wm->value, dt);
+            if (!em.boundKnown) {
+                em.boundStableTicks = std::numeric_limits<int32_t>::max();
+            } else if (ParticleGpuBoundSame(nb, em.bound)) {
+                if (em.boundStableTicks < std::numeric_limits<int32_t>::max()) {
+                    ++em.boundStableTicks;
+                }
+            } else {
+                em.boundStableTicks = 0;
+            }
+            em.bound = nb;
+            em.boundKnown = true;
+            em.boundUsable = nb.bounded && em.boundStableTicks >= ParticleGpuBoundSettleTicks(*desc, dt);
+        }
 
         // ---- M61f: maxParticles の変更追従 (容量が違えばリソース一式を作り直す) ----
         // 作り直しは一時オブジェクトで行い、成功時のみ move で差し替える — 失敗時 (VRAM 不足等)
@@ -921,7 +941,8 @@ void GpuParticleBackend::SortEmittersForDraw(GraphicsDevice& device, const Rende
         // 凍結 (M61e) と空 Dispatch 回避 (gpuIdle) は描画自体をスキップするので並べる意味が無い。
         // 歪み (blendMode==2) は GPU では描かないので、並べる相手が居ない。
         // 加算も並べる (理由は ParticleNeedsDrawSort)
-        if (!ready || em.frozen || em.gpuIdle || !ParticleNeedsDrawSort(em.descCache.blendMode)) {
+        if (!ready || em.frozen || em.gpuIdle || em.viewCulled
+            || !ParticleNeedsDrawSort(em.descCache.blendMode)) {
             continue;
         }
         if (!EnsureSortResources(device, em)) {
@@ -986,6 +1007,29 @@ void GpuParticleBackend::SortEmittersForDraw(GraphicsDevice& device, const Rende
     }
 }
 
+void GpuParticleBackend::MarkCulledEmitters(const RenderView& view, float renderOffsetX)
+{
+    prof::RenderStats delta;
+    for (GpuEmitter& em : emitters_) {
+        em.viewCulled = false;
+        // 描画される見込みのないものは数えない (凍結 / 空 Dispatch 回避 / 歪み)
+        if (view.cullFrustum == nullptr || em.frozen || em.gpuIdle || em.descCache.blendMode == 2) {
+            continue;
+        }
+        if (!em.boundUsable) {
+            ++delta.unculledGpuEmitters;
+            continue;
+        }
+        if (!ParticleGpuBoundVisible(*view.cullFrustum, em.bound, em.descCache, em.renderWorld, renderOffsetX)) {
+            em.viewCulled = true;
+            ++delta.culledNonMesh;
+        }
+    }
+    if (delta.culledNonMesh != 0 || delta.unculledGpuEmitters != 0) {
+        prof::AddRenderStats(delta);
+    }
+}
+
 void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
                                 ShaderManager& shaders, RenderResources& resources,
                                 float renderOffsetX)
@@ -995,6 +1039,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         return;
     }
     ID3D11DeviceContext* dc = device.Context();
+
+    // 視錐台の外のエミッタは、並べ替えも描画も飛ばす (sim は止めない)
+    MarkCulledEmitters(view, renderOffsetX);
 
     // M42追補: 描画順ソート。描画ループより**前**に全部済ませる
     SortEmittersForDraw(device, view);
@@ -1082,6 +1129,9 @@ void GpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
         }
         if (em.gpuIdle) {
             continue; // 空 Dispatch 回避中 (最後の実 Dispatch が InstanceCount=0 を確定済み)
+        }
+        if (em.viewCulled) {
+            continue; // 視錐台の外 (MarkCulledEmitters)
         }
         if (em.descCache.blendMode == 2) {
             continue; // M42d: 歪みは CPU バックエンド限定 (v1 制限。GPU は描画スキップ)

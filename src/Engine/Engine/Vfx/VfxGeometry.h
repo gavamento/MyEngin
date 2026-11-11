@@ -9,6 +9,7 @@
 
 #include <DirectXMath.h>
 
+#include "Engine/Renderer/Pipeline/FrustumCull.h" // 視錐台の外のスプライト / トレイルを落とす判定
 #include "Engine/Renderer/Text/FontGeometry.h" // FontGlyphMap (M34: FontAtlas とグリフ共有)
 
 namespace mye {
@@ -184,6 +185,35 @@ inline int BuildTrailRibbon(const TrailPoint* pts, int count, uint64_t nowTick, 
         added += 6;
     }
     return added;
+}
+
+// スプライトの外接球 (位置を中心、半径 0.5·|size| と世界行列の最大軸スケールの大きい方) の外接箱が視錐台と交わるか。
+// 描画は size をそのまま使うので、縮小スケールで半径が小さくなって見えているスプライトを落とさないよう 1 を下限にする
+inline bool SpriteInFrustum(const Frustum& f, const DirectX::XMFLOAT4X4& world, float sizeX, float sizeY)
+{
+    const auto rowLen = [](float x, float y, float z) { return std::sqrt(x * x + y * y + z * z); };
+    const float scale = (std::max)({ 1.0f, rowLen(world._11, world._12, world._13),
+                                     rowLen(world._21, world._22, world._23),
+                                     rowLen(world._31, world._32, world._33) });
+    const float r = 0.5f * std::sqrt(sizeX * sizeX + sizeY * sizeY) * scale;
+    return WorldAabbInFrustum(f, { world._41 - r, world._42 - r, world._43 - r },
+                              { world._41 + r, world._42 + r, world._43 + r });
+}
+
+// トレイルの点列の AABB を幅の半分だけ広げた箱が視錐台と交わるか (リボンの半幅は width/2 以下)。点が無ければ true
+inline bool TrailInFrustum(const Frustum& f, const TrailPoint* pts, int count, float width)
+{
+    if (!pts || count <= 0) {
+        return true;
+    }
+    DirectX::XMFLOAT3 lo = pts[0].pos;
+    DirectX::XMFLOAT3 hi = pts[0].pos;
+    for (int i = 1; i < count; ++i) {
+        lo = { (std::min)(lo.x, pts[i].pos.x), (std::min)(lo.y, pts[i].pos.y), (std::min)(lo.z, pts[i].pos.z) };
+        hi = { (std::max)(hi.x, pts[i].pos.x), (std::max)(hi.y, pts[i].pos.y), (std::max)(hi.z, pts[i].pos.z) };
+    }
+    const float h = 0.5f * std::fabs(width);
+    return WorldAabbInFrustum(f, { lo.x - h, lo.y - h, lo.z - h }, { hi.x + h, hi.y + h, hi.z + h });
 }
 
 // billboardMode からワールドの right/up 基底を決める。

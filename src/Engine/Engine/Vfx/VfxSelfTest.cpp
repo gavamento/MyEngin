@@ -504,6 +504,33 @@ bool RunVfxSelfTest()
         check(ok, "roundtrip: all 9 M29 components survive scene JSON save/load");
     }
 
+    // ---- (M99) 視錐台の外のスプライト / トレイルを落とす判定 ----
+    // 90 度の透視 (view = 単位行列) → z=10 で半幅 10
+    {
+        XMFLOAT4X4 vp;
+        XMStoreFloat4x4(&vp, XMMatrixPerspectiveFovLH(XM_PIDIV2, 1.0f, 0.1f, 100.0f));
+        const Frustum fr = BuildFrustum(vp);
+        XMFLOAT4X4 at;
+        XMStoreFloat4x4(&at, XMMatrixTranslation(0.0f, 0.0f, 10.0f));
+        check(vfx::SpriteInFrustum(fr, at, 2.0f, 2.0f), "cull: a sprite ahead of the camera is kept");
+        XMStoreFloat4x4(&at, XMMatrixTranslation(30.0f, 0.0f, 10.0f));
+        check(!vfx::SpriteInFrustum(fr, at, 2.0f, 2.0f), "cull: a sprite far to the side is dropped");
+        // 半径 0.5·|size| = 約 14 が、x=30 の箱を画面端 (x=10) へ届かせる大きさなら残す
+        check(vfx::SpriteInFrustum(fr, at, 40.0f, 40.0f), "cull: a huge sprite straddling the edge is kept");
+        // 縮小スケールでも描画は size そのまま = 縮んだ半径で落とさない (x=10.5 の板は幅 4 で画面へ掛かる)
+        XMStoreFloat4x4(&at, XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixTranslation(11.5f, 0.0f, 10.0f));
+        check(vfx::SpriteInFrustum(fr, at, 4.0f, 4.0f), "cull: a down-scaled sprite is not shrunk by its scale");
+
+        vfx::TrailPoint inView[2] = { { { -1.0f, 0.0f, 10.0f }, 0 }, { { 1.0f, 0.0f, 10.0f }, 1 } };
+        vfx::TrailPoint outside[2] = { { { 40.0f, 0.0f, 10.0f }, 0 }, { { 42.0f, 0.0f, 10.0f }, 1 } };
+        vfx::TrailPoint edge[2] = { { { 11.0f, 0.0f, 10.0f }, 0 }, { { 12.0f, 0.0f, 10.0f }, 1 } };
+        check(vfx::TrailInFrustum(fr, inView, 2, 0.5f), "cull: a trail in view is kept");
+        check(!vfx::TrailInFrustum(fr, outside, 2, 0.5f), "cull: a trail outside is dropped");
+        check(!vfx::TrailInFrustum(fr, edge, 2, 0.5f), "cull: a thin trail just outside is dropped");
+        check(vfx::TrailInFrustum(fr, edge, 2, 4.0f), "cull: the ribbon half-width widens the box into view");
+        check(vfx::TrailInFrustum(fr, nullptr, 0, 0.5f), "cull: a trail with no points is not judged");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== Vfx self test: ALL PASS ====");
         return true;

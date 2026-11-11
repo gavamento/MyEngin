@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "Engine/Core/Ecs/Components.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/UI/UIRenderer.h"
 #include "Engine/Renderer/Device/GpuResources.h"
@@ -256,6 +257,10 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
     };
     std::vector<Item> items;
 
+    // 視錐台の外のスプライト / トレイルは描画リストへ入れない (描画だけを落とす。TextMesh は判定しない)
+    const Frustum* cullFrustum = view.cullFrustum;
+    int culledCount = 0;
+
     const ComponentTypeId spReq[] = { SpriteRendererComponent::sTypeId,
                                       WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(spReq, [&](Archetype& arch) {
@@ -269,6 +274,11 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
             const auto* sp = static_cast<const SpriteRendererComponent*>(arch.GetPtr(si, row));
             const auto* wmc = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row));
             const XMFLOAT3 pos = { wmc->value._41, wmc->value._42, wmc->value._43 };
+            if (cullFrustum != nullptr
+                && !vfx::SpriteInFrustum(*cullFrustum, wmc->value, sp->size.x, sp->size.y)) {
+                ++culledCount;
+                continue;
+            }
             items.push_back({ viewZOf(pos), e.index, 0, sp, &wmc->value, nullptr });
         }
     });
@@ -304,9 +314,19 @@ void VfxRenderer::Render(World& world, GraphicsDevice& device, ShaderManager& sh
         if (!tr || !IsEntityActive(world, tb.owner)) {
             continue;
         }
+        if (cullFrustum != nullptr
+            && !vfx::TrailInFrustum(*cullFrustum, tb.pts.data(), static_cast<int>(tb.pts.size()), tr->width)) {
+            ++culledCount;
+            continue;
+        }
         items.push_back({ viewZOf(tb.pts.back().pos), tb.owner.index, 1, tr, nullptr, &tb });
     }
 
+    if (culledCount != 0) {
+        prof::RenderStats delta;
+        delta.culledNonMesh = culledCount;
+        prof::AddRenderStats(delta);
+    }
     if (items.empty()) {
         return;
     }
