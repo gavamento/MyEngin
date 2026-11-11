@@ -76,6 +76,8 @@ const ShowcaseDef kShowcases[] = {
       &BuildPlain<&BuildRenderBenchUniqueScene>, false }, // M90f
     { L"--culling-demo", false, L"cache\\culling_showcase.scene.json", nullptr,
       &BuildPlain<&BuildCullingShowcaseScene>, false }, // M99c
+    { L"--culling-distance-demo", false, L"cache\\culling_distance_showcase.scene.json", nullptr,
+      &BuildPlain<&BuildCullingDistanceShowcaseScene>, false }, // M99f
     { L"--culling-2d-demo", false, L"cache\\culling_2d_showcase.scene.json", nullptr,
       &BuildPlain<&BuildCulling2DShowcaseScene>, false }, // M99e
     { L"--compute-demo", false, L"cache\\compute_showcase.scene.json", nullptr, &BuildPlain<&BuildComputeShowcaseScene>,

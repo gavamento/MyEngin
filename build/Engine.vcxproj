@@ -255,6 +255,7 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\Camera2DFollow.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\Camera2DFollowSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\CullingSettings.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\DistanceCullSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsDump.cpp" />
@@ -648,6 +649,8 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\Camera2DFollowSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\CullingSettings.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\DebugDraw.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\DistanceCull.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\DistanceCullSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\LightSelection.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\ProbeBaker.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsDump.h" />

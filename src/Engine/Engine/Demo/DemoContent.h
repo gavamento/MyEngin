@@ -308,6 +308,9 @@ void BuildFogNoiseShowcaseScene(EngineContext& ctx);
 // 霧の嵩 (--fog-kick-demo)。人が蹴ると霧に穴が開き、押し出された分が縁に盛り上がり、重力でゆっくり埋まる (濃さ + 嵩の 2D 層 1 枚)。
 // 人は自動で歩いて蹴り、WASD / 左スティックで歩き、J / 左クリック / RB で蹴れる (ZZFogKickDriver。GameLogic.dll が無い構成では動かない)
 void BuildFogKickShowcaseScene(EngineContext& ctx);
+// M99f: 距離カリングの検証シーン (--culling-distance-demo)。太陽と床、画面内に並べた箱を距離 29 / 69 / 129 に置く。
+// 物ごと (RenderCulling 40 m)・タグ 5・何も付けない物の 3 組。--culling-demo の物量は変えないため別シーンにしてある
+void BuildCullingDistanceShowcaseScene(EngineContext& ctx);
 // M99e: 2D の視錐台カリングの検証シーン (--culling-2d-demo)。正射影カメラの画面内外に、Sprite2D (画面端に掛かる回転・拡大つきを含む) /
 // Sliced / Tiled / Line2D / SpriteShape2D / タイルマップ / Parallax2D / SpriteMask2D を置く。資産は --2d-demo と同じ (assets\2d\)。
 // ★後続のカリングの検証は物を**末尾へ**足す

@@ -104,6 +104,9 @@ MYE_STR(Menu_CullDistanceHint, "Saved to the project (project_settings.json). Th
 MYE_STR(Menu_CullSize,        "Screen Size Culling", "画面サイズカリング")
 MYE_STR(Menu_CullSizeHint,    "Saved to the project (project_settings.json). The --no-size-culling option overrides it at launch without saving. Drops objects smaller than the minimum screen size",
                               "プロジェクト (project_settings.json) に保存されます。起動時の --no-size-culling は保存せずに上書きします。最小画面サイズより小さい物を落とします")
+MYE_STR(Menu_CullSceneView,   "Apply Game Culling to Scene View", "Scene View にもゲームのカリングを掛ける")
+MYE_STR(Menu_CullSceneViewHint, "Not saved (this session only). Applies the distance and screen size culling to the Scene View too. Off by default so distant objects stay selectable while editing",
+                              "保存されません (このセッションだけ)。距離・画面サイズのカリングを Scene View にも掛けます。既定は OFF で、編集中に遠い物が消えて選べなくなるのを避けます")
 MYE_STR(Menu_AnimUro,        "Distant Animation Throttling (URO)", "遠いキャラのアニメ更新を間引く (URO)")
 // M90e: メッシュ LOD の描画設定 (.meta で段を作ったモデルだけに効く)
 MYE_STR(Menu_Lod,             "Mesh LOD",          "メッシュ LOD")

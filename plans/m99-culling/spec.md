@@ -95,6 +95,7 @@
 
 **4.1.3 距離カリング (メッシュのみ)**
 - 実効距離 Dmax = {`RenderCulling.maxDrawDistance`, 物が持つ各タグの `tagCullDistances`, `defaultMaxDrawDistance`} のうち 0 より大きい値の最小。どれも 0 なら判定しない。
+- **継承 (sub-06 round 1 で確定、RT の適用範囲と同じ規則)**: タグは `Tags::EffectiveMask` (自分 + 祖先の OR) で引く (`src\Engine\Engine\Scene\Tags.h` の「描画はこちらを使う」の規則。FBX / glTF のモデルはメッシュが子孫に分かれるので、ルートに付けたタグが効かないと使えない)。`RenderCulling` は自分 → 祖先の順に探して最初に見つかった 1 個を使う (`ResolveRtScope` と同じ「近い方が勝つ」)。見つかった物の `maxDrawDistance` と `exemptFromSizeCulling` を両方そのまま使う (子に置いた `RenderCulling` は祖先の値を丸ごと上書きする)。祖先を辿るのは、ワールドに `RenderCulling` が 1 つでもあるか、タグ別の距離が 1 つでもあるときだけ (存在の門)。判定は物 (メッシュのエンティティ) ごとの箱で行うので、1 つのモデルの部品が少しずつ違う距離で消えることはある。
 - 距離 d = カメラ位置からワールド AABB (`boundsPadding` 込み、スキンは全姿勢の箱) の最近点までのユークリッド距離。d > Dmax で落とす。正射影でもカメラ位置から測る。
 - 箱を持たない物 (`alwaysVisible`、例: ラグドール中のスキン) は落とさない。
 - 掛けるビュー: viewKey 1 と 3。2 は「Scene View にもゲームのカリングを掛ける」が ON のときだけ。0 には掛けない。
@@ -135,7 +136,7 @@
 - 新コンポーネント `RenderCulling` (`RenderCullingComponent`、kComponentNoHash、Inspector の Add Component に出す):
   - `maxDrawDistance` (float、0..100000、0 = 物ごとの上限なし)
   - `exemptFromSizeCulling` (bool)
-  - 付けた MeshRenderer エンティティにだけ効く。シーン JSON・プレハブ上書きは既存のリフレクション経路に載せる。
+  - 付けたエンティティと、その子孫の MeshRenderer に効く (近い方が勝つ。4.1.3 の継承)。シーン JSON・プレハブ上書きは既存のリフレクション経路に載せる。
   - **TypeId 100、SimSnapshot v82** (着手時に実コードで末尾を再確認し、台帳に書く)。**ABI は v35 のまま** (C ABI・`Interop.cs` は触らない)。WorldHash は変わらない。
 - 統計の JSON は欄が増える (既存の欄の名前と意味は変えない)。
 
@@ -206,3 +207,4 @@
 - 2026-11-11 (sub-03 round 1): 既知の制限 2 件と `flow_title` の切り分けを 7. に追記。sub-09 の作業に反映。
 - 2026-11-11 (sub-04 round 1、coder の逸脱・追加を仕様側の誤りとして採用): SpriteRenderer の半径を max(1, スケール) に、GPU エミッタの「上界を持てない」条件に衝突 2 種を、安定待ちの基準を「原点の移動」から「上界の変化」に変えた (4.1.5)。
 - 2026-11-11 (sub-05 round 1): 2D の判定位置・余裕・SpriteShape の張り出しを実装に合わせて 4.1.5 に記録 (縁スプライトの厚みは帯の厚みに使われていなかった = 仕様の誤り)。`culledNonMesh` の数え方を「メッシュ以外の視錐台による落とし全部 (CPU プール・タイルチャンク込み、地形除く)」に確定。sub-04 で数えていない CPU プールは sub-08 で足す。
+- 2026-11-11 (sub-06 round 1、coder の質問を受けて planner の誤りとして修正): タグを自分の mask だけで引くとした sub-06 本文は、`Tags.h` の「描画は EffectiveMask」という既存の規則に反していた。タグは EffectiveMask、`RenderCulling` は自分 → 祖先の最初の 1 個 (RtScope と同じ) に変更 (4.1.3 / 4.2)。sub-07 の除外フラグも同じ解決を使う。

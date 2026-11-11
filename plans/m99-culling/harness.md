@@ -15,8 +15,8 @@
 | sub-02 | OK | 1 | acc258b4 | 設定の土台 + 視錐台スイッチ |
 | sub-03 | OK | 1 | 2485dd6c | 局所影の画面外キャスター (--culling-demo) |
 | sub-04 | OK | 1 | d276ed81 | 3D 経路の視錐台 (GPU 粒子・トレイル・スプライト・デカール) |
-| sub-05 | OK | 1 | (このコミット) | 2D 経路の視錐台 (--culling-2d-demo) |
-| sub-06 | 未着手 | 0 | | 距離カリング + RenderCulling |
+| sub-05 | OK | 1 | a0226a4f | 2D 経路の視錐台 (--culling-2d-demo) |
+| sub-06 | OK | 2 | (このコミット) | 距離カリング + RenderCulling (TypeId 100、SimSnapshot v82、ABI 不変)。round 1 は祖先継承で REWORK |
 | sub-07 | 未着手 | 0 | | 画面サイズカリング |
 | sub-08 | 未着手 | 0 | | カメラ固定 + 理由別表示 |
 | sub-09 | 未着手 | 0 | | 文書と通し検証 |
@@ -47,4 +47,6 @@
 - 範囲外の別件: master の CI は M98e 以降 4 回連続 failure (run 42927691480 はビルド途中で exit 1)。最終報告でユーザーへ伝える
 - sub-04: nit: ParticleGpuBound を軽いヘッダへ分けると GpuParticleBackend.h の依存が細くなる (任意)。sub-08 は CPU パーティクルのプール判定を cullFrustum へ寄せる。Scene View の動く GPU エミッタは sub-09 の手動確認
 - sub-05: nit: Sliced/Tiled/SpriteShape の視錐台判定の単体テストなし (任意)。culledNonMesh の定義を「非メッシュの視錐台落ち全部」に確定、CPU プールの計上は sub-08。Scene View の 2D は sub-09 の手動確認
+- sub-06: should (タグ継承を Tags::EffectiveMask 呼び出しへ) は sub-07 で直す。round 2 後の Release ビルドと replay_verify は sub-07 の検証で兼ねる。タグ別距離の実描画は未確認
+- 契約番号: TypeId 100 = RenderCulling、kSimSnapshotVersion 82 (M99f)。ABI v35 のまま
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。

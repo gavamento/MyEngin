@@ -160,6 +160,9 @@ public:
     float cullMinScreenSize = kDefaultMinScreenSize;
     float cullDefaultMaxDrawDistance = 0.0f;
     float cullTagDistance[kCullingTagCount] = {};
+    // 距離・画面サイズのカリングを Scene View (viewKey 2) にも掛ける。保存しないセッション限りの値 (既定 OFF)。
+    // Runtime (1) と Game View (3) には常に掛かり、viewKey 0 には掛からない
+    bool cullSceneView = false;
     // 設定をまとめて反映する (起動時の実効値)。オクルージョンの bool もここで入る
     void ApplyCullingSettings(const CullingSettings& settings);
     // オクルージョンの統計の読み戻しで GPU を待つか。既定 true (selftest・決定的な撮影の counts を揃える)。

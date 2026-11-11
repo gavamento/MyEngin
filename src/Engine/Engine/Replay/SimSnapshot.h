@@ -190,7 +190,8 @@ struct SimRefs {
 // v79: DisturbanceFieldComponent の末尾に pushMargin / pushStrength、DisturbancePusherComponent (TypeId 98、hash 対象)。World 節のカラム生バイト
 // v80 (M97a): CharacterInputComponent (TypeId 99、hash 対象)。World 節のカラム生バイト
 // v81 (M89q): TwoBoneIKComponent の末尾に footMaxTilt (足首を地面の傾きに揃える上限)。World 節のカラム生バイト
-inline constexpr uint32_t kSimSnapshotVersion = 81;
+// v82 (M99f): RenderCullingComponent (TypeId 100、NoHash)。World 節のカラム生バイト
+inline constexpr uint32_t kSimSnapshotVersion = 82;
 
 // 撮る: out を clear して blob を書く。成功で true。
 // 節ごとの参照が null なら「空の節」を書くのでレイアウトは常に同じ

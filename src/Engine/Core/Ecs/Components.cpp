@@ -2154,6 +2154,13 @@ void RegisterBuiltinComponents()
         MYE_JP("ジャンプのアクション名", MYE_FIELD_TIP(CharacterInputComponent, jumpAction, String64, "action name in assets/input/actions.json that also jumps (its bufferTicks gives jump buffering). Empty = key only")),
         MYE_JP("ジャンプキーの前回の状態", MYE_FIELD_FLAGS(CharacterInputComponent, jumpKeyWasDown, UInt32, kFieldReadOnly | kFieldHidden)),
     });
+
+    // M99f: 描画のカリング設定 (TypeId=100、末尾 append)。描画専用の **kComponentNoHash**
+    static_assert(sizeof(RenderCullingComponent) == 8, "RenderCullingComponent: no implicit padding");
+    RegisterComponent<RenderCullingComponent>("RenderCulling", {
+        MYE_JP("最大描画距離 (m)", ::mye::FieldDesc{ .name = "maxDrawDistance", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(RenderCullingComponent, maxDrawDistance)), .minVal = 0.0f, .maxVal = 100000.0f, .tooltip = "meshes farther than this from the camera are not drawn, shadows included [m] (0 = no limit from this object; the tag and project distances still apply)" }),
+        MYE_JP("画面サイズカリングの対象外", MYE_FIELD_TIP(RenderCullingComponent, exemptFromSizeCulling, Bool, "never dropped by screen-size culling, however small it looks. Distance culling still applies")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

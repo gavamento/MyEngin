@@ -2777,6 +2777,18 @@ struct CharacterInputComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- 描画のカリング設定 (M99f、TypeId=100) ----
+// メッシュの距離カリング・画面サイズカリングを物ごとに調整する。描画専用なので **kComponentNoHash**。
+// maxDrawDistance: カメラからこの物の AABB までの最大描画距離 [m]。0 = 物ごとの指定なし
+//   (タグ別・プロジェクト既定の距離は別に効く。実効距離はそのうち 0 より大きい最小)。
+// exemptFromSizeCulling: 画面サイズカリングで落とさない。距離カリングには効かない。
+struct RenderCullingComponent {
+    float maxDrawDistance = 0.0f;
+    bool exemptFromSizeCulling = false;
+    uint8_t reserved[3] = {};
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

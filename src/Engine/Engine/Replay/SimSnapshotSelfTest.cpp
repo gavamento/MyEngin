@@ -51,6 +51,8 @@ void BuildScene(Scene& scene)
     b.AddComponent<ColliderComponent>();
     c.AddComponent<MeshRendererComponent>();
     c.AddComponent<ColliderComponent>();
+    // v82 (M99f): 描画専用 (NoHash) のコンポーネントもカラム生バイトで往復する
+    a.AddComponent<RenderCullingComponent>()->maxDrawDistance = 321.5f;
     w.ApplyStructuralChanges();
 
     if (auto* t = w.GetComponent<LocalTransform>(a.Id())) {
@@ -161,6 +163,23 @@ bool RunSimSnapshotSelfTest()
     if (auto* t = w.GetComponent<LocalTransform>(junk.Id())) {
         t->position = { 99.0f, 99.0f, 99.0f };
     }
+    // RenderCulling の値を持つ唯一のエンティティを探す (壊す前後の確認用)
+    auto renderCullingDistance = [&w](float set) {
+        float found = -1.0f;
+        const ComponentTypeId req[] = { RenderCullingComponent::sTypeId };
+        w.ForEachArchetype(req, [&](Archetype& arch) {
+            const int ri = arch.FindTypeIndex(RenderCullingComponent::sTypeId);
+            for (uint32_t row = 0; row < arch.Count(); ++row) {
+                auto* rc = static_cast<RenderCullingComponent*>(arch.GetPtr(ri, row));
+                found = rc->maxDrawDistance;
+                if (set >= 0.0f) {
+                    rc->maxDrawDistance = set;
+                }
+            }
+        });
+        return found;
+    };
+    check(renderCullingDistance(0.0f) == 321.5f, "RenderCulling is on the captured entity before it is broken");
     w.Rng().NextU32();
     scene.Time().paused = false;
     scene.Time().scalePercent = 100;
@@ -186,6 +205,7 @@ bool RunSimSnapshotSelfTest()
     check(HashWorld(w, {nullptr, &scene.Time(), &scene.Persist()}) == hash0,
           "world hash is bit-identical after restore");
     check(ArchetypeShape(w) == shape0, "archetype creation order and row counts are preserved");
+    check(renderCullingDistance(-1.0f) == 321.5f, "RenderCulling (NoHash, v82) values are restored as raw column bytes");
     check(w.Rng().State() == rngState0, "world RNG state is restored");
     check(scene.PeekNextFileId() == nextFileId0, "scene nextFileId is restored");
     check(scene.SourcePath() == L"C:\\proj\\assets\\scenes\\probe.scene.json",

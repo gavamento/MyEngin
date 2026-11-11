@@ -1035,4 +1035,78 @@ void BuildCullingShowcaseScene(EngineContext& ctx)
     decal("Decal_OffScreen", 80.0f, 10.0f);
 }
 
+void BuildCullingDistanceShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("culling_distance_demo");
+
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    auto makeMaterial = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    const AssetID matGround = makeMaterial("cdist_ground", 0.70f, 0.70f, 0.68f);
+    const AssetID matBox = makeMaterial("cdist_box", 0.80f, 0.45f, 0.35f);
+    const AssetID cube = res.meshes.Cube();
+    auto place = [&](const char* name, float px, float pz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, 1.0f, pz);
+        go.SetLocalScale(2.0f, 2.0f, 2.0f);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = matBox;
+        return go;
+    };
+
+    // ---- カメラ (固定。+Z 向き) と、影を落とす太陽 ----
+    GameObject camera = s.CreateGameObject("Main Camera");
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->fovYDeg = 60.0f;
+        cam->farZ = 400.0f;
+    }
+    camera.SetLocalPosition(0.0f, 5.0f, -10.0f);
+    camera.SetLocalRotationEuler(15.0f, 0.0f, 0.0f);
+    GameObject sun = s.CreateGameObject("Sun");
+    sun.SetLocalRotationEuler(50.0f, 30.0f, 0.0f);
+    {
+        auto* l = sun.AddComponent<LightComponent>();
+        l->type = lighttype::kDirectional;
+        l->intensity = 2.0f;
+        l->castShadow = 1;
+    }
+
+    GameObject ground = s.CreateGameObject("Ground");
+    ground.SetLocalPosition(0.0f, -0.5f, 100.0f);
+    ground.SetLocalScale(120.0f, 1.0f, 240.0f);
+    {
+        auto* mr = ground.AddComponent<MeshRendererComponent>();
+        mr->mesh = cube;
+        mr->material = matGround;
+    }
+
+    // ---- 距離の 3 つの出所 (カメラは z = -10。箱は画面内の x = ±6 以内に並べる) ----
+    // 物ごと: RenderCulling の maxDrawDistance = 40。近い (距離およそ 29) は残り、遠い (およそ 69) は落ちる
+    place("PerObject_Near", -4.0f, 20.0f).AddComponent<RenderCullingComponent>()->maxDrawDistance = 40.0f;
+    place("PerObject_Far", -4.0f, 60.0f).AddComponent<RenderCullingComponent>()->maxDrawDistance = 40.0f;
+    // タグ別: タグ 5 を付ける。プロジェクト設定のタグ別の距離 (project_settings.json) を設定したときだけ効く
+    constexpr int kDemoTag = 5;
+    place("Tagged_Near", 0.0f, 20.0f).AddComponent<TagComponent>()->mask = 1ull << kDemoTag;
+    place("Tagged_Far", 0.0f, 60.0f).AddComponent<TagComponent>()->mask = 1ull << kDemoTag;
+    // 既定: 何も付けない。--cull-max-distance (または既定の最大描画距離) を設定したときだけ効く
+    place("Plain_Near", 4.0f, 20.0f);
+    place("Plain_Far", 4.0f, 60.0f);
+    place("Plain_Farthest", 4.0f, 120.0f);
+    // 継承: ルートの RenderCulling (40 m) が子のメッシュ (距離およそ 69) に効く。モデルのメッシュが子孫に分かれる形
+    GameObject inheritRoot = s.CreateGameObject("Inherit_Root");
+    inheritRoot.SetLocalPosition(-8.0f, 0.0f, 0.0f);
+    inheritRoot.AddComponent<RenderCullingComponent>()->maxDrawDistance = 40.0f;
+    GameObject inheritChild = place("Inherit_ChildFar", 0.0f, 60.0f);
+    inheritChild.SetParent(inheritRoot);
+}
+
 } // namespace mye

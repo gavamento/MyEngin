@@ -1290,6 +1290,12 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                            ctx.renderSystem->enableDistanceCulling, CullingFlag::Distance);
                 cullSwitch(StrId::Menu_CullSize, StrId::Menu_CullSizeHint,
                            ctx.renderSystem->enableSizeCulling, CullingFlag::Size);
+                // 保存しないセッション限りの値 (編集中に遠い物が消えて選べなくなるのを避けるため既定 OFF)
+                ImGui::Separator();
+                ImGui::MenuItem(Tr(StrId::Menu_CullSceneView), nullptr, &ctx.renderSystem->cullSceneView);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", Tr(StrId::Menu_CullSceneViewHint));
+                }
                 ImGui::EndMenu();
             }
             ImGui::MenuItem(Tr(StrId::Menu_AnimUro), nullptr, &ctx.renderSystem->enableAnimUro);

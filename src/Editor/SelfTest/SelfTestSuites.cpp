@@ -92,6 +92,7 @@
 #include "Engine/Engine/RayTracing/RtSelfTest.h"
 #include "Engine/Engine/Rendering/Camera2DFollowSelfTest.h"
 #include "Engine/Engine/Rendering/RenderStatsSelfTest.h"
+#include "Engine/Engine/Rendering/DistanceCullSelfTest.h"
 #include "Engine/Engine/Rendering/ShadowCullSelfTest.h"
 #include "Engine/Engine/Rendering/SkinBoundsSelfTest.h"
 #include "Engine/Engine/Rendering/SkinPaletteCacheSelfTest.h"
@@ -225,6 +226,7 @@ const SelfTestSuite kSuites[] = {
     { "renderstats", mye::RunRenderStatsSelfTest, SelfTestTier::Fast, "M90a: 描画統計のビュー別集計と JSON ダンプ" },
     { "occlusion", mye::RunOcclusionSelfTest, SelfTestTier::Full, "M90b: GPU オクルージョン (max-Z HZB・保守的判定・ON/OFF 画素一致)" },
     { "shadowcull", mye::RunShadowCullSelfTest, SelfTestTier::Fast, "M90d: CSM のカスケード別判定 (近平面を除く 5 面・run 数)" },
+    { "distancecull", mye::RunDistanceCullSelfTest, SelfTestTier::Fast, "M99f: 距離カリングの判定・RenderCulling (NoHash・保存・プレハブ上書き)" },
     { "skinbounds", mye::RunSkinBoundsSelfTest, SelfTestTier::Fast, "M90d: スキンの保守的 AABB (全クリップの全フレームを包む)" },
     { "meshlod", mye::RunMeshLodSelfTest, SelfTestTier::Fast, "M90e: メッシュ LOD (生成・クック・.meta・選択)" },
     { "skinpalettecache", mye::RunSkinPaletteCacheSelfTest, SelfTestTier::Fast, "M90f: パレットのキャッシュ・URO の更新 tick・LOD 履歴の破棄" },

@@ -37,6 +37,8 @@ const std::unordered_map<std::string, ComponentUiInfo>& Table()
         { "Terrain", { ICON_FA_MOUNTAIN, "Rendering", "地形" } },
         // M56a: デカール。GBuffer の albedo を上描きする描画レーンなので Rendering に置く
         { "Decal", { ICON_FA_STAMP, "Rendering", "デカール" } },
+        // M99f: 物ごとの最大描画距離・画面サイズカリングの除外。描画専用レーン
+        { "RenderCulling", { ICON_FA_EYE_SLASH, "Rendering", "描画カリング" } },
         // M56f: ローカル反射プローブ。焼いた cubemap を環境スペキュラへ差し込む描画レーン
         { "ReflectionProbe", { ICON_FA_GLOBE, "Rendering", "反射プローブ" } },
         // 水面波 (Gerstner 波)

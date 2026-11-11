@@ -22,6 +22,7 @@
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // M80g: root proxy の可視規則を FractureSystem と共有
 #include "Engine/Engine/Navigation/NavDebugDraw.h" // M82e: ナビメッシュの塗り・輪郭
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Rendering/DistanceCull.h"
 #include "Engine/Engine/Physics/Ragdoll/Ragdoll.h" // M60g1: 剛体が骨を駆動しているときのパレット
 #include "Engine/Engine/Animation/SkinningSystem.h" // M18 追補: クロスフェード込みのポーズ評価
 #include "Engine/Engine/RayTracing/RtScope.h" // RT の適用範囲 (個別設定 / タグ規則)
@@ -82,6 +83,9 @@ struct CullCand {
     // スキンの画面での大きさ (外接球の高さ比、全姿勢を包む箱から。ステージ 2 で決める)。URO の間隔の出所。
     // 求められない (カメラ無し) ときは FLT_MAX = 間引かない
     float uroSize = FLT_MAX;
+    // 距離カリング: 実効の最大描画距離 (0 = 判定しない。ステージ 1 で物ごと・タグ・既定から決める) と、その判定の結果
+    float maxDrawDistance = 0.0f;
+    uint8_t tooFar = 0;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -1399,6 +1403,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     }
 
     int culledCount = 0;
+    int culledDistanceCount = 0;
     // 不透明キャスターの world AABB を集約 → シャドウ範囲のフィットに使う (M17)
     sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };
     sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
@@ -1417,6 +1422,19 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         world.ForEachArchetype(destructibleReq,
                                [&](Archetype& a) { anyDestructibles = anyDestructibles || a.Count() != 0; });
     }
+    // 距離カリングを掛けるビューか。タグ別の距離が 1 つも無ければタグの列は引かない
+    const bool distanceOn = cullEnabled && enableDistanceCulling
+        && distancecull::AppliesToView(target.viewKey, cullSceneView);
+    const bool anyTagDistance = distanceOn
+        && std::any_of(std::begin(cullTagDistance), std::end(cullTagDistance), [](float d) { return d > 0.0f; });
+    // 祖先を辿るのは、RenderCulling がワールドに 1 つでもあるか、タグ別の距離が 1 つでもあるときだけ (存在の門)
+    bool anyRenderCulling = false;
+    if (distanceOn) {
+        const ComponentTypeId rcReq[] = { RenderCullingComponent::sTypeId };
+        world.ForEachArchetype(rcReq,
+                               [&](Archetype& a) { anyRenderCulling = anyRenderCulling || a.Count() != 0; });
+    }
+    const bool resolveDistance = distanceOn && (anyRenderCulling || anyTagDistance);
     const ComponentTypeId req[] = { MeshRendererComponent::sTypeId, WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
@@ -1502,6 +1520,12 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     cand.alwaysVisible = 1;
                 }
             }
+            if (resolveDistance) {
+                cand.maxDrawDistance = distancecull::ResolveMaxDrawDistance(
+                    world, e, anyTagDistance, cullTagDistance, cullDefaultMaxDrawDistance);
+            } else if (distanceOn) {
+                cand.maxDrawDistance = cullDefaultMaxDrawDistance > 0.0f ? cullDefaultMaxDrawDistance : 0.0f;
+            }
             cullCands.push_back(cand);
         }
     });
@@ -1538,6 +1562,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 && !RenderableInFrustum(frustum, c.world, c.boundsMin, c.boundsMax, c.alwaysVisible != 0,
                                         c.boundsPadding)) {
                 c.visible = 0;
+            }
+            // 距離は視錐台の内外に関わらず求める (視錐台 OFF でも遠い物は落とす / 視錐台の外の遠い物は影も落とす)。
+            // 箱を持てない物 (alwaysVisible) は落とさない
+            if (c.maxDrawDistance > 0.0f && c.meshPtr && c.alwaysVisible == 0) {
+                XMFLOAT3 lo, hi;
+                WorldAabb(c.world, c.boundsMin, c.boundsMax, lo, hi, c.boundsPadding);
+                c.tooFar = distancecull::ExceedsMaxDistance(view.cameraPos, lo, hi, c.maxDrawDistance) ? 1 : 0;
             }
         }
     });
@@ -1591,9 +1622,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             if (frustumDrop) {
                 ++culledCount;
             }
-            // 画面外でも影は画面へ落ちる: 不透明のキャスターは影の候補に残す (描くかはカスケード別の判定)
-            const Material* offMat = collectShadowCasters && c.meshPtr ? resources.materials.Get(c.material) : nullptr;
-            if (collectShadowCasters && c.meshPtr && !(offMat && offMat->transparent != 0)) {
+            // 画面外でも影は画面へ落ちる: 不透明のキャスターは影の候補に残す (描くかはカスケード別の判定)。
+            // 距離で落とす物は影も落とすので入れない
+            const bool shadowCandidate = collectShadowCasters && c.meshPtr && !c.tooFar;
+            const Material* offMat = shadowCandidate ? resources.materials.Get(c.material) : nullptr;
+            if (shadowCandidate && !(offMat && offMat->transparent != 0)) {
                 RenderItem it;
                 it.mesh = c.mesh;
                 it.material = c.material;
@@ -1622,6 +1655,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             if (frustumDrop) {
                 continue;
             }
+        }
+        // 距離の外 (視錐台の判定を通った物、または視錐台 OFF の物)。キュー・影・CSM のフィットに入れない
+        if (c.tooFar) {
+            ++culledDistanceCount;
+            continue;
         }
         RenderItem item;
         item.mesh = c.mesh;
@@ -1697,6 +1735,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         }
     }
     prof::AddCulled(culledCount);
+    if (culledDistanceCount != 0) {
+        prof::RenderStats culledDelta;
+        culledDelta.culledDistance = culledDistanceCount;
+        prof::AddRenderStats(culledDelta);
+    }
     const auto stage3End = std::chrono::steady_clock::now();
 
     // ---- パレットの評価 (並列) と、キューの項目への接続 (直列、キューの添字は固定) ----
