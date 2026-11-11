@@ -8,11 +8,12 @@
 spec 受け入れ条件 8, 12, 13, 14。
 - `engine_spec.md`: §6.14 に「切り替えとプロジェクト設定」を書き直し (4 種、キー、既定、CLI の優先)、距離・画面サイズ・追加経路・局所影 (「The local-light shadow atlas still sees on-screen casters only.」の文を直す)・デバッグを足し、CLI 表を更新。§6.6 の「No frustum culling」行を消す。機能一覧表 (:430-433 付近) と M99 の行を足す。契約番号 (TypeId / SimSnapshot) の記述を実コードに合わせる。
 - `docs\adr\ADR-038-culling.md`: sub-01 の計測節に加え、決定 (spec 2. の D2〜D18 の要点、却下した案と理由、公式情報の URL) を書く。
-- `docs\test_checklists.md`: カリングの手動確認項目 (各スイッチ、Scene View のトグル、固定、枠表示、Project Settings の保存、Scene View で動く GPU エミッタが画面端で消えないこと、Scene View の 2D で画面端のスプライト・線・シェイプが消えないこと)。
+- `docs\test_checklists.md`: カリングの手動確認項目 (各スイッチ、Scene View のトグル、固定、枠表示、Project Settings の保存、Scene View で動く GPU エミッタが画面端で消えないこと、Scene View の 2D で画面端のスプライト・線・シェイプが消えないこと、Rendering > カリング の固定と枠表示をエディタで操作して使えること、距離の枠の青が見分けられるか)。
 - `tools\cull_verify.bat` (新規): `Runtime.exe` で視錐台 ON と `--no-frustum-culling` を撮り、`Editor.exe` の img-diff `--tol 0` で照合する。対象は既定ベンチ・`--culling-demo`・`--culling-2d-demo`・`--particle-demo`・`--2d-demo`・`--render-demo`。撮影条件は `shot_verify.bat` に揃える (`--warp`・`--font-embedded`・`--no-fxaa`、`cache\` の保存済みシーンを先に消す)。`docs\test_checklists.md` と engine_spec の検証表に載せる。CI に載せるかは実行時間を測ってから決め、SELF_EVAL に書く。
 - `ResolveOcclusionCulling` (`TagNames.cpp`) は sub-02 から本番経路で使われていない。EngineCliSelfTest の旧検査を `ResolveCullingSettings` 側へ寄せて削除するか、残す理由をコメントに書く。
 - engine_spec §6.14 の制限に、spec 7. の既知の制限 2 件 (`hasScene == false` で局所影アトラスを作らない、アトラスのスキンは bind 箱で判定) を書く。
 - `flow_title` の shot_verify FAIL (sub-03 で発見、diffPixels 944) の出所を切り分ける: 基点 `d52e91f3` を別ディレクトリへ出して Release をビルドし、同じ撮影条件で `flow_title` を撮って golden と比べる。基点でも同じ差なら M99 と無関係として報告 (golden は更新しない)、基点で一致するなら M99 のどのサブが原因かを特定して SELF_EVAL に書く。
+- sub-08 からの持ち越し: (1) `Runtime.exe --screenshot` を `--frames` 無しで使うと撮影後に終了せず CPU を使い続ける件を、基点 `d52e91f3` の exe でも起きるか確かめる。基点でも起きれば M99 と無関係として報告、M99 で起きるようになったなら原因を特定して直す (直すのはこのサブの範囲。挙動の変更として SELF_EVAL の差分に書く)。(2) engine_spec に固定の仕様 (viewKey 別、固定 ON 後の最初の描画で控える、LOD・ライト・CSM・オクルージョン・地形・視差は今のカメラ) と `--cull-freeze-frame` / `--cull-debug`、枠の色と上限を書く。(3) cull_verify に「`--cull-freeze-frame 10 --render-bench-cut-frame 20` の `culled` がカット無しの値と一致」を足す。
 - 通し検証: `Editor.exe --selftest-full`、`tools\replay_verify.bat`、`tools\shot_verify.bat`、`tools\check_rules.ps1`。既定ベンチの `counts` を M99 前 (基点 `d52e91f3`) と比べ、新しい欄以外の一致を確かめる (受け入れ条件 8)。
 - Debug / Release / `--warp` の `counts` 一致 (既定ベンチ、`--culling-demo`、`--culling-2d-demo`、`--culling-distance-demo`、既定ベンチ + `--cull-min-screen-size 0.02`)。比較は目視ではなく機械で行う (JSON の `counts` 節を取り出して完全一致を判定するスクリプト。cull_verify.bat に同居させてよい)。
 

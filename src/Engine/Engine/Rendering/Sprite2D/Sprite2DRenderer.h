@@ -56,6 +56,17 @@ public:
     // (RenderSystem::enableFrustumCulling。次の Collect から効く)
     void SetFrustumCulling(bool enabled) { frustumCulling_ = enabled; }
 
+    // 視錐台判定 (表示範囲の箱) だけに使うカメラの上書き (カリング用カメラの固定)。null なら Collect に渡した view / proj。
+    // 視差・描画は上書きしない。値を複製して持つので、呼び出し側の行列の寿命に依らない
+    void SetCullCameraOverride(const DirectX::XMFLOAT4X4* view, const DirectX::XMFLOAT4X4* proj)
+    {
+        hasCullOverride_ = view != nullptr && proj != nullptr;
+        if (hasCullOverride_) {
+            cullViewOverride_ = *view;
+            cullProjOverride_ = *proj;
+        }
+    }
+
     // 正射影のとき、カメラの視錐台 (直方体) を囲むワールドの AABB (view / proj は行ベクトル規約の行列)。
     // 透視 / 行列が無い / 特異は false (タイルを切らない)
     static bool OrthoWorldBounds(const DirectX::XMFLOAT4X4* view, const DirectX::XMFLOAT4X4* proj,
@@ -269,6 +280,9 @@ private:
     bool anyNormalReady_ = false;                        // 実際に法線マップのバッチを積んだ (積めなければ法線 RT を作らない)
     float pixelSnapUnit_ = 0.0f;                         // SetPixelSnapUnit の値
     bool frustumCulling_ = true;                         // SetFrustumCulling の値
+    bool hasCullOverride_ = false;                       // SetCullCameraOverride の値
+    DirectX::XMFLOAT4X4 cullViewOverride_ = {};
+    DirectX::XMFLOAT4X4 cullProjOverride_ = {};
     bool cullActive_ = false;                            // この Collect で視錐台判定が効く (ON かつ正射影)
     DirectX::XMFLOAT3 cullMin_ = { 0.0f, 0.0f, 0.0f };   // 視錐台の AABB (余裕込み)
     DirectX::XMFLOAT3 cullMax_ = { 0.0f, 0.0f, 0.0f };

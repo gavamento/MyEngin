@@ -478,11 +478,12 @@ struct RenderView {
     // 0 = 待たず、終わっていなければ前の値を残す (対話の描画)
     int32_t occlusionStatsWait = 1;
     // ---- 視錐台カリング (末尾 append。1 = 従来どおり) ----
-    // 0 = CPU パーティクルのプールを視錐台で落とさない (--no-frustum-culling。描かれる画素は 1 と同じ)
-    int32_t frustumCulling = 1;
-    // GPU パーティクル・トレイル・ビルボードが落とす判定に使う視錐台 (非ジッタ)。非所有 (RenderSystem のフレーム文脈を指す)。
+    // CPU / GPU パーティクル・トレイル・ビルボードが落とす判定に使う視錐台 (非ジッタ。カリング用カメラの固定中は控え)。
+    // 非所有 (RenderSystem のフレーム文脈を指す)。
     // null = 落とさない (カメラ無し / 視錐台カリング OFF / RenderSystem を通らないビュー)
     const struct Frustum* cullFrustum = nullptr;
+    // 1 = hzbDebugMax でなくてもオクルージョンで隠れた物の AABB を集める (--cull-debug。GPU 待ちの読み戻しが走る)
+    int32_t occlusionBoxCollect = 0;
 };
 
 // --hzb-debug-max 用: GPU オクルージョンが隠れていると判定した項目のワールド AABB

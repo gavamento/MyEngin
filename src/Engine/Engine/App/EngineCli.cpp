@@ -351,6 +351,21 @@ const CliFlag kEngineCliFlags[] = {
           a.c.cullingCli.minScreenSize = f;
           return true;
       } },
+    // N フレーム目 (N >= 0 の整数) でカリング用カメラを固定する。--render-bench-cut-frame と組んで検証する。
+    // ★綴り違い・負数を黙って捨てない (固定されないまま「一致した」と読み違える)
+    { L"--cull-freeze-frame", CliValue::One,
+      [](CliArgs& a) {
+          wchar_t* end = nullptr;
+          const long long n = std::wcstoll(a.v1, &end, 10);
+          if (end == a.v1 || *end != L'\0' || n < 0) {
+              std::fwprintf(stderr, L"invalid --cull-freeze-frame (expected an integer >= 0)\n");
+              return false;
+          }
+          a.c.cullFreezeFrame = n;
+          return true;
+      } },
+    // 落とした物の枠を理由別の色で重ねる (保存しない)
+    { L"--cull-debug", CliValue::None, [](CliArgs& a) { a.c.cullDebug = true; return true; } },
     // メッシュ LOD の bias と強制段 (.meta で段を作ったモデルだけに効く)
     { L"--lod-bias", CliValue::One,
       [](CliArgs& a) {

@@ -17,8 +17,8 @@
 | sub-04 | OK | 1 | d276ed81 | 3D 経路の視錐台 (GPU 粒子・トレイル・スプライト・デカール) |
 | sub-05 | OK | 1 | a0226a4f | 2D 経路の視錐台 (--culling-2d-demo) |
 | sub-06 | OK | 2 | a523e363 | 距離カリング + RenderCulling (TypeId 100、SimSnapshot v82、ABI 不変)。round 1 は祖先継承で REWORK |
-| sub-07 | OK | 1 | (このコミット) | 画面サイズカリング (+ sub-06 の should 解消) |
-| sub-08 | 未着手 | 0 | | カメラ固定 + 理由別表示 |
+| sub-07 | OK | 1 | 939b246a | 画面サイズカリング (+ sub-06 の should 解消) |
+| sub-08 | OK | 1 | (このコミット) | カメラ固定 + 理由別表示 (+ CPU プールを cullFrustum へ、exempt の実経路確認) |
 | sub-09 | 未着手 | 0 | | 文書と通し検証 |
 
 ## レビュー
@@ -50,4 +50,5 @@
 - sub-06: should (タグ継承を Tags::EffectiveMask 呼び出しへ) は sub-07 で直す。round 2 後の Release ビルドと replay_verify は sub-07 の検証で兼ねる。タグ別距離の実描画は未確認
 - 契約番号: TypeId 100 = RenderCulling、kSimSnapshotVersion 82 (M99f)。ABI v35 のまま
 - sub-07: should (RenderSystem 経由の exempt の確認) は sub-08、nit (counts の機械比較) は sub-09 へ転記済み
+- sub-08: nit 距離の青が薄い (ユーザーの目視で判断)、RenderSystem.cpp の切り出し (任意)。--frames 無しの撮影が終わらない件は sub-09 で基点と比べる。司会もスクショ (scratchpad の s_bench.png / s_dist_zoom.png) で枠を確認済み
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。

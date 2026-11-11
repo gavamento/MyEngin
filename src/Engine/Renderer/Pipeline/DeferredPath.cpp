@@ -1155,7 +1155,7 @@ void DeferredPath::RenderGeometry(GraphicsDevice& device, const RenderView& view
         dc->OMSetRenderTargets(0, nullptr, nullptr);
         occlusion_.TestPhase2(device, shaders, view.depthSRV);
         f.occlusionRan = true;
-        if (view.hzbDebugMax != 0) {
+        if (view.hzbDebugMax != 0 || view.occlusionBoxCollect != 0) {
             occlusion_.CollectOccludedBoxes(device, occItems_, occDebugBoxes_);
         }
         dc->OMSetRenderTargets(5, gbufs, view.dsv);

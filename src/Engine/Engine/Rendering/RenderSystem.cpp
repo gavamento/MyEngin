@@ -644,6 +644,13 @@ struct RenderSystem::FrameContext {
     Frustum frustum = {};                              // メッシュとライトのカリング (カメラがある時のみ)
     bool cullEnabled = false;                          // カメラがある (LOD・URO・地形・ライト選別の元栓)
     bool frustumDrop = false;                          // 視錐台の外のメッシュを落とす (cullEnabled && enableFrustumCulling)
+    // 視錐台・距離・画面サイズの判定が使うカメラ。固定中 (frozen != null) は控え、そうでなければ今のカメラと同じ値。
+    // ライト選別・CSM・LOD・地形は frustum / view を読み続ける
+    Frustum cullFrustum = {};
+    DirectX::XMFLOAT3 cullCameraPos = { 0.0f, 0.0f, 0.0f };
+    float cullProj22 = 0.0f;
+    bool cullOrthographic = false;
+    const CullFreezeSlot* frozen = nullptr;
     SceneLightData lights;                             // 選別後のライト。view.lights がこの実体を指す
     XMFLOAT3 sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };    // 不透明キャスターの world AABB (影のフィット、M17)
     XMFLOAT3 sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
@@ -657,6 +664,14 @@ struct RenderSystem::FrameContext {
 };
 
 namespace {
+
+// 落としたメッシュの枠の色 (0xRRGGBBAA)。凡例は Rendering > カリング の「落とした物を表示」のツールチップが正本
+constexpr uint32_t kCullBoxFrustumRgba = 0xFFD700FFu;   // 視錐台 (黄)
+constexpr uint32_t kCullBoxDistanceRgba = 0x3399FFFFu;  // 距離 (青)
+constexpr uint32_t kCullBoxScreenSizeRgba = 0x33CC33FFu; // 画面サイズ (緑)
+constexpr uint32_t kCullBoxOcclusionRgba = 0xFF3333FFu; // オクルージョン (赤)
+constexpr uint32_t kCullFrozenFrustumRgba = 0xFFFFFFFFu; // 固定した視錐台の 12 辺 (白)
+constexpr size_t kCullDebugMaxBoxes = 4096;              // 枠の上限 (落とした物 + オクルージョン)
 
 // 主カメラのピクセルパーフェクト設定から求めた描画計画 (ResolveCamera と同じ規則でカメラを選ぶ)
 struct PixelPerfectPlan {
@@ -797,7 +812,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     forwardOpaqueGpuMs_ = path.ForwardOpaqueGpuMs(); // M90a (同上)
     gbufferCpuMs_ = path.GbufferCpuMs();             // M90f (同上)
     occlusionGpuMs_ = path.OcclusionGpuMs();         // (同上)
-    f.occlusionBoxes = (hzbDebugMip != 0 && hzbDebugMax) ? &path.OcclusionDebugBoxes() : nullptr;
+    f.occlusionBoxes = ((hzbDebugMip != 0 && hzbDebugMax) || f.view.occlusionBoxCollect != 0) ? &path.OcclusionDebugBoxes() : nullptr;
 
     DrawParticlesAndDebug(world, device, shaders, resources, target, cameraOverride, particles, vfx, f);
     if (groundFogBound_) {
@@ -1049,7 +1064,46 @@ void RenderSystem::CollectLights(World& world, FrameContext& f)
         XMStoreFloat4x4(&vp, XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter));
         frustum = BuildFrustum(vp);
     }
-    view.cullFrustum = f.frustumDrop ? &frustum : nullptr; // GPU パーティクル / VFX が描画だけを落とす判定に使う
+    // 視錐台・距離・画面サイズの判定のカメラ。既定は今のカメラ。固定が ON なら、このビューが固定後に最初に描かれた
+    // ときのカメラを控え、以後それを使う (OFF で控えを捨てる)。viewKey 0 (プレビュー) は固定しない
+    f.cullFrustum = frustum;
+    f.cullCameraPos = view.cameraPos;
+    f.cullProj22 = view.proj._22;
+    f.cullOrthographic = view.proj._44 != 0.0f; // 透視は _44 == 0
+    if (view.viewKey > 0 && view.viewKey < 4) {
+        CullFreezeSlot& slot = cullFreeze_[view.viewKey];
+        if (!freezeCullCamera) {
+            slot.valid = false;
+        } else if (!slot.valid && cullEnabled) {
+            slot.view = view.view;
+            slot.projNoJitter = view.projNoJitter;
+            slot.cameraPos = view.cameraPos;
+            slot.proj22 = view.projNoJitter._22;
+            slot.orthographic = view.projNoJitter._44 != 0.0f;
+            const XMMATRIX vp = XMLoadFloat4x4(&view.view) * XMLoadFloat4x4(&view.projNoJitter);
+            XMFLOAT4X4 vpStored;
+            XMStoreFloat4x4(&vpStored, vp);
+            slot.frustum = BuildFrustum(vpStored);
+            const XMMATRIX inv = XMMatrixInverse(nullptr, vp);
+            const float cornerX[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
+            const float cornerY[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
+            for (int i = 0; i < 8; ++i) {
+                const float ndcZ = (i < 4) ? 0.0f : 1.0f; // D3D のクリップ空間 z は 0..1
+                XMStoreFloat3(&slot.corners[i],
+                              XMVector3TransformCoord(XMVectorSet(cornerX[i % 4], cornerY[i % 4], ndcZ, 1.0f), inv));
+            }
+            slot.valid = true;
+            MYE_LOG_INFO("Culling: froze the culling camera for view %u", static_cast<unsigned>(view.viewKey));
+        }
+        if (slot.valid) {
+            f.frozen = &slot;
+            f.cullFrustum = slot.frustum;
+            f.cullCameraPos = slot.cameraPos;
+            f.cullProj22 = slot.proj22;
+            f.cullOrthographic = slot.orthographic;
+        }
+    }
+    view.cullFrustum = f.frustumDrop ? &f.cullFrustum : nullptr; // CPU / GPU パーティクル・VFX が描画だけを落とす判定に使う
 
     // ---- ライト (Directional/Point/Spot) ----
     // M54b: ここは候補を集めるだけで、カリング / 決定論ソート / 上限 kMaxLights の適用は
@@ -1135,7 +1189,8 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
 {
     const auto collectStart = std::chrono::steady_clock::now();
     RenderView& view = f.view;
-    const Frustum& frustum = f.frustum;
+    const Frustum& frustum = f.frustum;           // 地形 (固定の対象外)
+    const Frustum& cullFrustum = f.cullFrustum;   // メッシュ・デカール (固定中は控え)
     const bool cullEnabled = f.cullEnabled;
     const bool frustumDrop = f.frustumDrop;
     XMFLOAT3& sceneMin = f.sceneMin;
@@ -1152,6 +1207,23 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
 
     // ---- 収集 ----
     queue_.Clear();
+    cullDebugBoxes_.clear();
+    cullDebugOverflow_ = 0;
+    // 落としたメッシュの AABB を理由別の色で積む (cullDebug のときだけ。箱を持てない物は描かない)
+    const bool collectDebugBoxes = cullDebug && prevRenderKey != 0;
+    auto addDebugBox = [&](const CullCand& c, uint32_t rgba) {
+        if (!collectDebugBoxes || c.meshPtr == nullptr || c.alwaysVisible != 0) {
+            return;
+        }
+        if (cullDebugBoxes_.size() >= kCullDebugMaxBoxes) {
+            ++cullDebugOverflow_;
+            return;
+        }
+        CullDebugBox box;
+        WorldAabb(c.world, c.boundsMin, c.boundsMax, box.lo, box.hi, c.boundsPadding);
+        box.rgba = rgba;
+        cullDebugBoxes_.push_back(box);
+    };
     // sim の tick が戻った = 巻き戻し・Play の開始や停止。前の履歴 (LOD の段・パレット) は別の時間のもの
     if (simTick < lastSimTick_) {
         ResetRenderHistory();
@@ -1244,7 +1316,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     continue; // スケール 0 等で逆行列が作れない
                 }
                 if (frustumDrop
-                    && !AabbInFrustum(frustum, w->value, { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f })) {
+                    && !AabbInFrustum(cullFrustum, w->value, { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f })) {
                     ++decalsCulled;
                     continue;
                 }
@@ -1572,7 +1644,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             c.viewZ = XMVectorGetZ(XMVector3TransformCoord(posWS, v));
             // スキンの箱は全クリップの全姿勢を包む (別メッシュの手・指がアニメ中に消えない)
             if (cullEnabled && c.meshPtr
-                && !RenderableInFrustum(frustum, c.world, c.boundsMin, c.boundsMax, c.alwaysVisible != 0,
+                && !RenderableInFrustum(cullFrustum, c.world, c.boundsMin, c.boundsMax, c.alwaysVisible != 0,
                                         c.boundsPadding)) {
                 c.visible = 0;
             }
@@ -1581,13 +1653,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             if (c.maxDrawDistance > 0.0f && c.meshPtr && c.alwaysVisible == 0) {
                 XMFLOAT3 lo, hi;
                 WorldAabb(c.world, c.boundsMin, c.boundsMax, lo, hi, c.boundsPadding);
-                c.tooFar = distancecull::ExceedsMaxDistance(view.cameraPos, lo, hi, c.maxDrawDistance) ? 1 : 0;
+                c.tooFar = distancecull::ExceedsMaxDistance(f.cullCameraPos, lo, hi, c.maxDrawDistance) ? 1 : 0;
             }
             // 画面サイズは視錐台・距離の結果に関わらず求める (履歴を物の状態として一貫させ、影の判断にも使う)
             if (sizeOn && c.meshPtr && c.alwaysVisible == 0) {
                 XMFLOAT3 lo, hi;
                 WorldAabb(c.world, c.boundsMin, c.boundsMax, lo, hi, 0.0f);
-                const float size = BoxScreenSize(lo, hi, view.cameraPos, view.proj._22, orthographic);
+                const float size = BoxScreenSize(lo, hi, f.cullCameraPos, f.cullProj22, f.cullOrthographic);
                 c.tooSmall = distancecull::CullsByScreenSize(size, cullMinScreenSize, sizeHistoryRead->Get(c.e),
                                                              c.exemptSize != 0, false)
                     ? 1
@@ -1607,7 +1679,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             for (size_t i = a; i < b; ++i) {
                 const CullCand& c = cullCands[i];
                 probeVisible[i] = (c.meshPtr
-                                   && !RenderableInFrustum(frustum, c.world, c.boundsMin, c.boundsMax,
+                                   && !RenderableInFrustum(cullFrustum, c.world, c.boundsMin, c.boundsMax,
                                                            c.alwaysVisible != 0, c.boundsPadding))
                     ? 0
                     : 1;
@@ -1647,6 +1719,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         if (outsideFrustum) {
             if (frustumDrop) {
                 ++culledCount;
+                addDebugBox(c, kCullBoxFrustumRgba);
             }
             // 画面外でも影は画面へ落ちる: 不透明のキャスターは影の候補に残す (描くかはカスケード別の判定)。
             // 距離・画面サイズで落とす物は影も落とすので入れない
@@ -1685,11 +1758,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         // 距離の外 (視錐台の判定を通った物、または視錐台 OFF の物)。キュー・影・CSM のフィットに入れない
         if (c.tooFar) {
             ++culledDistanceCount;
+            addDebugBox(c, kCullBoxDistanceRgba);
             continue;
         }
         // 画面サイズの外 (視錐台・距離の判定を通った物)
         if (c.tooSmall) {
             ++culledScreenSizeCount;
+            addDebugBox(c, kCullBoxScreenSizeRgba);
             continue;
         }
         RenderItem item;
@@ -2225,10 +2300,10 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
     // GPU オクルージョン (Deferred / Forward の不透明のみ)。viewKey 0 (AssetPreview) は履歴を持たないので常に off
     view.occlusionEnabled = (enableOcclusionCulling && target.viewKey > 0 && target.viewKey < 4) ? 1 : 0;
-    view.frustumCulling = enableFrustumCulling ? 1 : 0; // CPU パーティクルのプール判定が読む
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費。hzbDebugMax は Forward も)
     view.hzbDebugMax = hzbDebugMax ? 1 : 0;
+    view.occlusionBoxCollect = (cullDebug && view.occlusionEnabled != 0) ? 1 : 0; // --cull-debug: 隠れた物の枠も集める
     view.occlusionStatsWait = occlusionStatsWait ? 1 : 0;
     view.ssrEnabled = enableSsr ? 1 : 0;               // M56d (Deferred のみ消費)
     // M56f: 焼いたプローブ束をそのまま指す (Deferred のみ消費)。ベイクした所有者が
@@ -2627,6 +2702,9 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
     // M94: Sprite2D。VFX の直前 (整数ソートキーで並べた 2D スプライト)。Sprite2D が無ければ
     // 描画リストが空のままパスを Init もせず、D3D の状態も触らない
     {
+        // カリング用カメラの固定中は、表示範囲の判定だけ控えのカメラで行う (視差・描画は今のカメラ)
+        sprite2dRenderer_.SetCullCameraOverride(f.frozen ? &f.frozen->view : nullptr,
+                                                f.frozen ? &f.frozen->projNoJitter : nullptr);
         const Sprite2DDrawList& sprites = sprite2dRenderer_.Collect(world, resources, &view.view, &view.proj, simTick);
         if (!sprites.Empty()) {
             if (!sprite2dPass_.IsReady()) {
@@ -2711,7 +2789,10 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
     // ポスプロ解決前 = HDR 中間 (直描き時は最終 RT) に描く。ナビメッシュの輪郭線も同じ線パスで描く
     const bool hasNavLines = navView != nullptr && !navView->Lines().empty();
     const bool hasOccBoxes = f.occlusionBoxes != nullptr && !f.occlusionBoxes->empty();
-    if ((debugLines != nullptr && !debugLines->empty()) || hasNavLines || hasOccBoxes) {
+    const bool hasCullBoxes = !cullDebugBoxes_.empty();
+    const bool hasFrozenFrustum = f.frozen != nullptr; // 控えは freezeCullCamera が true の間だけ有効
+    if ((debugLines != nullptr && !debugLines->empty()) || hasNavLines || hasOccBoxes || hasCullBoxes
+        || hasFrozenFrustum) {
         if (!linePass_.IsReady()) {
             linePass_.Init(device, shaders); // 遅延 Init (postFx_ 前例)
         }
@@ -2727,12 +2808,36 @@ void RenderSystem::DrawParticlesAndDebug(World& world, GraphicsDevice& device, S
                     linePass_.AddLine({ l.ax, l.ay, l.az }, { l.bx, l.by, l.bz }, l.rgba, false);
                 }
             }
+            // 落としたメッシュの枠 (理由別の色) と、オクルージョンで隠れた物の枠。合わせて上限までで、超えた数はログへ
+            for (const CullDebugBox& b : cullDebugBoxes_) {
+                linePass_.AddAABB(b.lo, b.hi, b.rgba, true);
+            }
             if (hasOccBoxes) {
-                // 隠れていると判定された物なので手前に出す (R=1 G=0.2 B=0.2 A=1)
-                constexpr uint32_t kOccludedBoxRgba = 0xFF3333FFu;
+                // 隠れていると判定された物なので手前に出す
+                size_t room = kCullDebugMaxBoxes > cullDebugBoxes_.size() ? kCullDebugMaxBoxes - cullDebugBoxes_.size() : 0;
                 for (const OcclusionDebugBox& b : *f.occlusionBoxes) {
+                    if (cullDebug && room == 0) {
+                        ++cullDebugOverflow_;
+                        continue;
+                    }
                     linePass_.AddAABB({ b.bmin[0], b.bmin[1], b.bmin[2] }, { b.bmax[0], b.bmax[1], b.bmax[2] },
-                                      kOccludedBoxRgba, true);
+                                      kCullBoxOcclusionRgba, true);
+                    room = room > 0 ? room - 1 : 0;
+                }
+            }
+            if (cullDebugOverflow_ != 0 && !cullDebugOverflowLogged_) {
+                cullDebugOverflowLogged_ = true;
+                MYE_LOG_WARN("Culling: the debug boxes are capped at %zu; %d boxes were not drawn",
+                             kCullDebugMaxBoxes, cullDebugOverflow_);
+            }
+            // 固定した視錐台の 12 辺 (near 面・far 面の各 4 辺と、その間の 4 辺)
+            if (hasFrozenFrustum) {
+                const XMFLOAT3* c = f.frozen->corners;
+                for (int i = 0; i < 4; ++i) {
+                    const int next = (i + 1) % 4;
+                    linePass_.AddLine(c[i], c[next], kCullFrozenFrustumRgba, true);
+                    linePass_.AddLine(c[4 + i], c[4 + next], kCullFrozenFrustumRgba, true);
+                    linePass_.AddLine(c[i], c[4 + i], kCullFrozenFrustumRgba, true);
                 }
             }
             linePass_.Render(device, shaders, view.rtv, view.dsv, target.width, target.height,

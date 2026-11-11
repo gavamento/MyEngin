@@ -310,6 +310,7 @@ void BuildFogNoiseShowcaseScene(EngineContext& ctx);
 void BuildFogKickShowcaseScene(EngineContext& ctx);
 // M99f: 距離カリングの検証シーン (--culling-distance-demo)。太陽と床、画面内に並べた箱を距離 29 / 69 / 129 に置く。
 // 物ごと (RenderCulling 40 m)・タグ 5・何も付けない物の 3 組。--culling-demo の物量は変えないため別シーンにしてある
+// 末尾に画面サイズの検証用の小さい遠景の組 (SmallFar_Exempt = exemptFromSizeCulling / SmallFar_Plain)。後続の検証は物を**末尾へ**足す
 void BuildCullingDistanceShowcaseScene(EngineContext& ctx);
 // M99e: 2D の視錐台カリングの検証シーン (--culling-2d-demo)。正射影カメラの画面内外に、Sprite2D (画面端に掛かる回転・拡大つきを含む) /
 // Sliced / Tiled / Line2D / SpriteShape2D / タイルマップ / Parallax2D / SpriteMask2D を置く。資産は --2d-demo と同じ (assets\2d\)。

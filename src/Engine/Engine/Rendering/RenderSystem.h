@@ -26,6 +26,7 @@
 #include "Engine/Renderer/PostFx/ProjectEffectRunner.h" // M78c: fxstack 駆動ユーザーポスト
 #include "Engine/Renderer/Compute/ProjectComputeRunner.h" // M78d: fxstack 駆動ユーザーコンピュート
 #include "Engine/Renderer/RayTracing/RtPasses.h"
+#include "Engine/Renderer/Pipeline/FrustumCull.h"
 #include "Engine/Renderer/Pipeline/RenderTypes.h"
 #include "Engine/Renderer/Passes/ShadowAtlas.h"
 #include "Engine/Renderer/Passes/ShadowPass.h"
@@ -163,6 +164,15 @@ public:
     // 距離・画面サイズのカリングを Scene View (viewKey 2) にも掛ける。保存しないセッション限りの値 (既定 OFF)。
     // Runtime (1) と Game View (3) には常に掛かり、viewKey 0 には掛からない
     bool cullSceneView = false;
+    // カリング用カメラの固定 (デバッグ。保存しない)。true にすると、各ビュー (viewKey 1..3) が次に描かれたときの
+    // カメラを控え、そのビューの視錐台・距離・画面サイズの判定 (メッシュ・CPU / GPU パーティクル・トレイル・
+    // ビルボード・デカール・2D) を控えで行う。描画・LOD・ライト選別・CSM・オクルージョン・地形は今のカメラのまま。
+    // false で控えを捨てる。ResetRenderHistory では解除しない
+    bool freezeCullCamera = false;
+    // 落としたメッシュの AABB を理由別の色の線で重ねる (デバッグ。保存しない)。CLI は --cull-debug
+    bool cullDebug = false;
+    // 直近の Render で枠の上限 (4096) を超えて描かなかった箱の数 (メニューに表示する)
+    int CullDebugOverflow() const { return cullDebugOverflow_; }
     // 設定をまとめて反映する (起動時の実効値)。オクルージョンの bool もここで入る
     void ApplyCullingSettings(const CullingSettings& settings);
     // オクルージョンの統計の読み戻しで GPU を待つか。既定 true (selftest・決定的な撮影の counts を揃える)。
@@ -556,6 +566,27 @@ private:
     LodHistory lodHistory_[4];
     // 画面サイズカリングの viewKey 毎の前フレームの結果 (1 = 落とした)。作りは lodHistory_ と同じ
     LodHistory sizeCullHistory_[4];
+    // カリング用カメラの固定の控え (viewKey 別。freezeCullCamera が true の間だけ valid)
+    struct CullFreezeSlot {
+        bool valid = false;
+        DirectX::XMFLOAT4X4 view = {};
+        DirectX::XMFLOAT4X4 projNoJitter = {};
+        DirectX::XMFLOAT3 cameraPos = { 0.0f, 0.0f, 0.0f };
+        float proj22 = 0.0f;
+        bool orthographic = false;
+        Frustum frustum;
+        DirectX::XMFLOAT3 corners[8] = {}; // 視錐台の 8 隅 (near 4 + far 4。線で描く用)
+    };
+    CullFreezeSlot cullFreeze_[4];
+    // 落としたメッシュの枠 (cullDebug が true のときだけ CollectDrawables が埋め、同じ Render の線パスが読む)
+    struct CullDebugBox {
+        DirectX::XMFLOAT3 lo;
+        DirectX::XMFLOAT3 hi;
+        uint32_t rgba;
+    };
+    std::vector<CullDebugBox> cullDebugBoxes_;
+    int cullDebugOverflow_ = 0;      // 上限を超えて描かなかった箱の数 (直近の Render)
+    bool cullDebugOverflowLogged_ = false;
     // M46b: レイトレ (遅延 Init)。rtDebugMode が 0 で RT のレーンも全部無効のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;

@@ -511,7 +511,7 @@ void ForwardPath::Render(GraphicsDevice& device, const RenderView& view, const R
         dc->OMSetRenderTargets(0, nullptr, nullptr);
         occlusion_.TestPhase2(device, shaders, view.depthSRV);
         occlusionRan = true;
-        if (view.hzbDebugMax != 0) {
+        if (view.hzbDebugMax != 0 || view.occlusionBoxCollect != 0) {
             occlusion_.CollectOccludedBoxes(device, occItems_, occDebugBoxes_);
         }
         // 地形が IA/VS/PS/CB を替えたので、固定バインドと不透明のステートを張り直す

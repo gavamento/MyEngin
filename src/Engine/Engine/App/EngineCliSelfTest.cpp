@@ -326,6 +326,18 @@ bool RunEngineCliSelfTest()
         r = RunParse({ L"--cull-min-screen-size", bad });
         check(r.errors == 1 && r.config.cullingCli.minScreenSize == 0.0f, "--cull-min-screen-size rejects a bad value");
     }
+    // カリング用カメラの固定と枠表示 (どちらも保存しない)
+    r = RunParse({});
+    check(r.config.cullFreezeFrame < 0 && !r.config.cullDebug, "the culling freeze and the debug boxes are off by default");
+    r = RunParse({ L"--cull-freeze-frame", L"10", L"--cull-debug" });
+    check(r.consumed == 2 && r.errors == 0 && r.config.cullFreezeFrame == 10 && r.config.cullDebug,
+          "--cull-freeze-frame N / --cull-debug");
+    r = RunParse({ L"--cull-freeze-frame", L"0" });
+    check(r.consumed == 1 && r.errors == 0 && r.config.cullFreezeFrame == 0, "--cull-freeze-frame 0 is allowed (the first frame)");
+    for (const wchar_t* bad : { L"-1", L"abc", L"1x", L"1.5", L"" }) {
+        r = RunParse({ L"--cull-freeze-frame", bad });
+        check(r.errors == 1 && r.config.cullFreezeFrame < 0, "--cull-freeze-frame rejects a bad value");
+    }
     {
         // 実効値 = ファイルの値 && CLI の OFF。数値だけは CLI が上書きし、ファイルは書き換えない
         namespace fs = std::filesystem;

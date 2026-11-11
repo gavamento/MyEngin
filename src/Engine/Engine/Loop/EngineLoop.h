@@ -142,6 +142,11 @@ struct EngineConfig {
     // 視錐台・距離・画面サイズのカリングの CLI 上書き (--no-frustum-culling / --no-distance-culling /
     // --no-size-culling / --cull-max-distance / --cull-min-screen-size)。occlusion は上の occlusionCulling が正本
     CullingCliOverrides cullingCli;
+    // --cull-freeze-frame N: N フレーム目 (描画フレーム) でカリング用カメラを固定する。負 = しない。
+    // --render-bench-cut-frame と組むと、固定した視点の判定のままカメラだけ動かせる
+    int64_t cullFreezeFrame = -1;
+    // --cull-debug: 落とした物の枠を理由別の色で重ねる (メニュー「落とした物を表示」の起動時の値)
+    bool cullDebug = false;
     // メッシュ LOD (.meta で段を作ったモデルだけに効く)。--lod-bias F で詳細な段を長く使う (> 1) / 早く落とす (< 1)、
     // --lod-force N で段を固定 (-1 = 自動、N が無ければ最も粗い段)。A/B 比較と切り分け用
     float lodBias = 1.0f;

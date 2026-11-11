@@ -49,7 +49,7 @@ public:
     virtual float OcclusionGpuMs() const { return 0.0f; }
 
     // 直近の Render で GPU オクルージョンが隠れていると判定した物の AABB。
-    // view.hzbDebugMax != 0 のときだけ集める (GPU 待ちの読み戻し)。それ以外・走らせないパスは空
+    // view.hzbDebugMax か view.occlusionBoxCollect が非 0 のときだけ集める (GPU 待ちの読み戻し)。それ以外・走らせないパスは空
     virtual const std::vector<OcclusionDebugBox>& OcclusionDebugBoxes() const
     {
         static const std::vector<OcclusionDebugBox> kEmpty;

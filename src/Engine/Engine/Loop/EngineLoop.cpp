@@ -275,6 +275,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     // シーンを読み込んだ回数 (TickRunner が数える)。描画が前のシーンの履歴を捨てる契機
     uint32_t sceneLoadSerial = 0;
     uint32_t renderSceneLoadSerial = 0;
+    bool cullFreezeApplied = false; // --cull-freeze-frame を立て済みか
     // M51g: SaveGame/LoadGame のスロット要求 (-1 = なし)。積み手はスクリプト API (v12)。
     // Save は tick 末ハッシュ後の出力レーンで書出、Load は pendingScene と同じ
     // セーフポイントで消費し record/verify 中は no-op + WARN (決定台帳 5)
@@ -470,6 +471,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
     renderSystem.hzbDebugMax = config.hzbDebugMax;         // --hzb-debug-max
+    renderSystem.cullDebug = config.cullDebug;             // --cull-debug (保存しない)
     // プロジェクト設定 && CLI (--no-* は config 側が false になるだけで、ファイルへは書き戻さない)
     {
         CullingCliOverrides cullingCli = config.cullingCli;
@@ -3291,6 +3293,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 renderSystem.ResetRenderHistory(); // 別のシーン: 前のシーンの LOD の段とパレットを捨てる
             }
             renderSystem.debugLines = &debugLines; // v7 DebugDrawLine (M37)
+            // --cull-freeze-frame N: N フレーム目でカリング用カメラを固定する。一度だけ立てる (以後はメニューで外せる)
+            if (config.cullFreezeFrame >= 0 && !cullFreezeApplied
+                && ctx.frameIndex >= static_cast<uint64_t>(config.cullFreezeFrame)) {
+                cullFreezeApplied = true;
+                renderSystem.freezeCullCamera = true;
+            }
             // M82e: 表示用のナビメッシュはフレームごとに最新にする (Surface が無ければ走査だけ)。
             // OnRenderViews の前に置く = 編集中の SceneView も Bake 直後の絵になる
             // sim を回している間 (Play / Runtime) は NavSystem の実行時のナビメッシュから組む (Obstacle の切り抜きが映る)。

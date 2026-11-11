@@ -199,6 +199,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
         if (vs.drawCalls != 0 || vs.shadowDrawCalls != 0 || vs.culled != 0) {
             ImGui::Text(Tr(StrId::Prof_ViewStats), viewKey, vs.drawCalls, vs.triangles, vs.culled,
                         vs.shadowDrawCalls, vs.shadowTriangles);
+            // M99: ビュー別の理由別の数 (どれかが 0 でないときだけ)
+            if (vs.culled != 0 || vs.culledDistance != 0 || vs.culledScreenSize != 0 || vs.occluded != 0
+                || vs.culledNonMesh != 0 || vs.unculledGpuEmitters != 0) {
+                ImGui::Text(Tr(StrId::Prof_ViewCullReasons), viewKey, vs.culled, vs.culledDistance,
+                            vs.culledScreenSize, vs.occluded, vs.culledNonMesh, vs.unculledGpuEmitters);
+            }
             const bool hasOcclusion = vs.occlusionPhase1Draws != 0 || vs.occlusionPhase2Draws != 0 || vs.occluded != 0;
             if (ctx.renderSystem && ctx.renderSystem->enableOcclusionCulling && hasOcclusion) {
                 ImGui::Text(Tr(StrId::Prof_ViewOcclusion), viewKey, vs.occlusionPhase1Draws,

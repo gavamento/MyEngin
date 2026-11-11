@@ -1296,6 +1296,18 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("%s", Tr(StrId::Menu_CullSceneViewHint));
                 }
+                // デバッグ (保存しない): カリング用カメラの固定と、落とした物の理由別の枠
+                ImGui::MenuItem(Tr(StrId::Menu_CullFreeze), nullptr, &ctx.renderSystem->freezeCullCamera);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", Tr(StrId::Menu_CullFreezeHint));
+                }
+                ImGui::MenuItem(Tr(StrId::Menu_CullDebug), nullptr, &ctx.renderSystem->cullDebug);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", Tr(StrId::Menu_CullDebugHint));
+                }
+                if (ctx.renderSystem->cullDebug && ctx.renderSystem->CullDebugOverflow() > 0) {
+                    ImGui::TextDisabled(Tr(StrId::Menu_CullDebugOverflow), ctx.renderSystem->CullDebugOverflow());
+                }
                 ImGui::EndMenu();
             }
             ImGui::MenuItem(Tr(StrId::Menu_AnimUro), nullptr, &ctx.renderSystem->enableAnimUro);

@@ -1182,7 +1182,9 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
     }
     XMFLOAT3 boundsMin = { 0.0f, 0.0f, 0.0f };
     XMFLOAT3 boundsMax = { 0.0f, 0.0f, 0.0f };
-    const bool culling = OrthoWorldBounds(view, proj, boundsMin, boundsMax) && frustumCulling_;
+    const bool culling = (hasCullOverride_ ? OrthoWorldBounds(&cullViewOverride_, &cullProjOverride_, boundsMin, boundsMax)
+                                           : OrthoWorldBounds(view, proj, boundsMin, boundsMax))
+        && frustumCulling_;
     const TilemapSystem* sim = tilemap::System();
     std::vector<ChunkKey> chunkKeys;
 
@@ -1730,7 +1732,9 @@ const Sprite2DDrawList& Sprite2DRenderer::Collect(World& world, RenderResources&
     hasCamera_ = false;
     hasOrtho_ = false;
     culledCount_ = 0;
-    cullActive_ = frustumCulling_ && OrthoWorldBounds(view, proj, cullMin_, cullMax_);
+    cullActive_ = frustumCulling_
+        && (hasCullOverride_ ? OrthoWorldBounds(&cullViewOverride_, &cullProjOverride_, cullMin_, cullMax_)
+                             : OrthoWorldBounds(view, proj, cullMin_, cullMax_));
     if (cullActive_) {
         // ジッタ・ピクセルスナップの分の余裕 (箱の大きさに対する比 + スナップ格子)
         const XMFLOAT3 extent = { cullMax_.x - cullMin_.x, cullMax_.y - cullMin_.y, cullMax_.z - cullMin_.z };

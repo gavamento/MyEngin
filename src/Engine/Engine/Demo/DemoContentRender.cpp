@@ -1107,6 +1107,17 @@ void BuildCullingDistanceShowcaseScene(EngineContext& ctx)
     inheritRoot.AddComponent<RenderCullingComponent>()->maxDrawDistance = 40.0f;
     GameObject inheritChild = place("Inherit_ChildFar", 0.0f, 60.0f);
     inheritChild.SetParent(inheritRoot);
+    // 画面サイズ: 遠景の小さい物の組 (どちらも距離およそ 110 m、外接球の画面高さ比 0.003 前後)。
+    // 除外あり (exemptFromSizeCulling) は閾値を上げても残り、除外なしだけが画面サイズで落ちる。
+    // 距離カリングは掛からない (maxDrawDistance 0)。--no-distance-culling --cull-min-screen-size 0.02 で確かめる
+    GameObject smallExempt = place("SmallFar_Exempt", -2.0f, 100.0f);
+    smallExempt.SetLocalScale(0.3f, 0.3f, 0.3f);
+    {
+        auto* rc = smallExempt.AddComponent<RenderCullingComponent>();
+        rc->maxDrawDistance = 0.0f;
+        rc->exemptFromSizeCulling = true;
+    }
+    place("SmallFar_Plain", 2.0f, 100.0f).SetLocalScale(0.3f, 0.3f, 0.3f);
 }
 
 } // namespace mye

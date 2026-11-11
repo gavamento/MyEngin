@@ -107,6 +107,13 @@ MYE_STR(Menu_CullSizeHint,    "Saved to the project (project_settings.json). The
 MYE_STR(Menu_CullSceneView,   "Apply Game Culling to Scene View", "Scene View にもゲームのカリングを掛ける")
 MYE_STR(Menu_CullSceneViewHint, "Not saved (this session only). Applies the distance and screen size culling to the Scene View too. Off by default so distant objects stay selectable while editing",
                               "保存されません (このセッションだけ)。距離・画面サイズのカリングを Scene View にも掛けます。既定は OFF で、編集中に遠い物が消えて選べなくなるのを避けます")
+MYE_STR(Menu_CullFreeze,      "Freeze Culling Camera", "カリング用カメラを固定")
+MYE_STR(Menu_CullFreezeHint,  "Not saved (this session only). Each view keeps the camera it had when this was turned on and decides frustum, distance and screen size culling from it, so you can move the camera and see what was dropped. The drawing camera, LOD, light selection, shadows, occlusion and terrain keep using the current camera. The frozen frustum is drawn as white lines. Turn it off to release",
+                              "保存されません (このセッションだけ)。ON にしたときの各ビューのカメラを控え、視錐台・距離・画面サイズの判定をその控えで行うので、カメラを動かして落とされた物を確かめられます。描画のカメラ・LOD・ライト選別・影・オクルージョン・地形は今のカメラのままです。固定した視錐台は白い線で描きます。OFF で解除します")
+MYE_STR(Menu_CullDebug,       "Show Culled Objects", "落とした物を表示")
+MYE_STR(Menu_CullDebugHint,   "Not saved (this session only). Draws the bounds of dropped meshes by reason: yellow = frustum, blue = distance, green = screen size, red = occlusion. Occlusion boxes cost a GPU readback while this is on. At most 4096 boxes are drawn",
+                              "保存されません (このセッションだけ)。落としたメッシュの境界を理由別の色で描きます: 黄 = 視錐台、青 = 距離、緑 = 画面サイズ、赤 = オクルージョン。ON の間はオクルージョンの箱のために GPU の読み戻しが走ります。描く箱は最大 4096 個です")
+MYE_STR(Menu_CullDebugOverflow, "%d boxes were not drawn (limit 4096)", "描かなかった箱: %d 個 (上限 4096)")
 MYE_STR(Menu_AnimUro,        "Distant Animation Throttling (URO)", "遠いキャラのアニメ更新を間引く (URO)")
 // M90e: メッシュ LOD の描画設定 (.meta で段を作ったモデルだけに効く)
 MYE_STR(Menu_Lod,             "Mesh LOD",          "メッシュ LOD")
@@ -353,6 +360,8 @@ MYE_STR(Prof_ViewOcclusion,   "  view %u occlusion: phase1 %d / phase2 %d / occl
                               "  ビュー %u オクルージョン: フェーズ1 %d / フェーズ2 %d / 隠れた物 %d (2 フレーム遅れ)")
 MYE_STR(Prof_CullReasons,     "  culled by reason: frustum %d / distance %d / screen size %d / non-mesh %d (GPU emitters not decided: %d)",
                               "  カリング理由別: 視錐台 %d / 距離 %d / 画面サイズ %d / メッシュ以外 %d (判定できなかった GPU エミッタ: %d)")
+MYE_STR(Prof_ViewCullReasons, "  view %u culled: frustum %d / distance %d / screen size %d / occluded %d / non-mesh %d / GPU emitters not decided %d",
+                              "  ビュー %u カリング: 視錐台 %d / 距離 %d / 画面サイズ %d / 隠れた物 %d / メッシュ以外 %d / 判定できなかった GPU エミッタ %d")
 MYE_STR(Prof_ShadowDraw,      "shadow: %d draw calls, %d tris (csm cascades %d / %d / %d)",
                               "影: %d ドローコール / %d 三角形 (CSM カスケード別 %d / %d / %d)")
 MYE_STR(Prof_ViewStats,       "  view %u: %d draw calls, %d tris, %d culled, %d shadow draws, %d shadow tris",

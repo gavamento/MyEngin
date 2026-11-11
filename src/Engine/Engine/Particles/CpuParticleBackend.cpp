@@ -6,6 +6,7 @@
 #include <xmmintrin.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Disturbance/DisturbanceState.h"
@@ -711,13 +712,15 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
     // プール単位フラスタムカリング (描画専用)。AABB は Update が撮ったもの — Render は
     // sim を進めないので同 tick 内では正確。invalid (スナップショット復元直後など) は
     // 「描画する」側へ倒す。判定はビュー毎 (SceneView / Game / プレビューで各々正しく落ちる)
-    DirectX::XMFLOAT4X4 viewProjRaw;
+    DirectX::XMFLOAT4X4 viewProjRaw; // 描画用 (ジッタあり)。カリングには使わない
     {
         const XMMATRIX xv = XMLoadFloat4x4(&view.view);
         const XMMATRIX xp = XMLoadFloat4x4(&view.proj);
         XMStoreFloat4x4(&viewProjRaw, XMMatrixMultiply(xv, xp));
     }
-    const Frustum frustum = BuildFrustum(viewProjRaw);
+    // 視錐台は RenderSystem が非ジッタ (固定中は控え) で作った view.cullFrustum。null = 落とさない
+    const Frustum* frustum = view.cullFrustum;
+    int culledPools = 0;
     visScratch_.assign(pools_.size(), 1u);
     uint32_t total = 0;
     for (size_t pi = 0; pi < pools_.size(); ++pi) {
@@ -727,7 +730,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             visScratch_[pi] = 0;
             continue;
         }
-        if (pool.boundsValid && view.frustumCulling != 0) {
+        if (pool.boundsValid && frustum != nullptr) {
             // M61g: ローカル空間プールのバウンズはローカル AABB — renderWorld の 8 頂点変換で
             // 保守的なワールド AABB にしてから既存の判定に掛ける (回転で膨らむが包含は保存)。
             // ワールド空間 (既定) はコピーを渡すだけで判定値は従来と同一
@@ -736,14 +739,20 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             if (ParticleIsLocalSpace(pool.descCache)) {
                 TransformAabbToWorld(pool.renderWorld, pool.boundsMin, pool.boundsMax, bmin, bmax);
             }
-            if (!ParticlePoolVisible(frustum, bmin, bmax,
+            if (!ParticlePoolVisible(*frustum, bmin, bmax,
                                      ParticleBillboardExpand(pool.descCache, pool.maxSize0),
                                      renderOffsetX)) {
                 visScratch_[pi] = 0;
+                ++culledPools;
                 continue;
             }
         }
         total += pool.alive;
+    }
+    if (culledPools != 0) {
+        prof::RenderStats delta;
+        delta.culledNonMesh = culledPools;
+        prof::AddRenderStats(delta);
     }
     if (total == 0) {
         return;
