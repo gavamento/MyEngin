@@ -16,6 +16,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Rendering/CullingSettings.h"
 #include "Engine/Engine/Rendering/DistanceCull.h"
+#include "Engine/Renderer/Mesh/MeshLod.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Prefab.h"
@@ -116,6 +117,34 @@ bool RunDistanceCullSelfTest()
         check(dc::AppliesToView(2, true), "view: Scene View (2) is dropped when the session toggle is on");
         check(!dc::AppliesToView(0, false) && !dc::AppliesToView(0, true), "view: previews (0) are never dropped");
         check(!dc::AppliesToView(4, true), "view: an out-of-range key is never dropped");
+    }
+
+    // ---- (4b) 画面サイズ: 閾値・ヒステリシス・除外・履歴 ----
+    {
+        constexpr float kMin = 0.02f;
+        const auto cull = [&](float s, int32_t prev, bool exempt = false, bool always = false) {
+            return dc::CullsByScreenSize(s, kMin, prev, exempt, always);
+        };
+        check(cull(0.019f, -1) && !cull(0.021f, -1), "size: below the threshold is dropped, above is kept (no history)");
+        check(!cull(kMin, -1), "size: exactly the threshold is kept");
+        check(!cull(0.0201f, 0) && cull(0.0199f, 0), "size: a kept object follows the plain threshold");
+        // 前フレームに落とした物は 閾値 x 1.0〜1.1 の帯で落としたまま、1.1 倍以上で戻る
+        check(cull(0.0201f, 1) && cull(0.0219f, 1), "size: a dropped object stays dropped inside the 10% band");
+        check(!cull(0.0221f, 1), "size: a dropped object returns above threshold x 1.1");
+        check(!cull(0.0201f, 0), "size: a kept object is not dropped inside the band (no flicker)");
+        check(!cull(0.001f, 1, true) && !cull(0.001f, -1, true), "size: exemptFromSizeCulling is never dropped");
+        check(!cull(0.001f, -1, false, true), "size: alwaysVisible (no box) is never dropped");
+        check(!dc::CullsByScreenSize(0.0f, 0.0f, -1, false, false), "size: a threshold of 0 never drops");
+        check(!cull(std::numeric_limits<float>::quiet_NaN(), -1), "size: NaN is kept");
+
+        // 履歴: Get は Set 前と Clear 後で -1 (= 履歴なし)。ResetRenderHistory はこれを呼ぶ
+        LodHistory history;
+        const EntityID e{ 5, 0 };
+        check(history.Get(e) < 0, "size history: none before the first write");
+        history.Set(e, 1);
+        check(cull(0.0205f, history.Get(e)), "size history: a recorded drop holds the object inside the band");
+        history.Clear();
+        check(!cull(0.0205f, history.Get(e)), "size history: after a reset the plain threshold decides");
     }
 
     // ---- (5) RenderCulling コンポーネント: 登録・既定値・NoHash ----

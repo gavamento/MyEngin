@@ -86,6 +86,9 @@ struct CullCand {
     // 距離カリング: 実効の最大描画距離 (0 = 判定しない。ステージ 1 で物ごと・タグ・既定から決める) と、その判定の結果
     float maxDrawDistance = 0.0f;
     uint8_t tooFar = 0;
+    // 画面サイズカリング: RenderCulling.exemptFromSizeCulling (ステージ 1 で解決) と、判定の結果 (ステージ 2)
+    uint8_t exemptSize = 0;
+    uint8_t tooSmall = 0;
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
@@ -1404,6 +1407,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
 
     int culledCount = 0;
     int culledDistanceCount = 0;
+    int culledScreenSizeCount = 0;
     // 不透明キャスターの world AABB を集約 → シャドウ範囲のフィットに使う (M17)
     sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };
     sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
@@ -1422,19 +1426,21 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         world.ForEachArchetype(destructibleReq,
                                [&](Archetype& a) { anyDestructibles = anyDestructibles || a.Count() != 0; });
     }
-    // 距離カリングを掛けるビューか。タグ別の距離が 1 つも無ければタグの列は引かない
-    const bool distanceOn = cullEnabled && enableDistanceCulling
-        && distancecull::AppliesToView(target.viewKey, cullSceneView);
+    // 距離・画面サイズカリングを掛けるビューか。タグ別の距離が 1 つも無ければタグの列は引かない
+    const bool viewCulled = cullEnabled && distancecull::AppliesToView(target.viewKey, cullSceneView);
+    const bool distanceOn = viewCulled && enableDistanceCulling;
+    const bool sizeOn = viewCulled && enableSizeCulling && cullMinScreenSize > 0.0f;
     const bool anyTagDistance = distanceOn
         && std::any_of(std::begin(cullTagDistance), std::end(cullTagDistance), [](float d) { return d > 0.0f; });
-    // 祖先を辿るのは、RenderCulling がワールドに 1 つでもあるか、タグ別の距離が 1 つでもあるときだけ (存在の門)
+    // 祖先を辿るのは、RenderCulling がワールドに 1 つでもあるか、タグ別の距離が 1 つでもあるときだけ (存在の門)。
+    // exemptFromSizeCulling も RenderCulling の中なので、RenderCulling が無ければ除外もない
     bool anyRenderCulling = false;
-    if (distanceOn) {
+    if (distanceOn || sizeOn) {
         const ComponentTypeId rcReq[] = { RenderCullingComponent::sTypeId };
         world.ForEachArchetype(rcReq,
                                [&](Archetype& a) { anyRenderCulling = anyRenderCulling || a.Count() != 0; });
     }
-    const bool resolveDistance = distanceOn && (anyRenderCulling || anyTagDistance);
+    const bool resolveRenderCulling = anyRenderCulling || anyTagDistance;
     const ComponentTypeId req[] = { MeshRendererComponent::sTypeId, WorldMatrixComponent::sTypeId };
     world.ForEachArchetype(req, [&](Archetype& arch) {
         const int mi = arch.FindTypeIndex(MeshRendererComponent::sTypeId);
@@ -1520,9 +1526,14 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     cand.alwaysVisible = 1;
                 }
             }
-            if (resolveDistance) {
-                cand.maxDrawDistance = distancecull::ResolveMaxDrawDistance(
-                    world, e, anyTagDistance, cullTagDistance, cullDefaultMaxDrawDistance);
+            if (resolveRenderCulling) {
+                bool exempt = false;
+                const float resolved = distancecull::ResolveMaxDrawDistance(
+                    world, e, anyTagDistance, cullTagDistance, cullDefaultMaxDrawDistance, &exempt);
+                if (distanceOn) {
+                    cand.maxDrawDistance = resolved;
+                }
+                cand.exemptSize = exempt ? 1 : 0;
             } else if (distanceOn) {
                 cand.maxDrawDistance = cullDefaultMaxDrawDistance > 0.0f ? cullDefaultMaxDrawDistance : 0.0f;
             }
@@ -1535,6 +1546,8 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     const auto stage2Start = std::chrono::steady_clock::now();
     const LodSelectParams lodParams{ lodBias, static_cast<int32_t>(lodForcedStage) };
     const LodHistory* lodHistoryRead = (prevRenderKey != 0) ? &lodHistory_[prevRenderKey] : nullptr;
+    // sizeOn は viewKey 1..3 でしか真にならないので、履歴は必ずある
+    const LodHistory* sizeHistoryRead = sizeOn ? &sizeCullHistory_[prevRenderKey] : nullptr;
     const bool orthographic = view.proj._44 != 0.0f; // 透視は _44 == 0
     jobs::System().ParallelRanges(cullCands.size(), kCullGrain, [&](size_t a, size_t b) {
         for (size_t i = a; i < b; ++i) {
@@ -1570,6 +1583,16 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 WorldAabb(c.world, c.boundsMin, c.boundsMax, lo, hi, c.boundsPadding);
                 c.tooFar = distancecull::ExceedsMaxDistance(view.cameraPos, lo, hi, c.maxDrawDistance) ? 1 : 0;
             }
+            // 画面サイズは視錐台・距離の結果に関わらず求める (履歴を物の状態として一貫させ、影の判断にも使う)
+            if (sizeOn && c.meshPtr && c.alwaysVisible == 0) {
+                XMFLOAT3 lo, hi;
+                WorldAabb(c.world, c.boundsMin, c.boundsMax, lo, hi, 0.0f);
+                const float size = BoxScreenSize(lo, hi, view.cameraPos, view.proj._22, orthographic);
+                c.tooSmall = distancecull::CullsByScreenSize(size, cullMinScreenSize, sizeHistoryRead->Get(c.e),
+                                                             c.exemptSize != 0, false)
+                    ? 1
+                    : 0;
+            }
         }
     });
     const auto stage2End = std::chrono::steady_clock::now();
@@ -1602,6 +1625,9 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         if (prevRenderKey != 0 && c.meshPtr != nullptr && c.meshPtr->lods.size() > 1) {
             lodHistory_[prevRenderKey].Set(c.e, c.lod); // 次フレームのヒステリシスの出所
         }
+        if (sizeOn && c.meshPtr != nullptr && c.alwaysVisible == 0) {
+            sizeCullHistory_[prevRenderKey].Set(c.e, c.tooSmall); // 除外の物は 0 のまま
+        }
         // RT の適用範囲 (個別設定 → タグ規則 → 既定 OFF)。RT が off のフレームは引かない
         const RtScope rtScope = rtAnyLane ? ResolveRtScope(world, c.e, rtTagRules) : RtScope{};
         // M46b: レイトレ用の収集はフラスタムカリングしない (画面外の物体も
@@ -1623,8 +1649,8 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 ++culledCount;
             }
             // 画面外でも影は画面へ落ちる: 不透明のキャスターは影の候補に残す (描くかはカスケード別の判定)。
-            // 距離で落とす物は影も落とすので入れない
-            const bool shadowCandidate = collectShadowCasters && c.meshPtr && !c.tooFar;
+            // 距離・画面サイズで落とす物は影も落とすので入れない
+            const bool shadowCandidate = collectShadowCasters && c.meshPtr && !c.tooFar && !c.tooSmall;
             const Material* offMat = shadowCandidate ? resources.materials.Get(c.material) : nullptr;
             if (shadowCandidate && !(offMat && offMat->transparent != 0)) {
                 RenderItem it;
@@ -1659,6 +1685,11 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         // 距離の外 (視錐台の判定を通った物、または視錐台 OFF の物)。キュー・影・CSM のフィットに入れない
         if (c.tooFar) {
             ++culledDistanceCount;
+            continue;
+        }
+        // 画面サイズの外 (視錐台・距離の判定を通った物)
+        if (c.tooSmall) {
+            ++culledScreenSizeCount;
             continue;
         }
         RenderItem item;
@@ -1735,9 +1766,10 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         }
     }
     prof::AddCulled(culledCount);
-    if (culledDistanceCount != 0) {
+    if (culledDistanceCount != 0 || culledScreenSizeCount != 0) {
         prof::RenderStats culledDelta;
         culledDelta.culledDistance = culledDistanceCount;
+        culledDelta.culledScreenSize = culledScreenSizeCount;
         prof::AddRenderStats(culledDelta);
     }
     const auto stage3End = std::chrono::steady_clock::now();
@@ -1896,6 +1928,9 @@ void RenderSystem::ApplyCullingSettings(const CullingSettings& settings)
 void RenderSystem::ResetRenderHistory()
 {
     for (LodHistory& history : lodHistory_) {
+        history.Clear();
+    }
+    for (LodHistory& history : sizeCullHistory_) {
         history.Clear();
     }
     skinPaletteCache_.Clear();

@@ -15,6 +15,8 @@ spec 4.1.7 / 4.3 / 受け入れ条件 9 (と 2 の `--cull-freeze-frame` / `--cu
 
 - **sub-05 からの追加**: `culledNonMesh` に CPU パーティクルのプールで視錐台により落とした数も足す (spec 4.1.7。タイルチャンクは sub-05 で数え済み)。
 
+- **sub-07 からの持ち越し (should)**: 画面サイズの除外 (`exemptFromSizeCulling`) を RenderSystem 経由で確かめていない。`--culling-distance-demo` の**末尾に**「RenderCulling (maxDrawDistance 0、exemptFromSizeCulling = true) を付けた小さい遠景の物」と「付けない同じ物」を足し、`--no-distance-culling --cull-min-screen-size <両方が閾値未満になる値>` の dump で前者だけ残る (`culledScreenSize` の差が 1) ことを示す。`--cull-debug` の撮影で画面サイズの色の枠も確かめる。
+
 ## やらないこと (このサブでは)
 - オクルージョンの固定 (spec D18)
 - 4.1.5 の経路の枠表示 (メッシュだけ)

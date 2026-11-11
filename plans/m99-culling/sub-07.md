@@ -1,8 +1,8 @@
 # sub-07: 画面サイズカリング
 
 - 依存: sub-06
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (コミットは司会)
+- 往復: 1
 
 ## やること
 spec 4.1.4 / 受け入れ条件 7 (と 1, 2 の画面サイズ部分)。
@@ -38,4 +38,13 @@ spec 4.1.4 / 受け入れ条件 7 (と 1, 2 の画面サイズ部分)。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-07 (round 1)
+- 実装: DistanceCull.h `CullsByScreenSize` (純関数、ヒステリシス `kSizeCullHysteresis` 0.1) を追加、`ResolveMaxDrawDistance` のタグは `Tags::EffectiveMask` 呼び出しへ (祖先走査は RenderCulling のみ)。RenderSystem に `sizeCullHistory_[4]` (LodHistory 流用、`ResetRenderHistory` で Clear)、CullCand に `exemptSize` / `tooSmall`。ステージ 1 で門 (RenderCulling またはタグ別距離) が開いたとき exempt を解決、ステージ 2 で BoxScreenSize (lodBias なし、全姿勢の箱) 判定、ステージ 3 で履歴書き込みと `culledScreenSize` 計上 (視錐台 → 距離 → 画面サイズ)。落とした物は影候補にも入れない。
+- 差分: [追加] 履歴は視錐台・距離で落ちた物にも書く (画面サイズ判定は理由の順に関わらず物の状態として一貫させるため)。`LodHistory` を型名のまま再利用 (新クラスを作らない)。
+- 検証: Debug / Release ビルド成功。selftest (distancecull, RenderStats, simsnapshot) 3 suite 0 failed。`--render-bench-demo` の counts: 既定は sub-06 後と同値 (drawCalls 23 / culled 308 / candidates 3686 / culledScreenSize 0)。`--cull-min-screen-size 0.02` は culledScreenSize 1894・candidates 1781・triangles 1335104→597956。Release/Debug (--warp)、--no-jobs、Release GPU、shot-frame 61 の 6 本の counts が完全一致。replay_verify PASS (24 jobs)。check_rules 0 error。
+- 自己採点: 仕様適合 4 (単体のみで、除外フラグ付きシーンの実描画は未確認) / 正しさ 4 / コード品質 4 / テスト 4 (判定関数と履歴の単体。RenderSystem 経由の画面サイズ + 除外は未テスト)
+- 不安・質問: なし。`--screenshot` での画面目視・Scene View トグル経由は未実施。
+- 触ったファイル: src\Engine\Engine\Rendering\DistanceCull.h / DistanceCullSelfTest.cpp / RenderSystem.h / RenderSystem.cpp
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-11)。受け入れ 1 (単体 10 件: 閾値の内外・ちょうど・帯の保持と復帰・除外 2 種・閾値 0・NaN・履歴なし・Clear 後)、2 (`--cull-min-screen-size 0.02` で culledScreenSize 1894、既定は 0 で counts が sub-06 後と一致)、3 (shot-frame 60 / 61 の counts 一致)、4 (Debug / Release / WARP / GPU / `--no-jobs` の counts 一致) を確認。sub-06 から持ち越した should (`Tags::EffectiveMask` を呼ぶ) は解消。replay_verify PASS。[追加] 3 件は採用 (spec 4.1.4 に記録)。shadowCascadeCasters が変わらないのは、0.02 未満になる遠景が CSM の最遠カスケードの外にあるためと読める (候補 3686 → 1781 は画面外リストからも除いた結果) — 矛盾なし。持ち越し: 除外フラグの RenderSystem 経由の確認は sub-08 (should)、counts の比較を目視でなく機械で行うのは sub-09 (nit)。

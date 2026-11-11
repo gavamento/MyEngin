@@ -554,6 +554,8 @@ private:
     PrevRenderWorldStore prevRender_[4];
     // メッシュ LOD の viewKey 毎の前フレームの段 (ヒステリシスの出所)。viewKey==0 は履歴を持たない
     LodHistory lodHistory_[4];
+    // 画面サイズカリングの viewKey 毎の前フレームの結果 (1 = 落とした)。作りは lodHistory_ と同じ
+    LodHistory sizeCullHistory_[4];
     // M46b: レイトレ (遅延 Init)。rtDebugMode が 0 で RT のレーンも全部無効のあいだは一切触らない
     RtScene rtScene_;
     RtPasses rtPasses_;

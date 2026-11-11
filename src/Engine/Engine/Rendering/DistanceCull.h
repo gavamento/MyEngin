@@ -48,19 +48,14 @@ inline float ResolveMaxDrawDistance(World& world, EntityID e, bool useTags, cons
     float perObject = 0.0f;
     bool exempt = false;
     bool found = false;
-    uint64_t tagMask = 0;
-    for (EntityID cur = e; !cur.IsNull(); cur = world.GetParent(cur)) {
-        if (!found) {
-            if (const auto* rc = world.GetComponent<RenderCullingComponent>(cur)) {
-                perObject = rc->maxDrawDistance;
-                exempt = rc->exemptFromSizeCulling;
-                found = true;
-            }
-        }
-        if (useTags) {
-            tagMask |= Tags::OwnMask(world, cur);
+    for (EntityID cur = e; !found && !cur.IsNull(); cur = world.GetParent(cur)) {
+        if (const auto* rc = world.GetComponent<RenderCullingComponent>(cur)) {
+            perObject = rc->maxDrawDistance;
+            exempt = rc->exemptFromSizeCulling;
+            found = true;
         }
     }
+    const uint64_t tagMask = useTags ? Tags::EffectiveMask(world, e) : 0;
     if (outExempt != nullptr) {
         *outExempt = exempt;
     }
@@ -88,6 +83,21 @@ inline bool ExceedsMaxDistance(const DirectX::XMFLOAT3& cameraPos, const DirectX
 inline bool AppliesToView(uint32_t viewKey, bool sceneViewToo)
 {
     return viewKey == 1 || viewKey == 3 || (viewKey == 2 && sceneViewToo);
+}
+
+// 画面サイズカリングのヒステリシス幅 (閾値の 10%。LOD と同じ)
+inline constexpr float kSizeCullHysteresis = 0.1f;
+
+// 画面サイズで落とすか (spec 4.1.4)。screenSize = BoxScreenSize (lodBias なし)。prevCulled > 0 = 前フレームに
+// このビューで画面サイズにより落とした (履歴なしは 0 以下)。落とした物は閾値 × 1.1 を超えるまで落としたまま。
+// minSize <= 0・除外・箱を持てない物は落とさない
+inline bool CullsByScreenSize(float screenSize, float minSize, int32_t prevCulled, bool exempt, bool alwaysVisible)
+{
+    if (minSize <= 0.0f || exempt || alwaysVisible) {
+        return false;
+    }
+    const float limit = prevCulled > 0 ? minSize * (1.0f + kSizeCullHysteresis) : minSize;
+    return screenSize < limit;
 }
 
 } // namespace mye::distancecull

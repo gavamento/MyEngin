@@ -14,7 +14,7 @@ spec 受け入れ条件 8, 12, 13, 14。
 - engine_spec §6.14 の制限に、spec 7. の既知の制限 2 件 (`hasScene == false` で局所影アトラスを作らない、アトラスのスキンは bind 箱で判定) を書く。
 - `flow_title` の shot_verify FAIL (sub-03 で発見、diffPixels 944) の出所を切り分ける: 基点 `d52e91f3` を別ディレクトリへ出して Release をビルドし、同じ撮影条件で `flow_title` を撮って golden と比べる。基点でも同じ差なら M99 と無関係として報告 (golden は更新しない)、基点で一致するなら M99 のどのサブが原因かを特定して SELF_EVAL に書く。
 - 通し検証: `Editor.exe --selftest-full`、`tools\replay_verify.bat`、`tools\shot_verify.bat`、`tools\check_rules.ps1`。既定ベンチの `counts` を M99 前 (基点 `d52e91f3`) と比べ、新しい欄以外の一致を確かめる (受け入れ条件 8)。
-- Debug / Release / `--warp` の `counts` 一致 (既定ベンチ、`--culling-demo`、`--culling-2d-demo`)。
+- Debug / Release / `--warp` の `counts` 一致 (既定ベンチ、`--culling-demo`、`--culling-2d-demo`、`--culling-distance-demo`、既定ベンチ + `--cull-min-screen-size 0.02`)。比較は目視ではなく機械で行う (JSON の `counts` 節を取り出して完全一致を判定するスクリプト。cull_verify.bat に同居させてよい)。
 
 ## やらないこと (このサブでは)
 - 機能の追加・挙動の変更 (見つけた不具合は SELF_EVAL に書き、planner が差し戻し先を決める)
