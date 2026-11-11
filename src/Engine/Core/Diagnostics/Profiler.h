@@ -51,6 +51,11 @@ struct RenderStats {
     int occlusionPhase1Draws = 0;
     int occlusionPhase2Draws = 0;
     int occluded = 0;
+    // カリングの理由別。culled は「視錐台で落としたメッシュ」のまま (意味を変えない)
+    int culledDistance = 0;       // 距離カリングで落としたメッシュ
+    int culledScreenSize = 0;     // 画面サイズカリングで落としたメッシュ
+    int culledNonMesh = 0;        // メッシュ以外の経路 (パーティクル・トレイル・ビルボード・デカール・2D) を視錐台で落とした項目
+    int unculledGpuEmitters = 0;  // 上界を持てず判定しなかった GPU エミッタ
 };
 // 描画パスの DrawIndexed 地点で呼ぶ。triangles は呼び出し全体 (インスタンシングは三角形 x 個数)、
 // lod は描いた LOD 段、instances はその呼び出しで描いたオブジェクト数

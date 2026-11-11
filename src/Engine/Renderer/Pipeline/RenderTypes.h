@@ -477,6 +477,9 @@ struct RenderView {
     // 1 = オクルージョンの統計の読み戻しで GPU の完了を待つ (決定的な撮影、selftest)。
     // 0 = 待たず、終わっていなければ前の値を残す (対話の描画)
     int32_t occlusionStatsWait = 1;
+    // ---- 視錐台カリング (末尾 append。1 = 従来どおり) ----
+    // 0 = CPU パーティクルのプールを視錐台で落とさない (--no-frustum-culling。描かれる画素は 1 と同じ)
+    int32_t frustumCulling = 1;
 };
 
 // --hzb-debug-max 用: GPU オクルージョンが隠れていると判定した項目のワールド AABB

@@ -1269,15 +1269,28 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             // 描画専用トグル (M40d)。sim/hash 非影響
             ImGui::MenuItem(Tr(StrId::Menu_Ssao), nullptr, &ctx.renderSystem->enableSsao);
             ImGui::MenuItem(Tr(StrId::Menu_GpuInstancing), nullptr, &ctx.renderSystem->enableInstancing);
-            // オクルージョンだけはプロジェクト設定へ保存する (rayTracingTags と同じ理由: シーンの作りで
-            // 得か損かが決まる、プロジェクトの決めごと)
-            if (ImGui::MenuItem(Tr(StrId::Menu_Occlusion), nullptr, &ctx.renderSystem->enableOcclusionCulling)) {
-                if (SaveOcclusionCullingSetting(ctx.assetsRoot, ctx.renderSystem->enableOcclusionCulling)) {
-                    scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
-                }
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", Tr(StrId::Menu_OcclusionHint));
+            // カリングの種類ごとのスイッチはプロジェクト設定へ即保存する (rayTracingTags と同じ理由: シーンの作りで
+            // 得か損かが決まる、プロジェクトの決めごと)。描画専用なので Play 中も切り替えてよい
+            if (ImGui::BeginMenu(Tr(StrId::Menu_Culling))) {
+                auto cullSwitch = [&](StrId label, StrId hint, bool& value, CullingFlag flag) {
+                    if (ImGui::MenuItem(Tr(label), nullptr, &value)) {
+                        if (SaveCullingFlag(ctx.assetsRoot, flag, value)) {
+                            scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", Tr(hint));
+                    }
+                };
+                cullSwitch(StrId::Menu_CullFrustum, StrId::Menu_CullFrustumHint,
+                           ctx.renderSystem->enableFrustumCulling, CullingFlag::Frustum);
+                cullSwitch(StrId::Menu_Occlusion, StrId::Menu_OcclusionHint,
+                           ctx.renderSystem->enableOcclusionCulling, CullingFlag::Occlusion);
+                cullSwitch(StrId::Menu_CullDistance, StrId::Menu_CullDistanceHint,
+                           ctx.renderSystem->enableDistanceCulling, CullingFlag::Distance);
+                cullSwitch(StrId::Menu_CullSize, StrId::Menu_CullSizeHint,
+                           ctx.renderSystem->enableSizeCulling, CullingFlag::Size);
+                ImGui::EndMenu();
             }
             ImGui::MenuItem(Tr(StrId::Menu_AnimUro), nullptr, &ctx.renderSystem->enableAnimUro);
             // M90e: メッシュ LOD。描画専用 (sim/hash 非影響)。.meta で段を作ったモデルだけに効く

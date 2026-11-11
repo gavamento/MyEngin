@@ -1057,7 +1057,7 @@ void Sprite2DRenderer::CollectTilemaps(World& world, const XMFLOAT4X4* view, con
     }
     XMFLOAT3 boundsMin = { 0.0f, 0.0f, 0.0f };
     XMFLOAT3 boundsMax = { 0.0f, 0.0f, 0.0f };
-    const bool culling = OrthoWorldBounds(view, proj, boundsMin, boundsMax);
+    const bool culling = OrthoWorldBounds(view, proj, boundsMin, boundsMax) && frustumCulling_;
     const TilemapSystem* sim = tilemap::System();
     std::vector<ChunkKey> chunkKeys;
 

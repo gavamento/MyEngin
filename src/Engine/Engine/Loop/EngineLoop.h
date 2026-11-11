@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Engine/Engine/Loop/StartupProgress.h"
+#include "Engine/Engine/Rendering/CullingSettings.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Input.h"
 
@@ -138,6 +139,9 @@ struct EngineConfig {
     // GPU オクルージョンカリング (--no-occlusion で off)。Deferred / Forward の不透明 (影・半透明は対象外)。
     // 描かれる画素は off と同じで、A/B 比較 (img-diff) と原因の切り分け用
     bool occlusionCulling = true;
+    // 視錐台・距離・画面サイズのカリングの CLI 上書き (--no-frustum-culling / --no-distance-culling /
+    // --no-size-culling / --cull-max-distance / --cull-min-screen-size)。occlusion は上の occlusionCulling が正本
+    CullingCliOverrides cullingCli;
     // メッシュ LOD (.meta で段を作ったモデルだけに効く)。--lod-bias F で詳細な段を長く使う (> 1) / 早く落とす (< 1)、
     // --lod-force N で段を固定 (-1 = 自動、N が無ければ最も粗い段)。A/B 比較と切り分け用
     float lodBias = 1.0f;

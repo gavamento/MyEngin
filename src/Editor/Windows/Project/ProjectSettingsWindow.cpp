@@ -21,6 +21,7 @@
 #include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Compute/ComputeSettings.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Rendering/RenderSystem.h" // M99: カリングの設定欄
 #include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d
 #include "Engine/Platform/InputActions.h"
 #include "Engine/Platform/PathUtil.h"
@@ -94,6 +95,66 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
                 //   押した直後の 1 行だけをここに残す
                 ImGui::TextColored(themeColor::Success, "%s", Tr(StrId::PrjSet_ParticleSaved));
             }
+        }
+
+        // ---- カリング (M99、assets\project_settings.json の rendering 節) ----
+        // ★切り替えた瞬間に実行中の RenderSystem へ反映してファイルへも書く (Rendering メニューと同じ)。
+        //   数値は編集を終えたときに書く。描画専用なので Play 中も触ってよい
+        if (ctx.renderSystem != nullptr) {
+            RenderSystem& rs = *ctx.renderSystem;
+            const std::wstring settingsPath = ctx.assetsRoot + L"\\project_settings.json";
+            ImGui::SeparatorText(Tr(StrId::PrjSet_Culling));
+            auto cullSwitch = [&](StrId label, bool& value, CullingFlag flag) {
+                if (ImGui::Checkbox(Tr(label), &value) && SaveCullingFlag(ctx.assetsRoot, flag, value)) {
+                    scmhint::Changed(settingsPath);
+                }
+            };
+            cullSwitch(StrId::Menu_CullFrustum, rs.enableFrustumCulling, CullingFlag::Frustum);
+            cullSwitch(StrId::Menu_Occlusion, rs.enableOcclusionCulling, CullingFlag::Occlusion);
+            cullSwitch(StrId::Menu_CullDistance, rs.enableDistanceCulling, CullingFlag::Distance);
+            cullSwitch(StrId::Menu_CullSize, rs.enableSizeCulling, CullingFlag::Size);
+
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::SliderFloat(Tr(StrId::PrjSet_CullMinScreenSize), &rs.cullMinScreenSize, 0.0001f, 1.0f, "%.4f",
+                               ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+            if (ImGui::IsItemDeactivatedAfterEdit() && SaveMinScreenSize(ctx.assetsRoot, rs.cullMinScreenSize)) {
+                scmhint::Changed(settingsPath);
+            }
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_CullMinScreenSizeHint));
+
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::InputFloat(Tr(StrId::PrjSet_CullMaxDistance), &rs.cullDefaultMaxDrawDistance, 0.0f, 0.0f, "%.1f");
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                if (!IsValidCullDistance(rs.cullDefaultMaxDrawDistance)) {
+                    rs.cullDefaultMaxDrawDistance = 0.0f;
+                }
+                if (SaveDefaultMaxDrawDistance(ctx.assetsRoot, rs.cullDefaultMaxDrawDistance)) {
+                    scmhint::Changed(settingsPath);
+                }
+            }
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_CullMaxDistanceHint));
+
+            // タグ別の距離: 名前のあるタグと、距離が設定済みのタグを行に出す
+            ImGui::TextUnformatted(Tr(StrId::PrjSet_CullTagDistances));
+            const TagNames& tagNames = TagNames::Get();
+            for (int tag = 0; tag < kCullingTagCount; ++tag) {
+                if (tagNames.Name(tag)[0] == '\0' && !(rs.cullTagDistance[tag] > 0.0f)) {
+                    continue;
+                }
+                ImGui::PushID(tag);
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::InputFloat(tagNames.Display(tag), &rs.cullTagDistance[tag], 0.0f, 0.0f, "%.1f");
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    if (!IsValidCullDistance(rs.cullTagDistance[tag])) {
+                        rs.cullTagDistance[tag] = 0.0f;
+                    }
+                    if (SaveTagCullDistances(ctx.assetsRoot, rs.cullTagDistance)) {
+                        scmhint::Changed(settingsPath);
+                    }
+                }
+                ImGui::PopID();
+            }
+            ImGui::TextDisabled("%s", Tr(StrId::PrjSet_CullNote));
         }
     }
 

@@ -93,6 +93,17 @@ MYE_STR(Menu_PostFx,          "Post FX",           "ポストエフェクト")
 // M90f: 遠いスキンのアニメ更新を間引く (描画専用)
 MYE_STR(Menu_OcclusionHint,   "Saved to the project (project_settings.json). The --no-occlusion option overrides it at launch without saving",
                               "プロジェクト (project_settings.json) に保存されます。起動時の --no-occlusion は保存せずに上書きします")
+// M99: Rendering > カリング サブメニュー
+MYE_STR(Menu_Culling,         "Culling",           "カリング")
+MYE_STR(Menu_CullFrustum,     "Frustum Culling",   "視錐台カリング")
+MYE_STR(Menu_CullFrustumHint, "Saved to the project (project_settings.json). The --no-frustum-culling option overrides it at launch without saving. Off still draws the same picture; only the draw calls grow",
+                              "プロジェクト (project_settings.json) に保存されます。起動時の --no-frustum-culling は保存せずに上書きします。OFF でも絵は同じで、ドローコールだけが増えます")
+MYE_STR(Menu_CullDistance,    "Distance Culling",  "距離カリング")
+MYE_STR(Menu_CullDistanceHint, "Saved to the project (project_settings.json). The --no-distance-culling option overrides it at launch without saving. Takes effect once a max draw distance is set",
+                              "プロジェクト (project_settings.json) に保存されます。起動時の --no-distance-culling は保存せずに上書きします。最大描画距離を設定すると効きます")
+MYE_STR(Menu_CullSize,        "Screen Size Culling", "画面サイズカリング")
+MYE_STR(Menu_CullSizeHint,    "Saved to the project (project_settings.json). The --no-size-culling option overrides it at launch without saving. Drops objects smaller than the minimum screen size",
+                              "プロジェクト (project_settings.json) に保存されます。起動時の --no-size-culling は保存せずに上書きします。最小画面サイズより小さい物を落とします")
 MYE_STR(Menu_AnimUro,        "Distant Animation Throttling (URO)", "遠いキャラのアニメ更新を間引く (URO)")
 // M90e: メッシュ LOD の描画設定 (.meta で段を作ったモデルだけに効く)
 MYE_STR(Menu_Lod,             "Mesh LOD",          "メッシュ LOD")
@@ -337,6 +348,8 @@ MYE_STR(Prof_OcclusionDrawn,  "  occlusion: instances actually drawn = phase1 %d
                               "  オクルージョン: 実際に描いたインスタンス数 = フェーズ1 %d + フェーズ2 %d = %d (GPU の数、2 フレーム遅れ。上のドローコールは CPU が提出した論理数)")
 MYE_STR(Prof_ViewOcclusion,   "  view %u occlusion: phase1 %d / phase2 %d / occluded %d (2 frames late)",
                               "  ビュー %u オクルージョン: フェーズ1 %d / フェーズ2 %d / 隠れた物 %d (2 フレーム遅れ)")
+MYE_STR(Prof_CullReasons,     "  culled by reason: frustum %d / distance %d / screen size %d / non-mesh %d (GPU emitters not decided: %d)",
+                              "  カリング理由別: 視錐台 %d / 距離 %d / 画面サイズ %d / メッシュ以外 %d (判定できなかった GPU エミッタ: %d)")
 MYE_STR(Prof_ShadowDraw,      "shadow: %d draw calls, %d tris (csm cascades %d / %d / %d)",
                               "影: %d ドローコール / %d 三角形 (CSM カスケード別 %d / %d / %d)")
 MYE_STR(Prof_ViewStats,       "  view %u: %d draw calls, %d tris, %d culled, %d shadow draws, %d shadow tris",
@@ -441,6 +454,17 @@ MYE_STR(PrjSet_ParticleNote,  "  written to assets/project_settings.json (shared
                               "  assets/project_settings.json (共有) に書き込みます。比較モードと SIMD は個人設定です。")
 MYE_STR(PrjSet_ParticleSaved, "Particle backend saved as the project default.",
                               "パーティクルバックエンドをプロジェクト既定として保存しました。")
+// M99: Project Settings > Rendering のカリング
+MYE_STR(PrjSet_Culling,       "Culling",           "カリング")
+MYE_STR(PrjSet_CullNote,      "  Applied to the running editor at once and written to assets/project_settings.json. The runtime reads it at launch.",
+                              "  実行中のエディタへ即座に反映し、assets/project_settings.json に書き込みます。Runtime は起動時に読みます。")
+MYE_STR(PrjSet_CullMinScreenSize, "Minimum screen size###PrjSetCullMinSize", "最小画面サイズ###PrjSetCullMinSize")
+MYE_STR(PrjSet_CullMinScreenSizeHint, "Bounding sphere height as a fraction of the screen height (0 < x <= 1). Objects below it are dropped when screen size culling is on",
+                              "外接球の画面高さに対する比 (0 < x <= 1)。画面サイズカリングが ON のとき、これより小さい物を落とします")
+MYE_STR(PrjSet_CullMaxDistance, "Default max draw distance (m)###PrjSetCullMaxDist", "既定の最大描画距離 (m)###PrjSetCullMaxDist")
+MYE_STR(PrjSet_CullMaxDistanceHint, "0 = unlimited. Per-tag and per-object distances take the smallest value above 0",
+                              "0 = 無制限。タグ別・物ごとの距離とは、0 より大きい最小の値が使われます")
+MYE_STR(PrjSet_CullTagDistances, "Max draw distance per tag (m, 0 = none)", "タグ別の最大描画距離 (m、0 = 設定なし)")
 MYE_STR(PrjSet_UI,            "UI###PrjSetUI",       "UI###PrjSetUI")
 MYE_STR(PrjSet_UIHint,        "Reference resolution of the default canvas (UI without a Canvas, and Canvases whose reference is 0). Saved to assets/project_settings.json (shared) and applied on the next launch.",
                               "既定キャンバス (Canvas の無い UI と、基準解像度 0 の Canvas) の基準解像度。assets/project_settings.json (共有) に保存し、次回起動から反映されます。")

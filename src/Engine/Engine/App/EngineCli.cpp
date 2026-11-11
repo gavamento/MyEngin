@@ -1,6 +1,7 @@
 #include "Engine/Engine/App/EngineCli.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
@@ -20,6 +21,18 @@ enum class CliValue {
     Two,      // 値 2 つ。同上
     Optional, // 次の引数が '-' で始まらなければ値として読む (省略時は既定値)
 };
+
+// 数値全体を float として読む。空・末尾のゴミ・nan / inf は false
+bool ParseCliFloat(const wchar_t* text, float& out)
+{
+    wchar_t* end = nullptr;
+    const float v = std::wcstof(text, &end);
+    if (end == text || *end != L'\0' || !std::isfinite(v)) {
+        return false;
+    }
+    out = v;
+    return true;
+}
 
 // 1 フラグの適用。v1 / v2 = 値 (無ければ nullptr)
 struct CliArgs {
@@ -312,6 +325,32 @@ const CliFlag kEngineCliFlags[] = {
     // GPU オクルージョンの切り替えと、render_bench のカメラカット (描画側の上書きだけ。sim には触れない)
     { L"--hzb-debug-max", CliValue::None, [](CliArgs& a) { a.c.hzbDebugMax = true; return true; } },
     { L"--no-occlusion", CliValue::None, [](CliArgs& a) { a.c.occlusionCulling = false; return true; } },
+    // 視錐台・距離・画面サイズのカリング (その起動中だけ。project_settings.json は書き換えない)
+    { L"--no-frustum-culling", CliValue::None, [](CliArgs& a) { a.c.cullingCli.frustum = false; return true; } },
+    { L"--no-distance-culling", CliValue::None, [](CliArgs& a) { a.c.cullingCli.distance = false; return true; } },
+    { L"--no-size-culling", CliValue::None, [](CliArgs& a) { a.c.cullingCli.size = false; return true; } },
+    // 既定の最大描画距離 D (m、0 = 無制限)。★範囲外・綴り違いを黙って捨てない
+    { L"--cull-max-distance", CliValue::One,
+      [](CliArgs& a) {
+          float d = 0.0f;
+          if (!ParseCliFloat(a.v1, d) || !IsValidCullDistance(d)) {
+              std::fwprintf(stderr, L"invalid --cull-max-distance (expected a number >= 0)\n");
+              return false;
+          }
+          a.c.cullingCli.maxDrawDistance = d;
+          return true;
+      } },
+    // 画面サイズカリングを ON にして閾値を F (0 < F <= 1) にする。--no-size-culling が併記されたらそちらが勝つ
+    { L"--cull-min-screen-size", CliValue::One,
+      [](CliArgs& a) {
+          float f = 0.0f;
+          if (!ParseCliFloat(a.v1, f) || !IsValidMinScreenSize(f)) {
+              std::fwprintf(stderr, L"invalid --cull-min-screen-size (expected a number in (0, 1])\n");
+              return false;
+          }
+          a.c.cullingCli.minScreenSize = f;
+          return true;
+      } },
     // メッシュ LOD の bias と強制段 (.meta で段を作ったモデルだけに効く)
     { L"--lod-bias", CliValue::One,
       [](CliArgs& a) {

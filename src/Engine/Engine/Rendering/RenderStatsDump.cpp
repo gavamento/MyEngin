@@ -61,12 +61,17 @@ void AppendStatsBody(std::string& out, const prof::RenderStats& s, const char* i
     AppendF(out, "%s\"paletteReused\": %d,\n", indent, s.paletteReused);
     AppendF(out, "%s\"occlusionPhase1Draws\": %d,\n", indent, s.occlusionPhase1Draws);
     AppendF(out, "%s\"occlusionPhase2Draws\": %d,\n", indent, s.occlusionPhase2Draws);
-    AppendF(out, "%s\"occluded\": %d", indent, s.occluded);
+    AppendF(out, "%s\"occluded\": %d,\n", indent, s.occluded);
+    AppendF(out, "%s\"culledDistance\": %d,\n", indent, s.culledDistance);
+    AppendF(out, "%s\"culledScreenSize\": %d,\n", indent, s.culledScreenSize);
+    AppendF(out, "%s\"culledNonMesh\": %d,\n", indent, s.culledNonMesh);
+    AppendF(out, "%s\"unculledGpuEmitters\": %d", indent, s.unculledGpuEmitters);
 }
 
 bool HasActivity(const prof::RenderStats& s)
 {
-    return s.drawCalls != 0 || s.triangles != 0 || s.culled != 0 || s.shadowDrawCalls != 0;
+    return s.drawCalls != 0 || s.triangles != 0 || s.culled != 0 || s.shadowDrawCalls != 0
+        || s.culledDistance != 0 || s.culledScreenSize != 0 || s.culledNonMesh != 0 || s.unculledGpuEmitters != 0;
 }
 
 } // namespace

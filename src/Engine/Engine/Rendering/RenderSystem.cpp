@@ -624,7 +624,8 @@ struct RenderSystem::FrameContext {
     bool froxelOn = false;                             // M57c: この描画でフロクセルを回すか
     FroxelSettings effectiveFroxel;                    // グローバル設定 + シーンカメラの CameraPostFx
     Frustum frustum = {};                              // メッシュとライトのカリング (カメラがある時のみ)
-    bool cullEnabled = false;
+    bool cullEnabled = false;                          // カメラがある (LOD・URO・地形・ライト選別の元栓)
+    bool frustumDrop = false;                          // 視錐台の外のメッシュを落とす (cullEnabled && enableFrustumCulling)
     SceneLightData lights;                             // 選別後のライト。view.lights がこの実体を指す
     XMFLOAT3 sceneMin = { FLT_MAX, FLT_MAX, FLT_MAX };    // 不透明キャスターの world AABB (影のフィット、M17)
     XMFLOAT3 sceneMax = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
@@ -748,6 +749,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
         f.pixelSnapUnit = ppPlan.snapping ? ppPlan.snapUnit : 0.0f;
     }
     sprite2dRenderer_.SetPixelSnapUnit(f.pixelSnapUnit);
+    sprite2dRenderer_.SetFrustumCulling(enableFrustumCulling);
     BeginView(device, shaders, target, f);
     ResolveCamera(world, cameraOverride, f);
     DecideTaaAndFroxel(world, path, target, cameraOverride, f);
@@ -1020,6 +1022,7 @@ void RenderSystem::CollectLights(World& world, FrameContext& f)
     Frustum& frustum = f.frustum;
     SceneLightData& lights = f.lights;
     f.cullEnabled = f.cameraFound;
+    f.frustumDrop = f.cameraFound && enableFrustumCulling;
     const bool cullEnabled = f.cullEnabled;
     if (cullEnabled) {
         XMFLOAT4X4 vp;
@@ -1115,6 +1118,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     RenderView& view = f.view;
     const Frustum& frustum = f.frustum;
     const bool cullEnabled = f.cullEnabled;
+    const bool frustumDrop = f.frustumDrop;
     XMFLOAT3& sceneMin = f.sceneMin;
     XMFLOAT3& sceneMax = f.sceneMax;
     bool& hasScene = f.hasScene;
@@ -1556,8 +1560,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                 rtInstances_.push_back({ c.mesh, c.material, c.world });
             }
         }
-        if (!c.visible) {
-            ++culledCount;
+        // 視錐台の外。スイッチが OFF のときは落とさず描くが、影の候補・CSM のフィット・前フレーム行列の記録は
+        // ON と同じ規則にする (OFF が絵を変えないための不変量)
+        const bool outsideFrustum = !c.visible;
+        if (outsideFrustum) {
+            if (frustumDrop) {
+                ++culledCount;
+            }
             // 画面外でも影は画面へ落ちる: 不透明のキャスターは影の候補に残す (描くかはカスケード別の判定)
             const Material* offMat = collectShadowCasters && c.meshPtr ? resources.materials.Get(c.material) : nullptr;
             if (collectShadowCasters && c.meshPtr && !(offMat && offMat->transparent != 0)) {
@@ -1586,7 +1595,9 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     hasScene = true;
                 }
             }
-            continue;
+            if (frustumDrop) {
+                continue;
+            }
         }
         RenderItem item;
         item.mesh = c.mesh;
@@ -1602,7 +1613,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         // 同値を入れる = 画面速度が厳密に 0 = カメラ再投影のみへ縮退する。
         // Lookup は Record より先 (同じスロットを読んでから上書きする)
         item.prevWorld = c.world;
-        if (prevRender != nullptr) {
+        if (prevRender != nullptr && !outsideFrustum) {
             if (const XMFLOAT4X4* pr = prevRender->Lookup(c.e)) {
                 item.prevWorld = *pr;
             }
@@ -1625,7 +1636,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             }
             queue_.transparent.push_back(item);
         } else {
-            if (collectShadowCasters && c.meshPtr) {
+            if (collectShadowCasters && c.meshPtr && !outsideFrustum) {
                 // 影の候補は箱が持てれば AABB (ワールド) で、持てなければ全カスケードへ入れる
                 ShadowCaster sc;
                 sc.queueIndex = static_cast<int32_t>(queue_.opaque.size());
@@ -1647,11 +1658,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
                     item.worldAabbMax = wmax;
                     item.hasWorldAabb = 1;
                 }
-                sceneMin = { std::min(sceneMin.x, wmin.x), std::min(sceneMin.y, wmin.y),
-                             std::min(sceneMin.z, wmin.z) };
-                sceneMax = { std::max(sceneMax.x, wmax.x), std::max(sceneMax.y, wmax.y),
-                             std::max(sceneMax.z, wmax.z) };
-                hasScene = true;
+                if (!outsideFrustum) {
+                    sceneMin = { std::min(sceneMin.x, wmin.x), std::min(sceneMin.y, wmin.y),
+                                 std::min(sceneMin.z, wmin.z) };
+                    sceneMax = { std::max(sceneMax.x, wmax.x), std::max(sceneMax.y, wmax.y),
+                                 std::max(sceneMax.z, wmax.z) };
+                    hasScene = true;
+                }
             }
             if (paletteEntry != nullptr) {
                 paletteBinds.push_back({ false, queue_.opaque.size(), paletteEntry });
@@ -1800,6 +1813,17 @@ void RenderSystem::RunPaletteJobs(World& world, std::vector<PaletteJob>& jobs)
                          job.rawBoneCount, kMaxBones);
         }
     }
+}
+
+void RenderSystem::ApplyCullingSettings(const CullingSettings& settings)
+{
+    enableFrustumCulling = settings.frustum;
+    enableOcclusionCulling = settings.occlusion;
+    enableDistanceCulling = settings.distance;
+    enableSizeCulling = settings.size;
+    cullMinScreenSize = settings.minScreenSize;
+    cullDefaultMaxDrawDistance = settings.defaultMaxDrawDistance;
+    std::copy(std::begin(settings.tagDistance), std::end(settings.tagDistance), std::begin(cullTagDistance));
 }
 
 void RenderSystem::ResetRenderHistory()
@@ -2023,6 +2047,7 @@ void RenderSystem::PrepareEnvironment(World& world, GraphicsDevice& device, Shad
     view.instancingEnabled = enableInstancing ? 1 : 0; // M38f
     // GPU オクルージョン (Deferred / Forward の不透明のみ)。viewKey 0 (AssetPreview) は履歴を持たないので常に off
     view.occlusionEnabled = (enableOcclusionCulling && target.viewKey > 0 && target.viewKey < 4) ? 1 : 0;
+    view.frustumCulling = enableFrustumCulling ? 1 : 0; // CPU パーティクルのプール判定が読む
     view.velocityDebug = velocityDebugMode;            // M55c (Deferred のみ消費)
     view.hzbDebug = hzbDebugMip;                       // M56c (Deferred のみ消費。hzbDebugMax は Forward も)
     view.hzbDebugMax = hzbDebugMax ? 1 : 0;

@@ -180,6 +180,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     ImGui::Separator();
     const prof::RenderStats rs = prof::GetRenderStats();
     ImGui::Text(Tr(StrId::Prof_Draw), rs.drawCalls, rs.triangles, rs.culled);
+    // M99: 理由別 (culled = 視錐台で落としたメッシュ)。どれかが 0 でないときだけ出す
+    if (rs.culled != 0 || rs.culledDistance != 0 || rs.culledScreenSize != 0 || rs.culledNonMesh != 0
+        || rs.unculledGpuEmitters != 0) {
+        ImGui::Text(Tr(StrId::Prof_CullReasons), rs.culled, rs.culledDistance, rs.culledScreenSize, rs.culledNonMesh,
+                    rs.unculledGpuEmitters);
+    }
     // M90e: LOD の段を持つメッシュを描いたときだけ分布を出す
     if (rs.lodDraws[1] != 0 || rs.lodDraws[2] != 0 || rs.lodDraws[3] != 0) {
         ImGui::Text(Tr(StrId::Prof_LodDraws), rs.lodDraws[0], rs.lodTriangles[0], rs.lodDraws[1],

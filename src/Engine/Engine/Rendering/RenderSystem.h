@@ -7,6 +7,7 @@
 
 #include "Engine/Core/Ecs/EntityID.h"
 #include "Engine/Engine/Feel/FeelState.h"
+#include "Engine/Engine/Rendering/CullingSettings.h"
 #include "Engine/Engine/Rendering/DebugDraw.h"
 #include "Engine/Engine/Rendering/LightSelection.h"
 #include "Engine/Engine/Rendering/SkinPaletteCache.h"
@@ -150,6 +151,17 @@ public:
     // GPU オクルージョンカリング (Deferred / Forward の不透明のみ。viewKey 0 は常に off)。
     // 描かれる画素は off と同じで、見えない物を GPU が描かないだけ。CLI は --no-occlusion
     bool enableOcclusionCulling = true;
+    // 視錐台カリング。false でも判定は計算し、物を落とさないだけ (LOD・URO・地形・ライト選別・CSM のフィットは不変)。
+    // 効くのはメッシュ・CPU パーティクルのプール・タイルマップのチャンク。地形は常に判定する。CLI は --no-frustum-culling
+    bool enableFrustumCulling = true;
+    // 距離・画面サイズのカリング (メッシュのみ。判定は後続サブ)。タグ別の距離は 0 = 設定なし
+    bool enableDistanceCulling = true;
+    bool enableSizeCulling = false;
+    float cullMinScreenSize = kDefaultMinScreenSize;
+    float cullDefaultMaxDrawDistance = 0.0f;
+    float cullTagDistance[kCullingTagCount] = {};
+    // 設定をまとめて反映する (起動時の実効値)。オクルージョンの bool もここで入る
+    void ApplyCullingSettings(const CullingSettings& settings);
     // オクルージョンの統計の読み戻しで GPU を待つか。既定 true (selftest・決定的な撮影の counts を揃える)。
     // 対話の描画は EngineLoop が false にする
     bool occlusionStatsWait = true;

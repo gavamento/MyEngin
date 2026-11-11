@@ -83,7 +83,7 @@
 | 既定の最大描画距離 | `defaultMaxDrawDistance` (float m、0 = 無制限) | 0 | 上記 |
 | タグ別の距離 | `tagCullDistances` (配列 `[{"tag": 3, "distance": 50.0}]`、tag は 0..63、distance > 0) | 空 | なし |
 
-- 実効値 = ファイルの値 && CLI の OFF が無いこと (bool)。CLI の値の上書きは数値にだけ。優先の式は既存の `ResolveOcclusionCulling` と同じ考え方で、EngineLoop と selftest が同じ関数を使う。
+- 実効値 = ファイルの値 && CLI の OFF が無いこと (bool)。CLI の値の上書きは数値にだけ。`--cull-min-screen-size F` はファイルが OFF でもその起動中は ON にするが、`--no-size-culling` と併記したら OFF が勝つ (sub-02 で確定)。優先の式は既存の `ResolveOcclusionCulling` と同じ考え方で、EngineLoop と selftest が同じ関数を使う。
 - 範囲外・型違いの値は既定値に落とし、ログに 1 行出す。読めないファイルは上書きしない。`"rendering"` 内の他キーと他の節 (`rayTracingTags` 等) は壊さない。
 - Editor と Runtime は起動時に読む。エディタでの変更は即座に実行中の RenderSystem へ反映する (Play 中も可。描画専用なので sim に影響しない)。
 
@@ -170,7 +170,7 @@
 11. 計測: K = 1 の `counts` が今と同じ。K = 16 の段別 CPU 時間を測り、採否と数字が ADR-038 にある。— dump と文書
 12. 決定性: 新しい欄を含む `counts` が Debug / Release / `--warp` で一致。`--no-jobs` と結果が一致。— dump 3 本の比較
 13. 文書とルール: engine_spec §6.14 (切り替え・距離・画面サイズ・追加経路・局所影・デバッグ・CLI 表)、§6.6 の制限表、ADR-038、`docs\test_checklists.md` を更新。ローカライズは両言語。`tools\check_rules.ps1` が 0 error。
-14. 通し: `Editor.exe --selftest-full` PASS、`tools\replay_verify.bat` PASS、`tools\shot_verify.bat` PASS (8 の例外を除く)。
+14. 通し: `Editor.exe --selftest-full` PASS、`tools\replay_verify.bat` PASS、`tools\shot_verify.bat` PASS (8 の例外を除く)。視錐台 ON/OFF の全画素一致を回帰として回せるスクリプト `tools\cull_verify.bat` が PASS。
 
 ## 6. サブ分割
 
@@ -200,3 +200,4 @@
 
 - 2026-11-11 (ユーザー): U1〜U5 と仮置きの値を planner の裁定どおり確定。仕様の中身は変更なし。
 - 2026-11-11 (sub-01 round 1 の結果): BVH は採用条件を満たさず見送り (ADR-038 の計測節)。3. の後回しと 6. の注記を更新。サブ構成は sub-02〜09 のまま。
+- 2026-11-11 (sub-02 round 1、coder の質問への回答): `--no-size-culling` と `--cull-min-screen-size` の併記は OFF が勝つ規則を 4.1.1 に追記。視錐台 ON/OFF の全画素一致は RenderSystem を回す selftest の先例が無いため、Runtime.exe の撮影 + img-diff (tol 0) を回すスクリプト `tools\cull_verify.bat` を sub-09 で作り、受け入れ条件 14 に足した。

@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/RayTracing/RtScope.h"
+#include "Engine/Engine/Rendering/CullingSettings.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -328,6 +330,102 @@ bool RunTagSelfTest()
             std::ifstream f(dir / L"project_settings.json", std::ios::binary);
             const std::string after((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             check(after == broken, "OcclusionSetting: corrupt file content untouched");
+        }
+        // ---- カリング設定 (M99: rendering の 7 キー) ----
+        {
+            const std::wstring projectRoot = dir.wstring();
+            const fs::path settingsFile = dir / L"project_settings.json";
+            auto writeText = [&](const std::string& text) {
+                std::ofstream f(settingsFile, std::ios::binary | std::ios::trunc);
+                f << text;
+            };
+            auto readJson = [&]() {
+                std::ifstream f(settingsFile);
+                nlohmann::json j;
+                f >> j;
+                return j;
+            };
+            // ファイルが無い = 既定値
+            fs::remove(settingsFile, ec);
+            CullingSettings def = LoadCullingSettings(projectRoot);
+            bool noTags = true;
+            for (float d : def.tagDistance) {
+                noTags = noTags && d == 0.0f;
+            }
+            check(def.frustum && def.occlusion && def.distance && !def.size && def.minScreenSize == kDefaultMinScreenSize
+                      && def.defaultMaxDrawDistance == 0.0f && noTags,
+                  "CullingSettings: a missing file reads as the defaults");
+
+            // 7 キーの保存 → 読み戻し (他のキー・他の節は残る)
+            writeText(R"({"tags":["A"],"rayTracingTags":{"sceneOn":[1]},"rendering":{"other":7}})");
+            float tags[kCullingTagCount] = {};
+            tags[3] = 50.0f;
+            tags[10] = 7.5f;
+            check(SaveCullingFlag(projectRoot, CullingFlag::Frustum, false)
+                      && SaveCullingFlag(projectRoot, CullingFlag::Occlusion, false)
+                      && SaveCullingFlag(projectRoot, CullingFlag::Distance, false)
+                      && SaveCullingFlag(projectRoot, CullingFlag::Size, true) && SaveMinScreenSize(projectRoot, 0.02f)
+                      && SaveDefaultMaxDrawDistance(projectRoot, 120.5f) && SaveTagCullDistances(projectRoot, tags),
+                  "CullingSettings: every key saves");
+            const CullingSettings rt = LoadCullingSettings(projectRoot);
+            check(!rt.frustum && !rt.occlusion && !rt.distance && rt.size && rt.minScreenSize == 0.02f
+                      && rt.defaultMaxDrawDistance == 120.5f && rt.tagDistance[3] == 50.0f
+                      && rt.tagDistance[10] == 7.5f && rt.tagDistance[4] == 0.0f,
+                  "CullingSettings: the 7 keys round-trip");
+            {
+                const nlohmann::json j = readJson();
+                check(j.contains("tags") && j["rayTracingTags"]["sceneOn"][0] == 1 && j["rendering"]["other"] == 7,
+                      "CullingSettings: other keys and sections are preserved");
+                check(j["rendering"]["minScreenSize"] == 0.02 && j["rendering"]["tagCullDistances"].size() == 2
+                          && j["rendering"]["tagCullDistances"][0]["tag"] == 3,
+                      "CullingSettings: floats are written as short decimals and tags in ascending order");
+            }
+            // 1 キーだけ差し替えても他の値は変わらない
+            check(SaveCullingFlag(projectRoot, CullingFlag::Frustum, true) && LoadCullingSettings(projectRoot).frustum
+                      && !LoadCullingSettings(projectRoot).distance && LoadCullingSettings(projectRoot).tagDistance[3] == 50.0f,
+                  "CullingSettings: saving one key leaves the others alone");
+            // 範囲外の値は書かない (ファイルは変わらない)
+            check(!SaveMinScreenSize(projectRoot, 0.0f) && !SaveMinScreenSize(projectRoot, 1.5f)
+                      && !SaveDefaultMaxDrawDistance(projectRoot, -1.0f)
+                      && !SaveDefaultMaxDrawDistance(projectRoot, std::numeric_limits<float>::infinity())
+                      && LoadCullingSettings(projectRoot).minScreenSize == 0.02f,
+                  "CullingSettings: out-of-range values are refused");
+            check(SaveMinScreenSize(projectRoot, 1.0f) && LoadCullingSettings(projectRoot).minScreenSize == 1.0f,
+                  "CullingSettings: minScreenSize 1 is the upper bound");
+
+            // キー無し / 型違い / 範囲外 → 既定値 (有効な行だけが残る)
+            writeText(R"({"rendering":{"frustumCulling":"yes","distanceCulling":1,"sizeCulling":null,)"
+                      R"("minScreenSize":0,"defaultMaxDrawDistance":-5,"tagCullDistances":[)"
+                      R"({"tag":64,"distance":5},{"tag":2,"distance":0},{"tag":"x","distance":1},)"
+                      R"({"tag":4,"distance":9},7,{"tag":-1,"distance":3}]}})");
+            const CullingSettings bad = LoadCullingSettings(projectRoot);
+            int tagRows = 0;
+            for (float d : bad.tagDistance) {
+                tagRows += d > 0.0f ? 1 : 0;
+            }
+            check(bad.frustum && bad.distance && !bad.size && bad.minScreenSize == kDefaultMinScreenSize
+                      && bad.defaultMaxDrawDistance == 0.0f && bad.tagDistance[4] == 9.0f && tagRows == 1,
+                  "CullingSettings: wrong types and out-of-range values fall back to the defaults");
+            writeText(R"({"rendering":{"minScreenSize":2,"defaultMaxDrawDistance":"far","tagCullDistances":3}})");
+            const CullingSettings bad2 = LoadCullingSettings(projectRoot);
+            check(bad2.minScreenSize == kDefaultMinScreenSize && bad2.defaultMaxDrawDistance == 0.0f,
+                  "CullingSettings: minScreenSize above 1, a string distance and a non-array tag list fall back");
+            writeText(R"({"rendering":"oops"})");
+            check(SaveCullingFlag(projectRoot, CullingFlag::Size, true) && LoadCullingSettings(projectRoot).size,
+                  "CullingSettings: a non-object rendering node is replaced when saving");
+
+            // 読めないファイルは読んでも既定値、書いても上書きしない
+            const std::string broken = "{ not json";
+            writeText(broken);
+            const CullingSettings fromBroken = LoadCullingSettings(projectRoot);
+            check(fromBroken.frustum && fromBroken.occlusion && fromBroken.distance && !fromBroken.size,
+                  "CullingSettings: a corrupt file reads as the defaults");
+            check(!SaveCullingFlag(projectRoot, CullingFlag::Frustum, false) && !SaveMinScreenSize(projectRoot, 0.5f)
+                      && !SaveDefaultMaxDrawDistance(projectRoot, 10.0f) && !SaveTagCullDistances(projectRoot, tags),
+                  "CullingSettings: a corrupt file is not overwritten (every key)");
+            std::ifstream f(settingsFile, std::ios::binary);
+            const std::string after((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            check(after == broken, "CullingSettings: corrupt file content untouched");
         }
         fs::remove_all(dir, ec);
 

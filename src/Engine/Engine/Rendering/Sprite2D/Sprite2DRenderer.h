@@ -52,6 +52,9 @@ public:
     // 次の Collect から効く。Line2D / SpriteShape2D / タイルは対象外
     void SetPixelSnapUnit(float unit) { pixelSnapUnit_ = unit; }
 
+    // false ならタイルのチャンクを画面外でも切らない (RenderSystem::enableFrustumCulling。次の Collect から効く)
+    void SetFrustumCulling(bool enabled) { frustumCulling_ = enabled; }
+
     // 正射影のとき、カメラの視錐台 (直方体) を囲むワールドの AABB (view / proj は行ベクトル規約の行列)。
     // 透視 / 行列が無い / 特異は false (タイルを切らない)
     static bool OrthoWorldBounds(const DirectX::XMFLOAT4X4* view, const DirectX::XMFLOAT4X4* proj,
@@ -247,6 +250,7 @@ private:
     bool anyNormalMap_ = false;                          // 法線マップを持つ lit スプライトがある (無ければ法線を一切積まない)
     bool anyNormalReady_ = false;                        // 実際に法線マップのバッチを積んだ (積めなければ法線 RT を作らない)
     float pixelSnapUnit_ = 0.0f;                         // SetPixelSnapUnit の値
+    bool frustumCulling_ = true;                         // SetFrustumCulling の値
     uint64_t simTick_ = 0;                              // Collect が受けた sim の tick (アニメーションタイル用)
     uint64_t tileFrame_ = 0;                             // Collect の通し番号 (使われなくなったチャンクの掃除用)
     std::vector<Sprite2DVertex> tileScratch_;            // 原点を足した 1 run 分の頂点

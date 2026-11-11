@@ -727,7 +727,7 @@ void CpuParticleBackend::Render(GraphicsDevice& device, const RenderView& view,
             visScratch_[pi] = 0;
             continue;
         }
-        if (pool.boundsValid) {
+        if (pool.boundsValid && view.frustumCulling != 0) {
             // M61g: ローカル空間プールのバウンズはローカル AABB — renderWorld の 8 頂点変換で
             // 保守的なワールド AABB にしてから既存の判定に掛ける (回転で膨らむが包含は保存)。
             // ワールド空間 (既定) はコピーを渡すだけで判定値は従来と同一

@@ -470,8 +470,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.velocityDebugMode = config.velocityDebug; // M55c (--velocity-debug)
     renderSystem.hzbDebugMip = config.hzbDebug;            // M56c (--hzb-debug N)
     renderSystem.hzbDebugMax = config.hzbDebugMax;         // --hzb-debug-max
-    // プロジェクト設定 && CLI (--no-occlusion は config 側が false になるだけで、ファイルへは書き戻さない)
-    renderSystem.enableOcclusionCulling = ResolveOcclusionCulling(assetsRoot, config.occlusionCulling);
+    // プロジェクト設定 && CLI (--no-* は config 側が false になるだけで、ファイルへは書き戻さない)
+    {
+        CullingCliOverrides cullingCli = config.cullingCli;
+        cullingCli.occlusion = config.occlusionCulling;
+        renderSystem.ApplyCullingSettings(ResolveCullingSettings(assetsRoot, cullingCli));
+    }
     // 撮影・計測の run だけ統計の読み戻しで GPU を待つ (counts を構成間で一致させる)。対話は待たない
     renderSystem.occlusionStatsWait = config.IsCaptureRun();
     renderSystem.cullTimingProbe = !config.renderStatsDumpPath.empty(); // 視錐台判定だけの CPU 時間も測る

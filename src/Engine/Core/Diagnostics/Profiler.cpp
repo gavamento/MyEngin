@@ -129,6 +129,10 @@ void AddRenderStats(const RenderStats& d)
         r.occlusionPhase1Draws += d.occlusionPhase1Draws;
         r.occlusionPhase2Draws += d.occlusionPhase2Draws;
         r.occluded += d.occluded;
+        r.culledDistance += d.culledDistance;
+        r.culledScreenSize += d.culledScreenSize;
+        r.culledNonMesh += d.culledNonMesh;
+        r.unculledGpuEmitters += d.unculledGpuEmitters;
     });
 }
 

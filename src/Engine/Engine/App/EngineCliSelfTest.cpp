@@ -8,6 +8,7 @@
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Rendering/CullingSettings.h"
 #include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
@@ -298,6 +299,76 @@ bool RunEngineCliSelfTest()
         SaveOcclusionCullingSetting(root, true);
         check(effective(false) && !effective(true), "occlusion: file true -> on, with --no-occlusion -> off");
         check(LoadOcclusionCullingSetting(root), "occlusion: --no-occlusion does not rewrite the file");
+        fs::remove_all(dir, ec);
+    }
+    // ---- M99: 視錐台・距離・画面サイズのカリング ----
+    r = RunParse({ L"--no-frustum-culling", L"--no-distance-culling", L"--no-size-culling" });
+    check(r.consumed == 3 && !r.config.cullingCli.frustum && !r.config.cullingCli.distance && !r.config.cullingCli.size
+              && r.config.cullingCli.occlusion,
+          "--no-frustum-culling / --no-distance-culling / --no-size-culling");
+    r = RunParse({});
+    check(r.config.cullingCli.frustum && r.config.cullingCli.distance && r.config.cullingCli.size
+              && r.config.cullingCli.maxDrawDistance < 0.0f && r.config.cullingCli.minScreenSize == 0.0f,
+          "the culling switches are on and the numbers are not overridden by default");
+    r = RunParse({ L"--cull-max-distance", L"150.5", L"--cull-min-screen-size", L"0.01" });
+    check(r.consumed == 2 && r.errors == 0 && r.config.cullingCli.maxDrawDistance == 150.5f
+              && r.config.cullingCli.minScreenSize == 0.01f,
+          "--cull-max-distance D / --cull-min-screen-size F");
+    r = RunParse({ L"--cull-max-distance", L"0" });
+    check(r.consumed == 1 && r.config.cullingCli.maxDrawDistance == 0.0f, "--cull-max-distance 0 is allowed (= unlimited)");
+    r = RunParse({ L"--cull-min-screen-size", L"1" });
+    check(r.consumed == 1 && r.config.cullingCli.minScreenSize == 1.0f, "--cull-min-screen-size 1 is the upper bound");
+    for (const wchar_t* bad : { L"-1", L"abc", L"1x", L"nan", L"inf", L"" }) {
+        r = RunParse({ L"--cull-max-distance", bad });
+        check(r.errors == 1 && r.config.cullingCli.maxDrawDistance < 0.0f, "--cull-max-distance rejects a bad value");
+    }
+    for (const wchar_t* bad : { L"0", L"-0.5", L"1.5", L"abc", L"0.1x", L"nan", L"inf", L"" }) {
+        r = RunParse({ L"--cull-min-screen-size", bad });
+        check(r.errors == 1 && r.config.cullingCli.minScreenSize == 0.0f, "--cull-min-screen-size rejects a bad value");
+    }
+    {
+        // 実効値 = ファイルの値 && CLI の OFF。数値だけは CLI が上書きし、ファイルは書き換えない
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / L"mye_cli_culling_selftest";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        const std::wstring root = dir.wstring();
+        auto effective = [&](std::initializer_list<const wchar_t*> args) {
+            const ParseRun p = RunParse(args);
+            CullingCliOverrides cli = p.config.cullingCli;
+            cli.occlusion = p.config.occlusionCulling; // EngineLoop と同じ組み立て
+            return ResolveCullingSettings(root, cli);
+        };
+        CullingSettings s = effective({});
+        check(s.frustum && s.occlusion && s.distance && !s.size && s.minScreenSize == kDefaultMinScreenSize
+                  && s.defaultMaxDrawDistance == 0.0f,
+              "culling: no file, no flag -> the defaults");
+        s = effective({ L"--no-frustum-culling", L"--no-distance-culling", L"--no-occlusion" });
+        check(!s.frustum && !s.distance && !s.occlusion && !s.size, "culling: the --no-* flags turn the file's on off");
+        s = effective({ L"--cull-min-screen-size", L"0.02" });
+        check(s.size && s.minScreenSize == 0.02f, "culling: --cull-min-screen-size turns size culling on with that threshold");
+        s = effective({ L"--cull-min-screen-size", L"0.02", L"--no-size-culling" });
+        check(!s.size && s.minScreenSize == 0.02f, "culling: --no-size-culling wins over --cull-min-screen-size");
+        s = effective({ L"--cull-max-distance", L"80" });
+        check(s.defaultMaxDrawDistance == 80.0f && s.distance, "culling: --cull-max-distance sets the default distance");
+
+        float tags[kCullingTagCount] = {};
+        tags[5] = 30.0f;
+        SaveCullingFlag(root, CullingFlag::Frustum, false);
+        SaveCullingFlag(root, CullingFlag::Size, true);
+        SaveMinScreenSize(root, 0.03f);
+        SaveDefaultMaxDrawDistance(root, 200.0f);
+        SaveTagCullDistances(root, tags);
+        s = effective({});
+        check(!s.frustum && s.size && s.minScreenSize == 0.03f && s.defaultMaxDrawDistance == 200.0f && s.tagDistance[5] == 30.0f,
+              "culling: the file's values are the effective values without flags");
+        s = effective({ L"--cull-max-distance", L"0", L"--cull-min-screen-size", L"0.5", L"--no-size-culling" });
+        check(!s.size && s.defaultMaxDrawDistance == 0.0f && s.minScreenSize == 0.5f && s.tagDistance[5] == 30.0f,
+              "culling: CLI numbers override the file and the tag table stays");
+        const CullingSettings onDisk = LoadCullingSettings(root);
+        check(!onDisk.frustum && onDisk.size && onDisk.minScreenSize == 0.03f && onDisk.defaultMaxDrawDistance == 200.0f,
+              "culling: the CLI flags do not rewrite the file");
         fs::remove_all(dir, ec);
     }
     r = RunParse({ L"--lod-bias", L"1.5", L"--lod-force", L"2" });

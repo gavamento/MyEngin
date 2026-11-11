@@ -46,6 +46,10 @@ long long Fingerprint(const prof::RenderStats& s)
     add(s.occlusionPhase1Draws);
     add(s.occlusionPhase2Draws);
     add(s.occluded);
+    add(s.culledDistance);
+    add(s.culledScreenSize);
+    add(s.culledNonMesh);
+    add(s.unculledGpuEmitters);
     return sum;
 }
 
@@ -98,6 +102,10 @@ bool RunRenderStatsSelfTest()
     delta.occlusionPhase1Draws = 7;
     delta.occlusionPhase2Draws = 8;
     delta.occluded = 9;
+    delta.culledDistance = 10;
+    delta.culledScreenSize = 11;
+    delta.culledNonMesh = 12;
+    delta.unculledGpuEmitters = 13;
     prof::AddRenderStats(delta);
     prof::SetRenderStatsView(99); // 範囲外は 0 番へ
     prof::AddDraw(1);
@@ -128,6 +136,11 @@ bool RunRenderStatsSelfTest()
     check(prof::GetRenderStatsForView(3).shadowCasterCandidates == 4
               && prof::GetRenderStatsForView(3).shadowCascadeCasters[2] == 3,
           "AddRenderStats carries the CSM caster counts");
+    check(prof::GetRenderStatsForView(3).culledDistance == 10 && prof::GetRenderStatsForView(3).culledScreenSize == 11
+              && prof::GetRenderStatsForView(3).culledNonMesh == 12
+              && prof::GetRenderStatsForView(3).unculledGpuEmitters == 13 && total.culledNonMesh == 12
+              && total.culled == 4,
+          "the per-reason cull fields accumulate without changing the meaning of culled");
     check(Fingerprint(prof::GetRenderStatsForView(99)) == 0, "an out-of-range view reads as empty");
 
     // ---- JSON ----
@@ -154,7 +167,11 @@ bool RunRenderStatsSelfTest()
               && a.find("\"shadowCascadeDraws\": [1, 1, 1]") != std::string::npos
               && a.find("\"shadowCascadeCasters\": [0, 0, 3]") != std::string::npos
               && a.find("\"lodDraws\": [0, 2, 0, 0]") != std::string::npos
-              && a.find("\"lodTriangles\": [0, 40, 0, 0]") != std::string::npos,
+              && a.find("\"lodTriangles\": [0, 40, 0, 0]") != std::string::npos
+              && a.find("\"culledDistance\": 10") != std::string::npos
+              && a.find("\"culledScreenSize\": 11") != std::string::npos
+              && a.find("\"culledNonMesh\": 12") != std::string::npos
+              && a.find("\"unculledGpuEmitters\": 13") != std::string::npos,
           "the reserved fields and arrays are written in a fixed shape");
 
     prof::BeginFrame(); // 後続の表示へ持ち越さない
