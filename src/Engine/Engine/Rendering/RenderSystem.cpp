@@ -509,6 +509,17 @@ int FindDirectionalLight(const SceneLightData& lights)
     return -1;
 }
 
+// 影を投げる局所ライト (シャドウアトラスの担当) が 1 つでも選ばれているか
+bool HasLocalShadowLight(const LightSelection& selection)
+{
+    for (int i = 0; i < selection.count; ++i) {
+        if (selection.lights[i].shadowSlot >= 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 Texture* LoadTextureRememberingFailure(TextureLibrary& textures, AssetID id, const std::wstring& path,
@@ -759,7 +770,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     UpdateDisturbanceVolumes(world, device, resources, f); // フロクセルの注入 (UpdateFroxel) が読む
     CollectDrawables(world, resources, target, f);
     RenderCascadeShadows(world, device, shaders, resources, f);
-    AllocateShadowAtlas(device, shaders, resources, f);
+    AllocateShadowAtlas(world, device, shaders, resources, f);
     PrepareEnvironment(world, device, shaders, resources, target, cameraOverride, f);
     UpdateRtScene(device, shaders, resources, target, f);
     UpdateFroxel(device, shaders, target, f);
@@ -1139,11 +1150,13 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     }
     lastSimTick_ = simTick;
     skinPaletteCache_.BeginFrame();
-    // CSM のキャスター候補 (カメラの視錐台で落とす前の全不透明)。影を描かないフレームは集めない
+    // 影のキャスター候補 (カメラの視錐台で落とす前の全不透明)。CSM (平行光) とシャドウアトラス (局所光) が読む。
+    // どちらの影も描かないフレームは集めない
     shadowCasters_.clear();
     offscreenCasters_.clear();
     offscreenScreenSize_.clear();
-    const bool collectShadowCasters = enableShadows && FindDirectionalLight(f.lights) >= 0;
+    const bool collectShadowCasters = enableShadows
+        && (FindDirectionalLight(f.lights) >= 0 || (enableLocalShadows && HasLocalShadowLight(lightSelection)));
     // スキンのパレット: 直列段で必要なエントリを確保して評価を積み、並列段で評価し、キューの項目へ繋ぐ
     std::vector<PaletteJob> paletteJobs;
     struct PaletteBind {
@@ -1941,8 +1954,8 @@ void RenderSystem::RenderCascadeShadows(World& world, GraphicsDevice& device, Sh
 }
 
 // 局所ライトのシャドウアトラス (M54c: スポット 1 面 / M54d: 点光源 6 面): 影を投げるライトへ枠を前詰めで割り当てて描く
-void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
-                                       FrameContext& frame) // f は下の面番号ループが使う名前
+void RenderSystem::AllocateShadowAtlas(World& world, GraphicsDevice& device, ShaderManager& shaders,
+                                       RenderResources& resources, FrameContext& frame) // f は下の面番号ループが使う名前
 {
     RenderView& view = frame.view;
     SceneLightData& lights = frame.lights;
@@ -1960,6 +1973,9 @@ void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& sh
         int tileCount = 0;
         int culledFaces = 0;
         int casters = 0;
+        // 面カリングの判定は、全タイルが決まってから (画面外のキャスターの箱も判定に入れるため)
+        Frustum tileFrustums[kMaxShadowTiles];
+        bool tileTouchesScene[kMaxShadowTiles] = {};
         for (int i = 0; i < lightSelection.count && i < lights.count; ++i) {
             if (lightSelection.lights[i].shadowSlot < 0) {
                 continue;
@@ -1989,14 +2005,8 @@ void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& sh
                 // 定数バイアスはラスタライザ側 (傾斜依存) を主役にしているので極小。
                 // 0 にすると自己遮蔽の縞が出る距離帯が残る (実測で詰めた値)
                 tile.depthBias = 0.00015f;
-                // ★面カリング (M54d): この面の視錐台がシーン AABB に触れないなら描かない。
-                //   タイルは**確保したまま** pixelSize=0 にする — 連番を詰めると
-                //   shadowTile + 面番号の対応が崩れる。描かれないタイルはクリア値
-                //   1.0 (最遠) のままなので、サンプルしても「影なし」に落ちる
-                if (!WorldAabbInFrustum(BuildFrustum(tile.lightViewProj), sceneMin, sceneMax)) {
-                    tile.pixelSize = 0;
-                    ++culledFaces;
-                }
+                tileFrustums[base + f] = BuildFrustum(tile.lightViewProj);
+                tileTouchesScene[base + f] = WorldAabbInFrustum(tileFrustums[base + f], sceneMin, sceneMax);
             }
             lights.lights[i].shadowTile = base;
             lights.lights[i].shadowFaces = faces;
@@ -2004,7 +2014,86 @@ void RenderSystem::AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& sh
             ++casters;
         }
         if (tileCount > 0) {
-            shadowAtlas_.Render(device, shaders, queue_, resources, view.shadowTiles,
+            // 画面外のキャスター (視錐台で落とした不透明) のうち、どれかのタイルの視錐台に入るもの。
+            // bit t = タイル t。添字は offscreenCasters_ と同じ
+            static_assert(kMaxShadowTiles <= 16, "offscreenTileMask is 16 bits");
+            std::vector<uint16_t> offscreenTileMask(offscreenCasters_.size(), 0);
+            jobs::System().ParallelRanges(shadowCasters_.size(), 256, [&](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) {
+                    const ShadowCaster& sc = shadowCasters_[i];
+                    if (sc.offscreenIndex < 0) {
+                        continue;
+                    }
+                    uint16_t mask = 0;
+                    for (int t = 0; t < tileCount; ++t) {
+                        if (WorldAabbInFrustum(tileFrustums[t], sc.aabbMin, sc.aabbMax)) {
+                            mask = static_cast<uint16_t>(mask | (1u << t));
+                        }
+                    }
+                    offscreenTileMask[static_cast<size_t>(sc.offscreenIndex)] = mask;
+                }
+            });
+            uint16_t tilesWithOffscreen = 0;
+            for (const uint16_t mask : offscreenTileMask) {
+                tilesWithOffscreen = static_cast<uint16_t>(tilesWithOffscreen | mask);
+            }
+            // ★面カリング (M54d): この面の視錐台がシーン AABB にも画面外のキャスターにも触れないなら描かない。
+            //   タイルは**確保したまま** pixelSize=0 にする — 連番を詰めると
+            //   shadowTile + 面番号の対応が崩れる。描かれないタイルはクリア値
+            //   1.0 (最遠) のままなので、サンプルしても「影なし」に落ちる
+            for (int t = 0; t < tileCount; ++t) {
+                if (!tileTouchesScene[t] && (tilesWithOffscreen & (1u << t)) == 0) {
+                    view.shadowTiles[t].pixelSize = 0;
+                    ++culledFaces;
+                }
+            }
+
+            // 描くのは「画面内 + どれかのタイルに入る画面外のキャスター」。視錐台スイッチが OFF のときは
+            // 画面外の物も queue_ に入っているので、queue_ ではなく影の候補から組む (ON と描く集合を同じにする)
+            const RenderQueue* atlasQueue = &queue_;
+            if (!offscreenCasters_.empty()) {
+                // 画面外のスキンは、どれかのタイルが必要とするときだけパレットを評価する
+                std::vector<PaletteJob> paletteJobs;
+                std::vector<std::pair<size_t, SkinPaletteCache::Entry*>> offscreenBinds;
+                int paletteReused = 0;
+                atlasQueue_.Clear();
+                for (const ShadowCaster& sc : shadowCasters_) {
+                    if (sc.queueIndex >= 0 || offscreenTileMask[static_cast<size_t>(sc.offscreenIndex)] == 0) {
+                        continue;
+                    }
+                    const size_t offscreenIndex = static_cast<size_t>(sc.offscreenIndex);
+                    const RenderItem& item = offscreenCasters_[offscreenIndex];
+                    const auto* sm = world.GetComponent<SkinnedMeshComponent>(item.entity);
+                    const SkinnedModel* model = sm != nullptr ? resources.skinnedModels.Get(sm->model) : nullptr;
+                    if (model != nullptr) {
+                        offscreenBinds.emplace_back(
+                            offscreenIndex, AcquireSkinPalette(world, item.entity, *sm, *model,
+                                                               offscreenScreenSize_[offscreenIndex], paletteJobs,
+                                                               paletteReused));
+                    }
+                }
+                RunPaletteJobs(world, paletteJobs);
+                for (const auto& bind : offscreenBinds) {
+                    RenderItem& item = offscreenCasters_[bind.first];
+                    item.bones = bind.second->palette.data();
+                    item.boneCount = static_cast<int32_t>(bind.second->palette.size());
+                }
+                if (!paletteJobs.empty() || paletteReused != 0) {
+                    prof::RenderStats delta;
+                    delta.paletteEvaluated = static_cast<int>(paletteJobs.size());
+                    delta.paletteReused = paletteReused;
+                    prof::AddRenderStats(delta);
+                }
+                for (const ShadowCaster& sc : shadowCasters_) {
+                    if (sc.queueIndex >= 0) {
+                        atlasQueue_.opaque.push_back(queue_.opaque[static_cast<size_t>(sc.queueIndex)]);
+                    } else if (offscreenTileMask[static_cast<size_t>(sc.offscreenIndex)] != 0) {
+                        atlasQueue_.opaque.push_back(offscreenCasters_[static_cast<size_t>(sc.offscreenIndex)]);
+                    }
+                }
+                atlasQueue = &atlasQueue_;
+            }
+            shadowAtlas_.Render(device, shaders, *atlasQueue, resources, view.shadowTiles,
                                 tileCount, enableInstancing);
             view.shadowAtlasSRV = shadowAtlas_.SRV();
             view.shadowAtlasTexel =

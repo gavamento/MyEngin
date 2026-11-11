@@ -1,4 +1,4 @@
-// 描画系ショーケース (--rt-demo / --render-demo / --terrain-demo / --render-bench-demo / --render-bench-unique-demo)。
+// 描画系ショーケース (--rt-demo / --render-demo / --terrain-demo / --render-bench-demo / --render-bench-unique-demo / --culling-demo)。
 // DemoContent.cpp から領域ごとの翻訳単位へ分けたもの (M93g)。関数の契約は DemoContent.h、
 // ショーケースを跨いで使うヘルパーは DemoContentInternal.h。
 #include "Engine/Engine/Demo/DemoContent.h"
@@ -870,6 +870,96 @@ void BuildRenderBenchUniqueScene(EngineContext& ctx)
     }
     MYE_LOG_INFO("[render-bench-unique] %d unique mesh/material objects, %d skinned actors", kGridX * kGridZ,
                  actorIndex);
+}
+
+void BuildCullingShowcaseScene(EngineContext& ctx)
+{
+    Scene& s = *ctx.scene;
+    RenderResources& res = *ctx.resources;
+    s.SetName("culling_demo");
+
+    constexpr uint64_t kAnimTestControllerGuid = 0xb44c659f992d4a83ull; // BuildRenderBenchScene と同じ
+    const AssetID shader = AssetID{ HashStr("forward_lit") };
+    auto makeMaterial = [&](const char* name, float r, float g, float b) {
+        Material m;
+        m.shader = shader;
+        m.texture = res.textures.White();
+        m.baseColor = { r, g, b, 1.0f };
+        return res.materials.Register(name, m);
+    };
+    const AssetID matGround = makeMaterial("cull_ground", 0.70f, 0.70f, 0.68f);
+    const AssetID matBox = makeMaterial("cull_box", 0.80f, 0.45f, 0.35f);
+    const AssetID matCaster = makeMaterial("cull_caster", 0.45f, 0.60f, 0.85f);
+    const AssetID cube = res.meshes.Cube();
+    auto place = [&](const char* name, AssetID mesh, AssetID mat, float px, float py, float pz, float sx, float sy,
+                     float sz) {
+        GameObject go = s.CreateGameObject(name);
+        go.SetLocalPosition(px, py, pz);
+        go.SetLocalScale(sx, sy, sz);
+        auto* mr = go.AddComponent<MeshRendererComponent>();
+        mr->mesh = mesh;
+        mr->material = mat;
+        return go;
+    };
+
+    // ---- カメラ (固定。+Z 向き)。画面の横幅は z = 10 で x = ±20 ほど ----
+    GameObject camera = s.CreateGameObject("Main Camera");
+    {
+        auto* cam = camera.AddComponent<CameraComponent>();
+        cam->fovYDeg = 60.0f;
+        cam->farZ = 300.0f;
+    }
+    camera.SetLocalPosition(0.0f, 5.0f, -10.0f);
+    camera.SetLocalRotationEuler(15.0f, 0.0f, 0.0f);
+
+    // ---- 影付きの局所光 (太陽は置かない = 画面外キャスターが局所光の影だけで集められる経路) ----
+    // どちらも画面の外 (左右の端の外) にあり、画面の外のキャスターの影を画面の床へ伸ばす。
+    // アンビエントは最初のライトの値が全体に効く
+    GameObject pointLight = s.CreateGameObject("PointLight");
+    pointLight.SetLocalPosition(-40.0f, 10.0f, 10.0f);
+    {
+        auto* l = pointLight.AddComponent<LightComponent>();
+        l->type = lighttype::kPoint;
+        l->intensity = 14.0f;
+        l->range = 40.0f;
+        l->ambient = { 0.25f, 0.26f, 0.30f };
+        l->castShadow = 1;
+    }
+    GameObject spotLight = s.CreateGameObject("SpotLight");
+    spotLight.SetLocalPosition(60.0f, 8.0f, 10.0f);
+    spotLight.SetLocalRotationEuler(10.0f, -90.0f, 0.0f); // -X 向き、やや下
+    {
+        auto* l = spotLight.AddComponent<LightComponent>();
+        l->type = lighttype::kSpot;
+        l->intensity = 40.0f;
+        l->range = 50.0f;
+        l->spotInnerDeg = 25.0f;
+        l->spotOuterDeg = 40.0f;
+        l->castShadow = 1;
+    }
+
+    // ---- 画面内: 床と箱 3 つ ----
+    place("Ground", cube, matGround, 0.0f, -0.5f, 10.0f, 60.0f, 1.0f, 60.0f);
+    place("Box_0", cube, matBox, -6.0f, 1.0f, 10.0f, 2.0f, 2.0f, 2.0f);
+    place("Box_1", cube, matBox, 5.0f, 1.0f, 14.0f, 2.0f, 2.0f, 2.0f);
+    place("Box_2", cube, matBox, 0.0f, 1.0f, 22.0f, 2.0f, 2.0f, 2.0f);
+
+    // ---- 画面外の不透明キャスター (どれも視錐台の外) ----
+    // 点光源の範囲内: 影が x = -20 の内側の床まで伸びる静的メッシュ
+    place("CasterStatic", cube, matCaster, -30.0f, 3.0f, 10.0f, 3.0f, 6.0f, 3.0f);
+    // 点光源の -X 面の内側にだけある柱。床 (x >= -30) には届かないので絵には出ず、面カリングの確認に使う
+    place("CasterPillar", cube, matCaster, -46.0f, 3.0f, 10.0f, 2.0f, 6.0f, 2.0f);
+    // どちらの光の範囲にも入らない柱。アトラスへは描かれない
+    place("CasterFar", cube, matCaster, -120.0f, 3.0f, 10.0f, 3.0f, 6.0f, 3.0f);
+    // スポットの範囲内: スキンのキャラ (影が x = 20 の内側へ伸びる)。スキンの箱は全姿勢を包むので、余白を多めに外へ置く
+    GameObject actor = ModelLoader::Load(s, res, *ctx.shaders, ctx.assetsRoot + L"\\models\\anim_test.glb");
+    if (actor) {
+        actor.SetLocalPosition(45.0f, 0.0f, 10.0f);
+        actor.SetLocalScale(3.0f, 3.0f, 3.0f);
+        actor.AddComponent<AnimatorControllerComponent>()->controller = AssetID{ kAnimTestControllerGuid };
+    } else {
+        MYE_LOG_ERROR("[culling-demo] anim_test.glb could not be loaded (run tools\\gen_anim_test_gltf.ps1)");
+    }
 }
 
 } // namespace mye

@@ -281,6 +281,11 @@ void BuildRenderBenchScene(EngineContext& ctx, int scale = 1);
 // 画面で次第に小さくなるスキンのキャラ (URO の確認用)。既定の render_bench は変えない
 void BuildRenderBenchUniqueScene(EngineContext& ctx);
 
+// M99c: カリングの検証シーン (--culling-demo)。太陽なし。画面の左右の外に影付きの点光源とスポットを置き、
+// それぞれの範囲に入る画面外のキャスター (静的メッシュ / スキン) と、範囲外のキャスターを置く。
+// ★後続のカリングの検証は物を**末尾へ**足す (生成順を変えない)
+void BuildCullingShowcaseScene(EngineContext& ctx);
+
 // M91i: Compute.ForEach のデモ (--compute-demo)。C++ の State の群れ (CPU)、C++ の Fx の火花 (GPU 優先)、C# の State の群れ
 // (C# の CPU 版) を並べる。State の群れの位置はリプレイの照合に入る。--compute-force-cpu で Fx も CPU に回せる (replay_verify の computeab)
 void BuildComputeShowcaseScene(EngineContext& ctx);

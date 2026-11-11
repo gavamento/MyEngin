@@ -74,6 +74,8 @@ const ShowcaseDef kShowcases[] = {
       false }, // M90a
     { L"--render-bench-unique-demo", false, L"cache\\render_bench_unique.scene.json", nullptr,
       &BuildPlain<&BuildRenderBenchUniqueScene>, false }, // M90f
+    { L"--culling-demo", false, L"cache\\culling_showcase.scene.json", nullptr,
+      &BuildPlain<&BuildCullingShowcaseScene>, false }, // M99c
     { L"--compute-demo", false, L"cache\\compute_showcase.scene.json", nullptr, &BuildPlain<&BuildComputeShowcaseScene>,
       false }, // M91i
     { L"--2d-demo", false, L"cache\\2d_showcase.scene.json", nullptr, &BuildTwoD, false }, // M94w

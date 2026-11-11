@@ -429,7 +429,7 @@ private:
                                                 std::vector<PaletteJob>& jobs, int& reused);
     // jobs を並列に評価する (出力は互いに素なエントリ)。ボーン数超過の WARN はここ (直列) で出す
     void RunPaletteJobs(World& world, std::vector<PaletteJob>& jobs);
-    void AllocateShadowAtlas(GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
+    void AllocateShadowAtlas(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
                              FrameContext& f);
     void PrepareEnvironment(World& world, GraphicsDevice& device, ShaderManager& shaders, RenderResources& resources,
                             const FrameTarget& target, const CameraOverride* cameraOverride, FrameContext& f);
@@ -530,6 +530,7 @@ private:
     std::vector<ShadowCaster> shadowCasters_;
     std::vector<uint8_t> shadowCasterMask_;       // shadowCasters_ と同じ並び。bit c = カスケード c に入る
     std::vector<RenderItem> offscreenCasters_;  // 画面外のキャスター (スキンはカスケードに入ったときだけパレットを載せる)
+    RenderQueue atlasQueue_; // シャドウアトラスへ渡す不透明キュー (画面内 + 画面外のキャスター)。画面外のキャスターがあるときだけ組む
     RenderQueue cascadeQueues_[ShadowPass::kCascades]; // カスケードごとの描画リスト (ShadowPass が読む)
     // M44d: viewKey (1=runtime/2=SceneView/3=GameView) 毎の前フレーム viewProj。
     // 初フレーム/リサイズは valid=false → モーションブラー 0 (viewKey=0 は保存しない)

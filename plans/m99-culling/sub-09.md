@@ -11,6 +11,8 @@ spec 受け入れ条件 8, 12, 13, 14。
 - `docs\test_checklists.md`: カリングの手動確認項目 (各スイッチ、Scene View のトグル、固定、枠表示、Project Settings の保存)。
 - `tools\cull_verify.bat` (新規): `Runtime.exe` で視錐台 ON と `--no-frustum-culling` を撮り、`Editor.exe` の img-diff `--tol 0` で照合する。対象は既定ベンチ・`--culling-demo`・`--culling-2d-demo`・`--particle-demo`・`--2d-demo`・`--render-demo`。撮影条件は `shot_verify.bat` に揃える (`--warp`・`--font-embedded`・`--no-fxaa`、`cache\` の保存済みシーンを先に消す)。`docs\test_checklists.md` と engine_spec の検証表に載せる。CI に載せるかは実行時間を測ってから決め、SELF_EVAL に書く。
 - `ResolveOcclusionCulling` (`TagNames.cpp`) は sub-02 から本番経路で使われていない。EngineCliSelfTest の旧検査を `ResolveCullingSettings` 側へ寄せて削除するか、残す理由をコメントに書く。
+- engine_spec §6.14 の制限に、spec 7. の既知の制限 2 件 (`hasScene == false` で局所影アトラスを作らない、アトラスのスキンは bind 箱で判定) を書く。
+- `flow_title` の shot_verify FAIL (sub-03 で発見、diffPixels 944) の出所を切り分ける: 基点 `d52e91f3` を別ディレクトリへ出して Release をビルドし、同じ撮影条件で `flow_title` を撮って golden と比べる。基点でも同じ差なら M99 と無関係として報告 (golden は更新しない)、基点で一致するなら M99 のどのサブが原因かを特定して SELF_EVAL に書く。
 - 通し検証: `Editor.exe --selftest-full`、`tools\replay_verify.bat`、`tools\shot_verify.bat`、`tools\check_rules.ps1`。既定ベンチの `counts` を M99 前 (基点 `d52e91f3`) と比べ、新しい欄以外の一致を確かめる (受け入れ条件 8)。
 - Debug / Release / `--warp` の `counts` 一致 (既定ベンチ、`--culling-demo`、`--culling-2d-demo`)。
 
