@@ -592,6 +592,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.serverClient = config.netRole == mye::EngineConfig::kNetRoleClient;
     app.showcase = showcase;
     app.showcaseOptions = showcaseOptions;
+    app.showcaseOptions.renderBenchScale = cli.renderBenchScale;
     app.editActorPath = editActorPath;
     app.packageDir = packageDir;
     app.packageDds = packageDds;

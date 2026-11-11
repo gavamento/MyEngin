@@ -17,6 +17,11 @@ void BuildTerrain(EngineContext& ctx, const ShowcaseOptions& options)
     BuildTerrainShowcaseScene(ctx, options.terrainLodDistance, options.terrainSkirtDepth);
 }
 
+void BuildRenderBench(EngineContext& ctx, const ShowcaseOptions& options)
+{
+    BuildRenderBenchScene(ctx, options.renderBenchScale);
+}
+
 void BuildTwoD(EngineContext& ctx, const ShowcaseOptions& options)
 {
     BuildTwoDShowcaseScene(ctx, options.twoDNight, options.twoDStress);
@@ -65,7 +70,7 @@ const ShowcaseDef kShowcases[] = {
       false }, // M85
     { L"--anim-demo", false, L"cache\\anim_showcase.scene.json", nullptr, &BuildPlain<&BuildAnimShowcaseScene>,
       false }, // M89b
-    { L"--render-bench-demo", false, L"cache\\render_bench.scene.json", nullptr, &BuildPlain<&BuildRenderBenchScene>,
+    { L"--render-bench-demo", false, L"cache\\render_bench.scene.json", nullptr, &BuildRenderBench,
       false }, // M90a
     { L"--render-bench-unique-demo", false, L"cache\\render_bench_unique.scene.json", nullptr,
       &BuildPlain<&BuildRenderBenchUniqueScene>, false }, // M90f

@@ -324,6 +324,19 @@ const CliFlag kEngineCliFlags[] = {
     { L"--no-uro", CliValue::None, [](CliArgs& a) { a.c.animUro = false; return true; } },
     { L"--render-bench-cut-frame", CliValue::One,
       [](CliArgs& a) { a.c.renderBenchCutFrame = _wtoi64(a.v1); return true; } },
+    // ベンチシーンのグリッドを K 倍にする (--render-bench-demo の物量。BVH の採否の計測用)。
+    // ★範囲外・綴り違いを黙って 1 に戻さない — 計測の前提 (物量) が静かに変わる
+    { L"--render-bench-scale", CliValue::One,
+      [](CliArgs& a) {
+          wchar_t* end = nullptr;
+          const long k = std::wcstol(a.v1, &end, 10);
+          if (end == a.v1 || *end != L'\0' || k < kRenderBenchScaleMin || k > kRenderBenchScaleMax) {
+              std::fwprintf(stderr, L"invalid --render-bench-scale (expected an integer 1-32)\n");
+              return false;
+          }
+          a.x.renderBenchScale = static_cast<int>(k);
+          return true;
+      } },
     // M56d: SSR (Deferred のみ。HZB も一緒に組まれる)
     { L"--ssr", CliValue::None, [](CliArgs& a) { a.c.ssr = true; return true; } },
     // M56e: 反射プローブを 1 回だけ焼く (値は "X,Y,Z")。**明示指示専用** — 自動ベイクの口はどこにも無い

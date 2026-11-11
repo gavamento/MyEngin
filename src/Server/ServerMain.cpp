@@ -306,6 +306,7 @@ int wmain(int argc, wchar_t** argv)
         }
     }
     setup.config.developmentRun = !setup.config.projectRoot.empty(); // Runtime と同じ規則 (ABI v18)
+    setup.scene.showcaseOptions.renderBenchScale = cli.renderBenchScale;
 
     // --hash-diff / --rep-diff は Runtime と同じ差分ツール (窓も sim も要らない)
     if (!cli.hashDiffA.empty() && !cli.hashDiffB.empty()) {

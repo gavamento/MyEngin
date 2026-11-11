@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <numeric>
 #include <system_error>
 
 #include "Engine/Core/Asset/AssetGuidResolver.h"
@@ -83,6 +85,12 @@ struct CullCand {
 };
 
 constexpr size_t kCullGrain = 256; // これ未満は直列 (スレッド起動コスト回避)
+
+// 2 つの時刻の差 [ms]
+float ElapsedMs(std::chrono::steady_clock::time_point from, std::chrono::steady_clock::time_point to)
+{
+    return std::chrono::duration<float, std::milli>(to - from).count();
+}
 
 // ---- M65d: `--acoustic-dump N` の読み戻し検査 ----
 //
@@ -1103,6 +1111,7 @@ struct RenderSystem::PaletteJob {
 void RenderSystem::CollectDrawables(World& world, RenderResources& resources, const FrameTarget& target,
                                     FrameContext& f)
 {
+    const auto collectStart = std::chrono::steady_clock::now();
     RenderView& view = f.view;
     const Frustum& frustum = f.frustum;
     const bool cullEnabled = f.cullEnabled;
@@ -1368,6 +1377,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     hasScene = false;
 
     // ---- ステージ 1 (直列): 候補を収集 (順序 = ForEachArchetype/row = 決定的) ----
+    const auto stage1Start = std::chrono::steady_clock::now();
     std::vector<CullCand> cullCands;
     const bool interp = prevWorld != nullptr && interpAlpha < 1.0f; // M36b
     // M80f: root proxy の描画規則。破壊物の無いシーンに追加コストが出ないよう、
@@ -1470,6 +1480,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
 
     // ---- ステージ 2 (並列): 視錐台テスト + viewZ + LOD の段 (要素独立・純関数、M25) ----
     // 履歴は読むだけ (書き込みはステージ 3)。履歴の無いビュー (viewKey 0) は距離だけで決まる
+    const auto stage2Start = std::chrono::steady_clock::now();
     const LodSelectParams lodParams{ lodBias, static_cast<int32_t>(lodForcedStage) };
     const LodHistory* lodHistoryRead = (prevRenderKey != 0) ? &lodHistory_[prevRenderKey] : nullptr;
     const bool orthographic = view.proj._44 != 0.0f; // 透視は _44 == 0
@@ -1502,8 +1513,31 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
             }
         }
     });
+    const auto stage2End = std::chrono::steady_clock::now();
+
+    // 計測専用: 視錐台判定だけを同じ粒度で並列に回し直す (結果は捨てる。出力に使う値は 1 つも書かない)。
+    // stage2 の直後なので候補はキャッシュに載っており、stage2 内の判定よりやや速く出る
+    float frustumMs = 0.0f;
+    if (cullTimingProbe && cullEnabled) {
+        std::vector<uint8_t> probeVisible(cullCands.size(), 1);
+        const auto probeStart = std::chrono::steady_clock::now();
+        jobs::System().ParallelRanges(cullCands.size(), kCullGrain, [&](size_t a, size_t b) {
+            for (size_t i = a; i < b; ++i) {
+                const CullCand& c = cullCands[i];
+                probeVisible[i] = (c.meshPtr
+                                   && !RenderableInFrustum(frustum, c.world, c.boundsMin, c.boundsMax,
+                                                           c.alwaysVisible != 0, c.boundsPadding))
+                    ? 0
+                    : 1;
+            }
+        });
+        frustumMs = ElapsedMs(probeStart, std::chrono::steady_clock::now());
+        // 最適化で判定が消えないよう、結果の総和をメンバへ残す
+        cullProbeSink_ = std::accumulate(probeVisible.begin(), probeVisible.end(), size_t{ 0 });
+    }
 
     // ---- ステージ 3 (直列): 可視候補をキュー化 (スキン/AABB/キューは順序依存で直列) ----
+    const auto stage3Start = std::chrono::steady_clock::now();
     rtInstances_.clear();
     for (const CullCand& c : cullCands) {
         if (prevRenderKey != 0 && c.meshPtr != nullptr && c.meshPtr->lods.size() > 1) {
@@ -1626,6 +1660,7 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         }
     }
     prof::AddCulled(culledCount);
+    const auto stage3End = std::chrono::steady_clock::now();
 
     // ---- パレットの評価 (並列) と、キューの項目への接続 (直列、キューの添字は固定) ----
     RunPaletteJobs(world, paletteJobs);
@@ -1640,6 +1675,38 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
         delta.paletteReused = paletteReused;
         prof::AddRenderStats(delta);
     }
+
+    CullCpuMs sample;
+    sample.total = ElapsedMs(collectStart, std::chrono::steady_clock::now());
+    sample.stage1 = ElapsedMs(stage1Start, stage2Start);
+    sample.stage2 = ElapsedMs(stage2Start, stage2End);
+    sample.frustum = frustumMs;
+    sample.stage3 = ElapsedMs(stage3Start, stage3End);
+    cullCpuSamples_[cullCpuNext_] = sample;
+    cullCpuNext_ = (cullCpuNext_ + 1) % kCullCpuWindow;
+    cullCpuCount_ = (std::min)(cullCpuCount_ + 1, kCullCpuWindow);
+}
+
+RenderSystem::CullCpuMs RenderSystem::CullCpuTimes() const
+{
+    CullCpuMs avg;
+    if (cullCpuCount_ == 0) {
+        return avg;
+    }
+    for (int i = 0; i < cullCpuCount_; ++i) {
+        avg.total += cullCpuSamples_[i].total;
+        avg.stage1 += cullCpuSamples_[i].stage1;
+        avg.stage2 += cullCpuSamples_[i].stage2;
+        avg.frustum += cullCpuSamples_[i].frustum;
+        avg.stage3 += cullCpuSamples_[i].stage3;
+    }
+    const float inv = 1.0f / static_cast<float>(cullCpuCount_);
+    avg.total *= inv;
+    avg.stage1 *= inv;
+    avg.stage2 *= inv;
+    avg.frustum *= inv;
+    avg.stage3 *= inv;
+    return avg;
 }
 
 namespace {

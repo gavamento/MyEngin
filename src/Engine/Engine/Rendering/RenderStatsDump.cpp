@@ -90,6 +90,12 @@ RenderStatsDump CollectRenderStatsDump(const RenderSystem& renderSystem, uint64_
     d.gbufferMs = renderSystem.GbufferGpuMs();
     d.forwardOpaqueMs = renderSystem.ForwardOpaqueGpuMs();
     d.gbufferCpuMs = renderSystem.GbufferCpuMs();
+    const RenderSystem::CullCpuMs collect = renderSystem.CullCpuTimes();
+    d.collectTotalMs = collect.total;
+    d.collectStage1Ms = collect.stage1;
+    d.collectStage2Ms = collect.stage2;
+    d.collectFrustumMs = collect.frustum;
+    d.collectStage3Ms = collect.stage3;
     d.occlusionMs = renderSystem.OcclusionGpuMs();
     d.csmMs = renderSystem.ShadowCsmGpuMs();
     d.atlasMs = renderSystem.ShadowAtlasGpuMs();
@@ -147,7 +153,14 @@ std::string FormatRenderStatsJson(const RenderStatsDump& dump)
 
     // CPU 時間 [ms]。実測の参考値で、gpuMs と同じくゲートにしない
     out += "  \"cpuMs\": {\n";
-    AppendF(out, "    \"gbufferSubmit\": %.4f\n", static_cast<double>(dump.gbufferCpuMs));
+    AppendF(out, "    \"gbufferSubmit\": %.4f,\n", static_cast<double>(dump.gbufferCpuMs));
+    // CollectDrawables: 段 1 = 直列の候補収集 / 段 2 = 並列の判定 (frustum はその中の視錐台判定だけを別に測った値) /
+    // 段 3 = 直列のキュー化。total は地形・デカール・水面・スキンのパレットも含む全体
+    AppendF(out, "    \"collectTotal\": %.4f,\n", static_cast<double>(dump.collectTotalMs));
+    AppendF(out, "    \"collectStage1\": %.4f,\n", static_cast<double>(dump.collectStage1Ms));
+    AppendF(out, "    \"collectStage2\": %.4f,\n", static_cast<double>(dump.collectStage2Ms));
+    AppendF(out, "    \"collectFrustum\": %.4f,\n", static_cast<double>(dump.collectFrustumMs));
+    AppendF(out, "    \"collectStage3\": %.4f\n", static_cast<double>(dump.collectStage3Ms));
     out += "  }\n";
     out += "}\n";
     return out;

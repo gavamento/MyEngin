@@ -323,6 +323,18 @@ public:
     float ForwardOpaqueGpuMs() const { return forwardOpaqueGpuMs_; }
     // 不透明の本描画 (Deferred の GBuffer) の命令を積む CPU 時間 [ms]、直近 32 回の平均
     float GbufferCpuMs() const { return gbufferCpuMs_; }
+    // CollectDrawables の CPU 時間 [ms]。直近 32 回の平均 (参考値。ゲートにしない)
+    struct CullCpuMs {
+        float total = 0.0f;   // CollectDrawables 全体 (地形・デカール・水面・スキンのパレットも含む)
+        float stage1 = 0.0f;  // 直列: メッシュ候補の収集
+        float stage2 = 0.0f;  // 並列: LOD / URO / viewZ / 視錐台判定
+        float frustum = 0.0f; // 視錐台判定だけの時間。cullTimingProbe が true のときだけ測る
+        float stage3 = 0.0f;  // 直列: 可視候補のキュー化
+    };
+    CullCpuMs CullCpuTimes() const;
+    // true のとき stage2 の後に視錐台判定だけの並列パスを捨て結果で 1 回走らせて frustum を測る
+    // (出力には触れない。--render-stats-dump の run だけが立てる)
+    bool cullTimingProbe = false;
     // GPU オクルージョンの判定 + max-Z ピラミッド構築 (フェーズ 1/2 の描画は GBuffer 側に入る)
     float OcclusionGpuMs() const { return occlusionGpuMs_; }
     float FrameGpuMs() const { return frameTimer_.Milliseconds(); }
@@ -446,6 +458,12 @@ private:
     float gbufferGpuMs_ = 0.0f;
     float forwardOpaqueGpuMs_ = 0.0f;
     float gbufferCpuMs_ = 0.0f;
+    // CullCpuMs の直近 kCullCpuWindow 回の標本 (リング)
+    static constexpr int kCullCpuWindow = 32;
+    CullCpuMs cullCpuSamples_[kCullCpuWindow] = {};
+    int cullCpuCount_ = 0;
+    int cullCpuNext_ = 0;
+    size_t cullProbeSink_ = 0; // cullTimingProbe の判定結果の総和 (最適化で判定が消えないための受け皿)
     float occlusionGpuMs_ = 0.0f;
     GpuTimer frameTimer_;
     bool frameTimerInit_ = false; // 遅延 Init 済みか (ReleaseGpu で戻す)

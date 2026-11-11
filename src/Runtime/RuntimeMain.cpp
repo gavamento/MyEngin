@@ -141,6 +141,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         }
         LocalFree(argv);
     }
+    app.showcaseOptions.renderBenchScale = cli.renderBenchScale;
     // M93: オンライン (ロビー・P2P・ボイス)。生成関数を渡すのは Runtime の main だけ (EngineLoop.h の注記)。
     // ホストが起動する Server.exe には、この Runtime と同じ起動シーンを渡す
     config.createOnlineService = &mye::CreateOnlineService;

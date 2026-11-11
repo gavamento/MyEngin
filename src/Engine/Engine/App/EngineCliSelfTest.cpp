@@ -264,6 +264,23 @@ bool RunEngineCliSelfTest()
     r = RunParse({});
     check(r.config.occlusionCulling && r.config.renderBenchCutFrame < 0,
           "occlusion culling is on and the camera cut is off by default");
+    // --render-bench-scale K: 1..32 の整数だけ。範囲外・綴り違いは解析エラー (黙って 1 に戻さない)
+    r = RunParse({ L"--render-bench-scale", L"4" });
+    check(r.consumed == 1 && r.errors == 0 && r.extras.renderBenchScale == 4, "--render-bench-scale 4");
+    r = RunParse({ L"--render-bench-scale", L"1" });
+    check(r.consumed == 1 && r.extras.renderBenchScale == 1, "--render-bench-scale 1 (lower bound)");
+    r = RunParse({ L"--render-bench-scale", L"32" });
+    check(r.consumed == 1 && r.extras.renderBenchScale == 32, "--render-bench-scale 32 (upper bound)");
+    r = RunParse({ L"--render-bench-scale", L"0" });
+    check(r.errors == 1 && r.extras.renderBenchScale == 1, "--render-bench-scale 0 is a parse error");
+    r = RunParse({ L"--render-bench-scale", L"33" });
+    check(r.errors == 1 && r.extras.renderBenchScale == 1, "--render-bench-scale 33 is a parse error");
+    r = RunParse({ L"--render-bench-scale", L"abc" });
+    check(r.errors == 1 && r.extras.renderBenchScale == 1, "--render-bench-scale abc is a parse error");
+    r = RunParse({ L"--render-bench-scale", L"4x" });
+    check(r.errors == 1, "--render-bench-scale 4x is a parse error");
+    r = RunParse({});
+    check(r.extras.renderBenchScale == 1, "the bench scale is 1 by default");
     {
         // 実効値 = ファイルの値 && CLI。--no-occlusion はファイルを書き換えない
         namespace fs = std::filesystem;

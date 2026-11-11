@@ -12,6 +12,7 @@ struct ShowcaseOptions {
     float terrainSkirtDepth = 0.0f;  // 0 = 自動 / < 0 = スカート無し (クラックの A/B 撮影用)
     bool twoDNight = false;          // --2d-demo に Light2D (Global 暗 + スポット 2 灯) を足す
     bool twoDStress = false;         // --2d-demo に負荷計測用の Sprite2D 2000 枚とタイル 15000 セルを足す
+    int renderBenchScale = 1;        // --render-bench-scale K (1..32): --render-bench-demo のグリッドを K 倍にする
 };
 
 // デモ / ショーケースのシーン 1 本 = --*-demo フラグ 1 本 (表は ShowcaseScenes.cpp の kShowcases)。

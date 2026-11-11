@@ -4,6 +4,7 @@
 #include "Engine/Engine/Demo/DemoContent.h"
 #include "Engine/Engine/Demo/DemoContentInternal.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <iterator>
@@ -594,7 +595,7 @@ void BuildTerrainShowcaseScene(EngineContext& ctx, float lodDistance, float skir
     s.GetWorld().ApplyStructuralChanges();
 }
 
-void BuildRenderBenchScene(EngineContext& ctx)
+void BuildRenderBenchScene(EngineContext& ctx, int scale)
 {
     Scene& s = *ctx.scene;
     RenderResources& res = *ctx.resources;
@@ -742,7 +743,32 @@ void BuildRenderBenchScene(EngineContext& ctx)
         place(name, lodSphere, gridMats[lodIndex % 3], a.x, 3.0f, a.z, 6.0f, 6.0f, 6.0f);
         ++lodIndex;
     }
-    MYE_LOG_INFO("[render-bench] %d grid objects, %d skinned actors", kGridX * kGridZ, actorIndex);
+
+    // ---- --render-bench-scale K: グリッドの複製を (K - 1) 枚足す (K = 1 は何も足さない = 従来どおり) ----
+    // ★既存の生成順を変えないよう末尾へ足す。複製は元のグリッドの奥 (+Z) へ 4 列ずつ並べるので、
+    //   視錐台の外にも多く落ちる (広い屋外シーンの想定)。座標・材質は添字の整数式のみ
+    constexpr int kCopiesPerRow = 4;
+    constexpr float kCopyPitchZ = 184.0f; // グリッドの奥行き (59 * 3 m) より少し広い
+    constexpr float kCopyPitchX = 184.0f;
+    for (int copy = 1; copy < scale; ++copy) {
+        const int n = copy - 1;
+        const float offsetX = static_cast<float>((n % kCopiesPerRow) * 2 - (kCopiesPerRow - 1)) * kCopyPitchX * 0.5f;
+        const float offsetZ = static_cast<float>(n / kCopiesPerRow + 1) * kCopyPitchZ;
+        for (int iz = 0; iz < kGridZ; ++iz) {
+            for (int ix = 0; ix < kGridX; ++ix) {
+                const float height = 1.0f + static_cast<float>((ix * 7 + iz * 13) % 5) * 0.5f;
+                const float x = (static_cast<float>(ix) - 30.0f) * kGridStep + offsetX;
+                const float z = 22.0f + static_cast<float>(iz) * kGridStep + offsetZ;
+                char name[32];
+                std::snprintf(name, sizeof(name), "BenchK%02d_%02d_%02d", copy, ix, iz);
+                const bool isCube = ((ix + iz) % 2) == 0;
+                place(name, isCube ? cube : sphere, gridMats[(ix * 3 + iz) % 3], x, height * 0.5f, z, 1.6f, height,
+                      1.6f);
+            }
+        }
+    }
+    MYE_LOG_INFO("[render-bench] %d grid objects (scale %d), %d skinned actors", kGridX * kGridZ * (std::max)(scale, 1),
+                 scale, actorIndex);
 }
 
 void BuildRenderBenchUniqueScene(EngineContext& ctx)

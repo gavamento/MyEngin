@@ -16,7 +16,12 @@ struct EngineCliExtras {
     std::wstring hashDiffA;    // --hash-diff A B (M52a)
     std::wstring hashDiffB;
     std::wstring writeContentManifest; // --write-content-manifest PATH (M81c)
+    int renderBenchScale = 1;          // --render-bench-scale K (1..32): ベンチシーンのグリッドを K 倍にする
 };
+
+// --render-bench-scale の許容範囲
+constexpr int kRenderBenchScaleMin = 1;
+constexpr int kRenderBenchScaleMax = 32;
 
 enum class CliParse {
     NotMine,  // 共通フラグではない。値が足りない場合もこれ (= Main 側の分岐へ回す)

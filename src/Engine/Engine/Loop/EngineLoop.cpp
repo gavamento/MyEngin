@@ -474,6 +474,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
     renderSystem.enableOcclusionCulling = ResolveOcclusionCulling(assetsRoot, config.occlusionCulling);
     // 撮影・計測の run だけ統計の読み戻しで GPU を待つ (counts を構成間で一致させる)。対話は待たない
     renderSystem.occlusionStatsWait = config.IsCaptureRun();
+    renderSystem.cullTimingProbe = !config.renderStatsDumpPath.empty(); // 視錐台判定だけの CPU 時間も測る
     renderSystem.lodBias = config.lodBias;                 // --lod-bias
     renderSystem.lodForcedStage = config.lodForce;         // --lod-force
     renderSystem.enableAnimUro = config.animUro;           // --no-uro

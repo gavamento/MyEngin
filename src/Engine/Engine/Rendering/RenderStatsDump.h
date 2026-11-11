@@ -38,6 +38,12 @@ struct RenderStatsDump {
     float postFxMs = 0.0f;
     // CPU 時間 [ms]。GBuffer の命令を積む時間の直近 32 回の平均 (Deferred のみ)
     float gbufferCpuMs = 0.0f;
+    // CollectDrawables の CPU 時間 [ms] (直近 32 回の平均。frustum は --render-stats-dump の run だけが測る)
+    float collectTotalMs = 0.0f;
+    float collectStage1Ms = 0.0f;
+    float collectStage2Ms = 0.0f;
+    float collectFrustumMs = 0.0f;
+    float collectStage3Ms = 0.0f;
 };
 
 // 直近の Render が済んだ時点の統計を集める (prof の累積値と RenderSystem の計測口を読むだけ)
