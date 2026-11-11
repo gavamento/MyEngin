@@ -57,6 +57,12 @@
 #                      矩形の右端がちょうど画素の中心に乗る列があり、その 1 列を塗るかどうかが
 #                      WARP の版で反転する。ランナーでは白い縦線 20 画素が背景色になる
 #                      (maxDiff=219、9/13 から同じ画素)。tol では守れない
+#   MYE_SHOT_SKIP_2D … 2D ショーケース 2 枚 (2d / 2d_lights、M94w) を飛ばす。
+#                      ピクセルパーフェクトの低解像度 RT で、丘のタイルの texel が丸ごと隣の texel の
+#                      色に入れ替わる (境目ちょうどの点サンプリングが WARP の版で反転すると見ている)。
+#                      ランナーでは土の texel 3 個が隣の濃い色になる (3 倍拡大で 3x3 = 27 画素、
+#                      maxDiff=32 / 2d_lights は同じ場所で 9 画素、run 43021878816)。tol では守れない。
+#                      開発機では maxDiff=0 なのでローカルの判定に残す
 #
 #   MYE_CULL_SKIP_CONFIGS … cull_verify.bat の検査 3 (Release --warp / Release 実 GPU / Debug 実 GPU の counts 比較) を飛ばす。
 #                      runner に実 GPU も Debug の Runtime 撮影の前提も無い。検査 1 / 2 (視錐台 ON/OFF の
@@ -108,6 +114,7 @@ jobs:
       MYE_SHOT_SKIP_PARTICLE: 1
       MYE_SHOT_SKIP_RT: 1
       MYE_SHOT_SKIP_UI_WIDGETS: 1
+      MYE_SHOT_SKIP_2D: 1
       MYE_COLLAB_REQUIRED: 1
     steps:
       - uses: actions/checkout@v4
