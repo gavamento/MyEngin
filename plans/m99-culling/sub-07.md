@@ -7,7 +7,7 @@
 ## やること
 spec 4.1.4 / 受け入れ条件 7 (と 1, 2 の画面サイズ部分)。
 - 判定 (純関数): s = `BoxScreenSize(ワールド AABB, カメラ位置, proj._22, 正射影か)`、`lodBias` は掛けない。s < 閾値で落とす。前フレームにこのビューで画面サイズで落とした物は s < 閾値 × 1.1 の間は落としたまま。
-- 履歴: ビュー別 (viewKey 1..3)、`LodHistory` と同じ作り (ステージ 2 は読むだけ、ステージ 3 で書く)、`ResetRenderHistory()` とサイズ変更で捨てる。
+- 履歴: ビュー別 (viewKey 1..3)、`LodHistory` と同じ作り (ステージ 2 は読むだけ、ステージ 3 で書く)、`ResetRenderHistory()` で捨てる (サイズ変更では捨てない。review-1 #1)。
 - 除外: `RenderCulling.exemptFromSizeCulling`、`alwaysVisible`。 `RenderCulling` は sub-06 と同じ解決 (自分 → 祖先の最初の 1 個) で引く。
 - 掛けるビュー・影・フィット・RT の扱いは距離と同じ (sub-06)。判定順は 視錐台 → 距離 → 画面サイズ。`culledScreenSize` に数える。
 - `--cull-min-screen-size F` で起動中だけ ON・閾値 F。
@@ -48,3 +48,4 @@ SELF_EVAL: sub-07 (round 1)
 
 ## フィードバック履歴
 - round 1: VERDICT OK (planner、2026-11-11)。受け入れ 1 (単体 10 件: 閾値の内外・ちょうど・帯の保持と復帰・除外 2 種・閾値 0・NaN・履歴なし・Clear 後)、2 (`--cull-min-screen-size 0.02` で culledScreenSize 1894、既定は 0 で counts が sub-06 後と一致)、3 (shot-frame 60 / 61 の counts 一致)、4 (Debug / Release / WARP / GPU / `--no-jobs` の counts 一致) を確認。sub-06 から持ち越した should (`Tags::EffectiveMask` を呼ぶ) は解消。replay_verify PASS。[追加] 3 件は採用 (spec 4.1.4 に記録)。shadowCascadeCasters が変わらないのは、0.02 未満になる遠景が CSM の最遠カスケードの外にあるためと読める (候補 3686 → 1781 は画面外リストからも除いた結果) — 矛盾なし。持ち越し: 除外フラグの RenderSystem 経由の確認は sub-08 (should)、counts の比較を目視でなく機械で行うのは sub-09 (nit)。
+- 追記 (planner、reviewer round 1 #1): 上の「サイズ変更で捨てる」は実装されておらず、仕様から削除した (画面サイズは比率なのでリサイズで値が変わらない)。コードは変えない。engine_spec の記述は sub-10 で直す。

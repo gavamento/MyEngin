@@ -56,6 +56,7 @@
   - カリング用カメラの固定、落とした物の理由別の枠表示、固定した視錐台の線、理由別の数 (Profiler と `--render-stats-dump`)
   - BVH の計測と採否の判定 (採るならサブを足す)
   - 検証用のコード生成シーン、回帰テスト、engine_spec / ADR-038 / test_checklists
+  - `tools\cull_verify.bat` を CI (`.github\workflows\ci.yml`) の shot_verify の次に載せる (`MYE_CULL_SKIP_CONFIGS=1`、WARP のみ。2026-11-11 ユーザー判断、sub-10)
 - やらない (明示的に外したもの):
   - ポータル / PVS、クラスタードライトカリング、オクルージョンの対象拡大 (スキン・影パス) — ユーザーが選ばなかった
   - 距離・画面サイズカリングをメッシュ以外 (パーティクル・2D・デカール・地形) に掛けること
@@ -103,7 +104,7 @@
 
 **4.1.4 画面サイズカリング (メッシュのみ)**
 - s = `BoxScreenSize(ワールド AABB, カメラ位置, proj._22, 正射影か)` (LOD と同じ式、`lodBias` は掛けない)。s < 閾値で落とす。
-- ヒステリシス: 前フレームにこのビューで画面サイズで落とした物は s < 閾値 × 1.1 の間は落としたまま。履歴は視錐台・距離で落ちた物にも画面サイズの判定結果として書く (理由の計上とは独立。sub-07 で確定)。閾値が 0 以下なら判定しない。履歴はビュー別 (viewKey 1..3)、`ResetRenderHistory()` とサイズ変更で捨てる。履歴が無いときは閾値だけで決まる。
+- ヒステリシス: 前フレームにこのビューで画面サイズで落とした物は s < 閾値 × 1.1 の間は落としたまま。履歴は視錐台・距離で落ちた物にも画面サイズの判定結果として書く (理由の計上とは独立。sub-07 で確定)。閾値が 0 以下なら判定しない。履歴はビュー別 (viewKey 1..3)、`ResetRenderHistory()` で捨てる。画面サイズは画面の高さに対する比率 (`proj._22` は fovY から作る) なので、ビューのサイズ変更では値が変わらず、履歴を捨てる必要はない (review-1 #1 で「サイズ変更で捨てる」を削除。LOD の履歴も同じ扱い)。履歴が無いときは閾値だけで決まる。
 - `RenderCulling.exemptFromSizeCulling` が true の物は落とさない。`alwaysVisible` も落とさない。
 - 掛けるビュー・影の扱いは距離と同じ。
 - 判定の順序 (理由の付け方): 視錐台 → 距離 → 画面サイズ。先に当たった理由を 1 つだけ付ける (数は二重に数えない)。視錐台 OFF のときに視錐台の外にある物は、距離・画面サイズで落ちればその理由で数える。
@@ -172,6 +173,7 @@
 12. 決定性: 新しい欄を含む `counts` が Debug / Release / `--warp` で一致。`--no-jobs` と結果が一致。— dump 3 本の比較
 13. 文書とルール: engine_spec §6.14 (切り替え・距離・画面サイズ・追加経路・局所影・デバッグ・CLI 表)、§6.6 の制限表、ADR-038、`docs\test_checklists.md` を更新。ローカライズは両言語。`tools\check_rules.ps1` が 0 error。
 14. 通し: `Editor.exe --selftest-full` PASS、`tools\replay_verify.bat` PASS、`tools\shot_verify.bat` PASS (8 の例外を除く)。視錐台 ON/OFF の全画素一致を回帰として回せるスクリプト `tools\cull_verify.bat` が PASS。
+15. CI: `ci.yml` の shot_verify の次に cull_verify の step があり (`MYE_CULL_SKIP_CONFIGS=1`)、YAML として解析でき、CI と同じシェル (cmd)・引数・環境変数でローカル実行して PASS、検査が失敗したら step が非 0 で終わる。CI 上の実走は master の CI が緑に戻るまで観測できないので未検証として残す。— sub-10 の検証
 
 ## 6. サブ分割
 
@@ -186,6 +188,7 @@
 | sub-07 | 画面サイズカリング | sub-06 | 1, 2, 7 | M99g: 画面上で小さすぎる物を落とす画面サイズカリングを追加する |
 | sub-08 | カリング用カメラの固定と理由別の可視化 | sub-07 | 2, 9 | M99h: カリング用カメラの固定と、落とした物の理由別表示を追加する |
 | sub-09 | 文書と通し検証 | sub-08, sub-04, sub-05 | 8, 12, 13, 14 | M99i: カリングの拡充を engine_spec と ADR-038 に記録する |
+| sub-10 | cull_verify を CI に載せる (+ review-1 #1 の文書修正) | sub-09 | 13 (#1 の文書), 15 | M99j: カリングの回帰 (cull_verify) を CI に載せる |
 
 (sub-01 の計測で BVH は採用条件を満たさず見送り。BVH のサブは足さない。)
 
@@ -200,7 +203,7 @@
 - `flow_title` の shot_verify FAIL (diffPixels 944、画面下の操作説明の文字行): sub-09 で基点 `d52e91f3` の exe でも同じ差 (maxDiff 62、worst pixel (278,469)) と確認。**M99 と無関係の既存 FAIL**。golden は更新しない。
 - `--selftest-full` の `disturbancelong` FAIL (tick 600 の hash が焼いた値と違う): sub-09 で基点 `d52e91f3` でも同じ hash で FAIL と確認。**M99 と無関係の既存 FAIL** (M96 のスイート)。受け入れ条件 14 の「`--selftest-full` PASS」はこの 1 スイートを除いて満たす。
 - `Runtime.exe --screenshot` を `--frames` 無しで使うと終了しない: 基点でも同じ既存の挙動 (EngineLoop は maxFrames > 0 でしかループを抜けない)。M99 では変えない。
-- CI への `tools\cull_verify.bat` (`MYE_CULL_SKIP_CONFIGS=1`、WARP のみ約 2 分 40 秒) の組み込みは M99 では行わない: master の CI が M98e 以降ビルド段で failure のままで、載せた結果を観測できないため。CI が緑に戻ったら `shot_verify` の次に 1 行足す (申し送り)。
+- CI への `tools\cull_verify.bat` の組み込み: planner は「CI が緑に戻ってから」と裁定したが、**2026-11-11 にユーザーが「今載せる」と判断** (sub-10)。リスク: master の CI は M98e 以降ビルド段で failure のままなので、載せた step が CI 上で実際に PASS するかは CI が緑に戻るまで観測できない。sub-10 はローカルで確かめられる範囲 (YAML の構文、CI と同じ引数・環境変数・シェルでの PASS、失敗の終了コードの伝わり方) を受け入れ条件にし、CI 上の実走は未検証として残す。
 
 ## 8. 変更履歴
 
@@ -214,3 +217,5 @@
 - 2026-11-11 (sub-07 round 1): 画面サイズの履歴は理由の計上と独立に全候補へ書くこと、閾値 0 以下は判定しないことを 4.1.4 に記録。
 - 2026-11-11 (sub-08 round 1): 固定の控えを取る時点、枠の上限の共有、固定が非メッシュ経路にも効くことを 4.1.7 に記録。
 - 2026-11-11 (sub-09 round 1): 既存 FAIL 2 件 (flow_title、disturbancelong) は基点でも同じと確認し、受け入れ条件 8 / 14 の例外として 7. に記録。`--frames` 無しの撮影が終わらない件は既存挙動。cull_verify の CI 組み込みは見送り (CI が赤のため)。
+- 2026-11-11 (ユーザー): sub-09 の `[ユーザーに聞ける]`「cull_verify を CI に載せる時期」に「今載せる」と回答 (planner の裁定の逆)。3. のやる・5. の受け入れ条件 15・6. の sub-10・7. のリスクを更新。実装はレビュー round 1 の結果が出てから、修正のサブと一緒に回す。
+- 2026-11-11 (reviewer round 1 #1): 4.1.4 の「サイズ変更で履歴を捨てる」は実装されておらず、必要もない (比率なのでリサイズで値が変わらない) ので削除。engine_spec.md:1082 の同じ記述は sub-10 で直す。(reviewer round 1 #3): sub-10 の「cull_verify に --no-audio が無い」は planner の読み違い (`tools\cull_verify.bat:50` の `COMMON` に付いている)。sub-10 を「付いていることを確かめる」に直した。

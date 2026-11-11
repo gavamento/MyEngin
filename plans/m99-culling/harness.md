@@ -11,6 +11,7 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
+| 1 | PASS | 4/5/4/4 | minor 3 (履歴の「サイズ変更で捨てる」記述が未実装 / 枠の色が淡く化ける / sub-10 の --no-audio は既に付いている) |
 | sub-01 | OK | 1 | 877dc523 | 段別 CPU 時間・BVH 採否 → 見送り (ADR-038) |
 | sub-02 | OK | 1 | acc258b4 | 設定の土台 + 視錐台スイッチ |
 | sub-03 | OK | 1 | 2485dd6c | 局所影の画面外キャスター (--culling-demo) |
@@ -19,7 +20,8 @@
 | sub-06 | OK | 2 | a523e363 | 距離カリング + RenderCulling (TypeId 100、SimSnapshot v82、ABI 不変)。round 1 は祖先継承で REWORK |
 | sub-07 | OK | 1 | 939b246a | 画面サイズカリング (+ sub-06 の should 解消) |
 | sub-08 | OK | 1 | 565a1d26 | カメラ固定 + 理由別表示 (+ CPU プールを cullFrustum へ、exempt の実経路確認) |
-| sub-09 | OK | 1 | (このコミット) | 文書 (engine_spec §6.14/§6.6、ADR-038 確定、test_checklists) + cull_verify.bat + 通し検証 |
+| sub-09 | OK | 1 | 3f97eb03 | 文書 (engine_spec §6.14/§6.6、ADR-038 確定、test_checklists) + cull_verify.bat + 通し検証 |
+| sub-10 | OK | 1 | (このコミット) | cull_verify を CI に載せる (ユーザー判断で追加) + --no-audio を揃える |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -38,6 +40,7 @@
   - U3: Scene View には既定で掛けず、セッション限りのトグルで掛けられるようにする
   - U4: GPU パーティクルの箱は記述子から上界を計算する (乱流・かき乱し・速度継承あり、ワールド空間で動いたものは常に描く)
   - U5: BVH は sub-01 の計測で採用条件を満たしたときだけ足す (事前質問で合意済み)
+  - 2026-11-11 cull_verify の CI 組み込み: ユーザーは「今載せる」(planner の裁定「CI が緑に戻ってから」とは逆)。planner へ補足として送り、サブを足して実装する
   - 仕様の確定: spec 5. の受け入れ条件 14 項目と仮置き (画面サイズは既定 OFF、閾値 0.005、ヒステリシス 10%) でユーザーが確定
 
 ## 申し送り (セッション跨ぎ)
@@ -56,4 +59,5 @@
 - sub-09: nit Release の --selftest-full は未実施。cull_verify の CI 組み込みは見送り ([ユーザーに聞ける] 裁定: CI が緑に戻ってから shot_verify の次に MYE_CULL_SKIP_CONFIGS=1 で 1 行)
 - ユーザー目視: docs	est_checklists.md の M99 節 (UI 一式、Scene View トグル、固定・枠、距離の青)。任意: sub-01 nit 2
 - 番号 (M99 後): ABI v35 = 202、SimSnapshot v82、TypeId 100、ADR-038、check_rules 規則 18
+- sub-10: CI 上の実走は master の CI が緑に戻るまで観測できない。緑に戻ったら cull_verify の step のログを確かめる
 - 司会の事前調査は `plans\m99-culling\design-draft.md`。planner の出発点で、裁定で変えてよい。

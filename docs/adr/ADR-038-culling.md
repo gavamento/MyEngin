@@ -49,7 +49,7 @@
 
 ### 検証の作り
 
-- 視錐台 ON/OFF の全画素一致を `tools\cull_verify.bat` が回す (既定ベンチ・`--culling-demo`・`--culling-2d-demo`・`--particle-demo`・`--2d-demo`・`--render-demo`、tol 0)。固定の検査 (`--cull-freeze-frame` + `--render-bench-cut-frame`) と、`counts` の構成間一致 (Release `--warp` / Release / Debug) もここに同居する。
+- 視錐台 ON/OFF の全画素一致を `tools\cull_verify.bat` が回す (既定ベンチ・`--culling-demo`・`--culling-2d-demo`・`--particle-demo`・`--2d-demo`・`--render-demo`、tol 0)。固定の検査 (`--cull-freeze-frame` + `--render-bench-cut-frame`) と、`counts` の構成間一致 (Release `--warp` / Release / Debug) もここに同居する。CI では shot_verify の次に `MYE_CULL_SKIP_CONFIGS=1` (構成間一致を飛ばす) で回る。
 - 局所影の穴は `--culling-demo` が捕まえる (修正前は ON/OFF が 12360 画素ずれる)。距離・画面サイズは `--culling-distance-demo` と `DistanceCullSelfTest` (判定関数)。
 
 ## 計測 (BVH の採否)

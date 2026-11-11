@@ -1006,5 +1006,5 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 ### 回帰
 
 - [ ] `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` が全スイート PASS する (`disturbancelong` の「final hash at tick 600 equals the baked value」は基点 `d52e91f3` でも FAIL する別件)
-- [ ] `tools\cull_verify.bat` が PASS する (Release と Debug をビルドした後。CI 相当は `MYE_CULL_SKIP_CONFIGS=1`)
+- [ ] `tools\cull_verify.bat` が PASS する (Release と Debug をビルドした後。CI でも `MYE_CULL_SKIP_CONFIGS=1` で回る)
 - [ ] `tools\check_rules.ps1` が 0 error、`tools\replay_verify.bat` が全ジョブ PASS、`tools\shot_verify.bat` が PASS する (`flow_title` の差 (diffPixels=944) は M99 着手前の基点 `d52e91f3` でも同じに出る別件)

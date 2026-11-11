@@ -58,6 +58,10 @@
 #                      WARP の版で反転する。ランナーでは白い縦線 20 画素が背景色になる
 #                      (maxDiff=219、9/13 から同じ画素)。tol では守れない
 #
+#   MYE_CULL_SKIP_CONFIGS … cull_verify.bat の検査 3 (Release --warp / Release 実 GPU / Debug 実 GPU の counts 比較) を飛ばす。
+#                      runner に実 GPU も Debug の Runtime 撮影の前提も無い。検査 1 / 2 (視錐台 ON/OFF の
+#                      全画素一致、カメラ固定) は WARP だけで回り、tol 0 のまま判定する
+#
 # ★MYE_SHOT_SKIP_ACOUSTIC (スクショ 18/19 枚目、M65e) は**わざと立てていない**。
 #   波面は整数チャンファ距離 = 機種非依存、残光の符号化は sqrt (IEEE-754 で正しく
 #   丸められる)、合成は lerp と乗算だけで**しきい値分岐もテンポラル蓄積も無い** —
@@ -155,6 +159,15 @@ jobs:
       - name: screenshot regression (12 shots, no-fxaa/taa/ssr/froxel/fog/particle/rt)
         shell: cmd
         run: tools\shot_verify.bat
+
+      # ④b カリングの回帰 (M99i)。視錐台 ON / OFF の全画素一致 (tol 0) とカメラ固定を
+      #    WARP で回す。MYE_CULL_SKIP_CONFIGS で実 GPU / Debug の構成間比較は飛ばす。
+      #    replay_verify が先に Release をビルドしている前提 (bat はビルドしない)
+      - name: culling verify (frustum on/off pixel match, frozen camera)
+        shell: cmd
+        env:
+          MYE_CULL_SKIP_CONFIGS: 1
+        run: tools\cull_verify.bat
 
       # ⑤ 配布パッケージのスモーク。GUI の「ビルドを作成」と同一パイプラインを
       #    CLI で回す (M51j)。成否は終了コードに載る (M52b)
