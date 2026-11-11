@@ -2789,6 +2789,15 @@ struct RenderCullingComponent {
     static inline ComponentTypeId sTypeId = kInvalidComponentType;
 };
 
+// ---- カメラの持ち主 (M101、TypeId=101) ----
+// 付けたカメラは lane のマシンでだけ描画の候補になる (オンラインで各自が自分のカメラを見る)。
+// 選び方は Rendering/CameraSelect.h。付いていないカメラは全レーンの候補 (従来どおり)。
+// 描画専用なので **kComponentNoHash** (各マシンで見るカメラが違っても sim は分かれない)
+struct CameraOwnerComponent {
+    int32_t lane = 0; // 入力レーン (= NetLocalPlayer)。負なら誰にも出さない
+    static inline ComponentTypeId sTypeId = kInvalidComponentType;
+};
+
 class World;
 
 // エンティティが有効か。ActiveComponent が無ければ有効 / enabled==false なら無効。

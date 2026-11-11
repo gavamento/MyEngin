@@ -297,7 +297,7 @@ namespace MyeScripting
         // 版がずれると全スロットが黙って別関数を指すため、静的照合 (規則 11) だけでは
         // 「C++ 側だけ更新して build_managed.bat を忘れた」古い MyeScripting.dll を捕まえられない。
         // ★MYE_API_VERSION を上げたらここも同時に上げる (規則 11-e が機械照合する)
-        internal const uint kExpectedApiVersion = 35u;
+        internal const uint kExpectedApiVersion = 36u;
 
         public uint Version;
         public void* Engine;
@@ -550,6 +550,8 @@ namespace MyeScripting
         // FieldSample は読み取りなので使える
         public delegate* unmanaged<void*, MyeFieldImpulse*, int> FieldAddImpulse;
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3, MyeFieldSample*, int> FieldSample;
+        // v36 (M101): レーン別マウス
+        public delegate* unmanaged<void*, uint, int*, int*, void> GetMouseDeltaFor;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。
@@ -1222,6 +1224,15 @@ namespace MyeScripting
             sample = default;
             if (_api == null) return false;
             fixed (MyeFieldSample* p = &sample) { return _api->FieldSample(_api->Engine, field, pos, p) != 0; }
+        }
+
+        // v36 (M101): player レーンの今 tick の生マウスデルタ (GetMouseDelta はレーン 0 固定)
+        public static void GetMouseDeltaFor(uint player, out int dx, out int dy)
+        {
+            int x = 0, y = 0;
+            if (_api != null) _api->GetMouseDeltaFor(_api->Engine, player, &x, &y);
+            dx = x;
+            dy = y;
         }
 
         // ---- v13 (M52i): ネット対戦の状態 ----

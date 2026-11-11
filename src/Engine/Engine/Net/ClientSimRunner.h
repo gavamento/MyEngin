@@ -60,6 +60,12 @@ struct ClientSimRunnerStats {
     uint64_t desyncs = 0;
     uint64_t snapshotsApplied = 0;
     uint64_t resimsAcrossEvents = 0; // システムイベント (参加・離脱) を含む区間を再シムした回数
+    // M16: 再シムの実時間 (計測専用。sim には使わない)
+    uint64_t resimCalls = 0;
+    double resimMsTotal = 0.0;
+    double resimMsMax = 0.0;
+    uint64_t resimMaxDepth = 0; // resimMsMax を出したときの tick 数
+    double resimMsMaxPerTick = 0.0;
 };
 
 class ClientSimRunner {

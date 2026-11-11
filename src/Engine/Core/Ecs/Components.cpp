@@ -2161,6 +2161,11 @@ void RegisterBuiltinComponents()
         MYE_JP("最大描画距離 (m)", ::mye::FieldDesc{ .name = "maxDrawDistance", .type = ::mye::FieldType::Float, .offset = static_cast<uint32_t>(offsetof(RenderCullingComponent, maxDrawDistance)), .minVal = 0.0f, .maxVal = 100000.0f, .tooltip = "meshes farther than this from the camera are not drawn, shadows included [m] (0 = no limit from this object; the tag and project distances still apply)" }),
         MYE_JP("画面サイズカリングの対象外", MYE_FIELD_TIP(RenderCullingComponent, exemptFromSizeCulling, Bool, "never dropped by screen-size culling, however small it looks. Distance culling still applies")),
     }, kComponentNoHash);
+
+    // M101: カメラの持ち主 (TypeId=101、末尾 append)。描画専用の **kComponentNoHash**
+    RegisterComponent<CameraOwnerComponent>("CameraOwner", {
+        MYE_JP("レーン", MYE_FIELD_TIP(CameraOwnerComponent, lane, Int32, "this camera is a candidate only on the machine whose local player is this lane (online: each player sees their own camera). Cameras without CameraOwner are candidates everywhere. Negative = never")),
+    }, kComponentNoHash);
 }
 
 } // namespace mye

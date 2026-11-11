@@ -1266,6 +1266,13 @@ inline void MyeMouseDelta(const MyeUpdateContext& ctx, int32_t& dx, int32_t& dy)
     dy = 0;
     ctx.api->GetMouseDelta(ctx.api->engine, &dx, &dy);
 }
+// v36 (M101): player レーンの生マウスデルタ。オンラインのレーン 1 以降はこちらでしか読めない
+inline void MyeMouseDeltaFor(const MyeUpdateContext& ctx, uint32_t player, int32_t& dx, int32_t& dy)
+{
+    dx = 0;
+    dy = 0;
+    ctx.api->GetMouseDeltaFor(ctx.api->engine, player, &dx, &dy);
+}
 
 // カーソルのロック (0 = 通常 / 1 = クライアント矩形へ閉じ込めて非表示)。**出力レーン** —
 // 要求を書くだけで、record/verify 中・フォーカス喪失中・スクラブ中はエンジンが解除する。

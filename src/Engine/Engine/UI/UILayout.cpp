@@ -5,6 +5,7 @@
 #include "Engine/Core/Ecs/ComponentRegistry.h" // kComponentScriptState (UI 専用判定)
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
+#include "Engine/Engine/Rendering/CameraSelect.h" // M101: カメラの選び方 (RenderSystem と共通)
 #include "Engine/Engine/Rendering/RenderSystem.h" // PrevWorldStore (描画補間 M36b)
 #include "Engine/Renderer/Pipeline/PixelPerfect2D.h" // M94v: ピクセルパーフェクトの orthoSize
 #include "Engine/Engine/UI/UILayoutGroup.h" // M75e: 自動レイアウト
@@ -529,26 +530,15 @@ bool BuildSimWorldContext(World& world, int screenW, int screenH, UIWorldContext
 {
     // カメラ選択は RenderSystem と同一規則: 走査順で最初のカメラ、isPrimary が出たら確定
     // (アーキタイプ内 return は RenderSystem の実装と同じ = 同じ結果を選ぶ)
-    bool found = false;
+    // M101: sim 側なのでレーンは常に 0 (マシンごとに違う値を使うと sim が分かれる)
     CameraComponent cam = {};
     EntityID camEntity = kNullEntity;
     DirectX::XMFLOAT4X4 cw = {};
-    const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int ci = arch.FindTypeIndex(CameraComponent::sTypeId);
-        const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
-            if (!found || c->isPrimary) {
-                cam = *c;
-                camEntity = arch.EntityAt(row);
-                cw = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                found = true;
-                if (c->isPrimary) {
-                    return;
-                }
-            }
-        }
+    const bool found = camselect::ForEachCameraPick(world, 0u, [&](Archetype& arch, uint32_t row) {
+        cam = *static_cast<const CameraComponent*>(arch.GetPtr(arch.FindTypeIndex(CameraComponent::sTypeId), row));
+        camEntity = arch.EntityAt(row);
+        cw = static_cast<const WorldMatrixComponent*>(
+                 arch.GetPtr(arch.FindTypeIndex(WorldMatrixComponent::sTypeId), row))->value;
     });
     if (!found) {
         return false;

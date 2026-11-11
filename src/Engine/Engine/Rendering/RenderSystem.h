@@ -175,6 +175,10 @@ public:
     int CullDebugOverflow() const { return cullDebugOverflow_; }
     // 設定をまとめて反映する (起動時の実効値)。オクルージョンの bool もここで入る
     void ApplyCullingSettings(const CullingSettings& settings);
+    // M101: このマシンのレーン (NetLocalPlayer)。CameraOwner 付きのカメラはこのレーンのものだけ描く。
+    // オフライン・リプレイは 0。描画だけが読む値で sim には入らない
+    void SetViewLane(uint32_t lane) { viewLane_ = lane; }
+    uint32_t ViewLane() const { return viewLane_; }
     // オクルージョンの統計の読み戻しで GPU を待つか。既定 true (selftest・決定的な撮影の counts を揃える)。
     // 対話の描画は EngineLoop が false にする
     bool occlusionStatsWait = true;
@@ -619,6 +623,7 @@ private:
     FailedTextureLoad    noiseMapLoadFailed_[8];
     AssetID              loadedFxStackId_[4];       // 直前に読んだ fxStack ID
     int64_t              loadedFxStackStamp_[4] = {}; // 直前に読んだ fxstack.json の更新時刻 (再読込の判定用)
+    uint32_t             viewLane_ = 0;               // M101: SetViewLane
 };
 
 } // namespace mye

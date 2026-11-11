@@ -133,6 +133,12 @@ public:
     // パッド成分 (内側の遮断の後) に外側の遮断と応答カーブを掛ける。Evaluate の実体を selftest から直接検査するために公開する
     static float ShapePadValue(const InputAxisDef& a, float v);
     float AxisValue(uint64_t nameHash, uint32_t player = 0) const;      // [-1, +1]
+    // M101: 今 tick のレーン別の生マウスデルタ (Evaluate が cur から写す)。範囲外のレーンは 0
+    void MouseDelta(uint32_t player, int32_t& dx, int32_t& dy) const
+    {
+        dx = (player < kMaxPlayers) ? mouseDelta_[player][0] : 0;
+        dy = (player < kMaxPlayers) ? mouseDelta_[player][1] : 0;
+    }
 
     // 編集 UI 用 (Project Settings)。書き換えたら Save → Load(force) で正規形に確定する。
     // 定義列を伸縮した場合、次の Evaluate までライブ状態 (At 系) は 0 を返す
@@ -172,6 +178,7 @@ private:
     // 「レーンを増やした tick だけ添字がずれる」種類の事故が入る)。ロードで 0 クリア
     std::vector<uint8_t> actionBits_;
     std::vector<float> axisValues_;
+    int32_t mouseDelta_[kMaxPlayers][2] = {}; // M101: Evaluate の結果 (レーン別の生マウスデルタ)
     std::wstring loadedRoot_; // Load の冪等判定 (PhysicsLayerNames と同型)
 };
 

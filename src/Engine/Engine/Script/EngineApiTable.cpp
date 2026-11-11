@@ -1593,6 +1593,20 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         if (outDx) { *outDx = in.mouseDeltaX; }
         if (outDy) { *outDy = in.mouseDeltaY; }
     };
+    // v36 (M101): レーン別。InputActions が tick 頭に全レーンの入力から写した値を返す。
+    // アクションマップが無い構成 (null) ではレーン 0 だけ GetMouseDelta と同じ値を返す
+    out.GetMouseDeltaFor = [](void* engine, uint32_t player, int32_t* outDx, int32_t* outDy) {
+        int32_t dx = 0, dy = 0;
+        const ScriptApiContext* c = Ctx(engine);
+        if (c->inputActions) {
+            c->inputActions->MouseDelta(player, dx, dy);
+        } else if (player == 0) {
+            dx = c->input.mouseDeltaX;
+            dy = c->input.mouseDeltaY;
+        }
+        if (outDx) { *outDx = dx; }
+        if (outDy) { *outDy = dy; }
+    };
     // カーソルロック (出力レーン)。要求を書くだけ — 適用/ゲート/Escape の逃げ道は
     // EngineLoop (フレーム末) が持つ。SetPadVibration と 1 対 1 で同じ形
     out.SetCursorMode = [](void* engine, int mode) {

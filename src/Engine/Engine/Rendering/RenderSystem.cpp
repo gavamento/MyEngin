@@ -1,4 +1,5 @@
 #include "Engine/Engine/Rendering/RenderSystem.h"
+#include "Engine/Engine/Rendering/CameraSelect.h" // M101
 
 #include <algorithm>
 #include <cfloat>
@@ -681,26 +682,15 @@ struct PixelPerfectPlan {
     pixelperfect2d::Result result;
 };
 
-PixelPerfectPlan PlanPixelPerfect(World& world, int screenW, int screenH)
+PixelPerfectPlan PlanPixelPerfect(World& world, int screenW, int screenH, uint32_t viewLane)
 {
     PixelPerfectPlan plan;
-    bool found = false;
     EntityID camEntity = kNullEntity;
     bool orthographic = false;
-    const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
-    world.ForEachArchetype(req, [&](Archetype& arch) {
-        const int ci = arch.FindTypeIndex(CameraComponent::sTypeId);
-        for (uint32_t row = 0; row < arch.Count(); ++row) {
-            const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
-            if (!found || c->isPrimary) {
-                orthographic = c->orthographic;
-                camEntity = arch.EntityAt(row);
-                found = true;
-                if (c->isPrimary) {
-                    return;
-                }
-            }
-        }
+    const bool found = camselect::ForEachCameraPick(world, viewLane, [&](Archetype& arch, uint32_t row) {
+        orthographic = static_cast<const CameraComponent*>(
+                           arch.GetPtr(arch.FindTypeIndex(CameraComponent::sTypeId), row))->orthographic;
+        camEntity = arch.EntityAt(row);
     });
     if (!found || !orthographic) {
         return plan;
@@ -739,7 +729,7 @@ bool RenderSystem::Render(World& world, GraphicsDevice& device, IRenderPath& pat
     // PixelPerfectCamera2D の無いシーンは PlanPixelPerfect が active=false を返すだけで、以降の経路は従来と同じ
     PixelPerfectPlan ppPlan;
     if (!cameraOverride) {
-        ppPlan = PlanPixelPerfect(world, screenTarget.width, screenTarget.height);
+        ppPlan = PlanPixelPerfect(world, screenTarget.width, screenTarget.height, viewLane_);
         lastPixelPerfectValid = ppPlan.active;
         lastPixelPerfect = ppPlan.result;
     }
@@ -906,24 +896,14 @@ void RenderSystem::ResolveCamera(World& world, const CameraOverride* cameraOverr
         view.farZ = cameraOverride->farZ;
         cameraFound = true;
     } else {
-        const ComponentTypeId req[] = { CameraComponent::sTypeId, WorldMatrixComponent::sTypeId };
         XMFLOAT4X4 camWorld = {};
         CameraComponent cam = {};
-        world.ForEachArchetype(req, [&](Archetype& arch) {
-            const int ci = arch.FindTypeIndex(CameraComponent::sTypeId);
-            const int wi = arch.FindTypeIndex(WorldMatrixComponent::sTypeId);
-            for (uint32_t row = 0; row < arch.Count(); ++row) {
-                const auto* c = static_cast<const CameraComponent*>(arch.GetPtr(ci, row));
-                if (!cameraFound || c->isPrimary) {
-                    cam = *c;
-                    camWorld = static_cast<const WorldMatrixComponent*>(arch.GetPtr(wi, row))->value;
-                    camEntity = arch.EntityAt(row); // M29e: CameraPostFx 参照用
-                    cameraFound = true;
-                    if (c->isPrimary) {
-                        return;
-                    }
-                }
-            }
+        // M101: 選び方は CameraSelect.h (CameraOwner はこのマシンのレーン viewLane_ のものだけ)
+        cameraFound = camselect::ForEachCameraPick(world, viewLane_, [&](Archetype& arch, uint32_t row) {
+            cam = *static_cast<const CameraComponent*>(arch.GetPtr(arch.FindTypeIndex(CameraComponent::sTypeId), row));
+            camWorld = static_cast<const WorldMatrixComponent*>(
+                           arch.GetPtr(arch.FindTypeIndex(WorldMatrixComponent::sTypeId), row))->value;
+            camEntity = arch.EntityAt(row); // M29e: CameraPostFx 参照用
         });
         if (cameraFound) {
             // M36b: カメラも補間 (スクリプト駆動カメラの tick 刻みを消す)

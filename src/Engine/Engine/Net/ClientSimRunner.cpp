@@ -6,6 +6,7 @@
 #include "Engine/Engine/Net/ClientSimRunner.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Replay/CrashRing.h"
@@ -154,6 +155,7 @@ bool ClientSimRunner::ResimFrom(uint64_t from)
                      static_cast<unsigned long long>(from), static_cast<unsigned long long>(resume - from), eventCount,
                      eventTicks);
     }
+    const auto wall0 = std::chrono::steady_clock::now(); // M16: 再シムの実時間 (計測専用)
     for (uint64_t t = from; t < resume; ++t) {
         InputSnapshot lanes[kMaxPlayers] = {};
         SystemInputTick sys = {};
@@ -167,6 +169,21 @@ bool ClientSimRunner::ResimFrom(uint64_t from)
         }
         rb_.OnTickEnd(refs_, t, lanes, pc, hash, predicted, true, &sys);
         ++stats_.ticksResimulated;
+    }
+    {
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wall0).count();
+        const uint64_t depth = resume - from;
+        ++stats_.resimCalls;
+        stats_.resimMsTotal += ms;
+        if (ms > stats_.resimMsMax) {
+            stats_.resimMsMax = ms;
+            stats_.resimMaxDepth = depth;
+        }
+        const double perTick = ms / static_cast<double>(depth);
+        if (perTick > stats_.resimMsMaxPerTick) {
+            stats_.resimMsMaxPerTick = perTick;
+        }
     }
     return rb_.Active();
 }

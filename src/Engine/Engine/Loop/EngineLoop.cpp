@@ -1467,6 +1467,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         tickServices.prevWorld = nullptr; // 描画補間の採取も要らない
         tickServices.resim = true;
         audioSystem.SetSuspended(true); // 捨てた未来の音を断つ
+        MYE_PROFILE_SCOPE("net.resim"); // M16: Profiler に再シムの行を出す
         for (uint64_t t = from; t < resume; ++t) {
             const NetSpecTick* e = netRb.Entry(t);
             const bool predicted = BuildNetInputs(t, ctx.inputs);
@@ -1537,6 +1538,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
     };
 
+    // M16: 再シムの実時間の集計 (終了時に [net] resim 行で出す)
+    double netResimTotalMs = 0.0;
+    double netResimMaxMs = 0.0;
+    double netResimMaxPerTickMs = 0.0;
+    uint64_t netResimMaxDepth = 0;
+
     // フレーム頭に 1 回。届いた確定入力と投機記録を突き合わせ、外れていたら巻き戻す
     const auto NetReconcile = [&]() {
         if (!netRollbackActive || !net.Running()) {
@@ -1572,6 +1579,17 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 return;
             }
             netRb.NoteRollback(depth);
+            // M16: 再シムの実時間 (1 フレームに収まるかの判断材料)
+            const double resimMs = (clock.Now() - t0) * 1000.0;
+            netResimTotalMs += resimMs;
+            if (resimMs > netResimMaxMs) {
+                netResimMaxMs = resimMs;
+                netResimMaxDepth = depth;
+            }
+            const double perTick = resimMs / static_cast<double>(depth);
+            if (perTick > netResimMaxPerTickMs) {
+                netResimMaxPerTickMs = perTick;
+            }
             MYE_LOG_TRACE("[net] rolled back %llu tick(s) to %llu (%.2f ms)",
                           static_cast<unsigned long long>(depth),
                           static_cast<unsigned long long>(bad),
@@ -3337,6 +3355,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     benchCut.farZ = 400.0f;
                     cutOverride = &benchCut;
                 }
+                // M101: CameraOwner 付きのカメラは、このマシンのレーンのものだけ描く
+                renderSystem.SetViewLane(netInfo.localPlayer);
                 renderSystem.Render(scene.GetWorld(), device, *activePath, shaderManager, resources,
                                     target, cutOverride, &particleSystem, &vfxRenderer);
                 // M21: ゲーム内 UI を backbuffer に重ねる (Runtime 経路)。マウスは hover 表示用。
@@ -3616,6 +3636,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                          static_cast<unsigned long long>(netRb.PredictedTicks()),
                          static_cast<double>(netRb.SnapshotBytes()) / (1024.0 * 1024.0),
                          static_cast<unsigned long long>(netRb.ConfirmedTick()));
+            // M16: 再シムが 1 フレーム (16.6 ms) に収まるかの実測
+            const uint64_t rbCount = netRb.RollbackCount();
+            MYE_LOG_INFO("[net] resim: total %.1f ms / avg %.2f ms per rollback / max %.2f ms (depth %llu) / "
+                         "max %.3f ms per tick",
+                         netResimTotalMs, rbCount > 0 ? netResimTotalMs / static_cast<double>(rbCount) : 0.0,
+                         netResimMaxMs, static_cast<unsigned long long>(netResimMaxDepth), netResimMaxPerTickMs);
         }
         if (netDesync) {
             MYE_LOG_ERROR("[net] session ended on a DESYNC at tick %llu",
@@ -3634,7 +3660,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                      static_cast<unsigned long long>(rb.MaxRollbackDepth()), static_cast<unsigned long long>(rb.PredictedTicks()),
                      static_cast<unsigned long long>(rs.resimsAcrossEvents),
                      static_cast<unsigned long long>(clientRunner.ConfirmedTick()));
-        MYE_LOG_INFO("[client] session: %llu tick(s) run, %llu catch-up, %llu stall(s), %llu snapshot(s) applied, "
+        // M16: 再シムが 1 フレーム (16.6 ms) に収まるかの実測
+        MYE_LOG_INFO("[client] resim: %llu call(s) / total %.1f ms / avg %.2f ms / max %.2f ms (depth %llu) / "
+                     "max %.3f ms per tick",
+                     static_cast<unsigned long long>(rs.resimCalls), rs.resimMsTotal,
+                     rs.resimCalls > 0 ? rs.resimMsTotal / static_cast<double>(rs.resimCalls) : 0.0, rs.resimMsMax,
+                     static_cast<unsigned long long>(rs.resimMaxDepth), rs.resimMsMaxPerTick);
+        MYE_LOG_INFO("[client] session:%llu tick(s) run, %llu catch-up, %llu stall(s), %llu snapshot(s) applied, "
                      "%llu resync request(s), %llu desync(s), packets in/out %llu/%llu",
                      static_cast<unsigned long long>(rs.ticksRun), static_cast<unsigned long long>(rs.catchUpTicks),
                      static_cast<unsigned long long>(rs.stalls), static_cast<unsigned long long>(rs.snapshotsApplied),

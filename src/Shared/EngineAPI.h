@@ -63,7 +63,9 @@
 // v34 (M94h、GitHub 側の手触り): PlayFeel / PlayFeelDesc / StopFeel / ConsumeAction / IsSimStepping / SetFeelOutputScale
 //             (SendScriptMessage の次の 6 本、ADR-035)。GitHub 側では v31 = 181 として作られ、2026-11-05 の合流で末尾へ移した
 // v35 (M96d): かき乱しフィールド — FieldAddImpulse / FieldSample (SetFeelOutputScale の次の 2 本 = 202)
-#define MYE_API_VERSION 35u
+// v36 (M101): レーン別マウス — GetMouseDeltaFor (FieldSample の次の 1 本 = 203)。
+//             あわせて CameraOwner コンポーネント (描画するカメラをマシンのレーンで選ぶ) を追加
+#define MYE_API_VERSION 36u
 
 // v30 (M93) OnlineMemberFlags のビット
 #define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
@@ -1173,6 +1175,13 @@ struct MyeEngineApi {
     //   読むのは呼んだ時点の状態: Update からは前 tick の結果、LateUpdate からはこの tick の結果。
     //   戻り値 1 = 場の中、0 = 外 (out は 0 埋め)。C# から呼べる
     int32_t (*FieldSample)(void* engine, MyeEntityId field, MyeVec3 pos, MyeFieldSample* out);
+
+    // ---- v36 (M101): レーン別マウス ----
+    // GetMouseDeltaFor: player レーンの今 tick の生マウスデルタ (GetMouseDelta と同じ単位・向き)。
+    //   GetMouseDelta はレーン 0 固定なので、オンラインでレーン 1 以降のマシンのマウスはこちらでしか読めない。
+    //   オフライン (1 台) ではマウスはレーン 0 にしか載らない (他のレーンは 0)。範囲外のレーンは 0。
+    //   InputSnapshot 由来 = 決定論レーン (record/verify・ロールバックで同じ値)。outDx / outDy は null 可
+    void (*GetMouseDeltaFor)(void* engine, uint32_t player, int32_t* outDx, int32_t* outDy);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

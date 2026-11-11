@@ -384,6 +384,10 @@ void InputActions::Evaluate(const InputSnapshot* cur, const InputSnapshot* prev,
     for (uint32_t p = 0; p < kMaxPlayers; ++p) {
         const InputSnapshot& c = (p < playerCount) ? cur[p] : zero;
         const InputSnapshot& v = (p < playerCount) ? prev[p] : zero;
+        // M101: レーン別の生マウスデルタ (GetMouseDeltaFor の引き先)。オンラインではレーン N の
+        // マウスがレーン N のスナップショットで届くので、レーン 0 固定の GetMouseDelta では読めない
+        mouseDelta_[p][0] = c.mouseDeltaX;
+        mouseDelta_[p][1] = c.mouseDeltaY;
         const size_t aBase = static_cast<size_t>(p) * actions_.size();
         const size_t xBase = static_cast<size_t>(p) * axes_.size();
         for (size_t i = 0; i < actions_.size(); ++i) {
