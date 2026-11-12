@@ -461,7 +461,8 @@ struct FrameTimings {
     float reloadMs = 0.0f;  // フェーズ 2 (ホットリロード)
     float tickMs = 0.0f;    // 全 tick (フェーズ 3-5,7)
     float renderMs = 0.0f;  // フェーズ 6 (シーン描画 + OnRenderViews)
-    float presentMs = 0.0f; // フェーズ 8 (ImGui + Present)
+    float imguiMs = 0.0f;   // フェーズ 8 の ImGui (構築 + 描画)
+    float presentMs = 0.0f; // Present 呼び出し (vsync 待ちを含む)
     int ticksThisFrame = 0;
 };
 

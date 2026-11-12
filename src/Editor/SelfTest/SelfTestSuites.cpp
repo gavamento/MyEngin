@@ -34,6 +34,7 @@
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Editor/Tools/PatrolRouteEditSelfTest.h"
 #include "Editor/Undo/UndoSelfTest.h"
+#include "Engine/Core/Diagnostics/ProfilerSelfTest.h"
 #include "Engine/Core/Ecs/EcsSelfTest.h"
 #include "Engine/Core/Jobs/JobSystemSelfTest.h"
 #include "Engine/Core/Localization/LocalizationSelfTest.h"
@@ -156,6 +157,7 @@ const SelfTestSuite kSuites[] = {
     { "audio", mye::RunAudioSelfTest, SelfTestTier::Fast, "" },
     { "rt", mye::RunRtSelfTest, SelfTestTier::Fast, "" },
     { "localization", mye::RunLocalizationSelfTest, SelfTestTier::Fast, "" },
+    { "profiler", mye::RunProfilerSelfTest, SelfTestTier::Fast, "M102: スコープの順序と合算、フレーム履歴" },
     { "skeleton", mye::RunSkeletonSelfTest, SelfTestTier::Fast, "" },
     { "part", mye::RunPartSelfTest, SelfTestTier::Fast, "" },
     { "schema", mye::RunSchemaSelfTest, SelfTestTier::Fast, "" },

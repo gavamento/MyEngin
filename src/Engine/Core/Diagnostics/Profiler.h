@@ -6,17 +6,59 @@
 // リプレイに影響しない。スコープ記録はフレーム毎に固定領域へ貯める (tick 中の追加確保なし)。
 namespace mye::prof {
 
+// スレッド: スコープ・レンダ統計・履歴はメインスレッド専用 (ロックを持たない)。
+// ジョブのワーカーから呼ばない。
+//
 // ---- CPU 階層スコープ計測 ----
+// 並びは開始順 (親 → 子)。name は呼び出し側が寿命を保証する文字列 (リテラル、または
+// フレームをまたいでアドレスが変わらない文字列)。
 struct ScopeRecord {
     const char* name;
-    float ms;
+    float ms;   // 閉じるまでは 0
     int depth;
+    int parent; // FrameScopes() 内の親の添字。ルートは -1
 };
 
-void BeginFrame();                // 毎フレーム先頭で呼ぶ (前フレーム分をクリア)
+// 毎フレーム先頭で呼ぶ。前フレームを確定して履歴へ積み、今フレームの記録を空にする
+void BeginFrame();
 void PushScope(const char* name); // 手動 (通常は MYE_PROFILE_SCOPE を使う)
 void PopScope();
-const std::vector<ScopeRecord>& FrameScopes(); // 表示用 (今フレームの確定済みスコープ)
+// 今フレームの生の記録 (同名を合算しない)。フレームの途中で読むと、開いているスコープは 0 ms
+const std::vector<ScopeRecord>& FrameScopes();
+
+// ---- 確定済みフレームの履歴 ----
+// 表示は「確定済みフレーム」だけを読む。フレームの途中の値を混ぜないので、フェーズ時間・
+// スコープ・レンダ統計の時点が揃う (GPU 時間だけはクエリの読み出し遅延ぶん古い)。
+inline constexpr int kFrameHistory = 240;     // 保持するフレーム数 (60 fps で 4 秒)
+inline constexpr int kMaxFrameScopes = 192;   // 1 フレームの合算後スコープ数の上限
+inline constexpr int kMaxRawScopes = 4096;    // 1 フレームの生の記録数の上限 (超過分は捨てて数える)
+
+// 同じ親の下の同名スコープを 1 行へ合算したもの (1 フレームに複数 tick 回ると同名が並ぶため)
+struct ScopeStat {
+    const char* name = nullptr;
+    float ms = 0.0f; // 合計
+    int calls = 0;   // 合算した回数
+    int depth = 0;
+    int parent = -1; // FrameRecord::scopes 内の親の添字。ルートは -1。親は必ず自分より前にある
+};
+
+// フレームの壁時計の内訳。EngineLoop が SetFramePhases で渡す。
+// frameMs だけは BeginFrame が自分で測る (BeginFrame から次の BeginFrame まで)
+struct FramePhases {
+    float reloadMs = 0.0f;  // フェーズ 2 (ホットリロード)
+    float tickMs = 0.0f;    // 全 tick (フェーズ 3-5,7)
+    float renderMs = 0.0f;  // フェーズ 6 (シーン描画の CPU 側)
+    float imguiMs = 0.0f;   // フェーズ 8 の ImGui 構築と描画
+    float presentMs = 0.0f; // Present 呼び出し (vsync 待ちを含む)
+    int ticks = 0;
+};
+
+// フレームの末尾で呼ぶ。次の BeginFrame が確定するフレームへ付く (呼ばなければ 0 のまま)
+void SetFramePhases(const FramePhases& phases, uint64_t frameIndex, uint64_t tickIndex);
+
+struct FrameRecord;
+int HistoryCount();                         // 確定済みフレーム数 (最大 kFrameHistory)
+const FrameRecord& History(int age);        // age 0 = 直近の確定フレーム。範囲外は空のレコード
 
 struct ScopeTimer {
     explicit ScopeTimer(const char* n) { PushScope(n); }
@@ -67,6 +109,19 @@ void AddRenderStats(const RenderStats& delta); // 任意の欄をまとめて加
 void SetRenderStatsView(uint32_t viewKey);
 RenderStats GetRenderStats(); // 従来の累積値 (全ビューの和)
 RenderStats GetRenderStatsForView(uint32_t viewKey);
+
+// 確定済みの 1 フレーム。履歴のリングに固定長で持つ (確定時に確保しない)
+struct FrameRecord {
+    uint64_t frameIndex = 0;
+    uint64_t tickIndex = 0;
+    float frameMs = 0.0f; // 壁時計 (BeginFrame の間隔)
+    FramePhases phases;
+    int scopeCount = 0;
+    int droppedScopes = 0; // 上限 (kMaxRawScopes / kMaxFrameScopes) を超えて捨てた記録数
+    ScopeStat scopes[kMaxFrameScopes];
+    RenderStats render;                              // 全ビューの和
+    RenderStats renderByView[kRenderStatsViewSlots]; // viewKey 別
+};
 
 // ---- メモリ (MemoryTrack.cpp の global operator new/delete フック) ----
 struct MemStats {

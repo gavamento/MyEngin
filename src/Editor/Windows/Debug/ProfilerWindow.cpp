@@ -39,7 +39,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx)
     ImGui::Text(Tr(StrId::Prof_PhaseHotReload), t.reloadMs);
     ImGui::Text(Tr(StrId::Prof_PhaseTicks), t.tickMs, t.ticksThisFrame);
     ImGui::Text(Tr(StrId::Prof_PhaseRender), t.renderMs);
-    ImGui::Text(Tr(StrId::Prof_PhaseUi), t.presentMs);
+    ImGui::Text(Tr(StrId::Prof_PhaseUi), t.imguiMs);
 
     ImGui::Separator();
     ImGui::TextUnformatted(Tr(StrId::Prof_Particles));

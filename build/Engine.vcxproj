@@ -33,6 +33,7 @@
     <ClCompile Include="..\src\Engine\Core\Diagnostics\Log.cpp" />
     <ClCompile Include="..\src\Engine\Core\Diagnostics\MemoryTrack.cpp" />
     <ClCompile Include="..\src\Engine\Core\Diagnostics\Profiler.cpp" />
+    <ClCompile Include="..\src\Engine\Core\Diagnostics\ProfilerSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Core\Ecs\Archetype.cpp" />
     <ClCompile Include="..\src\Engine\Core\Ecs\ComponentRegistry.cpp" />
     <ClCompile Include="..\src\Engine\Core\Ecs\Components.cpp" />
@@ -416,6 +417,7 @@
     <ClInclude Include="..\src\Engine\Core\Diagnostics\Check.h" />
     <ClInclude Include="..\src\Engine\Core\Diagnostics\Log.h" />
     <ClInclude Include="..\src\Engine\Core\Diagnostics\Profiler.h" />
+    <ClInclude Include="..\src\Engine\Core\Diagnostics\ProfilerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Core\Ecs\Archetype.h" />
     <ClInclude Include="..\src\Engine\Core\Ecs\ComponentRegistry.h" />
     <ClInclude Include="..\src\Engine\Core\Ecs\Components.h" />

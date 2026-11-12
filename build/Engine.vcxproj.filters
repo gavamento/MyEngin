@@ -285,6 +285,9 @@
     <ClCompile Include="..\src\Engine\Core\Diagnostics\Profiler.cpp">
       <Filter>Core\Diagnostics</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Core\Diagnostics\ProfilerSelfTest.cpp">
+      <Filter>Core\Diagnostics</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Core\Ecs\Archetype.cpp">
       <Filter>Core\Ecs</Filter>
     </ClCompile>
@@ -1432,6 +1435,9 @@
       <Filter>Core\Diagnostics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Diagnostics\Profiler.h">
+      <Filter>Core\Diagnostics</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Core\Diagnostics\ProfilerSelfTest.h">
       <Filter>Core\Diagnostics</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Core\Ecs\Archetype.h">

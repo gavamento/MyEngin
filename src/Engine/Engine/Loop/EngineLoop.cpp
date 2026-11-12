@@ -3383,7 +3383,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
 
             timings.renderMs = static_cast<float>((clock.Now() - tRender) * 1000.0);
-            const double tPresent = clock.Now();
+            const double tImGui = clock.Now();
 
             // ---- フェーズ 8: ImGui 描画 / Present ----
             if (imguiEnabled) {
@@ -3391,7 +3391,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 app.OnImGui(ctx);
                 imgui.EndFrame();
             }
-            timings.presentMs = static_cast<float>((clock.Now() - tPresent) * 1000.0);
+            timings.imguiMs = static_cast<float>((clock.Now() - tImGui) * 1000.0);
             if (!config.screenshotPath.empty()) {
                 if (config.screenshotEvery > 0) {
                     if (ctx.frameIndex > 0
@@ -3516,7 +3516,9 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                     exitCode = 5;
                 }
             }
+            const double tPresent = clock.Now();
             presentHr = swapChain.Present(config.vsync);
+            timings.presentMs = static_cast<float>((clock.Now() - tPresent) * 1000.0);
             if (config.startHidden && !mainWindowShown) {
                 window.Show();
                 mainWindowShown = true;
@@ -3575,6 +3577,16 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
 
         timings.frameMs = static_cast<float>(dt * 1000.0);
         ctx.timings = timings;
+        {
+            prof::FramePhases phases;
+            phases.reloadMs = timings.reloadMs;
+            phases.tickMs = timings.tickMs;
+            phases.renderMs = timings.renderMs;
+            phases.imguiMs = timings.imguiMs;
+            phases.presentMs = timings.presentMs;
+            phases.ticks = timings.ticksThisFrame;
+            prof::SetFramePhases(phases, ctx.frameIndex, ctx.tickIndex);
+        }
 
         ++ctx.frameIndex;
         if (config.maxFrames > 0 && ctx.frameIndex >= static_cast<uint64_t>(config.maxFrames)) {
