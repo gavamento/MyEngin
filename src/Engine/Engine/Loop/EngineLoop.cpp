@@ -2338,6 +2338,20 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             crashPayload.sceneSource[n] = L'\0';
         }
 
+        // ---- Play セッションの開始 (エディタの Play、EngineContext::simSessionResetRequested) ----
+        // ★下のタイムトラベルの Begin より前: リングは戻した後の tick 番号から撮り始める。
+        //   クラッシュリングは tick 列が飛んだのを見て次の tick 末に撮り直す (CrashRing::OnTickBegin)。
+        // 記録 / 検証 / ネット / システム入力の構成では触らない — tick 列が .rep や相手との契約になっている
+        if (ctx.simSessionResetRequested) {
+            ctx.simSessionResetRequested = false;
+            if (!recorder.IsActive() && !verifying && !netEnabled && !clientEnabled && !ctx.hasSystemInput) {
+                ResetSimCarryState(tickServices);
+                MYE_LOG_INFO("[play] sim session reset (tick %llu -> 0)",
+                             static_cast<unsigned long long>(ctx.tickIndex));
+                ctx.tickIndex = 0;
+            }
+        }
+
         // ---- タイムトラベル (M52e): リングの開始とシーク要求を tick 境界で捌く ----
         // ★どちらもフレーム頭 (= 前フレームの tick が終わった直後) でしか行わない。
         //   ImGui の途中で世界を差し替えると、その後のウィンドウが破棄済み EntityID を掴む

@@ -284,6 +284,47 @@ void BuildClipEventImpulse(World& world, const AnimEventFired& ev, FieldImpulse&
     out.ripple = def.disturbRipple;
 }
 
+// (契約は TickRunner.h)
+void ResetSimCarryState(TickServices& ts)
+{
+    Scene& scene = *ts.scene;
+    // 前 tick の接触ペアは entity の **index だけ**で持つ (世代を見ない)。同じ index へ作り直した世界で
+    // 残すと、最初から重なっているペアの Enter が出ない
+    ts.collisionSystem->Reset();
+    ts.particleSystem->ResetParticles();
+    if (ts.xpbd) {
+        ts.xpbd->Reset(); // M60'b: 旧シーンの変形体の池を捨てる
+    }
+    if (ts.acoustic) {
+        ts.acoustic->Reset(); // M65a: 旧シーンの波と占有グリッドを捨てる
+    }
+    // M70c: 旧シーンの EntityID を握ったままにしない。世代付きなので
+    // 「別シーンの同じ index」を掴むことは無いが、UI 状態がシーンを跨ぐ意味も無い
+    scene.UI().Clear();
+    // M94b: ヒットストップ / スローは旧シーンの出来事への反応なので持ち越さない
+    // (pause と scalePercent はシーンを跨ぐ — M51g の意味論のまま)
+    scene.Time().ClearFeelEffects();
+    scene.Feel().Clear(); // M94c: 旧シーンで鳴った揺れ・振動も持ち越さない
+    scene.InputBuffer().Clear(); // M94f: 旧シーンで押した先行入力を新シーンで発火させない
+    scene.Disturbance().Clear(); // M96: 旧シーンの場と配送待ちのインパルスを持ち越さない
+    if (ts.agentSystem) {
+        ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
+    }
+    if (ts.navSystem) {
+        ts.navSystem->Reset(); // M82b: 旧シーンのナビメッシュ。次の tick が新シーンの分を読む
+    }
+    if (ts.behaviorTree) {
+        ts.behaviorTree->Reset(); // M85: 旧シーンの木の実行状態 (EntityID が別シーンの別物になる)
+    }
+    if (ts.tilemap) {
+        ts.tilemap->Reset(); // M94k: 旧シーンのセルの書き換え (EntityID が別シーンの別物になる)
+    }
+    ts.vfxRenderer->Reset(); // M29c: トレイル点列も新シーンでリセット
+    ts.partFollowSystem->Reset(); // M48g: 旧シーンの warn 抑制を捨てる
+    ts.twoBoneIkSystem->Reset();  // M89l: 同上
+    ts.fractureSystem->Reset(); // M80g: 旧シーンの検証キャッシュを捨てる
+}
+
 // 固定 tick 1 回分 (engine_spec.md 5.3 のフェーズ 3/3.5/3.6/4/5/7 + tick 末の出力レーン)。
 // (契約は TickRunner.h の TickServices)
 void RunOneTick(TickServices& ts)
@@ -1043,39 +1084,7 @@ void RunOneTick(TickServices& ts)
             if (ts.sceneLoadSerial) {
                 ++*ts.sceneLoadSerial;
             }
-            collisionSystem.Reset();
-            particleSystem.ResetParticles();
-            if (ts.xpbd) {
-                ts.xpbd->Reset(); // M60'b: 旧シーンの変形体の池を捨てる
-            }
-            if (ts.acoustic) {
-                ts.acoustic->Reset(); // M65a: 旧シーンの波と占有グリッドを捨てる
-            }
-            // M70c: 旧シーンの EntityID を握ったままにしない。世代付きなので
-            // 「別シーンの同じ index」を掴むことは無いが、UI 状態がシーンを跨ぐ意味も無い
-            scene.UI().Clear();
-            // M94b: ヒットストップ / スローは旧シーンの出来事への反応なので持ち越さない
-            // (pause と scalePercent はシーンを跨ぐ — M51g の意味論のまま)
-            scene.Time().ClearFeelEffects();
-            scene.Feel().Clear(); // M94c: 旧シーンで鳴った揺れ・振動も持ち越さない
-            scene.InputBuffer().Clear(); // M94f: 旧シーンで押した先行入力を新シーンで発火させない
-            scene.Disturbance().Clear(); // M96: 旧シーンの場と配送待ちのインパルスを持ち越さない
-            if (ts.agentSystem) {
-                ts.agentSystem->Reset(); // M65f: 航法グリッドも旧シーンのもの
-            }
-            if (ts.navSystem) {
-                ts.navSystem->Reset(); // M82b: 旧シーンのナビメッシュ。次の tick が新シーンの分を読む
-            }
-            if (ts.behaviorTree) {
-                ts.behaviorTree->Reset(); // M85: 旧シーンの木の実行状態 (EntityID が別シーンの別物になる)
-            }
-            if (ts.tilemap) {
-                ts.tilemap->Reset(); // M94k: 旧シーンのセルの書き換え (EntityID が別シーンの別物になる)
-            }
-            vfxRenderer.Reset(); // M29c: トレイル点列も新シーンでリセット
-            partFollowSystem.Reset(); // M48g: 旧シーンの warn 抑制を捨てる
-            twoBoneIkSystem.Reset();  // M89l: 同上
-            fractureSystem.Reset(); // M80g: 旧シーンの検証キャッシュを捨てる
+            ResetSimCarryState(ts);
             // 次 tick の物理より前に新シーンの破片資産を先読みしておく (Editor/Runtime の
             // 起動ロードと同じ扱い)
             PreloadFractureAssets(scene.GetWorld());

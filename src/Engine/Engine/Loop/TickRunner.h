@@ -239,6 +239,14 @@ inline bool IsNetSessionGates(const TickGates& g)
 //   区別しないための取り決め (決定台帳 5)。
 void RunOneTick(TickServices& ts);
 
+// エンジン側 (シーン文書の外) に持ち越している sim 状態を捨てる: 前 tick の接触ペア / パーティクル /
+// 変形体 / 音響 / UI・手触り・先行入力・かき乱し / AI・ナビ・BT・タイル / トレイル / 警告抑制のキャッシュ。
+// **世界を作り直した直後**に呼ぶ — スクリプトの LoadScene (tick 末) と、エディタの Play 開始
+// (EngineContext::simSessionResetRequested) が同じ 1 本を通る。片方だけに足すと、足し忘れた側でだけ
+// 前の世界の状態が残る。
+// スクリプトの Start 済み記録 / コンピュートバッファ / 音 / RNG / tick 番号は含めない (契機ごとに扱いが違う)
+void ResetSimCarryState(TickServices& ts);
+
 // kind が Disturb のアニメイベントをかき乱しフィールドのインパルスに直す (M96f)。位置は ev.pos、向きは
 // コントローラのエンティティの WorldMatrix (前 tick の確定値) の回転で回して正規化する。ev.def が必要
 void BuildClipEventImpulse(World& world, const AnimEventFired& ev, FieldImpulse& out);

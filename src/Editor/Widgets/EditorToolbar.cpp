@@ -107,6 +107,9 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
                 selection.Clear(); // 復元で EntityID が変わるため選択解除
                 undo.BeginPlaySession();
                 playMode.Play(*ctx.scene);
+                // シーンは Play が読み直すが、エンジン側の持ち越し状態と tick 番号は残る。Runtime の起動と同じ
+                // 状態から始めるために EngineLoop へ頼む (起動時の --autoplay は tick 0 で持ち越しも無いので不要)
+                ctx.simSessionResetRequested = true;
             }
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {

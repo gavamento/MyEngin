@@ -558,6 +558,12 @@ struct EngineContext {
     // 専用サーバのクライアント構成で、エディタの Stop などが「セッションを抜ける」ことを要求する。
     // EngineLoop が Bye を送って tick を止める (プロセスは終わらない)。それ以外の構成では読まれない
     bool netLeaveRequested = false;
+    // エディタの Play 開始が「新しい sim セッションとして始める」ことを要求する。EngineLoop が次のフレーム頭
+    // (= Play の最初の tick より前) で持ち越し状態を捨て (ResetSimCarryState)、tickIndex を 0 へ戻す。
+    // これが無いと Play は Runtime.exe の起動と違う状態から始まる: tickIndex は編集中も進むので絶対 tick を
+    // 見るスクリプトが開始直後に発火し、前の Play の接触ペアが残っていると OnTriggerEnter が出ない。
+    // 記録 / 検証 / ネット中は tick 列がそれぞれの契約なので EngineLoop が無視する
+    bool simSessionResetRequested = false;
 };
 
 // OnDeviceFatal へ渡す、デバイス消失の事実。HRESULT は生の値 (D3D 型を上へ出さない)

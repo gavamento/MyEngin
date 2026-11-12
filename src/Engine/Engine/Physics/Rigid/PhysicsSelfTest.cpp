@@ -560,6 +560,13 @@ bool RunPhysicsSelfTest()
         cols.Update(s.GetWorld(), nullptr, nullptr, nullptr);
         check(cols.LastTriggerEnter().size() == 1,
               "trigger filter: only the trigger-involving pair fires (solid-solid excluded)");
+        // 前 tick のペアは index で持つので、重なったままの 2 tick 目は Enter を出さない。同じ index へ
+        // 作り直した世界 (エディタの Play / LoadScene) はこれと区別できない = Reset しないと最初の Enter が欠ける
+        cols.Update(s.GetWorld(), nullptr, nullptr, nullptr);
+        check(cols.LastTriggerEnter().empty(), "trigger carry: a still-overlapping pair does not re-enter");
+        cols.Reset();
+        cols.Update(s.GetWorld(), nullptr, nullptr, nullptr);
+        check(cols.LastTriggerEnter().size() == 1, "trigger carry: Reset makes the overlapping pair enter again");
     }
 
     // ---- (22) OverlapSphere / OverlapBox: ヒット数・index 昇順・切り捨て時の総数 ----
