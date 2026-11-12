@@ -75,7 +75,18 @@ private:
         return (captureIndex_ >= 0) ? prof::Capture(captureIndex_) : prof::History(selectedAge_);
     }
 
+    // スコープと項目別の行を取るフレーム。描画が 60 fps を超えると tick の無いフレームが挟まり、
+    // そのフレームにはスコープが 1 つも無い。表示中フレームをそのまま使うと、表が出たり消えたりして
+    // 前後のフレームの絵が重なって見える。tick の無いフレームでは直前の tick があったフレームを使う
+    const prof::FrameRecord& TickFrame() const
+    {
+        return (captureIndex_ >= 0) ? prof::Capture(captureIndex_) : prof::History(tickAge_);
+    }
+    // TickFrame が表示中フレームと別のとき、その旨を 1 行出す
+    void DrawTickFrameNote() const;
+
     int selectedAge_ = 0;     // 表示中のフレーム (0 = 直近)。一時停止中だけ 0 以外になる
+    int tickAge_ = 0;         // TickFrame の履歴上の位置 (BuildStats が決める)
     // 表示中の控え (-1 = 履歴を表示)。控えを見ている間は履歴を止める — 止めないと新しい控えが
     // 入ってリングの添字がずれる
     int captureIndex_ = -1;

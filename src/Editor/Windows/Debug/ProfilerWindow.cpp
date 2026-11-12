@@ -26,6 +26,8 @@ constexpr int kRankingRows = 12;
 // 予算超過は直近この数フレームの平均で判定する (単発の跳ねで鳴らさない)
 constexpr int kBudgetCheckFrames = 30;
 constexpr double kBudgetToastCooldownSec = 10.0;
+// tick の無いフレームから、スコープのあるフレームを探して遡る上限 (60 Hz の tick に対して十分)
+constexpr int kTickSearchFrames = 60;
 constexpr int kAvgWindowChoices[] = { 1, 30, 60, 120, prof::kFrameHistory };
 
 // タブの並び = EditorSettings::profilerTab の値
@@ -125,8 +127,21 @@ void ProfilerWindow::BuildStats(int window)
     const int available = (std::max)(prof::HistoryCount() - selectedAge_, 1);
     const int frames = (captureIndex_ >= 0) ? 1 : std::clamp(window, 1, available);
 
+    // スコープの行を取るフレームを決める (tick の無いフレームなら、スコープのある直前のフレームまで遡る)
+    tickAge_ = selectedAge_;
+    if (captureIndex_ < 0) {
+        const int searchEnd = (std::min)(prof::HistoryCount(), selectedAge_ + kTickSearchFrames);
+        for (int age = selectedAge_; age < searchEnd; ++age) {
+            if (prof::History(age).scopeCount > 0 || prof::History(age).itemNameCount > 0) {
+                tickAge_ = age;
+                break;
+            }
+        }
+    }
+    const prof::FrameRecord& rows = TickFrame();
+
     phases_ = {};
-    for (int i = 0; i < shown.scopeCount; ++i) {
+    for (int i = 0; i < rows.scopeCount; ++i) {
         scopeStats_[i] = {};
     }
     int gpuSamples[prof::kMaxGpuPasses] = {};
@@ -155,8 +170,8 @@ void ProfilerWindow::BuildStats(int window)
         add(phases_.present, frame.phases.presentMs, first);
         add(phases_.gpuFrame, frame.gpuFrameMs, first);
 
-        for (int i = 0; i < shown.scopeCount; ++i) {
-            const prof::ScopeStat& row = shown.scopes[i];
+        for (int i = 0; i < rows.scopeCount; ++i) {
+            const prof::ScopeStat& row = rows.scopes[i];
             const int parentMatch = (row.parent >= 0) ? match[row.parent] : -1;
             int found = -1;
             if (row.parent < 0 || parentMatch >= 0) {
@@ -167,7 +182,7 @@ void ProfilerWindow::BuildStats(int window)
                 }
             }
             match[i] = found;
-            add(scopeStats_[i], (found >= 0) ? frame.scopes[found].ms : 0.0f, first);
+            add(scopeStats_[i], (found >= 0) ? frame.scopes[found].ms : 0.0f, false);
         }
 
         // GPU は「走ったフレーム」だけで平均する (走らなかったフレームの値は前回値の残り)
@@ -193,16 +208,20 @@ void ProfilerWindow::BuildStats(int window)
                              &phases_.present, &phases_.gpuFrame }) {
         stats->avg *= inv;
     }
-    for (int i = 0; i < shown.scopeCount; ++i) {
+    for (int i = 0; i < rows.scopeCount; ++i) {
+        // 「今回」は行を取ったフレームの値 (平均の窓に入っていなくても出す)。
+        // 平均は描画フレームあたり: tick の無いフレームは 0 として数える (フレーム比と同じ基準)
+        scopeStats_[i].now = rows.scopes[i].ms;
+        scopeStats_[i].max = (std::max)(scopeStats_[i].max, rows.scopes[i].ms);
         scopeStats_[i].avg *= inv;
         scopeSelfAvg_[i] = scopeStats_[i].avg;
     }
-    for (int i = 0; i < shown.scopeCount; ++i) {
-        if (shown.scopes[i].parent >= 0) {
-            scopeSelfAvg_[shown.scopes[i].parent] -= scopeStats_[i].avg;
+    for (int i = 0; i < rows.scopeCount; ++i) {
+        if (rows.scopes[i].parent >= 0) {
+            scopeSelfAvg_[rows.scopes[i].parent] -= scopeStats_[i].avg;
         }
     }
-    for (int i = 0; i < shown.scopeCount; ++i) {
+    for (int i = 0; i < rows.scopeCount; ++i) {
         scopeSelfAvg_[i] = (std::max)(0.0f, scopeSelfAvg_[i]);
     }
     for (int g = 0; g < shown.gpuCount; ++g) {
@@ -431,6 +450,7 @@ void ProfilerWindow::DrawOverview(const EditorSettings& settings)
     DrawFrameGraph();
 
     const prof::FrameRecord& shown = Shown();
+    const prof::FrameRecord& tickFrame = TickFrame();
     const float frameMs = phases_.frame.avg;
 
     // ---- フェーズの内訳 (グラフの凡例を兼ねる) ----
@@ -487,8 +507,8 @@ void ProfilerWindow::DrawOverview(const EditorSettings& settings)
         ImGui::TextColored(themeColor::Error, "%s  %s: %.3f ms / %.3f ms", Tr(kind), name,
                            static_cast<double>(ms), static_cast<double>(budget));
     };
-    for (int i = 0; i < shown.scopeCount; ++i) {
-        overRow(StrId::Prof_KindCpu, "cpu", shown.scopes[i].name, scopeStats_[i].avg);
+    for (int i = 0; i < tickFrame.scopeCount; ++i) {
+        overRow(StrId::Prof_KindCpu, "cpu", tickFrame.scopes[i].name, scopeStats_[i].avg);
     }
     for (int g = 0; g < shown.gpuCount; ++g) {
         if (shown.gpu[g].ran) {
@@ -506,9 +526,9 @@ void ProfilerWindow::DrawOverview(const EditorSettings& settings)
     };
     Entry entries[prof::kMaxFrameScopes + prof::kMaxGpuPasses];
     int entryCount = 0;
-    for (int i = 0; i < shown.scopeCount; ++i) {
-        if (PassesFilter(shown.scopes[i].name)) {
-            entries[entryCount++] = Entry{ StrId::Prof_KindCpu, shown.scopes[i].name, scopeSelfAvg_[i] };
+    for (int i = 0; i < tickFrame.scopeCount; ++i) {
+        if (PassesFilter(tickFrame.scopes[i].name)) {
+            entries[entryCount++] = Entry{ StrId::Prof_KindCpu, tickFrame.scopes[i].name, scopeSelfAvg_[i] };
         }
     }
     for (int g = 0; g < shown.gpuCount; ++g) {
@@ -543,6 +563,17 @@ void ProfilerWindow::DrawOverview(const EditorSettings& settings)
         }
         ImGui::EndTable();
     }
+}
+
+void ProfilerWindow::DrawTickFrameNote() const
+{
+    // 一時停止中だけ出す。動いている間は tick の有無が毎フレーム入れ替わるので、
+    // この 1 行を出し入れすると下の表が上下に揺れる (直したかった重なりの再発になる)
+    if (captureIndex_ >= 0 || tickAge_ == selectedAge_ || !prof::IsHistoryPaused()) {
+        return;
+    }
+    ImGui::TextColored(themeColor::TextDim, Tr(StrId::Prof_TickFrameNote),
+                       static_cast<unsigned long long>(TickFrame().frameIndex));
 }
 
 float ProfilerWindow::BudgetMs(const EditorSettings& settings, const char* kind, const char* name)

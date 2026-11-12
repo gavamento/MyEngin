@@ -31,7 +31,7 @@ using profui::ShareBar;
 
 void ProfilerWindow::DrawCpuChildren(int parent, EditorSettings& settings)
 {
-    const prof::FrameRecord& shown = Shown();
+    const prof::FrameRecord& shown = TickFrame();
     int children[prof::kMaxFrameScopes];
     int childCount = 0;
     for (int i = 0; i < shown.scopeCount; ++i) {
@@ -73,7 +73,7 @@ void ProfilerWindow::DrawCpuChildren(int parent, EditorSettings& settings)
 
 void ProfilerWindow::DrawCpuRowValues(int i, const EditorSettings& settings)
 {
-    const prof::FrameRecord& shown = Shown();
+    const prof::FrameRecord& shown = TickFrame();
     const float budget = BudgetMs(settings, "cpu", shown.scopes[i].name);
     ImVec4 budgetColor = themeColor::Text;
     const bool flagged = profui::BudgetColor(scopeStats_[i].avg, budget, &budgetColor);
@@ -105,7 +105,7 @@ void ProfilerWindow::DrawCpu(EngineContext& ctx, EditorSettings& settings, Selec
 
 void ProfilerWindow::DrawScopes(EditorSettings& settings)
 {
-    const prof::FrameRecord& shown = Shown();
+    const prof::FrameRecord& shown = TickFrame();
     if (shown.droppedScopes > 0) {
         ImGui::TextColored(themeColor::Warning, Tr(StrId::Prof_DroppedScopes), shown.droppedScopes);
     }
@@ -113,6 +113,7 @@ void ProfilerWindow::DrawScopes(EditorSettings& settings)
         ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_NoScopes));
         return;
     }
+    DrawTickFrameNote();
     if (!ImGui::BeginTable("##ProfCpu", 8, profui::kTableFlags)) {
         return;
     }
@@ -507,7 +508,7 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", Tr(StrId::Prof_ItemTimingHelp));
     }
-    const prof::FrameRecord& shown = Shown();
+    const prof::FrameRecord& shown = TickFrame();
     if (shown.itemNameCount == 0) {
         if (!settings.profilerItemTiming) {
             ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsOff));
