@@ -75,7 +75,18 @@ void ReportGpuFrame(float ms);
 void SetHistoryPaused(bool paused);
 bool IsHistoryPaused();
 
+// ---- 重いフレームの自動記録 ----
+// 確定したフレームの壁時計がしきい値を超えたら、そのフレームを丸ごと控えへ写す。
+// 履歴は 4 秒で流れてしまうので、たまにしか起きない引っかかりを後から開けるようにする。
+// 控えは kMaxCaptures 件のリングで、あふれたら古いものから捨てる
+inline constexpr int kMaxCaptures = 32;
+void SetCaptureThresholdMs(float ms); // 0 以下 = 記録しない
+float CaptureThresholdMs();
+void ClearCaptures();
+
 struct FrameRecord;
+int CaptureCount();
+const FrameRecord& Capture(int index);      // 0 = いちばん古い控え。範囲外は空のレコード
 int HistoryCount();                         // 確定済みフレーム数 (最大 kFrameHistory)
 const FrameRecord& History(int age);        // age 0 = 直近の確定フレーム。範囲外は空のレコード
 

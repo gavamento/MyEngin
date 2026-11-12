@@ -41,6 +41,16 @@ void EditorSettings::Load(const std::wstring& dir)
         profilerAvgFrames = root.value("profilerAvgFrames", profilerAvgFrames);
         profilerHideZero = root.value("profilerHideZero", profilerHideZero);
         profilerSortByCost = root.value("profilerSortByCost", profilerSortByCost);
+        profilerCaptureEnabled = root.value("profilerCaptureEnabled", profilerCaptureEnabled);
+        profilerCaptureMs = root.value("profilerCaptureMs", profilerCaptureMs);
+        if (root.contains("profilerBudgets") && root["profilerBudgets"].is_object()) {
+            profilerBudgets.clear();
+            for (const auto& item : root["profilerBudgets"].items()) {
+                if (item.value().is_number()) {
+                    profilerBudgets.push_back(ProfilerBudget{ item.key(), item.value().get<float>() });
+                }
+            }
+        }
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_settings.json parse error: %s", ex.what());
     }
@@ -80,6 +90,15 @@ void EditorSettings::Save() const
     root["profilerAvgFrames"] = profilerAvgFrames;
     root["profilerHideZero"] = profilerHideZero;
     root["profilerSortByCost"] = profilerSortByCost;
+    root["profilerCaptureEnabled"] = profilerCaptureEnabled;
+    root["profilerCaptureMs"] = profilerCaptureMs;
+    {
+        nlohmann::json budgets = nlohmann::json::object();
+        for (const ProfilerBudget& budget : profilerBudgets) {
+            budgets[budget.key] = budget.ms;
+        }
+        root["profilerBudgets"] = budgets;
+    }
 
     std::ofstream f(std::filesystem::path(path_), std::ios::binary);
     if (f) {

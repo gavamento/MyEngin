@@ -3,6 +3,8 @@
 #include <cfloat>
 #include <cstdio>
 
+#include "Engine/Renderer/ImGui/ImGuiTheme.h"
+
 #include "imgui.h"
 
 // プロファイラの各タブが共有する表の部品 (ProfilerWindow*.cpp だけが include する)
@@ -25,6 +27,30 @@ inline void ShareBar(float ms, float frameMs)
     char overlay[16];
     std::snprintf(overlay, sizeof(overlay), "%.1f%%", static_cast<double>(fraction * 100.0f));
     ImGui::ProgressBar((std::min)(fraction, 1.0f), ImVec2(-FLT_MIN, ImGui::GetTextLineHeight()), overlay);
+}
+
+// 予算に対する色。80% 以上で警告色、超過でエラー色。予算が無い (0 以下) か余裕があれば false
+inline bool BudgetColor(float ms, float budgetMs, ImVec4* out)
+{
+    if (budgetMs <= 0.0f || ms < budgetMs * 0.8f) {
+        return false;
+    }
+    *out = (ms > budgetMs) ? themeColor::Error : themeColor::Warning;
+    return true;
+}
+
+// 予算の列: 設定があれば値を書く (無ければ空欄)。超過・接近は色で示す
+inline void BudgetCell(float ms, float budgetMs)
+{
+    if (budgetMs <= 0.0f) {
+        return;
+    }
+    ImVec4 color = themeColor::Text;
+    if (BudgetColor(ms, budgetMs, &color)) {
+        ImGui::TextColored(color, "%.3f", static_cast<double>(budgetMs));
+    } else {
+        ImGui::Text("%.3f", static_cast<double>(budgetMs));
+    }
 }
 
 // 「項目 | 値」の 2 列表。BeginValueTable が true のときだけ行を足して EndValueTable を呼ぶ

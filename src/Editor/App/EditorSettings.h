@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace mye {
 
@@ -46,6 +47,14 @@ struct EditorSettings {
     int profilerAvgFrames = 60;     // 平均・最大を取るフレーム数 (1 = 瞬間値)
     bool profilerHideZero = true;   // 0 ms / 未実行の行を隠す
     bool profilerSortByCost = true; // 重い順に並べる (false = 実行順)
+    bool profilerCaptureEnabled = true; // 遅いフレームを自動で控える
+    float profilerCaptureMs = 20.0f;    // 控えるしきい値 (フレームの壁時計)
+    // 項目ごとの予算。key は "cpu/<スコープ名>" か "gpu/<パス名>"。個人の目安なのでここに置く
+    struct ProfilerBudget {
+        std::string key;
+        float ms = 0.0f;
+    };
+    std::vector<ProfilerBudget> profilerBudgets;
 
     void Load(const std::wstring& dir);
     void Save() const;

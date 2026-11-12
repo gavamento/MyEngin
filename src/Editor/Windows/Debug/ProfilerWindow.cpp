@@ -7,6 +7,7 @@
 #include <iterator>
 
 #include "Editor/App/EditorSettings.h"
+#include "Editor/Widgets/ToastCenter.h"
 #include "Editor/Windows/Debug/ProfilerWidgets.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
@@ -22,6 +23,9 @@ constexpr float kGraphMinScaleMs = 36.0f; // 縦軸の下限 (30 fps の線が�
 constexpr float kBudget60Ms = 1000.0f / 60.0f;
 constexpr float kBudget30Ms = 1000.0f / 30.0f;
 constexpr int kRankingRows = 12;
+// 予算超過は直近この数フレームの平均で判定する (単発の跳ねで鳴らさない)
+constexpr int kBudgetCheckFrames = 30;
+constexpr double kBudgetToastCooldownSec = 10.0;
 constexpr int kAvgWindowChoices[] = { 1, 30, 60, 120, prof::kFrameHistory };
 
 // フレームグラフの系列 (下から積む順)
@@ -103,8 +107,9 @@ bool ProfilerWindow::PassesFilter(const char* name) const
 void ProfilerWindow::BuildStats(int window)
 {
     const prof::FrameRecord& shown = Shown();
+    // 控えは前後のフレームを持たないので、平均も最大もそのフレームの値になる
     const int available = (std::max)(prof::HistoryCount() - selectedAge_, 1);
-    const int frames = std::clamp(window, 1, available);
+    const int frames = (captureIndex_ >= 0) ? 1 : std::clamp(window, 1, available);
 
     phases_ = {};
     for (int i = 0; i < shown.scopeCount; ++i) {
@@ -126,8 +131,8 @@ void ProfilerWindow::BuildStats(int window)
     // 表示中フレームの各行が、過去フレームのどの行に当たるか (親をたどって同じ場所の同名を探す)
     static int match[prof::kMaxFrameScopes];
     for (int f = 0; f < frames; ++f) {
-        const prof::FrameRecord& frame = prof::History(selectedAge_ + f);
         const bool first = (f == 0);
+        const prof::FrameRecord& frame = first ? shown : prof::History(selectedAge_ + f);
         add(phases_.frame, frame.frameMs, first);
         add(phases_.reload, frame.phases.reloadMs, first);
         add(phases_.tick, frame.phases.tickMs, first);
@@ -191,13 +196,16 @@ void ProfilerWindow::BuildStats(int window)
     }
 }
 
-void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings)
+void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, ToastCenter& toasts)
 {
+    prof::SetCaptureThresholdMs(settings.profilerCaptureEnabled ? settings.profilerCaptureMs : 0.0f);
+    CheckBudgets(settings, toasts);
     if (!open) {
         // 見ていない間に履歴を止めたままにしない (次に開いたとき古いフレームが出る)
         if (prof::IsHistoryPaused()) {
             prof::SetHistoryPaused(false);
             selectedAge_ = 0;
+            captureIndex_ = -1;
         }
         return;
     }
@@ -206,12 +214,15 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings)
         return;
     }
     selectedAge_ = std::clamp(selectedAge_, 0, (std::max)(prof::HistoryCount() - 1, 0));
+    if (captureIndex_ >= prof::CaptureCount()) {
+        captureIndex_ = -1; // 控えを消去した
+    }
     BuildStats(settings.profilerAvgFrames);
     DrawHeader(settings);
 
     // タブの並び = EditorSettings::profilerTab の値 (並べ替えると保存済みの選択がずれる)
     const StrId tabLabels[] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
-                                StrId::Prof_TabRender, StrId::Prof_TabSystems };
+                                StrId::Prof_TabRender, StrId::Prof_TabSystems, StrId::Prof_TabHistory };
     if (ImGui::BeginTabBar("###ProfTabs")) {
         for (int tab = 0; tab < static_cast<int>(std::size(tabLabels)); ++tab) {
             // 保存してあるタブを初回だけ選び直す。以後は選ばれたタブを保存する
@@ -231,7 +242,8 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings)
                 case 1: DrawCpu(settings); break;
                 case 2: DrawGpu(settings); break;
                 case 3: DrawRender(ctx); break;
-                default: DrawSystems(ctx); break;
+                case 4: DrawSystems(ctx); break;
+                default: DrawHistory(settings); break;
                 }
             }
             ImGui::EndChild();
@@ -260,6 +272,7 @@ void ProfilerWindow::DrawHeader(EditorSettings& settings)
     if (ImGui::Button(Tr(paused ? StrId::Prof_Resume : StrId::Prof_Pause))) {
         prof::SetHistoryPaused(!paused);
         selectedAge_ = 0;
+        captureIndex_ = -1;
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
@@ -294,7 +307,8 @@ void ProfilerWindow::DrawHeader(EditorSettings& settings)
     ImGui::InputTextWithHint("##ProfFilter", Tr(StrId::Prof_Filter), filter_, sizeof(filter_));
     if (paused) {
         ImGui::SameLine();
-        ImGui::TextColored(themeColor::Warning, Tr(StrId::Prof_PausedAt),
+        ImGui::TextColored(themeColor::Warning,
+                           Tr((captureIndex_ >= 0) ? StrId::Prof_ViewingCapture : StrId::Prof_PausedAt),
                            static_cast<unsigned long long>(shown.frameIndex),
                            static_cast<unsigned long long>(shown.tickIndex));
     }
@@ -384,6 +398,7 @@ void ProfilerWindow::DrawFrameGraph()
         if (clicked) {
             prof::SetHistoryPaused(true);
             selectedAge_ = age;
+            captureIndex_ = -1;
         }
     }
 }
@@ -435,6 +450,29 @@ void ProfilerWindow::DrawOverview(const EditorSettings& settings)
         ImGui::EndTable();
     }
 
+    // ---- 予算超過 (超過が 1 つも無ければ節ごと出さない) ----
+    bool anyOver = false;
+    auto overRow = [&](StrId kind, const char* kindKey, const char* name, float ms) {
+        const float budget = BudgetMs(settings, kindKey, name);
+        if (budget <= 0.0f || ms <= budget) {
+            return;
+        }
+        if (!anyOver) {
+            anyOver = true;
+            ImGui::SeparatorText(Tr(StrId::Prof_OverBudgetHeader));
+        }
+        ImGui::TextColored(themeColor::Error, "%s  %s: %.3f ms / %.3f ms", Tr(kind), name,
+                           static_cast<double>(ms), static_cast<double>(budget));
+    };
+    for (int i = 0; i < shown.scopeCount; ++i) {
+        overRow(StrId::Prof_KindCpu, "cpu", shown.scopes[i].name, scopeStats_[i].avg);
+    }
+    for (int g = 0; g < shown.gpuCount; ++g) {
+        if (shown.gpu[g].ran) {
+            overRow(StrId::Prof_KindGpu, "gpu", shown.gpu[g].name, gpuStats_[g].avg);
+        }
+    }
+
     // ---- 重い項目 ----
     // CPU スコープは「自身の時間」(子に含まれないぶん) で並べる。包含時間で並べると親が必ず上に来て、
     // どこが重いかの答えにならない
@@ -481,6 +519,102 @@ void ProfilerWindow::DrawOverview(const EditorSettings& settings)
             profui::ShareBar(entries[i].ms, frameMs);
         }
         ImGui::EndTable();
+    }
+}
+
+float ProfilerWindow::BudgetMs(const EditorSettings& settings, const char* kind, const char* name)
+{
+    char key[160];
+    std::snprintf(key, sizeof(key), "%s/%s", kind, name);
+    for (const EditorSettings::ProfilerBudget& budget : settings.profilerBudgets) {
+        if (budget.key == key) {
+            return budget.ms;
+        }
+    }
+    return 0.0f;
+}
+
+void ProfilerWindow::BudgetPopup(EditorSettings& settings, const char* kind, const char* name)
+{
+    if (!ImGui::BeginPopupContextItem("##ProfBudgetPopup")) {
+        return;
+    }
+    char key[160];
+    std::snprintf(key, sizeof(key), "%s/%s", kind, name);
+    float value = BudgetMs(settings, kind, name);
+    ImGui::TextUnformatted(name);
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+    if (ImGui::InputFloat(Tr(StrId::Prof_BudgetEdit), &value, 0.0f, 0.0f, "%.3f")) {
+        value = (std::max)(value, 0.0f);
+        auto& budgets = settings.profilerBudgets;
+        const auto it = std::find_if(budgets.begin(), budgets.end(),
+                                     [&](const EditorSettings::ProfilerBudget& b) { return b.key == key; });
+        if (value <= 0.0f) {
+            if (it != budgets.end()) {
+                budgets.erase(it);
+            }
+        } else if (it != budgets.end()) {
+            it->ms = value;
+        } else {
+            budgets.push_back(EditorSettings::ProfilerBudget{ key, value });
+        }
+        settings.Save();
+    }
+    ImGui::EndPopup();
+}
+
+void ProfilerWindow::CheckBudgets(const EditorSettings& settings, ToastCenter& toasts)
+{
+    if (settings.profilerBudgets.empty() || prof::IsHistoryPaused()) {
+        return;
+    }
+    const double now = ImGui::GetTime();
+    if (now - lastBudgetToast_ < kBudgetToastCooldownSec) {
+        return;
+    }
+    if (prof::HistoryCount() < kBudgetCheckFrames) {
+        return; // 起動直後の数フレームだけで判定しない
+    }
+    for (const EditorSettings::ProfilerBudget& budget : settings.profilerBudgets) {
+        const size_t slash = budget.key.find('/');
+        if (slash == std::string::npos) {
+            continue;
+        }
+        const bool gpu = (budget.key.compare(0, slash, "gpu") == 0);
+        const char* name = budget.key.c_str() + slash + 1;
+        float sum = 0.0f;
+        int samples = 0;
+        for (int age = 0; age < kBudgetCheckFrames; ++age) {
+            const prof::FrameRecord& frame = prof::History(age);
+            if (gpu) {
+                // 走ったフレームだけで平均する (表示と同じ)
+                for (int g = 0; g < frame.gpuCount; ++g) {
+                    if (frame.gpu[g].ran && SameName(frame.gpu[g].name, name)) {
+                        sum += frame.gpu[g].ms;
+                        ++samples;
+                        break;
+                    }
+                }
+            } else {
+                // 同名が親違いで複数あっても、最初の 1 行で判定する
+                for (int i = 0; i < frame.scopeCount; ++i) {
+                    if (SameName(frame.scopes[i].name, name)) {
+                        sum += frame.scopes[i].ms;
+                        break;
+                    }
+                }
+                ++samples;
+            }
+        }
+        const float avg = (samples > 0) ? sum / static_cast<float>(samples) : 0.0f;
+        if (avg > budget.ms) {
+            char text[256];
+            std::snprintf(text, sizeof(text), Tr(StrId::Prof_BudgetToast), name, static_cast<double>(avg),
+                          static_cast<double>(budget.ms));
+            toasts.Notify(LogLevel::Warn, text, 5.0f);
+            lastBudgetToast_ = now;
+            return; // 1 度に 1 件だけ (残りは次の間隔で)
+        }
     }
 }
 

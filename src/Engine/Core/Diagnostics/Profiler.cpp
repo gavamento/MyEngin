@@ -31,6 +31,11 @@ uint64_t g_pendingTickIndex = 0;
 const FrameRecord g_emptyFrame{};
 bool g_historyPaused = false;
 
+std::vector<FrameRecord> g_captures; // 履歴と同じく最初の BeginFrame で 1 度だけ確保する
+int g_captureHead = 0;
+int g_captureCount = 0;
+float g_captureThresholdMs = 0.0f;
+
 GpuStat g_gpu[kMaxGpuPasses];
 int g_gpuCount = 0;
 float g_gpuFrameMs = 0.0f;
@@ -120,6 +125,13 @@ void SealFrame(int64_t now)
     for (int i = 0; i < kRenderStatsViewSlots; ++i) {
         out.renderByView[i] = g_renderByView[i];
     }
+    if (g_captureThresholdMs > 0.0f && out.frameMs > g_captureThresholdMs) {
+        g_captures[static_cast<size_t>(g_captureHead)] = out;
+        g_captureHead = (g_captureHead + 1) % kMaxCaptures;
+        if (g_captureCount < kMaxCaptures) {
+            ++g_captureCount;
+        }
+    }
     g_historyHead = (g_historyHead + 1) % kFrameHistory;
     if (g_historyCount < kFrameHistory) {
         ++g_historyCount;
@@ -136,6 +148,7 @@ void BeginFrame()
         g_freq = f.QuadPart;
         g_records.reserve(static_cast<size_t>(kMaxRawScopes));
         g_history.resize(static_cast<size_t>(kFrameHistory));
+        g_captures.resize(static_cast<size_t>(kMaxCaptures));
     }
     const int64_t now = Now();
     if (g_frameStart != 0 && !g_historyPaused) {
@@ -226,6 +239,36 @@ void SetHistoryPaused(bool paused)
 bool IsHistoryPaused()
 {
     return g_historyPaused;
+}
+
+void SetCaptureThresholdMs(float ms)
+{
+    g_captureThresholdMs = ms;
+}
+
+float CaptureThresholdMs()
+{
+    return g_captureThresholdMs;
+}
+
+void ClearCaptures()
+{
+    g_captureHead = 0;
+    g_captureCount = 0;
+}
+
+int CaptureCount()
+{
+    return g_captureCount;
+}
+
+const FrameRecord& Capture(int index)
+{
+    if (index < 0 || index >= g_captureCount) {
+        return g_emptyFrame;
+    }
+    const int oldest = (g_captureHead - g_captureCount + kMaxCaptures) % kMaxCaptures;
+    return g_captures[static_cast<size_t>((oldest + index) % kMaxCaptures)];
 }
 
 int HistoryCount()

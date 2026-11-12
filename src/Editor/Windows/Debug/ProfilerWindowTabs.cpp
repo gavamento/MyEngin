@@ -1,6 +1,7 @@
 #include "Editor/Windows/Debug/ProfilerWindow.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <iterator>
 
 #include "Editor/App/EditorSettings.h"
@@ -23,7 +24,7 @@ using profui::kZeroMs;
 using profui::MsCell;
 using profui::ShareBar;
 
-void ProfilerWindow::DrawCpuChildren(int parent, const EditorSettings& settings)
+void ProfilerWindow::DrawCpuChildren(int parent, EditorSettings& settings)
 {
     const prof::FrameRecord& shown = Shown();
     int children[prof::kMaxFrameScopes];
@@ -55,7 +56,8 @@ void ProfilerWindow::DrawCpuChildren(int parent, const EditorSettings& settings)
             flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
         }
         const bool nodeOpen = ImGui::TreeNodeEx("##scope", flags, "%s", shown.scopes[i].name);
-        DrawCpuRowValues(i);
+        BudgetPopup(settings, "cpu", shown.scopes[i].name);
+        DrawCpuRowValues(i, settings);
         if (nodeOpen && hasChildren) {
             DrawCpuChildren(i, settings);
             ImGui::TreePop();
@@ -64,13 +66,20 @@ void ProfilerWindow::DrawCpuChildren(int parent, const EditorSettings& settings)
     }
 }
 
-void ProfilerWindow::DrawCpuRowValues(int i)
+void ProfilerWindow::DrawCpuRowValues(int i, const EditorSettings& settings)
 {
     const prof::FrameRecord& shown = Shown();
+    const float budget = BudgetMs(settings, "cpu", shown.scopes[i].name);
+    ImVec4 budgetColor = themeColor::Text;
+    const bool flagged = profui::BudgetColor(scopeStats_[i].avg, budget, &budgetColor);
     ImGui::TableSetColumnIndex(1);
     MsCell(scopeStats_[i].now);
     ImGui::TableSetColumnIndex(2);
-    MsCell(scopeStats_[i].avg);
+    if (flagged) {
+        ImGui::TextColored(budgetColor, "%.3f", static_cast<double>(scopeStats_[i].avg));
+    } else {
+        MsCell(scopeStats_[i].avg);
+    }
     ImGui::TableSetColumnIndex(3);
     MsCell(scopeStats_[i].max);
     ImGui::TableSetColumnIndex(4);
@@ -78,10 +87,12 @@ void ProfilerWindow::DrawCpuRowValues(int i)
     ImGui::TableSetColumnIndex(5);
     ImGui::Text("%d", shown.scopes[i].calls);
     ImGui::TableSetColumnIndex(6);
+    profui::BudgetCell(scopeStats_[i].avg, budget);
+    ImGui::TableSetColumnIndex(7);
     ShareBar(scopeStats_[i].avg, phases_.frame.avg);
 }
 
-void ProfilerWindow::DrawCpu(const EditorSettings& settings)
+void ProfilerWindow::DrawCpu(EditorSettings& settings)
 {
     const prof::FrameRecord& shown = Shown();
     if (shown.droppedScopes > 0) {
@@ -91,7 +102,7 @@ void ProfilerWindow::DrawCpu(const EditorSettings& settings)
         ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_NoScopes));
         return;
     }
-    if (!ImGui::BeginTable("##ProfCpu", 7, profui::kTableFlags)) {
+    if (!ImGui::BeginTable("##ProfCpu", 8, profui::kTableFlags)) {
         return;
     }
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 4.0f);
@@ -100,6 +111,7 @@ void ProfilerWindow::DrawCpu(const EditorSettings& settings)
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColMax), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColSelf), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColCalls), ImGuiTableColumnFlags_WidthStretch, 0.7f);
+    ImGui::TableSetupColumn(Tr(StrId::Prof_ColBudget), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::TableHeadersRow();
     if (filter_[0] == '\0') {
@@ -119,25 +131,29 @@ void ProfilerWindow::DrawCpu(const EditorSettings& settings)
         for (int r = 0; r < rowCount; ++r) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(rows[r]);
             ImGui::TextUnformatted(shown.scopes[rows[r]].name);
-            DrawCpuRowValues(rows[r]);
+            BudgetPopup(settings, "cpu", shown.scopes[rows[r]].name);
+            DrawCpuRowValues(rows[r], settings);
+            ImGui::PopID();
         }
     }
     ImGui::EndTable();
-    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_SelfHelp));
+    ImGui::TextColored(themeColor::TextDim, "%s %s", Tr(StrId::Prof_SelfHelp), Tr(StrId::Prof_BudgetHint));
 }
 
-void ProfilerWindow::DrawGpu(const EditorSettings& settings)
+void ProfilerWindow::DrawGpu(EditorSettings& settings)
 {
     const prof::FrameRecord& shown = Shown();
-    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_GpuLatency));
-    if (!ImGui::BeginTable("##ProfGpu", 5, profui::kTableFlags)) {
+    ImGui::TextColored(themeColor::TextDim, "%s %s", Tr(StrId::Prof_GpuLatency), Tr(StrId::Prof_BudgetHint));
+    if (!ImGui::BeginTable("##ProfGpu", 6, profui::kTableFlags)) {
         return;
     }
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColNow), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColAvg), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColMax), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn(Tr(StrId::Prof_ColBudget), ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
     ImGui::TableHeadersRow();
 
@@ -176,14 +192,14 @@ void ProfilerWindow::DrawGpu(const EditorSettings& settings)
     MsCell(phases_.gpuFrame.avg);
     ImGui::TableSetColumnIndex(3);
     MsCell(phases_.gpuFrame.max);
-    ImGui::TableSetColumnIndex(4);
+    ImGui::TableSetColumnIndex(5);
     ShareBar(phases_.gpuFrame.avg, phases_.frame.avg);
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_GpuPassTotal));
     ImGui::TableSetColumnIndex(2);
     MsCell(passTotal);
-    ImGui::TableSetColumnIndex(4);
+    ImGui::TableSetColumnIndex(5);
     ShareBar(passTotal, phases_.frame.avg);
 
     for (int r = 0; r < rowCount; ++r) {
@@ -193,11 +209,15 @@ void ProfilerWindow::DrawGpu(const EditorSettings& settings)
         if (!ran) {
             ImGui::PushStyleColor(ImGuiCol_Text, themeColor::TextDim);
         }
+        const float budget = BudgetMs(settings, "gpu", shown.gpu[g].name);
         ImGui::TableSetColumnIndex(0);
+        ImGui::PushID(g);
         ImGui::TextUnformatted(shown.gpu[g].name);
         if (!ran && ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", Tr(StrId::Prof_GpuNotRun));
         }
+        BudgetPopup(settings, "gpu", shown.gpu[g].name);
+        ImGui::PopID();
         ImGui::TableSetColumnIndex(1);
         MsCell(gpuStats_[g].now);
         ImGui::TableSetColumnIndex(2);
@@ -206,6 +226,8 @@ void ProfilerWindow::DrawGpu(const EditorSettings& settings)
         MsCell(gpuStats_[g].max);
         if (ran) {
             ImGui::TableSetColumnIndex(4);
+            profui::BudgetCell(gpuStats_[g].avg, budget);
+            ImGui::TableSetColumnIndex(5);
             ShareBar(gpuStats_[g].avg, phases_.frame.avg);
         } else {
             ImGui::PopStyleColor();
@@ -396,6 +418,84 @@ void ProfilerWindow::DrawSystems(EngineContext& ctx)
             profui::EndValueTable();
         }
     }
+}
+
+void ProfilerWindow::DrawHistory(EditorSettings& settings)
+{
+    if (ImGui::Checkbox(Tr(StrId::Prof_CaptureEnable), &settings.profilerCaptureEnabled)) {
+        settings.Save();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
+    ImGui::InputFloat("ms##ProfCaptureMs", &settings.profilerCaptureMs, 0.0f, 0.0f, "%.1f");
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        settings.profilerCaptureMs = (std::max)(settings.profilerCaptureMs, 1.0f);
+        settings.Save();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::Prof_CaptureClear))) {
+        prof::ClearCaptures();
+        captureIndex_ = -1;
+    }
+    const int count = prof::CaptureCount();
+    if (count == 0) {
+        ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_CaptureEmpty));
+        return;
+    }
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_CaptureHelp));
+    if (!ImGui::BeginTable("##ProfCaptures", 4, profui::kTableFlags)) {
+        return;
+    }
+    ImGui::TableSetupColumn(Tr(StrId::Prof_ColFrame), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn(Tr(StrId::Prof_ColTick), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn(Tr(StrId::Prof_ColFrameMs), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    ImGui::TableSetupColumn(Tr(StrId::Prof_ColHeaviest), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+    ImGui::TableHeadersRow();
+    // 新しい控えを上に
+    for (int index = count - 1; index >= 0; --index) {
+        const prof::FrameRecord& frame = prof::Capture(index);
+        // そのフレームでいちばん重い項目 = CPU スコープの自身の時間と、走った GPU パスのうちの最大
+        float self[prof::kMaxFrameScopes];
+        for (int i = 0; i < frame.scopeCount; ++i) {
+            self[i] = frame.scopes[i].ms;
+        }
+        for (int i = 0; i < frame.scopeCount; ++i) {
+            if (frame.scopes[i].parent >= 0) {
+                self[frame.scopes[i].parent] -= frame.scopes[i].ms;
+            }
+        }
+        const char* heaviest = "";
+        float heaviestMs = 0.0f;
+        for (int i = 0; i < frame.scopeCount; ++i) {
+            if (self[i] > heaviestMs) {
+                heaviestMs = self[i];
+                heaviest = frame.scopes[i].name;
+            }
+        }
+        for (int g = 0; g < frame.gpuCount; ++g) {
+            if (frame.gpu[g].ran && frame.gpu[g].ms > heaviestMs) {
+                heaviestMs = frame.gpu[g].ms;
+                heaviest = frame.gpu[g].name;
+            }
+        }
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        char label[48];
+        std::snprintf(label, sizeof(label), "%llu##cap%d", static_cast<unsigned long long>(frame.frameIndex), index);
+        if (ImGui::Selectable(label, captureIndex_ == index, ImGuiSelectableFlags_SpanAllColumns)) {
+            captureIndex_ = index;
+            prof::SetHistoryPaused(true);
+        }
+        ImGui::TableSetColumnIndex(1);
+        ImGui::Text("%llu", static_cast<unsigned long long>(frame.tickIndex));
+        ImGui::TableSetColumnIndex(2);
+        MsCell(frame.frameMs);
+        ImGui::TableSetColumnIndex(3);
+        if (heaviestMs > 0.0f) {
+            ImGui::Text("%s (%.3f ms)", heaviest, static_cast<double>(heaviestMs));
+        }
+    }
+    ImGui::EndTable();
 }
 
 } // namespace mye

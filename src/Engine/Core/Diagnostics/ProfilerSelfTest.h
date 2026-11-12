@@ -8,6 +8,9 @@ namespace mye {
 //   - SetFramePhases の値が、次の BeginFrame で確定するフレームへ付く
 //   - 履歴のリングが kFrameHistory で頭打ちになり、age 0 が直近を指す
 //   - 記録数の上限を超えたぶんは捨てて数える (範囲外へ書かない)
+//   - GPU パスの申告が確定フレームへ載り、同名は後勝ち
+//   - 一時停止中は履歴へ積まない
+//   - しきい値を超えたフレームだけが控えに残り、kMaxCaptures で古いものから捨てる
 bool RunProfilerSelfTest();
 
 } // namespace mye

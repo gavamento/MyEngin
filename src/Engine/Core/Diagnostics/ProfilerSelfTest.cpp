@@ -1,5 +1,6 @@
 #include "Engine/Core/Diagnostics/ProfilerSelfTest.h"
 
+#include <chrono>
 #include <cstring>
 
 #include "Engine/Core/Diagnostics/Log.h"
@@ -126,6 +127,60 @@ bool RunProfilerSelfTest()
     check(prof::History(prof::kFrameHistory - 1).frameIndex == 1005, "oldest kept frame after wrap-around");
     check(prof::History(prof::kFrameHistory).scopeCount == 0 && prof::History(-1).frameIndex == 0,
           "out-of-range age returns the empty record");
+
+    // ---- GPU パスの申告 ----
+    prof::ReportGpu("ssr", 1.0f, false);
+    prof::ReportGpu("gbuffer", 2.0f, true);
+    prof::ReportGpu("ssr", 3.0f, true); // 同名は後勝ち
+    prof::ReportGpuFrame(5.0f);
+    prof::BeginFrame();
+    {
+        const prof::FrameRecord& gpuFrame = prof::History(0);
+        check(gpuFrame.gpuCount == 2 && gpuFrame.gpuFrameMs == 5.0f, "gpu passes are sealed with the frame");
+        check(gpuFrame.gpuCount == 2 && std::strcmp(gpuFrame.gpu[0].name, "ssr") == 0 && gpuFrame.gpu[0].ms == 3.0f
+                  && gpuFrame.gpu[0].ran,
+              "a pass reported twice keeps the last report");
+    }
+    prof::BeginFrame();
+    check(prof::History(0).gpuCount == 0 && prof::History(0).gpuFrameMs == 0.0f,
+          "gpu passes do not carry over to the next frame");
+
+    // ---- 一時停止 ----
+    const uint64_t beforePause = prof::History(0).frameIndex;
+    prof::SetHistoryPaused(true);
+    prof::SetFramePhases(prof::FramePhases{}, 9999, 0);
+    prof::BeginFrame();
+    check(prof::IsHistoryPaused() && prof::History(0).frameIndex == beforePause,
+          "a paused history does not seal new frames");
+    prof::SetHistoryPaused(false);
+
+    // ---- 重いフレームの控え ----
+    // しきい値を「必ず超える」「絶対に超えない」の両端に置いて、実時間に依存させない
+    prof::ClearCaptures();
+    prof::SetCaptureThresholdMs(1.0e9f);
+    prof::BeginFrame();
+    prof::BeginFrame();
+    check(prof::CaptureCount() == 0, "frames under the threshold are not captured");
+    prof::SetCaptureThresholdMs(1.0e-9f);
+    for (int i = 0; i < prof::kMaxCaptures + 3; ++i) {
+        prof::SetFramePhases(prof::FramePhases{}, static_cast<uint64_t>(5000 + i), 0);
+        // フレームの長さが時計の分解能未満 (0 ms) だと「超えた」にならないので、時計が進むまで回す
+        // (sleep は Windows のタイマー分解能で 1 回 15 ms 前後かかり、スイートが遅くなる)
+        const auto spinStart = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() - spinStart < std::chrono::microseconds(20)) {
+        }
+        prof::BeginFrame();
+    }
+    check(prof::CaptureCount() == prof::kMaxCaptures, "captures are capped at kMaxCaptures");
+    check(prof::Capture(0).frameIndex == 5003 && prof::Capture(prof::kMaxCaptures - 1).frameIndex
+                                                      == static_cast<uint64_t>(5000 + prof::kMaxCaptures + 2),
+          "the oldest captures are dropped first");
+    check(prof::Capture(prof::kMaxCaptures).frameIndex == 0, "out-of-range capture returns the empty record");
+    prof::SetCaptureThresholdMs(0.0f);
+    prof::BeginFrame();
+    check(prof::CaptureCount() == prof::kMaxCaptures, "threshold 0 turns capturing off");
+    prof::ClearCaptures();
+    check(prof::CaptureCount() == 0, "ClearCaptures empties the list");
 
     MYE_LOG_INFO("==== Profiler self test: %s ====", failCount == 0 ? "PASS" : "FAIL");
     return failCount == 0;
