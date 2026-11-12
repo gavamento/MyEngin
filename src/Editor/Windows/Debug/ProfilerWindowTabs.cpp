@@ -5,7 +5,9 @@
 #include <iterator>
 
 #include "Editor/App/EditorSettings.h"
+#include "Editor/Scene/Selection.h"
 #include "Editor/Windows/Debug/ProfilerWidgets.h"
+#include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Engine/Acoustic/AcousticField.h"
 #include "Engine/Engine/Audio/Playback/AudioSourceSystem.h"
@@ -92,7 +94,13 @@ void ProfilerWindow::DrawCpuRowValues(int i, const EditorSettings& settings)
     ShareBar(scopeStats_[i].avg, phases_.frame.avg);
 }
 
-void ProfilerWindow::DrawCpu(EditorSettings& settings)
+void ProfilerWindow::DrawCpu(EngineContext& ctx, EditorSettings& settings, Selection& selection)
+{
+    DrawScopes(settings);
+    DrawItems(ctx, settings, selection);
+}
+
+void ProfilerWindow::DrawScopes(EditorSettings& settings)
 {
     const prof::FrameRecord& shown = Shown();
     if (shown.droppedScopes > 0) {
@@ -496,6 +504,130 @@ void ProfilerWindow::DrawHistory(EditorSettings& settings)
         }
     }
     ImGui::EndTable();
+}
+
+void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Selection& selection)
+{
+    ImGui::Spacing();
+    if (ImGui::Checkbox(Tr(StrId::Prof_ItemTiming), &settings.profilerItemTiming)) {
+        settings.Save();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", Tr(StrId::Prof_ItemTimingHelp));
+    }
+    const prof::FrameRecord& shown = Shown();
+    if (shown.itemNameCount == 0) {
+        if (!settings.profilerItemTiming) {
+            ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsOff));
+        }
+        return;
+    }
+    const float frameMs = shown.frameMs;
+
+    // ---- 名前別 (このフレームの合計。行数が少ないので全部出す) ----
+    int nameRows[prof::kMaxFrameItemNames];
+    int nameRowCount = 0;
+    for (int i = 0; i < shown.itemNameCount; ++i) {
+        if (PassesFilter(shown.itemNames[i].name)) {
+            nameRows[nameRowCount++] = i;
+        }
+    }
+    std::sort(nameRows, nameRows + nameRowCount,
+              [&](int a, int b) { return shown.itemNames[a].ms > shown.itemNames[b].ms; });
+    ImGui::SeparatorText(Tr(StrId::Prof_ItemsByName));
+    if (ImGui::BeginTable("##ProfItemNames", 5, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMs), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCalls), ImGuiTableColumnFlags_WidthStretch, 0.7f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+        for (int r = 0; r < nameRowCount; ++r) {
+            const prof::ItemStat& item = shown.itemNames[nameRows[r]];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(themeColor::TextDim, "%s", item.category);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(item.name);
+            ImGui::TableSetColumnIndex(2);
+            MsCell(item.ms);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%d", item.calls);
+            ImGui::TableSetColumnIndex(4);
+            ShareBar(item.ms, frameMs);
+        }
+        ImGui::EndTable();
+    }
+
+    // ---- エンティティ別 (重い順に上位だけ) ----
+    constexpr int kEntityRows = 40;
+    int rows[prof::kMaxFrameItems];
+    int rowCount = 0;
+    for (int i = 0; i < shown.itemCount; ++i) {
+        if (PassesFilter(shown.items[i].name)) {
+            rows[rowCount++] = i;
+        }
+    }
+    std::sort(rows, rows + rowCount, [&](int a, int b) { return shown.items[a].ms > shown.items[b].ms; });
+    rowCount = (std::min)(rowCount, kEntityRows);
+
+    ImGui::SeparatorText(Tr(StrId::Prof_ItemsByEntity));
+    if (shown.droppedItems > 0) {
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Prof_ItemsDropped), shown.droppedItems);
+    }
+    World& world = ctx.scene->GetWorld();
+    if (ImGui::BeginTable("##ProfItemEntities", 6, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColEntity), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMs), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCalls), ImGuiTableColumnFlags_WidthStretch, 0.7f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+        for (int r = 0; r < rowCount; ++r) {
+            const prof::ItemStat& item = shown.items[rows[r]];
+            const EntityID entity{ item.entityIndex, item.entityGeneration };
+            // 記録したフレームの後で破棄されていることがある (世代が合わなければ別物)
+            const bool alive = world.IsAlive(entity);
+            uint64_t fileId = 0;
+            const char* entityName = Tr(StrId::Prof_EntityDead);
+            if (alive) {
+                const FileIdComponent* fileIdComponent = world.GetComponent<FileIdComponent>(entity);
+                fileId = fileIdComponent ? fileIdComponent->value : 0;
+                entityName = world.GetName(entity);
+                if (entityName == nullptr || entityName[0] == '\0') {
+                    entityName = Tr(StrId::Prof_EntityUnnamed);
+                }
+            }
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(rows[r]);
+            // fileId を持つエンティティだけ選択できる。ここで採番 (EnsureFileId) すると Play 中の
+            // ワールドへコンポーネントを足すことになるので、持っていないものは選択させない
+            ImGui::BeginDisabled(fileId == 0);
+            char label[96];
+            std::snprintf(label, sizeof(label), "%s  #%u", entityName, item.entityIndex);
+            if (ImGui::Selectable(label, fileId != 0 && selection.Contains(fileId),
+                                  ImGuiSelectableFlags_SpanAllColumns)) {
+                selection.SelectOnly(fileId);
+            }
+            ImGui::EndDisabled();
+            ImGui::PopID();
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(themeColor::TextDim, "%s", item.category);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(item.name);
+            ImGui::TableSetColumnIndex(3);
+            MsCell(item.ms);
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%d", item.calls);
+            ImGui::TableSetColumnIndex(5);
+            ShareBar(item.ms, frameMs);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsSelectHint));
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsNotCovered));
 }
 
 } // namespace mye

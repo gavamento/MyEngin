@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <string>
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Diagnostics/Profiler.h"
@@ -181,6 +182,68 @@ bool RunProfilerSelfTest()
     check(prof::CaptureCount() == prof::kMaxCaptures, "threshold 0 turns capturing off");
     prof::ClearCaptures();
     check(prof::CaptureCount() == 0, "ClearCaptures empties the list");
+
+    // ---- 項目別の計測 ----
+    prof::BeginFrame();
+    {
+        // 名前は呼び出しの間だけ生きていればよい: 別々のバッファに同じ文字列を入れて渡す
+        const std::string nameA = "Enemy";
+        const std::string nameACopy = "Enemy";
+        prof::AddItemSample("script", nameA.c_str(), 7, 1, 1.0f);
+        prof::AddItemSample("script", nameA.c_str(), 7, 1, 2.0f);     // 同じ組 → 合算
+        prof::AddItemSample("script", nameACopy.c_str(), 8, 1, 4.0f); // 別エンティティ、別ポインタの同名
+        prof::AddItemSample("script.cs", nameA.c_str(), 7, 1, 8.0f);  // 分類が違えば別の行
+    }
+    prof::BeginFrame();
+    {
+        const prof::FrameRecord& frame = prof::History(0);
+        check(frame.itemCount == 3 && frame.droppedItems == 0, "items: one row per (category, name, entity)");
+        check(frame.itemNameCount == 2, "item names: one row per (category, name)");
+        float scriptTotal = 0.0f;
+        int scriptCalls = 0;
+        bool nameSurvives = false;
+        for (int i = 0; i < frame.itemNameCount; ++i) {
+            if (std::strcmp(frame.itemNames[i].category, "script") == 0) {
+                scriptTotal = frame.itemNames[i].ms;
+                scriptCalls = frame.itemNames[i].calls;
+                nameSurvives = std::strcmp(frame.itemNames[i].name, "Enemy") == 0;
+            }
+        }
+        check(scriptTotal == 7.0f && scriptCalls == 3, "item names: same text from different buffers is merged");
+        check(nameSurvives, "item names outlive the caller's string (prof keeps a copy)");
+        bool merged = false;
+        for (int i = 0; i < frame.itemCount; ++i) {
+            merged = merged || (frame.items[i].entityIndex == 7 && frame.items[i].calls == 2
+                                && frame.items[i].ms == 3.0f);
+        }
+        check(merged, "items: repeated samples for one entity are summed");
+    }
+    // 上限: エンティティ別は捨てて数え、名前別の合計は正確なまま
+    for (int i = 0; i < prof::kMaxFrameItems + 5; ++i) {
+        prof::AddItemSample("script", "Flood", static_cast<uint32_t>(i), 1, 1.0f);
+    }
+    prof::BeginFrame();
+    check(prof::History(0).itemCount == prof::kMaxFrameItems && prof::History(0).droppedItems == 5,
+          "items: rows past the limit are dropped and counted");
+    check(prof::History(0).itemNameCount == 1
+              && prof::History(0).itemNames[0].calls == prof::kMaxFrameItems + 5,
+          "item names: totals stay exact when entity rows overflow");
+    prof::BeginFrame();
+    check(prof::History(0).itemCount == 0 && prof::History(0).itemNameCount == 0,
+          "items do not carry over to the next frame");
+    // ItemScope は計測が止まっていれば何も積まない
+    prof::SetItemTimingEnabled(false);
+    {
+        const prof::ItemScope off("script", "Off", 1, 1);
+    }
+    prof::SetItemTimingEnabled(true);
+    {
+        const prof::ItemScope on("script", "On", 1, 1);
+    }
+    prof::SetItemTimingEnabled(false);
+    prof::BeginFrame();
+    check(prof::History(0).itemCount == 1 && std::strcmp(prof::History(0).items[0].name, "On") == 0,
+          "ItemScope records only while item timing is enabled");
 
     MYE_LOG_INFO("==== Profiler self test: %s ====", failCount == 0 ? "PASS" : "FAIL");
     return failCount == 0;

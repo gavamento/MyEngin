@@ -11,6 +11,7 @@ namespace mye {
 //   - GPU パスの申告が確定フレームへ載り、同名は後勝ち
 //   - 一時停止中は履歴へ積まない
 //   - しきい値を超えたフレームだけが控えに残り、kMaxCaptures で古いものから捨てる
+//   - 項目別の計測が名前別・エンティティ別に合算され、上限を超えた組は捨てて数える
 bool RunProfilerSelfTest();
 
 } // namespace mye

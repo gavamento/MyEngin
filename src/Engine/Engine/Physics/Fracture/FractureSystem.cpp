@@ -799,6 +799,7 @@ void FractureSystem::UpdateImpl(World& world, float dt, const std::vector<ShapeI
     MYE_PROFILE_SCOPE("fracture.process");
     static const std::vector<PieceEntry> kNoPieces;
     for (RootJob& job : jobs) {
+        const prof::ItemScope timing("fracture", "destructible", job.root.index, job.root.generation);
         const uint64_t key = EntityKey(job.root);
         // assetCache_ は root ではなく fractureAsset の値をキーにする。root 単位だと、
         // Play 中に Destructible.fractureAsset を差し替えても古い資産のハンドルを使い

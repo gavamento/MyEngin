@@ -10,6 +10,7 @@
 #include <tuple>
 #include <unordered_map>
 
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Physics/Rigid/PhysicsSystem.h"
@@ -438,6 +439,7 @@ void GridNavSystem::Update(World& world, const TilemapSystem* tiles, float dt)
     });
     views_.clear();
     for (const EntityID e : agents_) {
+        const prof::ItemScope timing("gridnav", "grid agent", e.index, e.generation);
         UpdateAgent(world, *tiles, e, dt);
     }
     views_.clear(); // 作業バッファが World の資産を指したまま残らないようにする

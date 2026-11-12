@@ -10,6 +10,7 @@
 
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/AI/BehaviorTreeSystem.h"
 #include "Engine/Engine/Compute/ComputeService.h"
@@ -511,6 +512,8 @@ void ScriptHost::RunPhase(Phase phase)
                 ctx.api = &api_;
                 void* state = arch.GetPtr(ci, row);
                 const RunningScriptScope running(apiCtx_, type.name.c_str());
+                const prof::ItemScope timing("script", type.name.c_str(), arch.EntityAt(row).index,
+                                             arch.EntityAt(row).generation);
                 if (wantStart) {
                     const ScriptStartedKey key = MakeScriptStartedKey(arch.EntityAt(row), type.componentId);
                     if (!started_.contains(key)) {

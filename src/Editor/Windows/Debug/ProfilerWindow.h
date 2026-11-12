@@ -5,6 +5,7 @@
 namespace mye {
 
 struct EditorSettings;
+struct Selection;
 class ToastCenter;
 
 // プロファイラ (engine_spec.md 9 章、M102 で作り直し)。
@@ -18,7 +19,7 @@ class ProfilerWindow {
 public:
     bool open = true; // 閉じる / 再表示 (タブ [x] と Window メニューに連動)
     // 窓を閉じていても、重いフレームの記録と予算超過の通知は続ける (見ていないときにこそ要る)
-    void OnImGui(EngineContext& ctx, EditorSettings& settings, ToastCenter& toasts);
+    void OnImGui(EngineContext& ctx, EditorSettings& settings, ToastCenter& toasts, Selection& selection);
 
 private:
     // 行ごとの「今回 / 平均 / 最大」。平均と最大は表示中フレームから過去へ window フレームぶん
@@ -42,7 +43,10 @@ private:
     void DrawHeader(EditorSettings& settings);
     void DrawFrameGraph();
     void DrawOverview(const EditorSettings& settings);
-    void DrawCpu(EditorSettings& settings);
+    void DrawCpu(EngineContext& ctx, EditorSettings& settings, Selection& selection);
+    void DrawScopes(EditorSettings& settings); // CPU タブの上段: スコープの木
+    // CPU タブの下段: スクリプト・システム別の合計と、エンティティ別の重い順
+    void DrawItems(EngineContext& ctx, EditorSettings& settings, Selection& selection);
     void DrawCpuChildren(int parent, EditorSettings& settings);
     // 名前の列より右 (今回 / 平均 / 最大 / 自身 / 回数 / 予算 / 割合)
     void DrawCpuRowValues(int scope, const EditorSettings& settings);

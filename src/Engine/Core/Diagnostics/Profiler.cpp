@@ -3,6 +3,8 @@
 #include <Windows.h>
 
 #include <cstring>
+#include <deque>
+#include <string>
 
 namespace mye::prof {
 namespace {
@@ -35,6 +37,43 @@ std::vector<FrameRecord> g_captures; // 履歴と同じく最初の BeginFrame �
 int g_captureHead = 0;
 int g_captureCount = 0;
 float g_captureThresholdMs = 0.0f;
+
+// ---- 項目別の計測 ----
+// エンティティ別の表は開番地法のハッシュで引く (スクリプト呼び出しごとに線形探索すると、
+// 計測そのものが測りたい時間を歪める)。キーの名前は呼び出し側のポインタで比べ、表に残す名前は写しにする
+constexpr int kItemSlots = 1024; // kMaxFrameItems の 4 倍 (2 の冪)。負荷率 25% 以下
+struct ItemRow {
+    const char* rawName = nullptr; // 呼び出し側のポインタ (今フレームの間だけキーに使う)
+    ItemStat stat;
+};
+bool g_itemTiming = false;
+ItemRow g_items[kMaxFrameItems];
+int g_itemCount = 0;
+int g_droppedItems = 0;
+int16_t g_itemSlots[kItemSlots]; // 行の添字 + 1。0 = 空 (ゼロ初期化のままで「全部空」になる)
+ItemStat g_itemNames[kMaxFrameItemNames];
+int g_itemNameCount = 0;
+// 名前の写し。deque なので要素のアドレスは変わらない。種類はスクリプト型の数程度なので消さない
+std::deque<std::string> g_internedNames;
+
+const char* InternName(const char* name)
+{
+    for (const std::string& known : g_internedNames) {
+        if (known == name) {
+            return known.c_str();
+        }
+    }
+    g_internedNames.emplace_back(name);
+    return g_internedNames.back().c_str();
+}
+
+void ResetItems()
+{
+    g_itemCount = 0;
+    g_itemNameCount = 0;
+    g_droppedItems = 0;
+    std::memset(g_itemSlots, 0, sizeof(g_itemSlots));
+}
 
 GpuStat g_gpu[kMaxGpuPasses];
 int g_gpuCount = 0;
@@ -116,6 +155,15 @@ void SealFrame(int64_t now)
     out.frameMs = TicksToMs(now - g_frameStart);
     out.phases = g_pendingPhases;
     AggregateScopes(out);
+    out.itemCount = g_itemCount;
+    out.itemNameCount = g_itemNameCount;
+    out.droppedItems = g_droppedItems;
+    for (int i = 0; i < g_itemCount; ++i) {
+        out.items[i] = g_items[i].stat;
+    }
+    for (int i = 0; i < g_itemNameCount; ++i) {
+        out.itemNames[i] = g_itemNames[i];
+    }
     out.gpuFrameMs = g_gpuFrameMs;
     out.gpuCount = g_gpuCount;
     for (int i = 0; i < g_gpuCount; ++i) {
@@ -156,6 +204,7 @@ void BeginFrame()
     }
     g_gpuCount = 0;
     g_gpuFrameMs = 0.0f;
+    ResetItems();
     g_frameStart = now;
     g_pendingPhases = {};
     g_pendingFrameIndex = 0;
@@ -211,6 +260,80 @@ void SetFramePhases(const FramePhases& phases, uint64_t frameIndex, uint64_t tic
     g_pendingPhases = phases;
     g_pendingFrameIndex = frameIndex;
     g_pendingTickIndex = tickIndex;
+}
+
+void SetItemTimingEnabled(bool enabled)
+{
+    g_itemTiming = enabled;
+}
+
+bool ItemTimingEnabled()
+{
+    return g_itemTiming;
+}
+
+void AddItemSample(const char* category, const char* name, uint32_t entityIndex, uint32_t entityGeneration,
+                   float ms)
+{
+    // ---- エンティティ別 ----
+    // 分類はハッシュに混ぜない: 同じ綴りのリテラルでも呼び出し箇所ごとにアドレスが違いうる
+    // (Debug は文字列プールが無効) ので、分類は下で文字列として比べる
+    const uint64_t mixed = (reinterpret_cast<uintptr_t>(name) >> 3) * 0x9E3779B97F4A7C15ull
+                           ^ (static_cast<uint64_t>(entityIndex) * 0xC2B2AE3D27D4EB4Full);
+    uint32_t slot = static_cast<uint32_t>(mixed >> 40) & (kItemSlots - 1);
+    const char* interned = nullptr;
+    for (;;) {
+        const int row = g_itemSlots[slot] - 1;
+        if (row < 0) {
+            interned = InternName(name);
+            if (g_itemCount < kMaxFrameItems) {
+                g_itemSlots[slot] = static_cast<int16_t>(g_itemCount + 1);
+                ItemRow& added = g_items[g_itemCount++];
+                added.rawName = name;
+                added.stat = ItemStat{ category, interned, entityIndex, entityGeneration, ms, 1 };
+            } else {
+                ++g_droppedItems;
+            }
+            break;
+        }
+        ItemRow& existing = g_items[row];
+        if (existing.rawName == name && SameName(existing.stat.category, category)
+            && existing.stat.entityIndex == entityIndex && existing.stat.entityGeneration == entityGeneration) {
+            existing.stat.ms += ms;
+            ++existing.stat.calls;
+            interned = existing.stat.name;
+            break;
+        }
+        slot = (slot + 1) & (kItemSlots - 1);
+    }
+
+    // ---- 名前別 (写しのポインタで比べる。種類が少ないので線形で足りる) ----
+    for (int i = 0; i < g_itemNameCount; ++i) {
+        if (g_itemNames[i].name == interned && SameName(g_itemNames[i].category, category)) {
+            g_itemNames[i].ms += ms;
+            ++g_itemNames[i].calls;
+            return;
+        }
+    }
+    if (g_itemNameCount < kMaxFrameItemNames) {
+        g_itemNames[g_itemNameCount++] = ItemStat{ category, interned, 0, 0, ms, 1 };
+    }
+}
+
+ItemScope::ItemScope(const char* category, const char* name, uint32_t entityIndex, uint32_t entityGeneration)
+    : category_(category)
+    , name_(name)
+    , entityIndex_(entityIndex)
+    , entityGeneration_(entityGeneration)
+    , start_(g_itemTiming ? Now() : 0)
+{
+}
+
+ItemScope::~ItemScope()
+{
+    if (start_ != 0) {
+        AddItemSample(category_, name_, entityIndex_, entityGeneration_, TicksToMs(Now() - start_));
+    }
 }
 
 void ReportGpu(const char* name, float ms, bool ran)

@@ -15,6 +15,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Compute/KernelCSharp.h"
@@ -399,6 +400,8 @@ void ManagedHost::RunPhase(Phase phase)
                     }
                     liveHandles_.insert(*handle);
                 }
+                // managed への遷移と例外の受けも含めた 1 呼び出しぶん (インスタンス生成は含めない)
+                const prof::ItemScope timing("script.cs", type.name.c_str(), e.index, e.generation);
                 if (phase == Phase::StartAndUpdate) {
                     const ScriptStartedKey key = MakeScriptStartedKey(e, type.componentId);
                     if (!started_.contains(key)) {

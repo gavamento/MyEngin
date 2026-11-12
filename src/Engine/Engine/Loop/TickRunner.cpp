@@ -449,10 +449,12 @@ void RunOneTick(TickServices& ts)
     // ---- フェーズ 3: スクリプト層 Start → Update ----
     const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
     if (runScripts) {
+        MYE_PROFILE_SCOPE("script");
         scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         scriptHost.RunStartAndUpdate();
     }
     if (runManaged) {
+        MYE_PROFILE_SCOPE("script.cs");
         managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         managedHost.RunStartAndUpdate();
     }
@@ -710,9 +712,11 @@ void RunOneTick(TickServices& ts)
     }
     // ---- フェーズ 5: スクリプト層 LateUpdate ----
     if (runScripts) {
+        MYE_PROFILE_SCOPE("script.late");
         scriptHost.RunLateUpdate();
     }
     if (runManaged) {
+        MYE_PROFILE_SCOPE("script.cs.late");
         managedHost.RunLateUpdate();
     }
     // ---- M93e: フェーズ 4 の衝突コールバックと LateUpdate で送られたメッセージの配達 ----

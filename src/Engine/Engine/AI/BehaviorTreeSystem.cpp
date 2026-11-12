@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Core/Util/Hash.h"
@@ -2002,6 +2003,7 @@ void BehaviorTreeSystem::Update(World& world, uint64_t tick, const NavSystem* na
             inst = std::move(instances_[oldAt]);
             ++oldAt;
         }
+        const prof::ItemScope timing("bt", "behavior tree", owner.index, owner.generation);
         if (StepOwner(world, tick, nav, controllers, clips, skinnedModels, owner, inst)) {
             next.push_back(std::move(inst));
         }

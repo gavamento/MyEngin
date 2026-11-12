@@ -75,6 +75,46 @@ void ReportGpuFrame(float ms);
 void SetHistoryPaused(bool paused);
 bool IsHistoryPaused();
 
+// ---- 項目別の計測 (スクリプト別・エンティティ別) ----
+// スコープは「どのシステムが重いか」まで。こちらは 1 件ずつ処理する直列ループの中で
+// 「どのスクリプト型 / どのエンティティが重いか」を測る。呼び出しごとに時計を 2 回読むので、
+// 既定では止めてある (SetItemTimingEnabled)。止まっている間のコストは分岐 1 つ。
+// 集計は 2 つ:
+//   名前別     = (分類, 名前) ごとの合計と回数。上限を超えない限り正確
+//   エンティティ別 = (分類, 名前, エンティティ) ごと。上限を超えた組は捨てて数える
+// category はリテラル。name は呼び出しの間だけ生きていればよい (prof が写しを持つ)。
+// ホットリロードでスクリプト型の文字列が解放されても、履歴の中の名前は壊れない
+inline constexpr int kMaxFrameItems = 256;     // エンティティ別の行数の上限
+inline constexpr int kMaxFrameItemNames = 64;  // 名前別の行数の上限
+struct ItemStat {
+    const char* category = nullptr;
+    const char* name = nullptr; // prof が持つ写し (プロセス終了まで有効)
+    uint32_t entityIndex = 0;   // 名前別の行では 0
+    uint32_t entityGeneration = 0;
+    float ms = 0.0f;
+    int calls = 0;
+};
+void SetItemTimingEnabled(bool enabled);
+bool ItemTimingEnabled();
+void AddItemSample(const char* category, const char* name, uint32_t entityIndex, uint32_t entityGeneration,
+                   float ms);
+
+// 1 件ぶんの処理を囲む。計測が止まっていれば何もしない
+class ItemScope {
+public:
+    ItemScope(const char* category, const char* name, uint32_t entityIndex, uint32_t entityGeneration);
+    ~ItemScope();
+    ItemScope(const ItemScope&) = delete;
+    ItemScope& operator=(const ItemScope&) = delete;
+
+private:
+    const char* category_;
+    const char* name_;
+    uint32_t entityIndex_;
+    uint32_t entityGeneration_;
+    int64_t start_; // 0 = 計測していない
+};
+
 // ---- 重いフレームの自動記録 ----
 // 確定したフレームの壁時計がしきい値を超えたら、そのフレームを丸ごと控えへ写す。
 // 履歴は 4 秒で流れてしまうので、たまにしか起きない引っかかりを後から開けるようにする。
@@ -149,6 +189,11 @@ struct FrameRecord {
     int scopeCount = 0;
     int droppedScopes = 0; // 上限 (kMaxRawScopes / kMaxFrameScopes) を超えて捨てた記録数
     ScopeStat scopes[kMaxFrameScopes];
+    int itemCount = 0;
+    int itemNameCount = 0;
+    int droppedItems = 0; // エンティティ別の上限を超えて捨てた組の数 (名前別の合計には入っている)
+    ItemStat items[kMaxFrameItems];
+    ItemStat itemNames[kMaxFrameItemNames];
     float gpuFrameMs = 0.0f;
     int gpuCount = 0;
     GpuStat gpu[kMaxGpuPasses];

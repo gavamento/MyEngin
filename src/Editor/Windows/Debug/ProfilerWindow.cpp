@@ -196,8 +196,11 @@ void ProfilerWindow::BuildStats(int window)
     }
 }
 
-void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, ToastCenter& toasts)
+void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, ToastCenter& toasts,
+                             Selection& selection)
 {
+    // 項目別の計測は窓を開いている間だけ (閉じている間まで呼び出しごとのコストを払わない)
+    prof::SetItemTimingEnabled(open && settings.profilerItemTiming);
     prof::SetCaptureThresholdMs(settings.profilerCaptureEnabled ? settings.profilerCaptureMs : 0.0f);
     CheckBudgets(settings, toasts);
     if (!open) {
@@ -239,7 +242,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
             if (ImGui::BeginChild("##ProfTabBody")) {
                 switch (tab) {
                 case 0: DrawOverview(settings); break;
-                case 1: DrawCpu(settings); break;
+                case 1: DrawCpu(ctx, settings, selection); break;
                 case 2: DrawGpu(settings); break;
                 case 3: DrawRender(ctx); break;
                 case 4: DrawSystems(ctx); break;

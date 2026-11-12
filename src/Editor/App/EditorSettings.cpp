@@ -41,6 +41,7 @@ void EditorSettings::Load(const std::wstring& dir)
         profilerAvgFrames = root.value("profilerAvgFrames", profilerAvgFrames);
         profilerHideZero = root.value("profilerHideZero", profilerHideZero);
         profilerSortByCost = root.value("profilerSortByCost", profilerSortByCost);
+        profilerItemTiming = root.value("profilerItemTiming", profilerItemTiming);
         profilerCaptureEnabled = root.value("profilerCaptureEnabled", profilerCaptureEnabled);
         profilerCaptureMs = root.value("profilerCaptureMs", profilerCaptureMs);
         if (root.contains("profilerBudgets") && root["profilerBudgets"].is_object()) {
@@ -90,6 +91,7 @@ void EditorSettings::Save() const
     root["profilerAvgFrames"] = profilerAvgFrames;
     root["profilerHideZero"] = profilerHideZero;
     root["profilerSortByCost"] = profilerSortByCost;
+    root["profilerItemTiming"] = profilerItemTiming;
     root["profilerCaptureEnabled"] = profilerCaptureEnabled;
     root["profilerCaptureMs"] = profilerCaptureMs;
     {
