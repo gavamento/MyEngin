@@ -1,6 +1,7 @@
 #include "Engine/Core/Jobs/JobSystem.h"
 
 #include <algorithm>
+#include <chrono>
 
 namespace mye::jobs {
 
@@ -13,6 +14,12 @@ struct RangeScope {
     RangeScope() { ++t_rangeDepth; }
     ~RangeScope() { --t_rangeDepth; }
 };
+
+uint64_t ElapsedNs(std::chrono::steady_clock::time_point since)
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count());
+}
 
 } // namespace
 
@@ -28,14 +35,14 @@ void JobSystem::Init()
     }
     const unsigned hw = std::thread::hardware_concurrency();
     int n = static_cast<int>(hw) - 2; // 2 コアはメイン + OS 用に残す
-    n = std::min(n, 16);
+    n = std::min(n, kMaxWorkers);
     if (n < 0) {
         n = 0;
     }
     stop_ = false;
     workers_.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
-        workers_.emplace_back([this] { WorkerLoop(); });
+        workers_.emplace_back([this, i] { WorkerLoop(i); });
     }
 }
 
@@ -65,7 +72,7 @@ void JobSystem::Shutdown()
 // cursor_ が自分の区間を超えているのを見て抜けるだけで、次バッチの chunk は掴めない。
 // fetch_add ではなく CAS なのは、掴めない時にカーソルを進めない (= 次バッチの chunk を
 // 食い逃げしない) ため。
-void JobSystem::DrainChunks(const Batch& b, bool onWorker)
+void JobSystem::DrainChunks(const Batch& b, int workerIndex)
 {
     if (b.fn == nullptr || b.chunkCount == 0) {
         return;
@@ -83,18 +90,23 @@ void JobSystem::DrainChunks(const Batch& b, bool onWorker)
         const size_t c = static_cast<size_t>(cur - b.base);
         const size_t begin = c * b.chunkSize;
         const size_t end = std::min(begin + b.chunkSize, b.total);
+        const auto chunkStart = std::chrono::steady_clock::now();
         {
             RangeScope scope;
             (*b.fn)(begin, end);
         }
-        if (onWorker) {
+        const uint64_t chunkNs = ElapsedNs(chunkStart);
+        if (workerIndex >= 0) {
             workerChunks_.fetch_add(1, std::memory_order_relaxed);
+            workerBusyNs_[workerIndex].fetch_add(chunkNs, std::memory_order_relaxed);
+        } else {
+            callerBusyNs_.fetch_add(chunkNs, std::memory_order_relaxed);
         }
         doneChunks_.fetch_add(1, std::memory_order_release);
     }
 }
 
-void JobSystem::WorkerLoop()
+void JobSystem::WorkerLoop(int workerIndex)
 {
     uint64_t localGen = 0;
     for (;;) {
@@ -108,7 +120,7 @@ void JobSystem::WorkerLoop()
             }
             b = batch_; // ロック下でスナップショット (以後 batch_ は触らない)
         }
-        DrainChunks(b, true);
+        DrainChunks(b, workerIndex);
         // 完了を呼出スレッドへ通知 (mutex を一度取ることで lost-wakeup を防ぐ)
         {
             std::lock_guard<std::mutex> lk(mutex_);
@@ -153,9 +165,10 @@ void JobSystem::ParallelRanges(size_t total, size_t grain,
     }
     cvWake_.notify_all();
 
-    DrainChunks(b, false); // 呼出スレッドも chunk を消化 (最低でも呼出スレッドが全部消化しきる)
+    DrainChunks(b, -1); // 呼出スレッドも chunk を消化 (最低でも呼出スレッドが全部消化しきる)
 
     // 全 chunk 完了を待つ (バリア)
+    const auto waitStart = std::chrono::steady_clock::now();
     {
         std::unique_lock<std::mutex> lk(mutex_);
         cvDone_.wait(lk, [this, &b] {
@@ -163,6 +176,19 @@ void JobSystem::ParallelRanges(size_t total, size_t grain,
         });
         batch_.fn = nullptr; // 破棄される fn への参照を残さない
     }
+    callerWaitNs_.fetch_add(ElapsedNs(waitStart), std::memory_order_relaxed);
+}
+
+JobSystem::TimingStats JobSystem::GetTimingStats() const
+{
+    TimingStats stats;
+    stats.workerCount = WorkerCount();
+    for (int i = 0; i < kMaxWorkers; ++i) {
+        stats.workerBusyNs[i] = workerBusyNs_[i].load(std::memory_order_relaxed);
+    }
+    stats.callerBusyNs = callerBusyNs_.load(std::memory_order_relaxed);
+    stats.callerWaitNs = callerWaitNs_.load(std::memory_order_relaxed);
+    return stats;
 }
 
 void JobSystem::ParallelFor(size_t total, size_t grain, const std::function<void(size_t)>& fn)

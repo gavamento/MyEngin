@@ -47,6 +47,18 @@ public:
         return { parallelBatches_.load(std::memory_order_relaxed), workerChunks_.load(std::memory_order_relaxed) };
     }
 
+    // 時間の統計 (観測用の累計。結果には効かない)。プロファイラがフレームごとの差を取って
+    // 「ワーカーが実際に働いた時間」と「呼出スレッドが完了待ちで止まっていた時間」を出す。
+    // 計測は chunk 単位 (1 バッチあたり高々 ワーカー数 + 1 回) なので、常時測っても負荷にならない
+    static constexpr int kMaxWorkers = 16; // Init の上限と同じ
+    struct TimingStats {
+        int workerCount = 0;
+        uint64_t workerBusyNs[kMaxWorkers] = {}; // ワーカー別: レンジ関数の実行時間
+        uint64_t callerBusyNs = 0;               // 呼出スレッドが自分で chunk を処理した時間
+        uint64_t callerWaitNs = 0;               // 呼出スレッドが全 chunk の完了を待った時間
+    };
+    TimingStats GetTimingStats() const;
+
     // 呼び出しスレッドが ParallelRanges のレンジ関数の中にいるか。直列実行 (jobs 無効・total 小) でも true。
     // ネスト呼び出しは非対応なので、ジョブの中から別のジョブを起動する入口 (Compute.ForEach) が弾くのに使う。
     static bool InJob();
@@ -65,8 +77,9 @@ private:
         uint64_t base = 0; // cursor_ 上でこのバッチが占有する区間の先頭
     };
 
-    void WorkerLoop();
-    void DrainChunks(const Batch& b, bool onWorker); // バッチ b の chunk を CAS で消化
+    void WorkerLoop(int workerIndex);
+    // バッチ b の chunk を CAS で消化する。workerIndex < 0 = 呼出スレッド
+    void DrainChunks(const Batch& b, int workerIndex);
 
     std::vector<std::thread> workers_;
     std::mutex mutex_;
@@ -85,6 +98,9 @@ private:
     std::atomic<bool> enabled_{ true };
     std::atomic<uint64_t> parallelBatches_{ 0 };
     std::atomic<uint64_t> workerChunks_{ 0 };
+    std::atomic<uint64_t> workerBusyNs_[kMaxWorkers]{};
+    std::atomic<uint64_t> callerBusyNs_{ 0 };
+    std::atomic<uint64_t> callerWaitNs_{ 0 };
 };
 
 // プロセス全体で共有する既定インスタンス (prof:: と同じ運用)。

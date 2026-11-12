@@ -1,5 +1,6 @@
 #pragma once
 #include "Engine/Core/Diagnostics/Profiler.h"
+#include "Engine/Core/Jobs/JobSystem.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
 
 namespace mye {
@@ -12,7 +13,7 @@ class ToastCenter;
 // 上の帯 (フレーム時間の要約 + 一時停止 + 表示の設定) は常に出し、その下をタブで分ける:
 //   概要 = 積み上げフレームグラフと重い順の一覧 / CPU = スコープの木 / GPU = パス別 /
 //   描画 = ドローコール・カリング・LOD・影 / メモリ = 分類別の確保と GPU メモリ /
-//   アセット = 読み込みの所要時間と待ち行列 / システム = 機能別の現在値 /
+//   アセット = 読み込みの所要時間と待ち行列 / ジョブ = ワーカー別の稼働 / システム = 機能別の現在値 /
 //   記録 = しきい値を超えた重いフレームの控え (選ぶと全タブがそのフレームの内容になる)。
 // 表示するのは prof の「確定済みフレーム」だけ (フレームの途中の値を混ぜない)。
 // 一時停止は prof の履歴そのものを止めるので、グラフ・平均・選んだフレームが同じ時点で揃う
@@ -58,6 +59,9 @@ private:
     void DrawMemory(EngineContext& ctx, const EditorSettings& settings);
     void DrawGpuMemory(EngineContext& ctx); // メモリタブの下段
     void DrawAssets(EngineContext& ctx, const EditorSettings& settings);
+    void DrawJobs(const EditorSettings& settings);
+    // ジョブの累計統計の前フレームとの差を積む (毎フレーム 1 回)
+    void UpdateJobHistory();
     // 累計カウンタの前フレームとの差を取り、フレームあたりの確保として積む (毎フレーム 1 回)
     void UpdateMemoryHistory();
     void CheckBudgets(const EditorSettings& settings, ToastCenter& toasts);
@@ -90,6 +94,22 @@ private:
     int memCount_ = 0;
     prof::MemStats memPrevious_;
     bool memPreviousValid_ = false;
+
+    // フレームあたりのジョブの時間 [ms]。行 = ワーカー 0..15、呼出スレッドの実行、呼出スレッドの待ち
+    static constexpr int kJobRows = jobs::JobSystem::kMaxWorkers + 2;
+    static constexpr int kJobRowCallerBusy = jobs::JobSystem::kMaxWorkers;
+    static constexpr int kJobRowCallerWait = jobs::JobSystem::kMaxWorkers + 1;
+    struct JobFrame {
+        float ms[kJobRows] = {};
+        uint32_t batches = 0;
+        uint32_t workerChunks = 0;
+    };
+    JobFrame jobHistory_[prof::kFrameHistory];
+    int jobHead_ = 0; // 次に書く位置
+    int jobCount_ = 0;
+    jobs::JobSystem::TimingStats jobPreviousTiming_;
+    jobs::JobSystem::Stats jobPreviousStats_;
+    bool jobPreviousValid_ = false;
 
     PhaseStats phases_;
     RowStats scopeStats_[prof::kMaxFrameScopes];

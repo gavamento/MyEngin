@@ -36,6 +36,7 @@ enum Tab {
     kTabRender,
     kTabMemory,
     kTabAssets,
+    kTabJobs,
     kTabSystems,
     kTabHistory,
     kTabCount
@@ -216,6 +217,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
     prof::SetItemTimingEnabled(open && settings.profilerItemTiming);
     prof::SetCaptureThresholdMs(settings.profilerCaptureEnabled ? settings.profilerCaptureMs : 0.0f);
     UpdateMemoryHistory();
+    UpdateJobHistory();
     CheckBudgets(settings, toasts);
     if (!open) {
         // 見ていない間に履歴を止めたままにしない (次に開いたとき古いフレームが出る)
@@ -239,7 +241,8 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
 
     const StrId tabLabels[kTabCount] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
                                          StrId::Prof_TabRender, StrId::Prof_TabMemory, StrId::Prof_TabAssets,
-                                         StrId::Prof_TabSystems, StrId::Prof_TabHistory };
+                                         StrId::Prof_TabJobs, StrId::Prof_TabSystems,
+                                         StrId::Prof_TabHistory };
     if (ImGui::BeginTabBar("###ProfTabs")) {
         for (int tab = 0; tab < kTabCount; ++tab) {
             // 保存してあるタブを初回だけ選び直す。以後は選ばれたタブを保存する
@@ -261,6 +264,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
                 case kTabRender: DrawRender(ctx); break;
                 case kTabMemory: DrawMemory(ctx, settings); break;
                 case kTabAssets: DrawAssets(ctx, settings); break;
+                case kTabJobs: DrawJobs(settings); break;
                 case kTabSystems: DrawSystems(ctx); break;
                 default: DrawHistory(settings); break;
                 }
@@ -652,6 +656,29 @@ void ProfilerWindow::UpdateMemoryHistory()
     }
     memPrevious_ = current;
     memPreviousValid_ = true;
+}
+
+void ProfilerWindow::UpdateJobHistory()
+{
+    const jobs::JobSystem& jobSystem = jobs::System();
+    const jobs::JobSystem::TimingStats timing = jobSystem.GetTimingStats();
+    const jobs::JobSystem::Stats stats = jobSystem.GetStats();
+    if (jobPreviousValid_ && !prof::IsHistoryPaused()) {
+        const auto toMs = [](uint64_t ns) { return static_cast<float>(static_cast<double>(ns) / 1.0e6); };
+        JobFrame& frame = jobHistory_[jobHead_];
+        for (int i = 0; i < jobs::JobSystem::kMaxWorkers; ++i) {
+            frame.ms[i] = toMs(timing.workerBusyNs[i] - jobPreviousTiming_.workerBusyNs[i]);
+        }
+        frame.ms[kJobRowCallerBusy] = toMs(timing.callerBusyNs - jobPreviousTiming_.callerBusyNs);
+        frame.ms[kJobRowCallerWait] = toMs(timing.callerWaitNs - jobPreviousTiming_.callerWaitNs);
+        frame.batches = static_cast<uint32_t>(stats.parallelBatches - jobPreviousStats_.parallelBatches);
+        frame.workerChunks = static_cast<uint32_t>(stats.workerChunks - jobPreviousStats_.workerChunks);
+        jobHead_ = (jobHead_ + 1) % prof::kFrameHistory;
+        jobCount_ = (std::min)(jobCount_ + 1, prof::kFrameHistory);
+    }
+    jobPreviousTiming_ = timing;
+    jobPreviousStats_ = stats;
+    jobPreviousValid_ = true;
 }
 
 } // namespace mye

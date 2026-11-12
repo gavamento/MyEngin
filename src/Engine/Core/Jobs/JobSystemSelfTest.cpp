@@ -136,6 +136,47 @@ bool RunJobSystemSelfTest()
         check(ok, "back-to-back small batches: exact coverage across batches");
     }
 
+    // ---- 時間の統計 (観測用) ----
+    {
+        js.SetEnabled(true);
+        const jobs::JobSystem::TimingStats before = js.GetTimingStats();
+        std::vector<uint64_t> sink(8192, 0);
+        js.ParallelRanges(sink.size(), 64, [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                uint64_t v = i;
+                for (int k = 0; k < 200; ++k) {
+                    v = v * 6364136223846793005ull + 1442695040888963407ull;
+                }
+                sink[i] = v;
+            }
+        });
+        const jobs::JobSystem::TimingStats after = js.GetTimingStats();
+        uint64_t busyDelta = after.callerBusyNs - before.callerBusyNs;
+        for (int i = 0; i < jobs::JobSystem::kMaxWorkers; ++i) {
+            busyDelta += after.workerBusyNs[i] - before.workerBusyNs[i];
+        }
+        check(after.workerCount == js.WorkerCount(), "timing stats report the worker count");
+        // ワーカー 0 (2 コア以下の機械) では直列実行になり、時間は積まれない
+        check(js.WorkerCount() == 0 || busyDelta > 0, "timing stats accumulate busy time for a parallel batch");
+        bool unusedWorkersStayZero = true;
+        for (int i = js.WorkerCount(); i < jobs::JobSystem::kMaxWorkers; ++i) {
+            unusedWorkersStayZero = unusedWorkersStayZero && after.workerBusyNs[i] == 0;
+        }
+        check(unusedWorkersStayZero, "slots past the worker count stay zero");
+
+        js.SetEnabled(false);
+        const jobs::JobSystem::TimingStats disabledBefore = js.GetTimingStats();
+        js.ParallelRanges(sink.size(), 64, [&](size_t begin, size_t end) {
+            for (size_t i = begin; i < end; ++i) {
+                sink[i] += 1;
+            }
+        });
+        const jobs::JobSystem::TimingStats disabledAfter = js.GetTimingStats();
+        check(disabledAfter.callerBusyNs == disabledBefore.callerBusyNs
+                  && disabledAfter.callerWaitNs == disabledBefore.callerWaitNs,
+              "the serial path is not counted as job time");
+    }
+
     js.Shutdown();
 
     if (failCount == 0) {

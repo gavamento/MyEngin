@@ -848,4 +848,76 @@ void ProfilerWindow::DrawAssets(EngineContext& ctx, const EditorSettings& settin
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_AssetLoadsNote));
 }
 
+void ProfilerWindow::DrawJobs(const EditorSettings& settings)
+{
+    const jobs::JobSystem& jobSystem = jobs::System();
+    const int workerCount = jobSystem.WorkerCount();
+    if (!jobSystem.Enabled()) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Prof_JobsOff));
+    }
+
+    // 直近 window フレームの今回 / 平均 / 最大
+    const int used = std::clamp(settings.profilerAvgFrames, 1, (std::max)(jobCount_, 1));
+    const int frames = (std::min)(used, jobCount_);
+    RowStats rows[kJobRows];
+    double batches = 0.0;
+    double chunks = 0.0;
+    for (int f = 0; f < frames; ++f) {
+        const JobFrame& frame = jobHistory_[(jobHead_ - 1 - f + prof::kFrameHistory * 2) % prof::kFrameHistory];
+        for (int r = 0; r < kJobRows; ++r) {
+            if (f == 0) {
+                rows[r].now = frame.ms[r];
+            }
+            rows[r].avg += frame.ms[r];
+            rows[r].max = (std::max)(rows[r].max, frame.ms[r]);
+        }
+        batches += frame.batches;
+        chunks += frame.workerChunks;
+    }
+    const float inv = (frames > 0) ? 1.0f / static_cast<float>(frames) : 0.0f;
+    for (RowStats& row : rows) {
+        row.avg *= inv;
+    }
+
+    ImGui::SeparatorText(Tr(StrId::Prof_SecJobThreads));
+    if (ImGui::BeginTable("##ProfJobs", 5, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColThread), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColNow), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAvg), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMax), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColBusy), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+        auto drawRow = [&](const char* label, const RowStats& row) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            MsCell(row.now);
+            ImGui::TableSetColumnIndex(2);
+            MsCell(row.avg);
+            ImGui::TableSetColumnIndex(3);
+            MsCell(row.max);
+            ImGui::TableSetColumnIndex(4);
+            ShareBar(row.avg, phases_.frame.avg);
+        };
+        drawRow(Tr(StrId::Prof_JobCallerBusy), rows[kJobRowCallerBusy]);
+        drawRow(Tr(StrId::Prof_JobCallerWait), rows[kJobRowCallerWait]);
+        for (int i = 0; i < workerCount && i < jobs::JobSystem::kMaxWorkers; ++i) {
+            char label[48];
+            std::snprintf(label, sizeof(label), Tr(StrId::Prof_JobWorker), i);
+            drawRow(label, rows[i]);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::SeparatorText(Tr(StrId::Prof_SecJobCounts));
+    if (profui::BeginValueTable("##ProfJobCounts", Tr(StrId::Prof_ColItem), Tr(StrId::Prof_ColValue))) {
+        profui::ValueRowInt(Tr(StrId::Prof_RowJobWorkers), workerCount);
+        profui::ValueRowFloat(Tr(StrId::Prof_RowJobBatches), batches * static_cast<double>(inv), 1);
+        profui::ValueRowFloat(Tr(StrId::Prof_RowJobChunks), chunks * static_cast<double>(inv), 1);
+        profui::EndValueTable();
+    }
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_JobsNote));
+}
+
 } // namespace mye
