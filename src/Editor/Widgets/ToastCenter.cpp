@@ -16,6 +16,7 @@ namespace {
 constexpr size_t kMaxToasts = 6;         // 画面に積む最大数 (超過は古いものから消す)
 constexpr int kAggregateThreshold = 3;   // 1 フレームでこれを超えたら「N 件」に集約
 constexpr float kFadeSeconds = 0.5f;
+constexpr float kAnchorMargin = 10.0f;   // アンカー矩形の右下からの内側余白
 
 const char* LevelIcon(LogLevel level)
 {
@@ -86,7 +87,7 @@ void ToastCenter::CollectLogs()
     }
 }
 
-void ToastCenter::OnImGui()
+void ToastCenter::OnImGui(float anchorRight, float anchorBottom)
 {
     CollectLogs();
     if (toasts_.empty()) {
@@ -94,9 +95,8 @@ void ToastCenter::OnImGui()
     }
 
     const float dt = ImGui::GetIO().DeltaTime;
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    float y = vp->WorkPos.y + vp->WorkSize.y - 10.0f;
-    const float x = vp->WorkPos.x + vp->WorkSize.x - 10.0f;
+    float y = anchorBottom - kAnchorMargin;
+    const float x = anchorRight - kAnchorMargin;
 
     int id = 0;
     for (Toast& t : toasts_) {

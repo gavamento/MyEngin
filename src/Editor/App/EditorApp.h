@@ -252,6 +252,9 @@ private:
     EditorToolbar toolbar_;
     StatusBar statusBar_;
     ToastCenter toasts_;
+    // トーストを積む右下の角 (毎フレーム、ドックスペース確定後に中央ノードから求める)
+    float toastAnchorRight_ = 0.0f;
+    float toastAnchorBottom_ = 0.0f;
     UpdateWindow update_; // M98d: 更新の確認・Help メニュー・About
     std::string projectName_;              // マニフェストの name (レガシー起動時は空)
     uint64_t savedStateSerial_ = 0;        // 最後に保存/ロードした時点の UndoStack::StateSerial

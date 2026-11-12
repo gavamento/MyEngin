@@ -856,6 +856,17 @@ void EditorApp::OnImGui(EngineContext& ctx)
         SetupDockLayout(dockspaceId);
         rebuildDockLayout_ = false;
     }
+    // トーストは中央ドック (Scene / Game) の右下へ積む。中央ノードが無い (全部を別ノードへ
+    // 寄せた) レイアウトでは作業領域の右下へ戻す
+    {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        toastAnchorRight_ = viewport->WorkPos.x + viewport->WorkSize.x;
+        toastAnchorBottom_ = viewport->WorkPos.y + viewport->WorkSize.y;
+        if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspaceId)) {
+            toastAnchorRight_ = central->Pos.x + central->Size.x;
+            toastAnchorBottom_ = central->Pos.y + central->Size.y;
+        }
+    }
     ImGuizmo::BeginFrame(); // ImGui NewFrame 後・ギズモ使用前に 1 回
 
     hierarchy_.OnImGui(ctx, selection_, undo_);
@@ -1165,7 +1176,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     DrawSaveConfirmModal(ctx);
     PollReloadToasts(ctx);
     UpdateWindowTitle(ctx);
-    toasts_.OnImGui();
+    toasts_.OnImGui(toastAnchorRight_, toastAnchorBottom_);
 }
 
 void EditorApp::DrawMainMenuBar(EngineContext& ctx)
@@ -2074,7 +2085,8 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Particle Settings", rightBottom);
     ImGui::DockBuilderDockWindow("Sound Generator", rightBottom);
     ImGui::DockBuilderDockWindow("Audio Mixer", bottom);
-    ImGui::DockBuilderDockWindow("Profiler", rightBottom);
+    // Profiler は表とグラフで横幅を使うので下段の帯へ (右下の列は幅 ≒ 340px で表が切れる)
+    ImGui::DockBuilderDockWindow("Profiler", bottom);
     ImGui::DockBuilderDockWindow("Performance Compare", rightBottom);
     ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Feel Monitor", rightBottom);
