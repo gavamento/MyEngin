@@ -53,6 +53,22 @@ inline void BudgetCell(float ms, float budgetMs)
     }
 }
 
+// バイト数を読みやすい単位で書く (B / KB / MB / GB)
+inline void BytesText(double bytes)
+{
+    const char* units[] = { "B", "KB", "MB", "GB" };
+    int unit = 0;
+    while (bytes >= 1024.0 && unit < 3) {
+        bytes /= 1024.0;
+        ++unit;
+    }
+    if (unit == 0) {
+        ImGui::Text("%.0f %s", bytes, units[unit]);
+    } else {
+        ImGui::Text("%.1f %s", bytes, units[unit]);
+    }
+}
+
 // 「項目 | 値」の 2 列表。BeginValueTable が true のときだけ行を足して EndValueTable を呼ぶ
 inline bool BeginValueTable(const char* id, const char* itemHeader, const char* valueHeader)
 {

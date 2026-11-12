@@ -340,17 +340,6 @@ void ProfilerWindow::DrawSystems(EngineContext& ctx)
         profui::EndValueTable();
     }
 
-    const prof::MemStats mem = prof::GetMemoryStats();
-    ImGui::SeparatorText(Tr(StrId::Prof_SecMemory));
-    if (profui::BeginValueTable("##ProfMemory", itemHeader, valueHeader)) {
-        profui::ValueRowInt(Tr(StrId::Prof_RowMemLive), static_cast<long long>(mem.liveAllocs));
-        profui::ValueRowFloat(Tr(StrId::Prof_RowMemTotalMb), static_cast<double>(mem.totalBytes) / (1024.0 * 1024.0),
-                              1);
-        profui::ValueRowInt(Tr(StrId::Prof_RowMemAllocs), static_cast<long long>(mem.totalAllocs));
-        profui::ValueRowInt(Tr(StrId::Prof_RowMemFrees), static_cast<long long>(mem.totalFrees));
-        profui::EndValueTable();
-    }
-
     if (!ctx.renderSystem) {
         return;
     }
@@ -628,6 +617,96 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
     }
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsSelectHint));
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsNotCovered));
+}
+
+void ProfilerWindow::DrawMemory(const EditorSettings& settings)
+{
+    const StrId tagLabels[prof::kMemTagCount] = { StrId::Prof_MemTagGeneral, StrId::Prof_MemTagAsset,
+                                                  StrId::Prof_MemTagTick,    StrId::Prof_MemTagPhysics,
+                                                  StrId::Prof_MemTagScript,  StrId::Prof_MemTagRender,
+                                                  StrId::Prof_MemTagEditorUi };
+    // 直近 window フレームの今回 / 平均 / 最大 (履歴のリングを新しい方からたどる)
+    const int frames = std::clamp(settings.profilerAvgFrames, 1, (std::max)(memCount_, 1));
+    struct TagRow {
+        uint32_t now = 0;
+        double avgAllocs = 0.0;
+        uint32_t maxAllocs = 0;
+        double avgBytes = 0.0;
+    };
+    TagRow rows[prof::kMemTagCount];
+    TagRow total;
+    const int used = (std::min)(frames, memCount_);
+    for (int f = 0; f < used; ++f) {
+        const MemFrame& frame = memHistory_[(memHead_ - 1 - f + prof::kFrameHistory * 2) % prof::kFrameHistory];
+        uint32_t frameAllocs = 0;
+        uint64_t frameBytes = 0;
+        for (int tag = 0; tag < prof::kMemTagCount; ++tag) {
+            if (f == 0) {
+                rows[tag].now = frame.allocs[tag];
+            }
+            rows[tag].avgAllocs += frame.allocs[tag];
+            rows[tag].maxAllocs = (std::max)(rows[tag].maxAllocs, frame.allocs[tag]);
+            rows[tag].avgBytes += static_cast<double>(frame.bytes[tag]);
+            frameAllocs += frame.allocs[tag];
+            frameBytes += frame.bytes[tag];
+        }
+        if (f == 0) {
+            total.now = frameAllocs;
+        }
+        total.avgAllocs += frameAllocs;
+        total.maxAllocs = (std::max)(total.maxAllocs, frameAllocs);
+        total.avgBytes += static_cast<double>(frameBytes);
+    }
+    const double inv = (used > 0) ? 1.0 / used : 0.0;
+
+    ImGui::SeparatorText(Tr(StrId::Prof_MemPerFrame));
+    if (ImGui::BeginTable("##ProfMemTags", 5, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAllocNow), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAllocAvg), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAllocMax), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColBytesAvg), ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableHeadersRow();
+        auto drawRow = [&](const char* label, const TagRow& row, bool dim) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            if (dim) {
+                ImGui::TextColored(themeColor::TextDim, "%s", label);
+            } else {
+                ImGui::TextUnformatted(label);
+            }
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%u", row.now);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%.1f", row.avgAllocs * inv);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%u", row.maxAllocs);
+            ImGui::TableSetColumnIndex(4);
+            profui::BytesText(row.avgBytes * inv);
+        };
+        drawRow(Tr(StrId::Prof_MemTagTotal), total, true);
+        for (int tag = 0; tag < prof::kMemTagCount; ++tag) {
+            if (settings.profilerHideZero && rows[tag].maxAllocs == 0) {
+                continue;
+            }
+            drawRow(Tr(tagLabels[tag]), rows[tag], false);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_MemScopeNote));
+
+    const prof::MemStats mem = prof::GetMemoryStats();
+    ImGui::SeparatorText(Tr(StrId::Prof_SecMemTotals));
+    if (profui::BeginValueTable("##ProfMemTotals", Tr(StrId::Prof_ColItem), Tr(StrId::Prof_ColValue))) {
+        profui::ValueRowLabel(Tr(StrId::Prof_RowMemLiveBytes));
+        profui::BytesText(static_cast<double>(mem.liveBytes));
+        profui::ValueRowInt(Tr(StrId::Prof_RowMemLive), static_cast<long long>(mem.liveAllocs));
+        profui::ValueRowLabel(Tr(StrId::Prof_RowMemTotalBytes));
+        profui::BytesText(static_cast<double>(mem.totalBytes));
+        profui::ValueRowInt(Tr(StrId::Prof_RowMemAllocs), static_cast<long long>(mem.totalAllocs));
+        profui::ValueRowInt(Tr(StrId::Prof_RowMemFrees), static_cast<long long>(mem.totalFrees));
+        profui::EndValueTable();
+    }
 }
 
 } // namespace mye

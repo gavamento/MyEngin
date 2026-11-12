@@ -202,11 +202,51 @@ struct FrameRecord {
 };
 
 // ---- メモリ (MemoryTrack.cpp の global operator new/delete フック) ----
+// 確保を「いま何の処理中か」で分ける札。スレッドごとに持ち、確保した側のスレッドの札へ数える
+// (ワーカースレッドは既定の General のまま)。解放はどの札の確保だったか分からないので、
+// 札別に出せるのは確保の回数とバイト数だけ (札別の生存量は出せない)
+enum class MemTag : uint8_t {
+    General,  // 下のどれでもない
+    Asset,    // フェーズ 2: ホットリロードと非同期ロードの取り込み
+    Tick,     // 固定 tick (物理・スクリプト以外)
+    Physics,
+    Script,   // C++ / C# スクリプトの呼び出し (GameLogic.dll 内の確保は別ヒープなので数に入らない)
+    Render,   // フェーズ 6: シーン描画の CPU 側
+    EditorUi, // フェーズ 8: ImGui
+    Count
+};
+inline constexpr int kMemTagCount = static_cast<int>(MemTag::Count);
+
+namespace detail {
+// 札の実体は Profiler.cpp に置く。MemoryTrack.cpp に置くと、札を立てるだけのコード
+// (EngineLoop / TickRunner) が new/delete のフックまでリンクへ引き込んでしまい、
+// フックを使っていない実行ファイル (Runtime / Server) の確保経路が変わる
+extern thread_local MemTag t_memTag;
+} // namespace detail
+
+inline MemTag CurrentMemTag() { return detail::t_memTag; }
+inline void SetMemTag(MemTag tag) { detail::t_memTag = tag; }
+
+// スコープの間だけ札を差し替え、抜けるとき元へ戻す
+class MemTagScope {
+public:
+    explicit MemTagScope(MemTag tag) : previous_(detail::t_memTag) { detail::t_memTag = tag; }
+    ~MemTagScope() { detail::t_memTag = previous_; }
+    MemTagScope(const MemTagScope&) = delete;
+    MemTagScope& operator=(const MemTagScope&) = delete;
+
+private:
+    MemTag previous_;
+};
+
 struct MemStats {
     uint64_t totalAllocs = 0; // 累計確保回数
     uint64_t totalFrees = 0;  // 累計解放回数
     uint64_t liveAllocs = 0;  // 生存中 (allocs - frees)
-    uint64_t totalBytes = 0;  // 累計確保バイト数
+    uint64_t totalBytes = 0;  // 累計確保バイト数 (要求サイズ)
+    uint64_t liveBytes = 0;   // 生存中のバイト数 (ヒープが実際に割り当てたブロックサイズの和)
+    uint64_t tagAllocs[kMemTagCount] = {}; // 札別の累計確保回数
+    uint64_t tagBytes[kMemTagCount] = {};  // 札別の累計確保バイト数 (要求サイズ)
 };
 MemStats GetMemoryStats();
 

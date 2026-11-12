@@ -2297,6 +2297,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         prof::BeginFrame();
 
         // ---- フェーズ 2: ホットリロード適用セーフポイント ----
+        prof::SetMemTag(prof::MemTag::Asset);
         const double tReload = clock.Now();
         reloadHub.Update();
         dllReloader.Update();
@@ -2308,6 +2309,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         }
         FrameTimings timings;
         timings.reloadMs = static_cast<float>((clock.Now() - tReload) * 1000.0);
+        prof::SetMemTag(prof::MemTag::Tick);
         const double tTicks = clock.Now();
 
         // ---- 固定 tick: フェーズ 3(Script) / 4(Systems) / 5(Late) / 7(構造変更) ----
@@ -3279,6 +3281,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                              display::WindowModeName(wanted));
             }
         }
+        prof::SetMemTag(prof::MemTag::Render);
         const double tRender = clock.Now();
 
         // エディタ (または将来の設定) によるレンダリングパス切替を反映
@@ -3389,6 +3392,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 const ParticleStats gpuParticles = particleSystem.Gpu().Stats();
                 prof::ReportGpu("particles", gpuParticles.updateMs, gpuParticles.aliveTotal > 0);
             }
+            prof::SetMemTag(prof::MemTag::EditorUi);
             const double tImGui = clock.Now();
 
             // ---- フェーズ 8: ImGui 描画 / Present ----
@@ -3398,6 +3402,7 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
                 imgui.EndFrame();
             }
             timings.imguiMs = static_cast<float>((clock.Now() - tImGui) * 1000.0);
+            prof::SetMemTag(prof::MemTag::General);
             if (!config.screenshotPath.empty()) {
                 if (config.screenshotEvery > 0) {
                     if (ctx.frameIndex > 0

@@ -7,6 +7,9 @@
 #include <string>
 
 namespace mye::prof {
+
+thread_local MemTag detail::t_memTag = MemTag::General;
+
 namespace {
 
 constexpr int kMaxScopeDepth = 64;

@@ -450,11 +450,13 @@ void RunOneTick(TickServices& ts)
     const bool runScripts = ctx.simulateScripts && scriptHost.IsLoaded();
     if (runScripts) {
         MYE_PROFILE_SCOPE("script");
+        const prof::MemTagScope memTag(prof::MemTag::Script);
         scriptHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         scriptHost.RunStartAndUpdate();
     }
     if (runManaged) {
         MYE_PROFILE_SCOPE("script.cs");
+        const prof::MemTagScope memTag(prof::MemTag::Script);
         managedHost.SetTickContext(ctx.Input(), ctx.tickIndex, ctx.fixedDt, ctx.playerCount);
         managedHost.RunStartAndUpdate();
     }
@@ -620,6 +622,7 @@ void RunOneTick(TickServices& ts)
     bool anyDestructibles = false;
     if (stepSim) {
         MYE_PROFILE_SCOPE("physics");
+        const prof::MemTagScope memTag(prof::MemTag::Physics);
         anyDestructibles = AnyDestructibles(scene.GetWorld());
         // ソリッド接触ペアを受け取り CollisionSystem へ渡す (M28c OnCollision 配信)
         physicsSystem.Update(scene.GetWorld(), ctx.fixedDt, &solidContacts, ts.xpbd,
@@ -713,10 +716,12 @@ void RunOneTick(TickServices& ts)
     // ---- フェーズ 5: スクリプト層 LateUpdate ----
     if (runScripts) {
         MYE_PROFILE_SCOPE("script.late");
+        const prof::MemTagScope memTag(prof::MemTag::Script);
         scriptHost.RunLateUpdate();
     }
     if (runManaged) {
         MYE_PROFILE_SCOPE("script.cs.late");
+        const prof::MemTagScope memTag(prof::MemTag::Script);
         managedHost.RunLateUpdate();
     }
     // ---- M93e: フェーズ 4 の衝突コールバックと LateUpdate で送られたメッセージの配達 ----

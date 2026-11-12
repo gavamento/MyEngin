@@ -28,6 +28,9 @@ constexpr int kBudgetCheckFrames = 30;
 constexpr double kBudgetToastCooldownSec = 10.0;
 constexpr int kAvgWindowChoices[] = { 1, 30, 60, 120, prof::kFrameHistory };
 
+// タブの並び = EditorSettings::profilerTab の値
+enum Tab { kTabOverview, kTabCpu, kTabGpu, kTabRender, kTabMemory, kTabSystems, kTabHistory, kTabCount };
+
 // フレームグラフの系列 (下から積む順)
 enum class Series { Tick, Render, ImGui, Reload, Present, Other, Count };
 constexpr int kSeriesCount = static_cast<int>(Series::Count);
@@ -202,6 +205,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
     // 項目別の計測は窓を開いている間だけ (閉じている間まで呼び出しごとのコストを払わない)
     prof::SetItemTimingEnabled(open && settings.profilerItemTiming);
     prof::SetCaptureThresholdMs(settings.profilerCaptureEnabled ? settings.profilerCaptureMs : 0.0f);
+    UpdateMemoryHistory();
     CheckBudgets(settings, toasts);
     if (!open) {
         // 見ていない間に履歴を止めたままにしない (次に開いたとき古いフレームが出る)
@@ -223,11 +227,11 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
     BuildStats(settings.profilerAvgFrames);
     DrawHeader(settings);
 
-    // タブの並び = EditorSettings::profilerTab の値 (並べ替えると保存済みの選択がずれる)
-    const StrId tabLabels[] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
-                                StrId::Prof_TabRender, StrId::Prof_TabSystems, StrId::Prof_TabHistory };
+    const StrId tabLabels[kTabCount] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
+                                         StrId::Prof_TabRender, StrId::Prof_TabMemory, StrId::Prof_TabSystems,
+                                         StrId::Prof_TabHistory };
     if (ImGui::BeginTabBar("###ProfTabs")) {
-        for (int tab = 0; tab < static_cast<int>(std::size(tabLabels)); ++tab) {
+        for (int tab = 0; tab < kTabCount; ++tab) {
             // 保存してあるタブを初回だけ選び直す。以後は選ばれたタブを保存する
             const ImGuiTabItemFlags flags =
                 (restoreTab_ && settings.profilerTab == tab) ? ImGuiTabItemFlags_SetSelected : 0;
@@ -241,11 +245,12 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
             // 上の帯を固定したまま、タブの中身だけスクロールさせる
             if (ImGui::BeginChild("##ProfTabBody")) {
                 switch (tab) {
-                case 0: DrawOverview(settings); break;
-                case 1: DrawCpu(ctx, settings, selection); break;
-                case 2: DrawGpu(settings); break;
-                case 3: DrawRender(ctx); break;
-                case 4: DrawSystems(ctx); break;
+                case kTabOverview: DrawOverview(settings); break;
+                case kTabCpu: DrawCpu(ctx, settings, selection); break;
+                case kTabGpu: DrawGpu(settings); break;
+                case kTabRender: DrawRender(ctx); break;
+                case kTabMemory: DrawMemory(settings); break;
+                case kTabSystems: DrawSystems(ctx); break;
                 default: DrawHistory(settings); break;
                 }
             }
@@ -619,6 +624,23 @@ void ProfilerWindow::CheckBudgets(const EditorSettings& settings, ToastCenter& t
             return; // 1 度に 1 件だけ (残りは次の間隔で)
         }
     }
+}
+
+void ProfilerWindow::UpdateMemoryHistory()
+{
+    const prof::MemStats current = prof::GetMemoryStats();
+    // 一時停止中は積まない (他のタブと同じ時点で止める)。差の基準だけは進めておく
+    if (memPreviousValid_ && !prof::IsHistoryPaused()) {
+        MemFrame& frame = memHistory_[memHead_];
+        for (int tag = 0; tag < prof::kMemTagCount; ++tag) {
+            frame.allocs[tag] = static_cast<uint32_t>(current.tagAllocs[tag] - memPrevious_.tagAllocs[tag]);
+            frame.bytes[tag] = current.tagBytes[tag] - memPrevious_.tagBytes[tag];
+        }
+        memHead_ = (memHead_ + 1) % prof::kFrameHistory;
+        memCount_ = (std::min)(memCount_ + 1, prof::kFrameHistory);
+    }
+    memPrevious_ = current;
+    memPreviousValid_ = true;
 }
 
 } // namespace mye

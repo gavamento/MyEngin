@@ -11,7 +11,7 @@ class ToastCenter;
 // プロファイラ (engine_spec.md 9 章、M102 で作り直し)。
 // 上の帯 (フレーム時間の要約 + 一時停止 + 表示の設定) は常に出し、その下をタブで分ける:
 //   概要 = 積み上げフレームグラフと重い順の一覧 / CPU = スコープの木 / GPU = パス別 /
-//   描画 = ドローコール・カリング・LOD・影 / システム = 機能別の現在値 /
+//   描画 = ドローコール・カリング・LOD・影 / メモリ = 分類別の確保 / システム = 機能別の現在値 /
 //   記録 = しきい値を超えた重いフレームの控え (選ぶと全タブがそのフレームの内容になる)。
 // 表示するのは prof の「確定済みフレーム」だけ (フレームの途中の値を混ぜない)。
 // 一時停止は prof の履歴そのものを止めるので、グラフ・平均・選んだフレームが同じ時点で揃う
@@ -54,6 +54,9 @@ private:
     void DrawRender(EngineContext& ctx);
     void DrawSystems(EngineContext& ctx);
     void DrawHistory(EditorSettings& settings);
+    void DrawMemory(const EditorSettings& settings);
+    // 累計カウンタの前フレームとの差を取り、フレームあたりの確保として積む (毎フレーム 1 回)
+    void UpdateMemoryHistory();
     void CheckBudgets(const EditorSettings& settings, ToastCenter& toasts);
     // 予算 [ms]。kind は "cpu" / "gpu"。未設定は 0
     static float BudgetMs(const EditorSettings& settings, const char* kind, const char* name);
@@ -73,6 +76,17 @@ private:
     bool restoreTab_ = true;  // 初回だけ、保存してあるタブを選び直す
     int renderView_ = 0;      // 描画タブのビュー (0 = 全ビュー、1.. = viewKey)
     char filter_[64] = {};    // 名前の絞り込み (保存しない)
+
+    // フレームあたりの確保 (分類別)。prof の履歴と同じ長さのリング
+    struct MemFrame {
+        uint32_t allocs[prof::kMemTagCount] = {};
+        uint64_t bytes[prof::kMemTagCount] = {};
+    };
+    MemFrame memHistory_[prof::kFrameHistory];
+    int memHead_ = 0;  // 次に書く位置
+    int memCount_ = 0;
+    prof::MemStats memPrevious_;
+    bool memPreviousValid_ = false;
 
     PhaseStats phases_;
     RowStats scopeStats_[prof::kMaxFrameScopes];
