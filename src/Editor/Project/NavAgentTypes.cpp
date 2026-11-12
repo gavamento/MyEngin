@@ -190,7 +190,8 @@ bool NavAgentTypes::Remove(int index)
     return true;
 }
 
-bool NavSurfaceMatchesAgentType(const NavMeshSurfaceComponent& surface, const NavAgentType& type)
+bool NavSurfaceMatchesAgentType(const 
+    NavMeshSurfaceComponent& surface, const NavAgentType& type)
 {
     return surface.agentRadius == type.radius && surface.agentHeight == type.height
         && surface.maxClimb == type.maxClimb && surface.maxSlopeDeg == type.maxSlopeDeg

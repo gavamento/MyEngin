@@ -16,37 +16,7 @@
 namespace mye {
 namespace {
 
-// ---- sub-09 (M76e2): マルチスレッド化の安全性について ----
-// jobs::System() (JobSystem.h) の ParallelRanges は「同期呼び出しなので常に高々 1 バッチ」と
-// 明記されている実装で、共有の batch_/cursor_ を「呼び出し元は 1 つだけ」という前提のまま
-// mutex で保護している (JobSystem.cpp の DrainChunks コメント参照)。Deep-Modal の推論は
-// ModalSoundLibrary の非同期焼きワーカースレッド上で走る一方、メインスレッドの
-// TransformSystem::Update / RenderSystem も毎 tick/フレーム jobs::System().ParallelRanges を
-// 呼ぶ (実地確認: src\Engine\Engine\Scene\TransformSystem.cpp / RenderSystem.cpp)。
-// 2 つの呼び出し元が同時に同じ JobSystem インスタンスの batch_ / 単調増加する cursor_ を
-// 書き換えると、片方のバッチの chunk をもう片方の呼び出しが横取りする形で壊れる
-// (cursor_ はバッチをまたいで単調増加するだけで、どのバッチの chunk かは base/last の
-// 範囲でしか区別しない — 2 つの呼び出し元が同時に batch_ を上書きすると、この前提が崩れる)。
-// このため Modal 専用に、呼び出しのたびに使い捨てるだけの単純なスレッド分割 (ParallelSpan) を
-// 持つ。スレッド生成コストは実測 (scratchpad の使い捨てベンチマーク) で ~0.08ms/スレッドで、
-// Infer() 1 回あたり数十回呼んでも合計は数 ms — 目標の秒未満の推論時間に対して無視できる。
-// 出力レンジだけを分割し、リダクション (K 次元の総和順) は 1 スレッドが 0..K-1 を固定順で
-// 計算しきるので、maxThreads をいくつに変えても同じ入力からは同じビット列が出る
-// (spec §5 受け入れ条件 23)。
-//
-// ★round 1 で見逃した罠 (spec §5 受け入れ条件 23 に追記): 「K を割らない」だけでは
-//   GEMM の決定論には不十分だった。GemmBiasAddAvx2Range は 8 列ブロックを FMA (乗算+加算を
-//   1 回で丸める) で処理し、8 に満たない端数だけを GemmBiasAddScalarRange (乗算→加算の
-//   2 回丸め) へ回す。align=1 のままだとチャンク幅 ceil(total/nThreads) が 8 の倍数とは
-//   限らず、「どの列が AVX2 でどの列が端数か」がスレッド数ごとに変わってしまう
-//   (実測: T=4 vs T=3/5 で .msfm が不一致、T=4 vs T=2/8 は N が 8 の倍数なので偶然一致した
-//   — 2 冪のスレッド数だけを検査すると原理的に検出できないバグだった)。
-//   `align` (既定 1 = 従来どおり) にチャンク幅の量子化単位を渡せるようにし、GEMM の呼び出し
-//   側だけ align=8 (AVX2 幅) を渡す。chunk を align の倍数に切り上げておけば、最初のチャンクの
-//   境界は必ず align の倍数になる — その後の境界は「align の倍数」× t なので同じく align の
-//   倍数、最後のチャンクの終端だけが total (align の倍数とは限らない) になるが、この端数は
-//   total mod align 個で常に固定 (どの nThreads でも同じ絶対 index に落ちる)。
-//   im2col の行分割・ReLU/Add (SIMD と scalar が同じ丸みで完全に同値) は align=1 のままでよい。
+	// 並列化。nBegin/nEnd は [0,n) の範囲で呼ぶと GemmBiasAdd と同じ計算になる
 void ParallelSpan(size_t total, int maxThreads, const std::function<void(size_t, size_t)>& fn,
                   size_t align = 1)
 {
