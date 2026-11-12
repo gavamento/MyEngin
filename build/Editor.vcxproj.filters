@@ -336,6 +336,9 @@
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindow.cpp">
       <Filter>Windows\Debug</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindowTabs.cpp">
+      <Filter>Windows\Debug</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp">
       <Filter>Windows\Debug</Filter>
     </ClCompile>
@@ -682,6 +685,9 @@
       <Filter>Windows\Debug</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.h">
+      <Filter>Windows\Debug</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWidgets.h">
       <Filter>Windows\Debug</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h">

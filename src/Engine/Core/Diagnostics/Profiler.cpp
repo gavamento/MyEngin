@@ -29,6 +29,11 @@ FramePhases g_pendingPhases;
 uint64_t g_pendingFrameIndex = 0;
 uint64_t g_pendingTickIndex = 0;
 const FrameRecord g_emptyFrame{};
+bool g_historyPaused = false;
+
+GpuStat g_gpu[kMaxGpuPasses];
+int g_gpuCount = 0;
+float g_gpuFrameMs = 0.0f;
 
 RenderStats g_render;                              // 全ビューの累積値
 RenderStats g_renderByView[kRenderStatsViewSlots]; // viewKey 別 (和が g_render と一致する)
@@ -106,6 +111,11 @@ void SealFrame(int64_t now)
     out.frameMs = TicksToMs(now - g_frameStart);
     out.phases = g_pendingPhases;
     AggregateScopes(out);
+    out.gpuFrameMs = g_gpuFrameMs;
+    out.gpuCount = g_gpuCount;
+    for (int i = 0; i < g_gpuCount; ++i) {
+        out.gpu[i] = g_gpu[i];
+    }
     out.render = g_render;
     for (int i = 0; i < kRenderStatsViewSlots; ++i) {
         out.renderByView[i] = g_renderByView[i];
@@ -128,9 +138,11 @@ void BeginFrame()
         g_history.resize(static_cast<size_t>(kFrameHistory));
     }
     const int64_t now = Now();
-    if (g_frameStart != 0) {
+    if (g_frameStart != 0 && !g_historyPaused) {
         SealFrame(now);
     }
+    g_gpuCount = 0;
+    g_gpuFrameMs = 0.0f;
     g_frameStart = now;
     g_pendingPhases = {};
     g_pendingFrameIndex = 0;
@@ -186,6 +198,34 @@ void SetFramePhases(const FramePhases& phases, uint64_t frameIndex, uint64_t tic
     g_pendingPhases = phases;
     g_pendingFrameIndex = frameIndex;
     g_pendingTickIndex = tickIndex;
+}
+
+void ReportGpu(const char* name, float ms, bool ran)
+{
+    for (int i = 0; i < g_gpuCount; ++i) {
+        if (SameName(g_gpu[i].name, name)) {
+            g_gpu[i] = GpuStat{ name, ms, ran };
+            return;
+        }
+    }
+    if (g_gpuCount < kMaxGpuPasses) {
+        g_gpu[g_gpuCount++] = GpuStat{ name, ms, ran };
+    }
+}
+
+void ReportGpuFrame(float ms)
+{
+    g_gpuFrameMs = ms;
+}
+
+void SetHistoryPaused(bool paused)
+{
+    g_historyPaused = paused;
+}
+
+bool IsHistoryPaused()
+{
+    return g_historyPaused;
 }
 
 int HistoryCount()

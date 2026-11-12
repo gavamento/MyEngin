@@ -3383,6 +3383,12 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
             }
 
             timings.renderMs = static_cast<float>((clock.Now() - tRender) * 1000.0);
+            // GPU 時間の申告 (プロファイラの履歴用)。エディタのビュー描画も OnRenderViews で済んでいる
+            renderSystem.ReportGpuTimings();
+            {
+                const ParticleStats gpuParticles = particleSystem.Gpu().Stats();
+                prof::ReportGpu("particles", gpuParticles.updateMs, gpuParticles.aliveTotal > 0);
+            }
             const double tImGui = clock.Now();
 
             // ---- フェーズ 8: ImGui 描画 / Present ----

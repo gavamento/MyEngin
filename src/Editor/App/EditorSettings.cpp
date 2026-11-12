@@ -37,6 +37,10 @@ void EditorSettings::Load(const std::wstring& dir)
         particleCompareOffsetX = root.value("particleCompareOffsetX", particleCompareOffsetX);
         particleCpuSimd = root.value("particleCpuSimd", particleCpuSimd);
         feelMuteCamera = root.value("feelMuteCamera", feelMuteCamera);
+        profilerTab = root.value("profilerTab", profilerTab);
+        profilerAvgFrames = root.value("profilerAvgFrames", profilerAvgFrames);
+        profilerHideZero = root.value("profilerHideZero", profilerHideZero);
+        profilerSortByCost = root.value("profilerSortByCost", profilerSortByCost);
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_settings.json parse error: %s", ex.what());
     }
@@ -72,6 +76,10 @@ void EditorSettings::Save() const
     root["particleCompareOffsetX"] = particleCompareOffsetX;
     root["particleCpuSimd"] = particleCpuSimd;
     root["feelMuteCamera"] = feelMuteCamera;
+    root["profilerTab"] = profilerTab;
+    root["profilerAvgFrames"] = profilerAvgFrames;
+    root["profilerHideZero"] = profilerHideZero;
+    root["profilerSortByCost"] = profilerSortByCost;
 
     std::ofstream f(std::filesystem::path(path_), std::ios::binary);
     if (f) {

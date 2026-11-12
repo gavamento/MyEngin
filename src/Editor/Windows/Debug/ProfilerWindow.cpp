@@ -1,229 +1,487 @@
 #include "Editor/Windows/Debug/ProfilerWindow.h"
 
+#include <algorithm>
+#include <cfloat>
+#include <cstdio>
+#include <cstring>
+#include <iterator>
 
+#include "Editor/App/EditorSettings.h"
+#include "Editor/Windows/Debug/ProfilerWidgets.h"
 #include "Engine/Core/Localization/Localization.h"
-#include "Engine/Core/Diagnostics/Profiler.h"
-#include "Engine/Engine/Acoustic/AcousticField.h" // M65d: 残光の統計行
-#include "Engine/Engine/Audio/Playback/AudioSourceSystem.h" // M68a: 音響 × オーディオの統計行
-#include "Engine/Engine/Particles/ParticleSystem.h"
-#include "Engine/Engine/Rendering/RenderSystem.h"
-#include "Engine/Engine/Scene/Scene.h"
-#include "Engine/Renderer/Pipeline/RenderPath.h"
-
+#include "Engine/Renderer/ImGui/ImGuiTheme.h"
 
 #include "imgui.h"
 
 namespace mye {
 
-void ProfilerWindow::OnImGui(EngineContext& ctx)
-{
-    frameHistory_[cursor_] = ctx.timings.frameMs;
-    cursor_ = (cursor_ + 1) % kHistory;
+namespace {
 
+constexpr float kGraphHeight = 96.0f;
+constexpr float kGraphMinScaleMs = 36.0f; // 縦軸の下限 (30 fps の線が必ず入る)
+constexpr float kBudget60Ms = 1000.0f / 60.0f;
+constexpr float kBudget30Ms = 1000.0f / 30.0f;
+constexpr int kRankingRows = 12;
+constexpr int kAvgWindowChoices[] = { 1, 30, 60, 120, prof::kFrameHistory };
+
+// フレームグラフの系列 (下から積む順)
+enum class Series { Tick, Render, ImGui, Reload, Present, Other, Count };
+constexpr int kSeriesCount = static_cast<int>(Series::Count);
+
+// 系列の色。themeColor の意味色は「状態」を表すので系列には使わず、同じ帯 (S ≒ 0.45 / V ≒ 0.80) から
+// 色相だけ変えて取る (ImGuiTheme.h の配色ルール 4 = カテゴリ色は持ち主の表に置く、と同じ流儀)。
+// Other は「測れていない残り」なので無彩色にする
+ImVec4 SeriesColor(Series series)
+{
+    switch (series) {
+    case Series::Tick: return ImVec4(0.44f, 0.80f, 0.80f, 1.0f);    // 青緑
+    case Series::Render: return ImVec4(0.62f, 0.44f, 0.80f, 1.0f);  // 紫
+    case Series::ImGui: return ImVec4(0.80f, 0.44f, 0.68f, 1.0f);   // 桃
+    case Series::Reload: return ImVec4(0.71f, 0.80f, 0.44f, 1.0f);  // 黄緑
+    case Series::Present: return ImVec4(0.44f, 0.59f, 0.80f, 1.0f); // 青
+    default: return themeColor::TextDim;
+    }
+}
+
+StrId SeriesLabel(Series series)
+{
+    switch (series) {
+    case Series::Tick: return StrId::Prof_PhaseTick;
+    case Series::Render: return StrId::Prof_PhaseRenderCpu;
+    case Series::ImGui: return StrId::Prof_PhaseImGui;
+    case Series::Reload: return StrId::Prof_PhaseReload;
+    case Series::Present: return StrId::Prof_PhasePresent;
+    default: return StrId::Prof_PhaseOther;
+    }
+}
+
+// 1 フレームの壁時計を系列へ分ける。other = フレーム全体 - 測れた和 (負にはしない)
+void SplitFrame(const prof::FrameRecord& frame, float out[kSeriesCount])
+{
+    out[static_cast<int>(Series::Tick)] = frame.phases.tickMs;
+    out[static_cast<int>(Series::Render)] = frame.phases.renderMs;
+    out[static_cast<int>(Series::ImGui)] = frame.phases.imguiMs;
+    out[static_cast<int>(Series::Reload)] = frame.phases.reloadMs;
+    out[static_cast<int>(Series::Present)] = frame.phases.presentMs;
+    const float measured = frame.phases.tickMs + frame.phases.renderMs + frame.phases.imguiMs
+                           + frame.phases.reloadMs + frame.phases.presentMs;
+    out[static_cast<int>(Series::Other)] = (std::max)(0.0f, frame.frameMs - measured);
+}
+
+bool SameName(const char* a, const char* b)
+{
+    return a == b || std::strcmp(a, b) == 0;
+}
+
+// 大文字小文字を無視した部分一致 (ASCII だけ畳む。スコープ名とパス名は ASCII の識別子)
+bool ContainsNoCase(const char* text, const char* needle)
+{
+    const size_t needleLen = std::strlen(needle);
+    if (needleLen == 0) {
+        return true;
+    }
+    auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; };
+    for (const char* p = text; *p != '\0'; ++p) {
+        size_t k = 0;
+        while (k < needleLen && p[k] != '\0' && lower(p[k]) == lower(needle[k])) {
+            ++k;
+        }
+        if (k == needleLen) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+bool ProfilerWindow::PassesFilter(const char* name) const
+{
+    return ContainsNoCase(name, filter_);
+}
+
+void ProfilerWindow::BuildStats(int window)
+{
+    const prof::FrameRecord& shown = Shown();
+    const int available = (std::max)(prof::HistoryCount() - selectedAge_, 1);
+    const int frames = std::clamp(window, 1, available);
+
+    phases_ = {};
+    for (int i = 0; i < shown.scopeCount; ++i) {
+        scopeStats_[i] = {};
+    }
+    int gpuSamples[prof::kMaxGpuPasses] = {};
+    for (int g = 0; g < shown.gpuCount; ++g) {
+        gpuStats_[g] = {};
+    }
+
+    auto add = [](RowStats& stats, float value, bool first) {
+        if (first) {
+            stats.now = value;
+        }
+        stats.avg += value; // ここでは和。最後に割る
+        stats.max = (std::max)(stats.max, value);
+    };
+
+    // 表示中フレームの各行が、過去フレームのどの行に当たるか (親をたどって同じ場所の同名を探す)
+    static int match[prof::kMaxFrameScopes];
+    for (int f = 0; f < frames; ++f) {
+        const prof::FrameRecord& frame = prof::History(selectedAge_ + f);
+        const bool first = (f == 0);
+        add(phases_.frame, frame.frameMs, first);
+        add(phases_.reload, frame.phases.reloadMs, first);
+        add(phases_.tick, frame.phases.tickMs, first);
+        add(phases_.render, frame.phases.renderMs, first);
+        add(phases_.imgui, frame.phases.imguiMs, first);
+        add(phases_.present, frame.phases.presentMs, first);
+        add(phases_.gpuFrame, frame.gpuFrameMs, first);
+
+        for (int i = 0; i < shown.scopeCount; ++i) {
+            const prof::ScopeStat& row = shown.scopes[i];
+            const int parentMatch = (row.parent >= 0) ? match[row.parent] : -1;
+            int found = -1;
+            if (row.parent < 0 || parentMatch >= 0) {
+                for (int j = 0; j < frame.scopeCount && found < 0; ++j) {
+                    if (frame.scopes[j].parent == parentMatch && SameName(frame.scopes[j].name, row.name)) {
+                        found = j;
+                    }
+                }
+            }
+            match[i] = found;
+            add(scopeStats_[i], (found >= 0) ? frame.scopes[found].ms : 0.0f, first);
+        }
+
+        // GPU は「走ったフレーム」だけで平均する (走らなかったフレームの値は前回値の残り)
+        for (int g = 0; g < shown.gpuCount; ++g) {
+            for (int j = 0; j < frame.gpuCount; ++j) {
+                if (SameName(frame.gpu[j].name, shown.gpu[g].name)) {
+                    if (first) {
+                        gpuStats_[g].now = frame.gpu[j].ms;
+                    }
+                    if (frame.gpu[j].ran) {
+                        gpuStats_[g].avg += frame.gpu[j].ms;
+                        gpuStats_[g].max = (std::max)(gpuStats_[g].max, frame.gpu[j].ms);
+                        ++gpuSamples[g];
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    const float inv = 1.0f / static_cast<float>(frames);
+    for (RowStats* stats : { &phases_.frame, &phases_.reload, &phases_.tick, &phases_.render, &phases_.imgui,
+                             &phases_.present, &phases_.gpuFrame }) {
+        stats->avg *= inv;
+    }
+    for (int i = 0; i < shown.scopeCount; ++i) {
+        scopeStats_[i].avg *= inv;
+        scopeSelfAvg_[i] = scopeStats_[i].avg;
+    }
+    for (int i = 0; i < shown.scopeCount; ++i) {
+        if (shown.scopes[i].parent >= 0) {
+            scopeSelfAvg_[shown.scopes[i].parent] -= scopeStats_[i].avg;
+        }
+    }
+    for (int i = 0; i < shown.scopeCount; ++i) {
+        scopeSelfAvg_[i] = (std::max)(0.0f, scopeSelfAvg_[i]);
+    }
+    for (int g = 0; g < shown.gpuCount; ++g) {
+        gpuStats_[g].avg = (gpuSamples[g] > 0) ? gpuStats_[g].avg / static_cast<float>(gpuSamples[g]) : 0.0f;
+    }
+}
+
+void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings)
+{
     if (!open) {
+        // 見ていない間に履歴を止めたままにしない (次に開いたとき古いフレームが出る)
+        if (prof::IsHistoryPaused()) {
+            prof::SetHistoryPaused(false);
+            selectedAge_ = 0;
+        }
         return;
     }
     if (!ImGui::Begin(Tr(StrId::Win_Profiler), &open)) {
         ImGui::End();
         return;
     }
-    const FrameTimings& t = ctx.timings;
+    selectedAge_ = std::clamp(selectedAge_, 0, (std::max)(prof::HistoryCount() - 1, 0));
+    BuildStats(settings.profilerAvgFrames);
+    DrawHeader(settings);
 
-    ImGui::Text(Tr(StrId::Prof_Frame), t.frameMs,
-                (t.frameMs > 0.001f) ? 1000.0f / t.frameMs : 0.0f);
-    ImGui::PlotLines("##frame", frameHistory_, kHistory, cursor_, nullptr, 0.0f, 33.3f,
-                     ImVec2(-1, 60));
-
-    ImGui::Separator();
-    ImGui::TextUnformatted(Tr(StrId::Prof_PhaseHeader));
-    ImGui::Text(Tr(StrId::Prof_PhaseHotReload), t.reloadMs);
-    ImGui::Text(Tr(StrId::Prof_PhaseTicks), t.tickMs, t.ticksThisFrame);
-    ImGui::Text(Tr(StrId::Prof_PhaseRender), t.renderMs);
-    ImGui::Text(Tr(StrId::Prof_PhaseUi), t.imguiMs);
-
-    ImGui::Separator();
-    ImGui::TextUnformatted(Tr(StrId::Prof_Particles));
-    const ParticleStats cpu = ctx.particles->Cpu().Stats();
-    const ParticleStats gpu = ctx.particles->Gpu().Stats();
-    ImGui::Text("  CPU: %7u alive %7.3f ms", cpu.aliveTotal, cpu.updateMs);
-    ImGui::Text("  GPU: %7u alive %7.3f ms (GpuTimer)", gpu.aliveTotal, gpu.updateMs);
-    // M44d: ポストプロセス解決の GPU 時間 (複数ビューでは最後に完了した Resolve)
-    if (ctx.renderSystem) {
-        ImGui::Text("  postfx: %6.3f ms (GpuTimer)", ctx.renderSystem->PostFxGpuMs());
-        // M90a: 不透明の本描画とフレーム全体 (走らせないパスの欄は 0.000)
-        ImGui::Text(Tr(StrId::Prof_GpuStages), ctx.renderSystem->FrameGpuMs(),
-                    ctx.renderSystem->GbufferGpuMs(), ctx.renderSystem->ForwardOpaqueGpuMs());
-        // GPU オクルージョン (Deferred。判定 + max-Z ピラミッド。件数は GPU が数えた 2 フレーム遅れの値の和)
-        if (ctx.renderSystem->enableOcclusionCulling) {
-            const prof::RenderStats all = prof::GetRenderStats();
-            ImGui::Text(Tr(StrId::Prof_Occlusion), ctx.renderSystem->OcclusionGpuMs(),
-                        all.occlusionPhase1Draws, all.occlusionPhase2Draws, all.occluded);
-            ImGui::Text(Tr(StrId::Prof_OcclusionDrawn), all.occlusionPhase1Draws, all.occlusionPhase2Draws,
-                        all.occlusionPhase1Draws + all.occlusionPhase2Draws);
-        }
-        // M54d: 影 (csm = 平行光 3 カスケード / atlas = 局所ライトのタイル)。
-        // 点光源 1 本 = 6 タイルなので、tiles と draws がアトラスの重さの実体。
-        // culled はタイル毎の視錐台カリングで省いた draw と、シーン AABB に触れない面の数
-        ImGui::Text("  shadow: %6.3f ms csm / %6.3f ms atlas (GpuTimer, %d tiles, %d draws, "
-                    "culled %d draws / %d faces)",
-                    ctx.renderSystem->ShadowCsmGpuMs(), ctx.renderSystem->ShadowAtlasGpuMs(),
-                    ctx.renderSystem->ShadowAtlasTiles(), ctx.renderSystem->ShadowAtlasDraws(),
-                    ctx.renderSystem->ShadowAtlasCulledDraws(),
-                    ctx.renderSystem->ShadowAtlasCulledFaces());
-        // M56c: HZB (min-Z ピラミッド)。組んでいないフレームは GpuTimer に前の値が
-        // 残るので、**組む条件が立っていないときは行ごと出さない** (RT と同じ流儀)。
-        // 出ている間の値は「全段の縮小ディスパッチ 1 フレーム分」の合計
-        if (ctx.renderSystem->hzbDebugMip != 0) {
-            ImGui::Text("  hzb: %6.3f ms (GpuTimer, mip %d)", ctx.renderSystem->HzbGpuMs(),
-                        ctx.renderSystem->hzbDebugMip - 1);
-        }
-        // M56d: SSR。HZB とセットで出す — SSR の総コストは「ピラミッド構築 + トレース」の
-        // 和で、片方だけ見ても支配項が分からない (可視化が off でも HZB は組まれている)
-        if (ctx.renderSystem->enableSsr) {
-            ImGui::Text("  ssr: %6.3f ms trace + %6.3f ms hzb (GpuTimer)",
-                        ctx.renderSystem->SsrGpuMs(), ctx.renderSystem->HzbGpuMs());
-        }
-        // M57: フロクセル (--froxel。off のときは行ごと出さない)。
-        // cells が 0 = ボリューム未確保 = まだ 1 度も注入していない (正射影のビュー等)。
-        // hist=0 が続くなら履歴が毎フレーム捨てられている (通番が飛んでいる)
-        if (ctx.renderSystem->enableFroxel) {
-            ImGui::Text("  froxel: %6.3f inject / %6.3f temporal / %6.3f integrate ms "
-                        "(GpuTimer, %d cells, density %.3f, g %.2f, jitter %.3f, hist %d)",
-                        ctx.renderSystem->FroxelInjectGpuMs(),
-                        ctx.renderSystem->FroxelTemporalGpuMs(),
-                        ctx.renderSystem->FroxelIntegrateGpuMs(),
-                        ctx.renderSystem->FroxelCellCount(),
-                        ctx.renderSystem->froxelSettings.density,
-                        ctx.renderSystem->froxelSettings.anisotropy,
-                        ctx.renderSystem->FroxelSliceJitter(),
-                        ctx.renderSystem->FroxelHistoryValid() ? 1 : 0);
-        }
-        // M65d: 音響の残光ボリューム (シーンに AcousticVolume が無ければ行ごと出さない)。
-        // ★upload ms が 0.000 でも「速い」とは限らない — 内容の通番が前フレームと同じで
-        //   転送を**省いた**フレームも 0 になる。supplied=0 が続くなら
-        //   「一度も音が鳴っていない」か「テクスチャを作れなかった」のどちらか
-        if (ctx.renderSystem->acousticField != nullptr
-            && ctx.renderSystem->AcousticCellCount() > 0) {
-            int acousticWaves = 0;
-            for (const AcousticField::Wave& w : ctx.renderSystem->acousticField->Waves()) {
-                acousticWaves += (w.active != 0) ? 1 : 0;
+    // タブの並び = EditorSettings::profilerTab の値 (並べ替えると保存済みの選択がずれる)
+    const StrId tabLabels[] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
+                                StrId::Prof_TabRender, StrId::Prof_TabSystems };
+    if (ImGui::BeginTabBar("###ProfTabs")) {
+        for (int tab = 0; tab < static_cast<int>(std::size(tabLabels)); ++tab) {
+            // 保存してあるタブを初回だけ選び直す。以後は選ばれたタブを保存する
+            const ImGuiTabItemFlags flags =
+                (restoreTab_ && settings.profilerTab == tab) ? ImGuiTabItemFlags_SetSelected : 0;
+            if (!ImGui::BeginTabItem(Tr(tabLabels[tab]), nullptr, flags)) {
+                continue;
             }
-            ImGui::Text("  acoustic: %6.3f ms upload (CPU, %d cells, waves %d, supplied %d)",
-                        ctx.renderSystem->AcousticUploadMs(),
-                        ctx.renderSystem->AcousticCellCount(), acousticWaves,
-                        ctx.renderSystem->AcousticSupplied() ? 1 : 0);
+            if (!restoreTab_ && settings.profilerTab != tab) {
+                settings.profilerTab = tab;
+                settings.Save();
+            }
+            // 上の帯を固定したまま、タブの中身だけスクロールさせる
+            if (ImGui::BeginChild("##ProfTabBody")) {
+                switch (tab) {
+                case 0: DrawOverview(settings); break;
+                case 1: DrawCpu(settings); break;
+                case 2: DrawGpu(settings); break;
+                case 3: DrawRender(ctx); break;
+                default: DrawSystems(ctx); break;
+                }
+            }
+            ImGui::EndChild();
+            ImGui::EndTabItem();
         }
-        // M68a: 音響 × オーディオ (有効な AcousticAudio と有効なリスナー場があるときだけ)。
-        // ★--no-audio では AudioSourceSystem::Update が丸ごと return するので
-        //   active が立たず、行ごと出ない = 「ヘッドレスはゼロコスト」が画面でも読める
-        if (ctx.audioSources != nullptr && ctx.audioSources->AcousticStats().active) {
-            const AcousticAudioStats& acs = ctx.audioSources->AcousticStats();
-            ImGui::Text("  acoustic-audio: probe %6.3f ms (rebuilds %d, box %d cells, "
-                        "shaped %d, open %.2f, shots %d, room t=%.2f)",
-                        static_cast<double>(acs.probeMsLast), acs.rebuilds, acs.boxCells,
-                        acs.shaped, static_cast<double>(acs.openness), acs.shots,
-                        static_cast<double>(acs.roomT));
-        }
-        // M46b: レイトレ (デバッグ表示も GI 合成も off のときは行ごと出さない)
-        const bool rtGiOn = ctx.renderSystem->enableRtGi;             // M46f
-        const bool rtShadowOn = ctx.renderSystem->enableRtShadow;     // M46g
-        const bool rtReflOn = ctx.renderSystem->enableRtRefl;         // M46h
-        const int32_t rtDebug = ctx.renderSystem->rtDebugMode;
-        if (rtDebug != rtdebug::kOff || rtGiOn || rtShadowOn || rtReflOn) {
-            ImGui::Text("  rt bvh: %5d inst / %7d tri / %6.3f ms (CPU)",
-                        ctx.renderSystem->RtInstanceCount(),
-                        ctx.renderSystem->RtTriangleCount(), ctx.renderSystem->RtBuildCpuMs());
-            if (rtDebug != rtdebug::kOff) {
-                ImGui::Text("  rt debug: %6.3f ms (GpuTimer)", ctx.renderSystem->RtDebugGpuMs());
-            }
-            // ★ここは GI 以外の表示 (影・反射) でも行を出す広い判定のまま (表示だけの差。前回値が出る)
-            if (rtDebug >= rtdebug::kGiRaw || rtGiOn) {
-                ImGui::Text("  rt gi: %6.3f ms (GpuTimer, %.0f%% res, %d bounce)",
-                            ctx.renderSystem->RtGiGpuMs(),
-                            ctx.renderSystem->rtResolutionScale * 100.0f,
-                            ctx.renderSystem->rtBounces);
-                // M46d: テンポラル蓄積 (off のときは前回値のまま = 参考値)
-                ImGui::Text("  rt temporal: %6.3f ms (GpuTimer, %s)",
-                            ctx.renderSystem->RtTemporalGpuMs(),
-                            ctx.renderSystem->rtTemporal ? "on" : "off");
-                // M46e: 分散推定 + A-Trous 全反復の合計 (蓄積 off では動かない)
-                ImGui::Text("  rt svgf: %6.3f ms (GpuTimer, %s)", ctx.renderSystem->RtSvgfGpuMs(),
-                            (ctx.renderSystem->rtSvgf && ctx.renderSystem->rtTemporal) ? "on"
-                                                                                       : "off");
-            }
-            // M46g: 影レイと分離型空間フィルタ (どちらもフル解像度)
-            if (rtdebug::NeedsShadow(rtDebug) || rtShadowOn) {
-                ImGui::Text("  rt shadow: %6.3f ms trace / %6.3f ms filter (GpuTimer, full res)",
-                            ctx.renderSystem->RtShadowGpuMs(),
-                            ctx.renderSystem->RtShadowFilterGpuMs());
-            }
-            // M46h: 反射レイと、そのデノイズ (蓄積 + 分散推定 + A-Trous の合計)
-            if (rtdebug::NeedsReflection(rtDebug) || rtReflOn) {
-                // M67d: restir = ReSTIR の 2 パス目 (off なら 0.000)。初期 reservoir の
-                // 書き出しは反射レイと同じディスパッチなので trace 側に含まれる
-                ImGui::Text("  rt refl: %6.3f ms trace / %6.3f ms denoise / %6.3f ms restir "
-                            "(GpuTimer, %.0f%% res)",
-                            ctx.renderSystem->RtReflGpuMs(),
-                            ctx.renderSystem->RtReflDenoiseGpuMs(),
-                            ctx.renderSystem->RtRestirGpuMs(),
-                            ctx.renderSystem->rtResolutionScale * 100.0f);
-            }
-        }
+        restoreTab_ = false;
+        ImGui::EndTabBar();
     }
-
-    ImGui::Separator();
-    ImGui::TextUnformatted(Tr(StrId::Prof_ScopesHeader));
-    for (const prof::ScopeRecord& s : prof::FrameScopes()) {
-        ImGui::Text("%*s%-14s %6.3f ms", s.depth * 2, "", s.name, s.ms);
-    }
-
-    ImGui::Separator();
-    const prof::RenderStats rs = prof::GetRenderStats();
-    ImGui::Text(Tr(StrId::Prof_Draw), rs.drawCalls, rs.triangles, rs.culled);
-    // M99: 理由別 (culled = 視錐台で落としたメッシュ)。どれかが 0 でないときだけ出す
-    if (rs.culled != 0 || rs.culledDistance != 0 || rs.culledScreenSize != 0 || rs.culledNonMesh != 0
-        || rs.unculledGpuEmitters != 0) {
-        ImGui::Text(Tr(StrId::Prof_CullReasons), rs.culled, rs.culledDistance, rs.culledScreenSize, rs.culledNonMesh,
-                    rs.unculledGpuEmitters);
-    }
-    // M90e: LOD の段を持つメッシュを描いたときだけ分布を出す
-    if (rs.lodDraws[1] != 0 || rs.lodDraws[2] != 0 || rs.lodDraws[3] != 0) {
-        ImGui::Text(Tr(StrId::Prof_LodDraws), rs.lodDraws[0], rs.lodTriangles[0], rs.lodDraws[1],
-                    rs.lodTriangles[1], rs.lodDraws[2], rs.lodTriangles[2], rs.lodDraws[3], rs.lodTriangles[3]);
-    }
-    // M90a: 影は本描画の欄に混ぜず別に出す。ビュー別は描いたビューだけ (viewKey 1=runtime 2=SceneView 3=GameView)
-    ImGui::Text(Tr(StrId::Prof_ShadowDraw), rs.shadowDrawCalls, rs.shadowTriangles,
-                rs.shadowCascadeDraws[0], rs.shadowCascadeDraws[1], rs.shadowCascadeDraws[2]);
-    for (uint32_t viewKey = 0; viewKey < static_cast<uint32_t>(prof::kRenderStatsViewSlots); ++viewKey) {
-        const prof::RenderStats vs = prof::GetRenderStatsForView(viewKey);
-        if (vs.drawCalls != 0 || vs.shadowDrawCalls != 0 || vs.culled != 0) {
-            ImGui::Text(Tr(StrId::Prof_ViewStats), viewKey, vs.drawCalls, vs.triangles, vs.culled,
-                        vs.shadowDrawCalls, vs.shadowTriangles);
-            // M99: ビュー別の理由別の数 (どれかが 0 でないときだけ)
-            if (vs.culled != 0 || vs.culledDistance != 0 || vs.culledScreenSize != 0 || vs.occluded != 0
-                || vs.culledNonMesh != 0 || vs.unculledGpuEmitters != 0) {
-                ImGui::Text(Tr(StrId::Prof_ViewCullReasons), viewKey, vs.culled, vs.culledDistance,
-                            vs.culledScreenSize, vs.occluded, vs.culledNonMesh, vs.unculledGpuEmitters);
-            }
-            const bool hasOcclusion = vs.occlusionPhase1Draws != 0 || vs.occlusionPhase2Draws != 0 || vs.occluded != 0;
-            if (ctx.renderSystem && ctx.renderSystem->enableOcclusionCulling && hasOcclusion) {
-                ImGui::Text(Tr(StrId::Prof_ViewOcclusion), viewKey, vs.occlusionPhase1Draws,
-                            vs.occlusionPhase2Draws, vs.occluded);
-            }
-        }
-    }
-
-    const prof::MemStats mem = prof::GetMemoryStats();
-    ImGui::Text(Tr(StrId::Prof_Memory),
-                static_cast<unsigned long long>(mem.liveAllocs),
-                static_cast<double>(mem.totalBytes) / (1024.0 * 1024.0),
-                static_cast<unsigned long long>(mem.totalAllocs),
-                static_cast<unsigned long long>(mem.totalFrees));
-
-    ImGui::Separator();
-    ImGui::Text(Tr(StrId::Prof_RenderPath), ctx.renderPath ? ctx.renderPath->Name() : "?");
-    ImGui::Text(Tr(StrId::Prof_Entities), ctx.scene->GetWorld().AliveCount());
     ImGui::End();
+}
+
+void ProfilerWindow::DrawHeader(EditorSettings& settings)
+{
+    const prof::FrameRecord& shown = Shown();
+    const float frameMs = phases_.frame.avg;
+    const float cpuMs = phases_.reload.avg + phases_.tick.avg + phases_.render.avg + phases_.imgui.avg;
+    const float otherMs = (std::max)(0.0f, frameMs - cpuMs - phases_.present.avg);
+    ImGui::Text(Tr(StrId::Prof_FrameSummary), static_cast<double>(frameMs),
+                static_cast<double>((frameMs > profui::kZeroMs) ? 1000.0f / frameMs : 0.0f));
+    ImGui::SameLine();
+    ImGui::TextColored(themeColor::TextDim, Tr(StrId::Prof_SummarySplit), static_cast<double>(cpuMs),
+                       static_cast<double>(phases_.gpuFrame.avg), static_cast<double>(phases_.present.avg),
+                       static_cast<double>(otherMs));
+
+    const bool paused = prof::IsHistoryPaused();
+    if (ImGui::Button(Tr(paused ? StrId::Prof_Resume : StrId::Prof_Pause))) {
+        prof::SetHistoryPaused(!paused);
+        selectedAge_ = 0;
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+    char preview[32];
+    auto windowLabel = [&](int frames) {
+        if (frames <= 1) {
+            std::snprintf(preview, sizeof(preview), "%s", Tr(StrId::Prof_AvgInstant));
+        } else {
+            std::snprintf(preview, sizeof(preview), Tr(StrId::Prof_AvgFrames), frames);
+        }
+        return preview;
+    };
+    if (ImGui::BeginCombo(Tr(StrId::Prof_AvgWindow), windowLabel(settings.profilerAvgFrames))) {
+        for (const int choice : kAvgWindowChoices) {
+            if (ImGui::Selectable(windowLabel(choice), settings.profilerAvgFrames == choice)) {
+                settings.profilerAvgFrames = choice;
+                settings.Save();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Checkbox(Tr(StrId::Prof_SortByCost), &settings.profilerSortByCost)) {
+        settings.Save();
+    }
+    ImGui::SameLine();
+    if (ImGui::Checkbox(Tr(StrId::Prof_HideZero), &settings.profilerHideZero)) {
+        settings.Save();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+    ImGui::InputTextWithHint("##ProfFilter", Tr(StrId::Prof_Filter), filter_, sizeof(filter_));
+    if (paused) {
+        ImGui::SameLine();
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Prof_PausedAt),
+                           static_cast<unsigned long long>(shown.frameIndex),
+                           static_cast<unsigned long long>(shown.tickIndex));
+    }
+}
+
+void ProfilerWindow::DrawFrameGraph()
+{
+    const ImVec2 size(ImGui::GetContentRegionAvail().x, kGraphHeight);
+    if (size.x < 8.0f) {
+        return;
+    }
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const ImVec2 p1(p0.x + size.x, p0.y + size.y);
+    ImGui::InvisibleButton("##ProfFrameGraph", size);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsItemClicked();
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(p0, p1, ImGui::GetColorU32(ImGuiCol_FrameBg));
+
+    const int count = prof::HistoryCount();
+    float scaleMs = kGraphMinScaleMs;
+    for (int age = 0; age < count; ++age) {
+        scaleMs = (std::max)(scaleMs, prof::History(age).frameMs * 1.1f);
+    }
+    const float barWidth = size.x / static_cast<float>(prof::kFrameHistory);
+    auto yOf = [&](float ms) { return p1.y - size.y * (std::min)(ms / scaleMs, 1.0f); };
+
+    ImU32 colors[kSeriesCount];
+    for (int s = 0; s < kSeriesCount; ++s) {
+        colors[s] = ImGui::ColorConvertFloat4ToU32(SeriesColor(static_cast<Series>(s)));
+    }
+    // 新しいフレームが右端。棒 1 本 = 1 フレーム
+    for (int age = 0; age < count; ++age) {
+        float parts[kSeriesCount];
+        SplitFrame(prof::History(age), parts);
+        const float x1 = p1.x - barWidth * static_cast<float>(age);
+        const float x0 = x1 - (std::max)(barWidth - 1.0f, 1.0f);
+        float stacked = 0.0f;
+        for (int s = 0; s < kSeriesCount; ++s) {
+            if (parts[s] <= 0.0f) {
+                continue;
+            }
+            draw->AddRectFilled(ImVec2(x0, yOf(stacked + parts[s])), ImVec2(x1, yOf(stacked)), colors[s]);
+            stacked += parts[s];
+        }
+    }
+    // GPU は CPU と時間が重なるので積まず、線で重ねる
+    const ImU32 gpuColor = ImGui::ColorConvertFloat4ToU32(themeColor::Text);
+    for (int age = 0; age + 1 < count; ++age) {
+        const float xa = p1.x - barWidth * (static_cast<float>(age) + 0.5f);
+        draw->AddLine(ImVec2(xa, yOf(prof::History(age).gpuFrameMs)),
+                      ImVec2(xa - barWidth, yOf(prof::History(age + 1).gpuFrameMs)), gpuColor, 1.0f);
+    }
+    // 目安の線 (60 fps / 30 fps)
+    const ImU32 guideColor = ImGui::ColorConvertFloat4ToU32(themeColor::TextDim);
+    for (const float budget : { kBudget60Ms, kBudget30Ms }) {
+        const float y = yOf(budget);
+        draw->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), guideColor, 1.0f);
+        char label[16];
+        std::snprintf(label, sizeof(label), "%.1f ms", static_cast<double>(budget));
+        draw->AddText(ImVec2(p0.x + 4.0f, y - ImGui::GetTextLineHeight()), guideColor, label);
+    }
+    // 表示中のフレーム (一時停止中だけ)
+    if (prof::IsHistoryPaused() && selectedAge_ < count) {
+        const float x1 = p1.x - barWidth * static_cast<float>(selectedAge_);
+        draw->AddRect(ImVec2(x1 - barWidth, p0.y), ImVec2(x1, p1.y),
+                      ImGui::ColorConvertFloat4ToU32(themeColor::Accent));
+    }
+
+    if (hovered && count > 0) {
+        const int age = std::clamp(static_cast<int>((p1.x - ImGui::GetIO().MousePos.x) / barWidth), 0, count - 1);
+        const prof::FrameRecord& frame = prof::History(age);
+        float parts[kSeriesCount];
+        SplitFrame(frame, parts);
+        if (ImGui::BeginTooltip()) {
+            ImGui::Text(Tr(StrId::Prof_GraphFrame), static_cast<unsigned long long>(frame.frameIndex),
+                        static_cast<unsigned long long>(frame.tickIndex), static_cast<double>(frame.frameMs));
+            for (int s = 0; s < kSeriesCount; ++s) {
+                ImGui::TextColored(SeriesColor(static_cast<Series>(s)), "%s: %.3f ms",
+                                   Tr(SeriesLabel(static_cast<Series>(s))), static_cast<double>(parts[s]));
+            }
+            ImGui::Text("%s: %.3f ms", Tr(StrId::Prof_GraphGpuLine), static_cast<double>(frame.gpuFrameMs));
+            ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_GraphClickHint));
+            ImGui::EndTooltip();
+        }
+        if (clicked) {
+            prof::SetHistoryPaused(true);
+            selectedAge_ = age;
+        }
+    }
+}
+
+void ProfilerWindow::DrawOverview(const EditorSettings& settings)
+{
+    DrawFrameGraph();
+
+    const prof::FrameRecord& shown = Shown();
+    const float frameMs = phases_.frame.avg;
+
+    // ---- フェーズの内訳 (グラフの凡例を兼ねる) ----
+    const RowStats* phaseRows[kSeriesCount] = { &phases_.tick, &phases_.render, &phases_.imgui, &phases_.reload,
+                                                &phases_.present, nullptr };
+    const float measuredAvg = phases_.tick.avg + phases_.render.avg + phases_.imgui.avg + phases_.reload.avg
+                              + phases_.present.avg;
+    if (ImGui::BeginTable("##ProfPhases", 5, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_KindPhase), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColNow), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAvg), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMax), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+        float nowParts[kSeriesCount];
+        SplitFrame(shown, nowParts);
+        for (int s = 0; s < kSeriesCount; ++s) {
+            const Series series = static_cast<Series>(s);
+            const float avg = phaseRows[s] ? phaseRows[s]->avg : (std::max)(0.0f, frameMs - measuredAvg);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(s);
+            ImGui::ColorButton("##swatch", SeriesColor(series),
+                               ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+                               ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()));
+            ImGui::PopID();
+            ImGui::SameLine();
+            ImGui::TextUnformatted(Tr(SeriesLabel(series)));
+            ImGui::TableSetColumnIndex(1);
+            profui::MsCell(nowParts[s]);
+            ImGui::TableSetColumnIndex(2);
+            profui::MsCell(avg);
+            ImGui::TableSetColumnIndex(3);
+            if (phaseRows[s]) {
+                profui::MsCell(phaseRows[s]->max);
+            }
+            ImGui::TableSetColumnIndex(4);
+            profui::ShareBar(avg, frameMs);
+        }
+        ImGui::EndTable();
+    }
+
+    // ---- 重い項目 ----
+    // CPU スコープは「自身の時間」(子に含まれないぶん) で並べる。包含時間で並べると親が必ず上に来て、
+    // どこが重いかの答えにならない
+    struct Entry {
+        StrId kind;
+        const char* name;
+        float ms;
+    };
+    Entry entries[prof::kMaxFrameScopes + prof::kMaxGpuPasses];
+    int entryCount = 0;
+    for (int i = 0; i < shown.scopeCount; ++i) {
+        if (PassesFilter(shown.scopes[i].name)) {
+            entries[entryCount++] = Entry{ StrId::Prof_KindCpu, shown.scopes[i].name, scopeSelfAvg_[i] };
+        }
+    }
+    for (int g = 0; g < shown.gpuCount; ++g) {
+        if (shown.gpu[g].ran && PassesFilter(shown.gpu[g].name)) {
+            entries[entryCount++] = Entry{ StrId::Prof_KindGpu, shown.gpu[g].name, gpuStats_[g].avg };
+        }
+    }
+    std::sort(entries, entries + entryCount, [](const Entry& a, const Entry& b) { return a.ms > b.ms; });
+
+    ImGui::SeparatorText(Tr(StrId::Prof_RankingHeader));
+    if (ImGui::BeginTable("##ProfRanking", 4, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColKind), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAvg), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableHeadersRow();
+        int shownRows = 0;
+        for (int i = 0; i < entryCount && shownRows < kRankingRows; ++i) {
+            if (settings.profilerHideZero && entries[i].ms < profui::kZeroMs) {
+                continue;
+            }
+            ++shownRows;
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(themeColor::TextDim, "%s", Tr(entries[i].kind));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(entries[i].name);
+            ImGui::TableSetColumnIndex(2);
+            profui::MsCell(entries[i].ms);
+            ImGui::TableSetColumnIndex(3);
+            profui::ShareBar(entries[i].ms, frameMs);
+        }
+        ImGui::EndTable();
+    }
 }
 
 } // namespace mye

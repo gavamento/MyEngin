@@ -886,7 +886,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     sceneView_.OnImGui(ctx, selection_, undo_, settings_);
     gameView_.OnImGui(ctx, selection_);
     particleSettings_.OnImGui(ctx, settings_);
-    profiler_.OnImGui(ctx);
+    profiler_.OnImGui(ctx, settings_);
     // M94i: カメラの揺れを切る個人設定は窓の開閉に関係なく毎フレーム写す (描画だけに効く)
     ctx.feelMuteCamera = settings_.feelMuteCamera;
     feelMonitor_.OnImGui(ctx, settings_);

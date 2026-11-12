@@ -56,6 +56,25 @@ struct FramePhases {
 // フレームの末尾で呼ぶ。次の BeginFrame が確定するフレームへ付く (呼ばなければ 0 のまま)
 void SetFramePhases(const FramePhases& phases, uint64_t frameIndex, uint64_t tickIndex);
 
+// ---- GPU パスの時間 ----
+// 描画側が毎フレーム「名前・時間・今フレームに走ったか」を申告する (表示側がパスごとの
+// 有効条件を知らずに済む)。ms は GPU クエリの読み出し遅延ぶん古い値。
+// ran = false のパスは時間が前回値のまま残っているので、表示は灰色にして合計へ入れない。
+// 同じ名前を 1 フレームに 2 度申告したら後勝ち
+inline constexpr int kMaxGpuPasses = 48;
+struct GpuStat {
+    const char* name = nullptr;
+    float ms = 0.0f;
+    bool ran = false;
+};
+void ReportGpu(const char* name, float ms, bool ran);
+// Render 1 回ぶん全体の GPU 時間 (複数ビューでは最後に描いたビュー)。パスの合計との差が未計測分
+void ReportGpuFrame(float ms);
+
+// 履歴の確定を止める / 再開する (表示の一時停止用)。止めている間のフレームは履歴へ積まない
+void SetHistoryPaused(bool paused);
+bool IsHistoryPaused();
+
 struct FrameRecord;
 int HistoryCount();                         // 確定済みフレーム数 (最大 kFrameHistory)
 const FrameRecord& History(int age);        // age 0 = 直近の確定フレーム。範囲外は空のレコード
@@ -119,6 +138,9 @@ struct FrameRecord {
     int scopeCount = 0;
     int droppedScopes = 0; // 上限 (kMaxRawScopes / kMaxFrameScopes) を超えて捨てた記録数
     ScopeStat scopes[kMaxFrameScopes];
+    float gpuFrameMs = 0.0f;
+    int gpuCount = 0;
+    GpuStat gpu[kMaxGpuPasses];
     RenderStats render;                              // 全ビューの和
     RenderStats renderByView[kRenderStatsViewSlots]; // viewKey 別
 };

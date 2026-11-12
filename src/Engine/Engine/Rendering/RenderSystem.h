@@ -367,6 +367,10 @@ public:
     // GPU オクルージョンの判定 + max-Z ピラミッド構築 (フェーズ 1/2 の描画は GBuffer 側に入る)
     float OcclusionGpuMs() const { return occlusionGpuMs_; }
     float FrameGpuMs() const { return frameTimer_.Milliseconds(); }
+    // 各パスの GPU 時間を prof::ReportGpu へ申告する (フレームに 1 回、描画の後で呼ぶ)。
+    // 「今フレームに走ったか」の判定はここ 1 か所に置く — GpuTimer は走らなかったフレームも
+    // 前回値を返すので、表示側が有効条件を知らないと古い値を現在値として出してしまう
+    void ReportGpuTimings() const;
     // M46b: レイトレの統計 (ProfilerWindow 表示用)
     float RtDebugGpuMs() const { return rtPasses_.DebugGpuMs(); }
     float RtGiGpuMs() const { return rtPasses_.GiGpuMs(); }

@@ -41,6 +41,11 @@ struct EditorSettings {
     // エディタで Play 中にカメラの揺れ・キックを切る (編集しながら長く見ると酔うため)。個人の好みなのでここ。
     // ゲームの出力倍率 (SetFeelOutputScale) とは別で、sim にも録画にも影響しない
     bool feelMuteCamera = false;
+    // ---- プロファイラの表示 (M102) ----
+    int profilerTab = 0;            // 最後に開いていたタブ (ProfilerWindow のタブ順)
+    int profilerAvgFrames = 60;     // 平均・最大を取るフレーム数 (1 = 瞬間値)
+    bool profilerHideZero = true;   // 0 ms / 未実行の行を隠す
+    bool profilerSortByCost = true; // 重い順に並べる (false = 実行順)
 
     void Load(const std::wstring& dir);
     void Save() const;

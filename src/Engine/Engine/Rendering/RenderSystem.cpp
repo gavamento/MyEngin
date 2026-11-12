@@ -1855,6 +1855,36 @@ void RenderSystem::CollectDrawables(World& world, RenderResources& resources, co
     cullCpuCount_ = (std::min)(cullCpuCount_ + 1, kCullCpuWindow);
 }
 
+void RenderSystem::ReportGpuTimings() const
+{
+    prof::ReportGpuFrame(FrameGpuMs());
+    // 本描画はパスによって片方しか走らない。走らない側は 0 を返す規約 (GbufferGpuMs の注記)
+    prof::ReportGpu("gbuffer", GbufferGpuMs(), GbufferGpuMs() > 0.0f);
+    prof::ReportGpu("forward opaque", ForwardOpaqueGpuMs(), ForwardOpaqueGpuMs() > 0.0f);
+    prof::ReportGpu("shadow csm", ShadowCsmGpuMs(), true);
+    prof::ReportGpu("shadow atlas", ShadowAtlasGpuMs(), ShadowAtlasTiles() > 0);
+    prof::ReportGpu("occlusion", OcclusionGpuMs(), enableOcclusionCulling);
+    // HZB は可視化か SSR が要るときだけ組む
+    prof::ReportGpu("hzb", HzbGpuMs(), hzbDebugMip != 0 || enableSsr);
+    prof::ReportGpu("ssr", SsrGpuMs(), enableSsr);
+    prof::ReportGpu("froxel inject", FroxelInjectGpuMs(), enableFroxel);
+    prof::ReportGpu("froxel temporal", FroxelTemporalGpuMs(), enableFroxel);
+    prof::ReportGpu("froxel integrate", FroxelIntegrateGpuMs(), enableFroxel);
+    const bool rtGi = rtdebug::NeedsGi(rtDebugMode) || enableRtGi;
+    const bool rtShadow = rtdebug::NeedsShadow(rtDebugMode) || enableRtShadow;
+    const bool rtRefl = rtdebug::NeedsReflection(rtDebugMode) || enableRtRefl;
+    prof::ReportGpu("rt debug", RtDebugGpuMs(), rtDebugMode != rtdebug::kOff);
+    prof::ReportGpu("rt gi", RtGiGpuMs(), rtGi);
+    prof::ReportGpu("rt temporal", RtTemporalGpuMs(), rtGi && rtTemporal);
+    prof::ReportGpu("rt svgf", RtSvgfGpuMs(), rtGi && rtTemporal && rtSvgf);
+    prof::ReportGpu("rt shadow", RtShadowGpuMs(), rtShadow);
+    prof::ReportGpu("rt shadow filter", RtShadowFilterGpuMs(), rtShadow);
+    prof::ReportGpu("rt refl", RtReflGpuMs(), rtRefl);
+    prof::ReportGpu("rt refl denoise", RtReflDenoiseGpuMs(), rtRefl);
+    prof::ReportGpu("rt restir", RtRestirGpuMs(), rtRefl && RtRestirEffective());
+    prof::ReportGpu("postfx", PostFxGpuMs(), true);
+}
+
 RenderSystem::CullCpuMs RenderSystem::CullCpuTimes() const
 {
     CullCpuMs avg;

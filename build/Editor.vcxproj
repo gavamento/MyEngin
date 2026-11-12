@@ -130,6 +130,7 @@
     <ClCompile Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindowTabs.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
@@ -246,6 +247,7 @@
     <ClInclude Include="..\src\Editor\Windows\Debug\ConsoleWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\FeelMonitorWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\PerformanceCompareWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWidgets.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\TimelineWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h" />
