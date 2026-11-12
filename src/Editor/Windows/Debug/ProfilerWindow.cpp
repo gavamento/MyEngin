@@ -28,6 +28,8 @@ constexpr int kBudgetCheckFrames = 30;
 constexpr double kBudgetToastCooldownSec = 10.0;
 // tick の無いフレームから、スコープのあるフレームを探して遡る上限 (60 Hz の tick に対して十分)
 constexpr int kTickSearchFrames = 60;
+// 表の値と並びを作り直す間隔 (動いている間)。フレームグラフはこれと関係なく毎フレーム動く
+constexpr double kStatsRefreshSec = 0.5;
 constexpr int kAvgWindowChoices[] = { 1, 30, 60, 120, prof::kFrameHistory };
 
 // タブの並び = EditorSettings::profilerTab の値
@@ -122,7 +124,7 @@ bool ProfilerWindow::PassesFilter(const char* name) const
 
 void ProfilerWindow::BuildStats(int window)
 {
-    const prof::FrameRecord& shown = Shown();
+    const prof::FrameRecord& shown = LiveShown();
     // 控えは前後のフレームを持たないので、平均も最大もそのフレームの値になる
     const int available = (std::max)(prof::HistoryCount() - selectedAge_, 1);
     const int frames = (captureIndex_ >= 0) ? 1 : std::clamp(window, 1, available);
@@ -138,7 +140,7 @@ void ProfilerWindow::BuildStats(int window)
             }
         }
     }
-    const prof::FrameRecord& rows = TickFrame();
+    const prof::FrameRecord& rows = (captureIndex_ >= 0) ? shown : prof::History(tickAge_);
 
     phases_ = {};
     for (int i = 0; i < rows.scopeCount; ++i) {
@@ -227,6 +229,35 @@ void ProfilerWindow::BuildStats(int window)
     for (int g = 0; g < shown.gpuCount; ++g) {
         gpuStats_[g].avg = (gpuSamples[g] > 0) ? gpuStats_[g].avg / static_cast<float>(gpuSamples[g]) : 0.0f;
     }
+
+    // 表が読む写しを差し替える (この関数が埋めた配列の添字は、この 2 つのフレームの行に対応する)
+    shownCopy_ = shown;
+    tickCopy_ = rows;
+}
+
+void ProfilerWindow::RefreshStatsIfNeeded(const EditorSettings& settings)
+{
+    const double now = ImGui::GetTime();
+    const bool paused = prof::IsHistoryPaused();
+    const bool frozen = paused || captureIndex_ >= 0;
+    const uint64_t liveFrame = LiveShown().frameIndex;
+    const bool keyChanged = statsKeyPaused_ != paused || statsKeySelectedAge_ != selectedAge_
+                            || statsKeyCapture_ != captureIndex_ || statsKeyWindow_ != settings.profilerAvgFrames
+                            || std::strcmp(statsKeyFilter_, filter_) != 0
+                            || (frozen && statsKeyFrame_ != liveFrame);
+    const bool due = !frozen && (now - statsRefreshedAt_ >= kStatsRefreshSec);
+    if (!keyChanged && !due && statsRefreshedAt_ >= 0.0) {
+        return;
+    }
+    BuildStats(settings.profilerAvgFrames);
+    RefreshItemRows(settings.profilerAvgFrames);
+    statsRefreshedAt_ = now;
+    statsKeyPaused_ = paused;
+    statsKeySelectedAge_ = selectedAge_;
+    statsKeyCapture_ = captureIndex_;
+    statsKeyWindow_ = settings.profilerAvgFrames;
+    statsKeyFrame_ = liveFrame;
+    std::snprintf(statsKeyFilter_, sizeof(statsKeyFilter_), "%s", filter_);
 }
 
 void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, ToastCenter& toasts,
@@ -255,7 +286,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
     if (captureIndex_ >= prof::CaptureCount()) {
         captureIndex_ = -1; // 控えを消去した
     }
-    BuildStats(settings.profilerAvgFrames);
+    RefreshStatsIfNeeded(settings);
     DrawHeader(settings);
 
     const StrId tabLabels[kTabCount] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
@@ -412,7 +443,8 @@ void ProfilerWindow::DrawFrameGraph()
         draw->AddLine(ImVec2(p0.x, y), ImVec2(p1.x, y), guideColor, 1.0f);
         char label[16];
         std::snprintf(label, sizeof(label), "%.1f ms", static_cast<double>(budget));
-        draw->AddText(ImVec2(p0.x + 4.0f, y - ImGui::GetTextLineHeight()), guideColor, label);
+        // 文字は線の下へ置く (上へ置くと、30 fps の線が上端に近いときグラフの枠からはみ出して切れる)
+        draw->AddText(ImVec2(p0.x + 4.0f, y + 1.0f), guideColor, label);
     }
     // 表示中のフレーム (一時停止中だけ)
     if (prof::IsHistoryPaused() && selectedAge_ < count) {

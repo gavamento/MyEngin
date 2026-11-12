@@ -530,7 +530,7 @@ MYE_STR(Prof_RowJobBatches, "parallel batches / frame (average)", "並列バッ�
 MYE_STR(Prof_RowJobChunks, "chunks run by workers / frame (average)", "ワーカーが処理したチャンク数/フレーム (平均)")
 MYE_STR(Prof_JobsNote, "Only JobSystem ranges are counted. Texture decoding, shader recompiles, audio streaming and bake threads are separate threads.", "数えているのは JobSystem の並列レンジだけです。テクスチャのデコード・シェーダーの再コンパイル・音声ストリーム・焼き込みは別スレッドです。")
 MYE_STR(Prof_TickFrameNote, "The shown frame ran no tick; CPU scopes are from frame %llu, the last one that did.", "表示中のフレームは tick が無いため、CPU スコープは直前に tick があったフレーム %llu の値です。")
-MYE_STR(Prof_ItemsRefreshNote, "These two tables refresh twice a second so rows do not jump around.", "この 2 つの表は、行が動き回らないよう 0.5 秒ごとに更新します。")
+MYE_STR(Prof_ItemsRefreshNote, "Table values and order refresh twice a second so rows do not jump around (the frame graph stays live).", "表の値と並びは、行が動き回らないよう 0.5 秒ごとに更新します (フレームグラフは毎フレーム動きます)。")
 MYE_STR(Prof_Yes, "yes", "はい")
 MYE_STR(Prof_No, "no", "いいえ")
 MYE_STR(Prof_PerfHeader,      "Performance CI", "性能回帰 CI")

@@ -41,7 +41,11 @@ private:
         RowStats gpuFrame;
     };
 
+    // 表に出す値 (今回 / 平均 / 最大) と並びの元を作り直す。動いている間は kStatsRefreshSec ごと、
+    // 止まっている間は見ている対象が変わったときだけ呼ぶ (RefreshStatsIfNeeded)。
+    // 毎フレーム作り直すと、値の近い行が入れ替わり続けて読めない
     void BuildStats(int window);
+    void RefreshStatsIfNeeded(const EditorSettings& settings);
     void DrawHeader(EditorSettings& settings);
     void DrawFrameGraph();
     void DrawOverview(const EditorSettings& settings);
@@ -49,7 +53,7 @@ private:
     void DrawScopes(EditorSettings& settings); // CPU タブの上段: スコープの木
     // CPU タブの下段: スクリプト・システム別の合計と、エンティティ別の重い順
     void DrawItems(EngineContext& ctx, EditorSettings& settings, Selection& selection);
-    // 項目別の表の中身を作り直す (平均・最大・並び)。毎フレームは呼ばない — DrawItems の注記を参照
+    // 項目別の表の中身を作り直す (平均・最大・並び)。BuildStats の直後に呼ぶ
     void RefreshItemRows(int window);
     void DrawCpuChildren(int parent, EditorSettings& settings);
     // 名前の列より右 (今回 / 平均 / 最大 / 自身 / 回数 / 予算 / 割合)
@@ -72,7 +76,10 @@ private:
     // 直前に描いた行の右クリックで予算を編集するポップアップ (行ごとに PushID 済みで呼ぶ)
     static void BudgetPopup(EditorSettings& settings, const char* kind, const char* name);
     bool PassesFilter(const char* name) const;
-    const prof::FrameRecord& Shown() const
+    // 表示中のフレーム。表は「最後に作り直した時点の写し」を読む (値の配列と行の対応を保つため)。
+    // いま選ばれている本物は LiveShown。フレームグラフだけは履歴を直接読んで毎フレーム動く
+    const prof::FrameRecord& Shown() const { return shownCopy_; }
+    const prof::FrameRecord& LiveShown() const
     {
         return (captureIndex_ >= 0) ? prof::Capture(captureIndex_) : prof::History(selectedAge_);
     }
@@ -80,10 +87,7 @@ private:
     // スコープと項目別の行を取るフレーム。描画が 60 fps を超えると tick の無いフレームが挟まり、
     // そのフレームにはスコープが 1 つも無い。表示中フレームをそのまま使うと、表が出たり消えたりして
     // 前後のフレームの絵が重なって見える。tick の無いフレームでは直前の tick があったフレームを使う
-    const prof::FrameRecord& TickFrame() const
-    {
-        return (captureIndex_ >= 0) ? prof::Capture(captureIndex_) : prof::History(tickAge_);
-    }
+    const prof::FrameRecord& TickFrame() const { return tickCopy_; }
     // TickFrame が表示中フレームと別のとき、その旨を 1 行出す
     void DrawTickFrameNote() const;
 
@@ -124,8 +128,7 @@ private:
     jobs::JobSystem::Stats jobPreviousStats_;
     bool jobPreviousValid_ = false;
 
-    // 項目別の表に出す行の控え。値も並びも毎フレーム作り直すと、近い値の行が 1 フレームごとに
-    // 入れ替わって読めない。動いている間は kItemRefreshSec ごとにだけ作り直す
+    // 項目別の表に出す行の控え (BuildStats と同じタイミングで作り直す)
     struct ItemRow {
         prof::ItemStat stat; // ms = 行を取ったフレームの値 (今回)
         float avg = 0.0f;
@@ -138,12 +141,17 @@ private:
     int itemEntityRowCount_ = 0;
     int itemDropped_ = 0;
     float itemFrameMs_ = 0.0f;       // 作り直した時点のフレーム時間の平均 (フレーム比の分母)
-    double itemRefreshedAt_ = -1.0;  // 最後に作り直した ImGui 時刻 [s]
-    // 止まっている間は「見ているフレーム・平均の窓・絞り込み」が変わったときだけ作り直す
-    uint64_t itemKeyFrame_ = 0;
-    int itemKeyWindow_ = 0;
-    int itemKeyCapture_ = -2;
-    char itemKeyFilter_[64] = {};
+
+    // 最後に作り直した時点の写しと、そのときの条件
+    prof::FrameRecord shownCopy_;
+    prof::FrameRecord tickCopy_;
+    double statsRefreshedAt_ = -1.0; // 最後に作り直した ImGui 時刻 [s]。負 = まだ 1 度も作っていない
+    bool statsKeyPaused_ = false;
+    int statsKeySelectedAge_ = 0;
+    int statsKeyCapture_ = -1;
+    int statsKeyWindow_ = 0;
+    uint64_t statsKeyFrame_ = 0; // 止まっている間に見ているフレーム
+    char statsKeyFilter_[64] = {};
 
     PhaseStats phases_;
     RowStats scopeStats_[prof::kMaxFrameScopes];

@@ -153,6 +153,7 @@ void ProfilerWindow::DrawScopes(EditorSettings& settings)
     }
     ImGui::EndTable();
     ImGui::TextColored(themeColor::TextDim, "%s %s", Tr(StrId::Prof_SelfHelp), Tr(StrId::Prof_BudgetHint));
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsRefreshNote));
 }
 
 void ProfilerWindow::DrawGpu(EditorSettings& settings)
@@ -568,8 +569,6 @@ void ProfilerWindow::RefreshItemRows(int window)
 
 void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Selection& selection)
 {
-    constexpr double kItemRefreshSec = 0.5;
-
     ImGui::Spacing();
     if (ImGui::Checkbox(Tr(StrId::Prof_ItemTiming), &settings.profilerItemTiming)) {
         settings.Save();
@@ -578,24 +577,6 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
         ImGui::SetTooltip("%s", Tr(StrId::Prof_ItemTimingHelp));
     }
 
-    // 表の中身を作り直すのは、動いている間は 0.5 秒ごと。止まっている間 (一時停止・控えの表示) は
-    // 見ている対象が変わったときだけ。毎フレーム作り直すと、値の近い行が入れ替わり続けて読めない
-    const prof::FrameRecord& rowsFrame = TickFrame();
-    const double now = ImGui::GetTime();
-    const bool frozen = prof::IsHistoryPaused() || captureIndex_ >= 0;
-    const bool keyChanged = itemKeyWindow_ != settings.profilerAvgFrames || itemKeyCapture_ != captureIndex_
-                            || std::strcmp(itemKeyFilter_, filter_) != 0
-                            || (frozen && itemKeyFrame_ != rowsFrame.frameIndex);
-    const bool due = !frozen && (now - itemRefreshedAt_ >= kItemRefreshSec);
-    // 動いている間に行が 1 つも無いフレームへ当たっても、前の表は消さない (次の更新で入れ替わる)
-    if (keyChanged || itemRefreshedAt_ < 0.0 || (due && rowsFrame.itemNameCount > 0)) {
-        RefreshItemRows(settings.profilerAvgFrames);
-        itemRefreshedAt_ = now;
-        itemKeyFrame_ = rowsFrame.frameIndex;
-        itemKeyWindow_ = settings.profilerAvgFrames;
-        itemKeyCapture_ = captureIndex_;
-        std::snprintf(itemKeyFilter_, sizeof(itemKeyFilter_), "%s", filter_);
-    }
     if (itemNameRowCount_ == 0) {
         if (!settings.profilerItemTiming) {
             ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsOff));
@@ -691,8 +672,7 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
         }
         ImGui::EndTable();
     }
-    ImGui::TextColored(themeColor::TextDim, "%s %s", Tr(StrId::Prof_ItemsRefreshNote),
-                       Tr(StrId::Prof_ItemsSelectHint));
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsSelectHint));
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsNotCovered));
 }
 
