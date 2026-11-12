@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <iterator>
 
 #include "Editor/App/EditorSettings.h"
@@ -499,8 +500,76 @@ void ProfilerWindow::DrawHistory(EditorSettings& settings)
     ImGui::EndTable();
 }
 
+void ProfilerWindow::RefreshItemRows(int window)
+{
+    const prof::FrameRecord& rowsFrame = TickFrame();
+    // 平均は CPU スコープの表と同じく「描画フレームあたり」(tick の無いフレームは 0 として数える)
+    const int available = (std::max)(prof::HistoryCount() - tickAge_, 1);
+    const int frames = (captureIndex_ >= 0) ? 1 : std::clamp(window, 1, available);
+    const float inv = 1.0f / static_cast<float>(frames);
+    auto sameItem = [](const prof::ItemStat& a, const prof::ItemStat& b, bool withEntity) {
+        // 名前は prof が持つ写しなので、同じ名前ならポインタも同じ
+        return a.name == b.name && std::strcmp(a.category, b.category) == 0
+               && (!withEntity || (a.entityIndex == b.entityIndex && a.entityGeneration == b.entityGeneration));
+    };
+
+    // ---- 名前別 ----
+    itemNameRowCount_ = 0;
+    for (int i = 0; i < rowsFrame.itemNameCount; ++i) {
+        if (PassesFilter(rowsFrame.itemNames[i].name)) {
+            itemNameRows_[itemNameRowCount_++] = ItemRow{ rowsFrame.itemNames[i], 0.0f, rowsFrame.itemNames[i].ms };
+        }
+    }
+    // ---- エンティティ別 (全行の平均を出してから、重い順の上位だけ残す) ----
+    static ItemRow entityScratch[prof::kMaxFrameItems]; // メインスレッド専用の作業領域 (スタックには大きい)
+    int entityCount = 0;
+    for (int i = 0; i < rowsFrame.itemCount; ++i) {
+        if (PassesFilter(rowsFrame.items[i].name)) {
+            entityScratch[entityCount++] = ItemRow{ rowsFrame.items[i], 0.0f, rowsFrame.items[i].ms };
+        }
+    }
+    for (int f = 0; f < frames; ++f) {
+        const prof::FrameRecord& frame = (captureIndex_ >= 0) ? rowsFrame : prof::History(tickAge_ + f);
+        for (int r = 0; r < itemNameRowCount_; ++r) {
+            for (int j = 0; j < frame.itemNameCount; ++j) {
+                if (sameItem(frame.itemNames[j], itemNameRows_[r].stat, false)) {
+                    itemNameRows_[r].avg += frame.itemNames[j].ms;
+                    itemNameRows_[r].max = (std::max)(itemNameRows_[r].max, frame.itemNames[j].ms);
+                    break;
+                }
+            }
+        }
+        for (int r = 0; r < entityCount; ++r) {
+            for (int j = 0; j < frame.itemCount; ++j) {
+                if (sameItem(frame.items[j], entityScratch[r].stat, true)) {
+                    entityScratch[r].avg += frame.items[j].ms;
+                    entityScratch[r].max = (std::max)(entityScratch[r].max, frame.items[j].ms);
+                    break;
+                }
+            }
+        }
+    }
+    for (int r = 0; r < itemNameRowCount_; ++r) {
+        itemNameRows_[r].avg *= inv;
+    }
+    for (int r = 0; r < entityCount; ++r) {
+        entityScratch[r].avg *= inv;
+    }
+    const auto heavier = [](const ItemRow& a, const ItemRow& b) { return a.avg > b.avg; };
+    std::sort(itemNameRows_, itemNameRows_ + itemNameRowCount_, heavier);
+    std::sort(entityScratch, entityScratch + entityCount, heavier);
+    itemEntityRowCount_ = (std::min)(entityCount, kItemEntityRows);
+    for (int r = 0; r < itemEntityRowCount_; ++r) {
+        itemEntityRows_[r] = entityScratch[r];
+    }
+    itemDropped_ = rowsFrame.droppedItems;
+    itemFrameMs_ = phases_.frame.avg;
+}
+
 void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Selection& selection)
 {
+    constexpr double kItemRefreshSec = 0.5;
+
     ImGui::Spacing();
     if (ImGui::Checkbox(Tr(StrId::Prof_ItemTiming), &settings.profilerItemTiming)) {
         settings.Save();
@@ -508,78 +577,86 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", Tr(StrId::Prof_ItemTimingHelp));
     }
-    const prof::FrameRecord& shown = TickFrame();
-    if (shown.itemNameCount == 0) {
+
+    // 表の中身を作り直すのは、動いている間は 0.5 秒ごと。止まっている間 (一時停止・控えの表示) は
+    // 見ている対象が変わったときだけ。毎フレーム作り直すと、値の近い行が入れ替わり続けて読めない
+    const prof::FrameRecord& rowsFrame = TickFrame();
+    const double now = ImGui::GetTime();
+    const bool frozen = prof::IsHistoryPaused() || captureIndex_ >= 0;
+    const bool keyChanged = itemKeyWindow_ != settings.profilerAvgFrames || itemKeyCapture_ != captureIndex_
+                            || std::strcmp(itemKeyFilter_, filter_) != 0
+                            || (frozen && itemKeyFrame_ != rowsFrame.frameIndex);
+    const bool due = !frozen && (now - itemRefreshedAt_ >= kItemRefreshSec);
+    // 動いている間に行が 1 つも無いフレームへ当たっても、前の表は消さない (次の更新で入れ替わる)
+    if (keyChanged || itemRefreshedAt_ < 0.0 || (due && rowsFrame.itemNameCount > 0)) {
+        RefreshItemRows(settings.profilerAvgFrames);
+        itemRefreshedAt_ = now;
+        itemKeyFrame_ = rowsFrame.frameIndex;
+        itemKeyWindow_ = settings.profilerAvgFrames;
+        itemKeyCapture_ = captureIndex_;
+        std::snprintf(itemKeyFilter_, sizeof(itemKeyFilter_), "%s", filter_);
+    }
+    if (itemNameRowCount_ == 0) {
         if (!settings.profilerItemTiming) {
             ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsOff));
         }
         return;
     }
-    const float frameMs = shown.frameMs;
 
-    // ---- 名前別 (このフレームの合計。行数が少ないので全部出す) ----
-    int nameRows[prof::kMaxFrameItemNames];
-    int nameRowCount = 0;
-    for (int i = 0; i < shown.itemNameCount; ++i) {
-        if (PassesFilter(shown.itemNames[i].name)) {
-            nameRows[nameRowCount++] = i;
-        }
-    }
-    std::sort(nameRows, nameRows + nameRowCount,
-              [&](int a, int b) { return shown.itemNames[a].ms > shown.itemNames[b].ms; });
-    ImGui::SeparatorText(Tr(StrId::Prof_ItemsByName));
-    if (ImGui::BeginTable("##ProfItemNames", 5, profui::kTableFlags)) {
-        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMs), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    auto valueCells = [&](const ItemRow& row, int firstColumn) {
+        ImGui::TableSetColumnIndex(firstColumn);
+        MsCell(row.stat.ms);
+        ImGui::TableSetColumnIndex(firstColumn + 1);
+        MsCell(row.avg);
+        ImGui::TableSetColumnIndex(firstColumn + 2);
+        MsCell(row.max);
+        ImGui::TableSetColumnIndex(firstColumn + 3);
+        ImGui::Text("%d", row.stat.calls);
+        ImGui::TableSetColumnIndex(firstColumn + 4);
+        ShareBar(row.avg, itemFrameMs_);
+    };
+    auto valueColumns = []() {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColNow), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAvg), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMax), ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn(Tr(StrId::Prof_ColCalls), ImGuiTableColumnFlags_WidthStretch, 0.7f);
         ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+    };
+
+    // ---- 名前別 (行数が少ないので全部出す) ----
+    ImGui::SeparatorText(Tr(StrId::Prof_ItemsByName));
+    if (ImGui::BeginTable("##ProfItemNames", 7, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        valueColumns();
         ImGui::TableHeadersRow();
-        for (int r = 0; r < nameRowCount; ++r) {
-            const prof::ItemStat& item = shown.itemNames[nameRows[r]];
+        for (int r = 0; r < itemNameRowCount_; ++r) {
+            const ItemRow& row = itemNameRows_[r];
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(themeColor::TextDim, "%s", item.category);
+            ImGui::TextColored(themeColor::TextDim, "%s", row.stat.category);
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(item.name);
-            ImGui::TableSetColumnIndex(2);
-            MsCell(item.ms);
-            ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%d", item.calls);
-            ImGui::TableSetColumnIndex(4);
-            ShareBar(item.ms, frameMs);
+            ImGui::TextUnformatted(row.stat.name);
+            valueCells(row, 2);
         }
         ImGui::EndTable();
     }
 
-    // ---- エンティティ別 (重い順に上位だけ) ----
-    constexpr int kEntityRows = 40;
-    int rows[prof::kMaxFrameItems];
-    int rowCount = 0;
-    for (int i = 0; i < shown.itemCount; ++i) {
-        if (PassesFilter(shown.items[i].name)) {
-            rows[rowCount++] = i;
-        }
-    }
-    std::sort(rows, rows + rowCount, [&](int a, int b) { return shown.items[a].ms > shown.items[b].ms; });
-    rowCount = (std::min)(rowCount, kEntityRows);
-
+    // ---- エンティティ別 (平均の重い順に上位だけ) ----
     ImGui::SeparatorText(Tr(StrId::Prof_ItemsByEntity));
-    if (shown.droppedItems > 0) {
-        ImGui::TextColored(themeColor::Warning, Tr(StrId::Prof_ItemsDropped), shown.droppedItems);
+    if (itemDropped_ > 0) {
+        ImGui::TextColored(themeColor::Warning, Tr(StrId::Prof_ItemsDropped), itemDropped_);
     }
     World& world = ctx.scene->GetWorld();
-    if (ImGui::BeginTable("##ProfItemEntities", 6, profui::kTableFlags)) {
+    if (ImGui::BeginTable("##ProfItemEntities", 8, profui::kTableFlags)) {
         ImGui::TableSetupColumn(Tr(StrId::Prof_ColEntity), ImGuiTableColumnFlags_WidthStretch, 3.0f);
         ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 3.0f);
-        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMs), ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCalls), ImGuiTableColumnFlags_WidthStretch, 0.7f);
-        ImGui::TableSetupColumn(Tr(StrId::Prof_ColShare), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        valueColumns();
         ImGui::TableHeadersRow();
-        for (int r = 0; r < rowCount; ++r) {
-            const prof::ItemStat& item = shown.items[rows[r]];
-            const EntityID entity{ item.entityIndex, item.entityGeneration };
+        for (int r = 0; r < itemEntityRowCount_; ++r) {
+            const ItemRow& row = itemEntityRows_[r];
+            const EntityID entity{ row.stat.entityIndex, row.stat.entityGeneration };
             // 記録したフレームの後で破棄されていることがある (世代が合わなければ別物)
             const bool alive = world.IsAlive(entity);
             uint64_t fileId = 0;
@@ -594,12 +671,12 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
             }
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::PushID(rows[r]);
+            ImGui::PushID(r);
             // fileId を持つエンティティだけ選択できる。ここで採番 (EnsureFileId) すると Play 中の
             // ワールドへコンポーネントを足すことになるので、持っていないものは選択させない
             ImGui::BeginDisabled(fileId == 0);
             char label[96];
-            std::snprintf(label, sizeof(label), "%s  #%u", entityName, item.entityIndex);
+            std::snprintf(label, sizeof(label), "%s  #%u", entityName, row.stat.entityIndex);
             if (ImGui::Selectable(label, fileId != 0 && selection.Contains(fileId),
                                   ImGuiSelectableFlags_SpanAllColumns)) {
                 selection.SelectOnly(fileId);
@@ -607,19 +684,15 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
             ImGui::EndDisabled();
             ImGui::PopID();
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextColored(themeColor::TextDim, "%s", item.category);
+            ImGui::TextColored(themeColor::TextDim, "%s", row.stat.category);
             ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(item.name);
-            ImGui::TableSetColumnIndex(3);
-            MsCell(item.ms);
-            ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%d", item.calls);
-            ImGui::TableSetColumnIndex(5);
-            ShareBar(item.ms, frameMs);
+            ImGui::TextUnformatted(row.stat.name);
+            valueCells(row, 3);
         }
         ImGui::EndTable();
     }
-    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsSelectHint));
+    ImGui::TextColored(themeColor::TextDim, "%s %s", Tr(StrId::Prof_ItemsRefreshNote),
+                       Tr(StrId::Prof_ItemsSelectHint));
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsNotCovered));
 }
 

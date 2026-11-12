@@ -49,6 +49,8 @@ private:
     void DrawScopes(EditorSettings& settings); // CPU タブの上段: スコープの木
     // CPU タブの下段: スクリプト・システム別の合計と、エンティティ別の重い順
     void DrawItems(EngineContext& ctx, EditorSettings& settings, Selection& selection);
+    // 項目別の表の中身を作り直す (平均・最大・並び)。毎フレームは呼ばない — DrawItems の注記を参照
+    void RefreshItemRows(int window);
     void DrawCpuChildren(int parent, EditorSettings& settings);
     // 名前の列より右 (今回 / 平均 / 最大 / 自身 / 回数 / 予算 / 割合)
     void DrawCpuRowValues(int scope, const EditorSettings& settings);
@@ -121,6 +123,27 @@ private:
     jobs::JobSystem::TimingStats jobPreviousTiming_;
     jobs::JobSystem::Stats jobPreviousStats_;
     bool jobPreviousValid_ = false;
+
+    // 項目別の表に出す行の控え。値も並びも毎フレーム作り直すと、近い値の行が 1 フレームごとに
+    // 入れ替わって読めない。動いている間は kItemRefreshSec ごとにだけ作り直す
+    struct ItemRow {
+        prof::ItemStat stat; // ms = 行を取ったフレームの値 (今回)
+        float avg = 0.0f;
+        float max = 0.0f;
+    };
+    static constexpr int kItemEntityRows = 40; // エンティティ別は重い順に上位だけ出す
+    ItemRow itemNameRows_[prof::kMaxFrameItemNames];
+    int itemNameRowCount_ = 0;
+    ItemRow itemEntityRows_[kItemEntityRows];
+    int itemEntityRowCount_ = 0;
+    int itemDropped_ = 0;
+    float itemFrameMs_ = 0.0f;       // 作り直した時点のフレーム時間の平均 (フレーム比の分母)
+    double itemRefreshedAt_ = -1.0;  // 最後に作り直した ImGui 時刻 [s]
+    // 止まっている間は「見ているフレーム・平均の窓・絞り込み」が変わったときだけ作り直す
+    uint64_t itemKeyFrame_ = 0;
+    int itemKeyWindow_ = 0;
+    int itemKeyCapture_ = -2;
+    char itemKeyFilter_[64] = {};
 
     PhaseStats phases_;
     RowStats scopeStats_[prof::kMaxFrameScopes];
