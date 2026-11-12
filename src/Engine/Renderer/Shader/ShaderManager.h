@@ -80,6 +80,8 @@ public:
     // フェーズ 2 で呼ぶ: 完了した非同期コンパイルを取り込み、成功分のみ差し替える。
     // 失敗した SurfaceProgram は旧プログラムを維持したまま (generation も据え置き)
     void PollAsyncCompiles();
+    // 裏で再コンパイル中のシェーダー数 (プロファイラ表示用)
+    int PendingCompileCount() const { return static_cast<int>(async_.size() + asyncSurface_.size()); }
 
     const std::vector<std::wstring>& ShaderDirs() const { return dirs_; }
 

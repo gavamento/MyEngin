@@ -17,6 +17,7 @@
 
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
@@ -456,6 +457,7 @@ std::wstring ShaderManager::ResolvePath(std::string_view name) const
 
 AssetID ShaderManager::Load(std::string_view name)
 {
+    const prof::AssetLoadScope load("shader", name);
     const AssetID id{ HashStr(name) };
     if (programs_.contains(id.value)) {
         return id;
@@ -473,6 +475,7 @@ AssetID ShaderManager::Load(std::string_view name)
 
 AssetID ShaderManager::LoadCompute(std::string_view name)
 {
+    const prof::AssetLoadScope load("compute shader", name);
     const AssetID id{ HashStr(name) };
     if (programs_.contains(id.value)) {
         return id;
@@ -496,6 +499,7 @@ ShaderProgram* ShaderManager::Get(AssetID id)
 
 AssetID ShaderManager::LoadSurface(std::string_view name)
 {
+    const prof::AssetLoadScope load("surface shader", name);
     const AssetID id{ HashStr(name) };
     if (surfacePrograms_.contains(id.value)) {
         return id;

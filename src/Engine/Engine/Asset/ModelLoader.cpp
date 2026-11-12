@@ -11,6 +11,7 @@
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Engine/Asset/ModelCook.h"
 #include "Engine/Engine/Scene/GameObject.h"
@@ -468,6 +469,7 @@ GameObject Load(Scene& scene, RenderResources& resources, ShaderManager& shaders
                 const std::wstring& path)
 {
     const std::string utf8 = WideToUtf8(path);
+    const prof::AssetLoadScope load("model", utf8);
 
     cgltf_options options = GltfOptions();
     cgltf_data* data = nullptr;

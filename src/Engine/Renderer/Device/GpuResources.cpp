@@ -1,6 +1,8 @@
 #include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/Device/GpuMemoryTracker.h"
 
+#include "Engine/Core/Diagnostics/Profiler.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -744,6 +746,7 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
     const bool effSrgb = (imp.srgb == 1) ? true : (imp.srgb == 2) ? false : srgb;
     const bool mips = imp.generateMips != 0;
 
+    const prof::AssetLoadScope load("texture", WideToUtf8(path));
     Texture t;
     if (!LoadFileInto(t, path, effSrgb, mips)) {
         return {};
@@ -966,6 +969,7 @@ void TextureLibrary::AsyncWorker()
         r.id = job.id;
         r.generation = job.generation;
         int w = 0, h = 0, comp = 0;
+        const auto decodeStart = std::chrono::steady_clock::now();
         stbi_uc* pixels = stbi_load(job.utf8Path.c_str(), &w, &h, &comp, 4);
         if (pixels) {
             r.pixels.assign(pixels, pixels + static_cast<size_t>(w) * h * 4);
@@ -974,6 +978,8 @@ void TextureLibrary::AsyncWorker()
             r.ok = true;
             stbi_image_free(pixels);
         }
+        r.decodeMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - decodeStart)
+                         .count();
         {
             std::lock_guard<std::mutex> lk(asyncMutex_);
             doneQueue_.push_back(std::move(r));
@@ -1044,8 +1050,14 @@ void TextureLibrary::PollAsyncLoads()
             importmeta::Resolve(path, imp);
         }
         Texture t;
-        if (CreateFromPixels(t, r.pixels.data(), r.w, r.h, imp.srgb == 1,
-                             imp.generateMips != 0)) {
+        const auto uploadStart = std::chrono::steady_clock::now();
+        const bool created = CreateFromPixels(t, r.pixels.data(), r.w, r.h, imp.srgb == 1, imp.generateMips != 0);
+        const float uploadMs =
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
+        if (nameIt != names_.end()) {
+            prof::RecordAssetLoad("texture (async)", nameIt->second, r.decodeMs + uploadMs);
+        }
+        if (created) {
             if (nameIt != names_.end()) {
                 gpumem::Rename(t.tex.Get(), nameIt->second.c_str());
             }

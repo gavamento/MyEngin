@@ -8,6 +8,7 @@
 #include <Windows.h>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Engine/Script/ScriptHost.h"
 #include "Engine/Engine/Session/Provenance.h"
 #include "Engine/Platform/PathUtil.h"
@@ -131,6 +132,7 @@ bool DllReloader::TryCopyAndLoad()
     if (ProbeWritable(dllPath_) != 0) {
         return false; // リンカがまだ書いている — 次フレーム再試行
     }
+    const prof::AssetLoadScope load("script dll reload", "GameLogic.dll");
     const bool hasPdb = GetWriteTime(pdbPath_) != 0;
 
     ++counter_;

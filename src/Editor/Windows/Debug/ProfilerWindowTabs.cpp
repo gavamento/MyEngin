@@ -15,8 +15,10 @@
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Scene/Scene.h"
 #include "Engine/Renderer/Device/GpuMemoryStats.h"
+#include "Engine/Renderer/Device/GpuResources.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
 #include "Engine/Renderer/Pipeline/RenderPath.h"
+#include "Engine/Renderer/Shader/ShaderManager.h"
 
 #include "imgui.h"
 
@@ -788,6 +790,62 @@ void ProfilerWindow::DrawGpuMemory(EngineContext& ctx)
         }
         ImGui::EndTable();
     }
+}
+
+void ProfilerWindow::DrawAssets(EngineContext& ctx, const EditorSettings& settings)
+{
+    ImGui::SeparatorText(Tr(StrId::Prof_SecAssetQueues));
+    if (profui::BeginValueTable("##ProfAssetQueues", Tr(StrId::Prof_ColItem), Tr(StrId::Prof_ColValue))) {
+        if (ctx.resources) {
+            profui::ValueRowInt(Tr(StrId::Prof_RowAsyncTextures), ctx.resources->textures.PendingAsyncCount());
+        }
+        if (ctx.shaders) {
+            profui::ValueRowInt(Tr(StrId::Prof_RowAsyncShaders), ctx.shaders->PendingCompileCount());
+        }
+        profui::ValueRowInt(Tr(StrId::Prof_RowAssetTotal), static_cast<long long>(prof::AssetLoadTotal()));
+        profui::EndValueTable();
+    }
+
+    ImGui::SeparatorText(Tr(StrId::Prof_SecAssetLoads));
+    const int count = prof::AssetLoadCount();
+    if (count == 0) {
+        ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_AssetLoadsEmpty));
+        return;
+    }
+    // 記録は別スレッドからも増えるので、まず写しを取ってから並べる
+    static prof::AssetLoadRecord records[prof::kMaxAssetLoads]; // メインスレッド専用の作業領域 (スタックには大きい)
+    int rowCount = 0;
+    for (int i = 0; i < count; ++i) {
+        const prof::AssetLoadRecord record = prof::AssetLoad(i);
+        if (record.ms > 0.0f && (PassesFilter(record.name) || PassesFilter(record.kind))) {
+            records[rowCount++] = record;
+        }
+    }
+    if (settings.profilerSortByCost) {
+        std::sort(records, records + rowCount,
+                  [](const prof::AssetLoadRecord& a, const prof::AssetLoadRecord& b) { return a.ms > b.ms; });
+    }
+    const double now = prof::AssetClockSeconds();
+    if (ImGui::BeginTable("##ProfAssetLoads", 4, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColAgo), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 6.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColMs), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableHeadersRow();
+        for (int r = 0; r < rowCount; ++r) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%.1f", now - records[r].atSeconds);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(themeColor::TextDim, "%s", records[r].kind);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(records[r].name);
+            ImGui::TableSetColumnIndex(3);
+            MsCell(records[r].ms);
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_AssetLoadsNote));
 }
 
 } // namespace mye

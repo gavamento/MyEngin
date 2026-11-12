@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Engine/Animation/Animation.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/AudioSystem.h"
@@ -271,6 +272,7 @@ void ReloadHub::HandleChange(const std::wstring& normPath, int attempt)
     if (row == nullptr) {
         return;
     }
+    const prof::AssetLoadScope load("hot reload", WideToUtf8(normPath));
     ReloadResult result = ReloadResult::Skipped;
     switch (row->kind) {
     case ReloadKind::Shader:

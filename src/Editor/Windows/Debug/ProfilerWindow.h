@@ -11,7 +11,8 @@ class ToastCenter;
 // プロファイラ (engine_spec.md 9 章、M102 で作り直し)。
 // 上の帯 (フレーム時間の要約 + 一時停止 + 表示の設定) は常に出し、その下をタブで分ける:
 //   概要 = 積み上げフレームグラフと重い順の一覧 / CPU = スコープの木 / GPU = パス別 /
-//   描画 = ドローコール・カリング・LOD・影 / メモリ = 分類別の確保 / システム = 機能別の現在値 /
+//   描画 = ドローコール・カリング・LOD・影 / メモリ = 分類別の確保と GPU メモリ /
+//   アセット = 読み込みの所要時間と待ち行列 / システム = 機能別の現在値 /
 //   記録 = しきい値を超えた重いフレームの控え (選ぶと全タブがそのフレームの内容になる)。
 // 表示するのは prof の「確定済みフレーム」だけ (フレームの途中の値を混ぜない)。
 // 一時停止は prof の履歴そのものを止めるので、グラフ・平均・選んだフレームが同じ時点で揃う
@@ -56,6 +57,7 @@ private:
     void DrawHistory(EditorSettings& settings);
     void DrawMemory(EngineContext& ctx, const EditorSettings& settings);
     void DrawGpuMemory(EngineContext& ctx); // メモリタブの下段
+    void DrawAssets(EngineContext& ctx, const EditorSettings& settings);
     // 累計カウンタの前フレームとの差を取り、フレームあたりの確保として積む (毎フレーム 1 回)
     void UpdateMemoryHistory();
     void CheckBudgets(const EditorSettings& settings, ToastCenter& toasts);

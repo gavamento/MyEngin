@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
 // 軽量プロファイラ (M12)。決定論規約: 計測値は sim 状態でもワールドハッシュでもないため
@@ -113,6 +114,39 @@ private:
     uint32_t entityIndex_;
     uint32_t entityGeneration_;
     int64_t start_; // 0 = 計測していない
+};
+
+// ---- アセット読み込みの記録 ----
+// 「何の読み込みに何 ms かかったか」を直近 kMaxAssetLoads 件ぶん持つ (フレームとは独立のリング)。
+// 読み込みは焼き込み用のスレッドからも起こりうるので、ここだけは鍵で守る (どのスレッドから呼んでもよい)。
+// kMinAssetLoadMs 未満は記録しない: 「登録済みなので何もせず戻った」呼び出しで一覧を埋めないため
+inline constexpr int kMaxAssetLoads = 256;
+inline constexpr int kAssetNameLength = 160;
+inline constexpr float kMinAssetLoadMs = 0.05f;
+struct AssetLoadRecord {
+    const char* kind = ""; // リテラル ("texture" / "scene" / "hot reload" など)
+    char name[kAssetNameLength] = {}; // UTF-8 (長いパスは末尾側を残して切り詰める)
+    float ms = 0.0f;
+    double atSeconds = 0.0; // 記録した時刻 (AssetClockSeconds と同じ時計)
+};
+void RecordAssetLoad(const char* kind, std::string_view nameUtf8, float ms);
+int AssetLoadCount();                    // 保持している件数 (最大 kMaxAssetLoads)
+AssetLoadRecord AssetLoad(int index);    // 0 = いちばん新しい。範囲外は空のレコード
+uint64_t AssetLoadTotal();               // 起動からの累計件数
+double AssetClockSeconds();              // 「何秒前か」を出すための現在時刻
+
+// 読み込み 1 件を囲む。抜けるときに記録する
+class AssetLoadScope {
+public:
+    AssetLoadScope(const char* kind, std::string_view nameUtf8);
+    ~AssetLoadScope();
+    AssetLoadScope(const AssetLoadScope&) = delete;
+    AssetLoadScope& operator=(const AssetLoadScope&) = delete;
+
+private:
+    const char* kind_;
+    char name_[kAssetNameLength] = {};
+    int64_t start_;
 };
 
 // ---- 重いフレームの自動記録 ----

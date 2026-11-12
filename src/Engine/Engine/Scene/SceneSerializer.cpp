@@ -15,6 +15,7 @@
 #include "Engine/Engine/UI/UILayout.h" // M75a: 旧 UIElement の配置 → RectTransform
 #include "Engine/Core/Util/JsonUtil.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/Scene/EntityNaming.h"
 #include "Engine/Engine/Scene/Scene.h"
@@ -914,6 +915,7 @@ bool SaveToFile(Scene& scene, const std::wstring& path)
 bool LoadFromFile(Scene& scene, const std::wstring& path,
                   const std::function<void()>& beforeApply)
 {
+    const prof::AssetLoadScope load("scene", WideToUtf8(path));
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
         MYE_LOG_ERROR("scene open failed: %s", WideToUtf8(path).c_str());

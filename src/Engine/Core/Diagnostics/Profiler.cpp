@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <deque>
+#include <mutex>
 #include <string>
 
 namespace mye::prof {
@@ -78,6 +79,13 @@ void ResetItems()
     std::memset(g_itemSlots, 0, sizeof(g_itemSlots));
 }
 
+// ---- アセット読み込みの記録 (g_assetMutex で守る) ----
+std::mutex g_assetMutex;
+AssetLoadRecord g_assetLoads[kMaxAssetLoads];
+int g_assetHead = 0; // 次に書く位置
+int g_assetCount = 0;
+uint64_t g_assetTotal = 0;
+
 GpuStat g_gpu[kMaxGpuPasses];
 int g_gpuCount = 0;
 float g_gpuFrameMs = 0.0f;
@@ -101,9 +109,32 @@ int64_t Now()
     return c.QuadPart;
 }
 
+// BeginFrame より前 (起動時のアセット登録など) にも時間を測るので、周波数は使う側で必ず確かめる
+int64_t Frequency()
+{
+    if (g_freq == 0) {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        g_freq = f.QuadPart;
+    }
+    return g_freq;
+}
+
 float TicksToMs(int64_t ticks)
 {
-    return g_freq ? static_cast<float>(ticks) * 1000.0f / static_cast<float>(g_freq) : 0.0f;
+    return static_cast<float>(ticks) * 1000.0f / static_cast<float>(Frequency());
+}
+
+// 長い名前は末尾側 (ファイル名のある側) を残して写す。UTF-8 の途中から始めない
+void CopyNameTail(char* out, size_t outSize, std::string_view name)
+{
+    size_t start = (name.size() >= outSize) ? name.size() - (outSize - 1) : 0;
+    while (start < name.size() && (static_cast<unsigned char>(name[start]) & 0xC0) == 0x80) {
+        ++start; // 継続バイトを飛ばして文字の先頭へ
+    }
+    const size_t length = name.size() - start;
+    std::memcpy(out, name.data() + start, length);
+    out[length] = '\0';
 }
 
 bool SameName(const char* a, const char* b)
@@ -193,10 +224,7 @@ void SealFrame(int64_t now)
 
 void BeginFrame()
 {
-    if (g_freq == 0) {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        g_freq = f.QuadPart;
+    if (g_history.empty()) {
         g_records.reserve(static_cast<size_t>(kMaxRawScopes));
         g_history.resize(static_cast<size_t>(kFrameHistory));
         g_captures.resize(static_cast<size_t>(kMaxCaptures));
@@ -337,6 +365,63 @@ ItemScope::~ItemScope()
     if (start_ != 0) {
         AddItemSample(category_, name_, entityIndex_, entityGeneration_, TicksToMs(Now() - start_));
     }
+}
+
+void RecordAssetLoad(const char* kind, std::string_view nameUtf8, float ms)
+{
+    if (ms < kMinAssetLoadMs) {
+        return;
+    }
+    const double at = AssetClockSeconds();
+    const std::lock_guard<std::mutex> lock(g_assetMutex);
+    AssetLoadRecord& record = g_assetLoads[g_assetHead];
+    record.kind = kind;
+    CopyNameTail(record.name, sizeof(record.name), nameUtf8);
+    record.ms = ms;
+    record.atSeconds = at;
+    g_assetHead = (g_assetHead + 1) % kMaxAssetLoads;
+    if (g_assetCount < kMaxAssetLoads) {
+        ++g_assetCount;
+    }
+    ++g_assetTotal;
+}
+
+int AssetLoadCount()
+{
+    const std::lock_guard<std::mutex> lock(g_assetMutex);
+    return g_assetCount;
+}
+
+AssetLoadRecord AssetLoad(int index)
+{
+    const std::lock_guard<std::mutex> lock(g_assetMutex);
+    if (index < 0 || index >= g_assetCount) {
+        return AssetLoadRecord{};
+    }
+    return g_assetLoads[(g_assetHead - 1 - index + kMaxAssetLoads * 2) % kMaxAssetLoads];
+}
+
+uint64_t AssetLoadTotal()
+{
+    const std::lock_guard<std::mutex> lock(g_assetMutex);
+    return g_assetTotal;
+}
+
+double AssetClockSeconds()
+{
+    return static_cast<double>(Now()) / static_cast<double>(Frequency());
+}
+
+AssetLoadScope::AssetLoadScope(const char* kind, std::string_view nameUtf8)
+    : kind_(kind)
+    , start_(Now())
+{
+    CopyNameTail(name_, sizeof(name_), nameUtf8);
+}
+
+AssetLoadScope::~AssetLoadScope()
+{
+    RecordAssetLoad(kind_, name_, TicksToMs(Now() - start_));
 }
 
 void ReportGpu(const char* name, float ms, bool ran)

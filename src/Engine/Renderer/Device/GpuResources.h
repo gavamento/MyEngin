@@ -242,6 +242,8 @@ public:
     void WaitForAsyncLoads(int timeoutMs = 30000);
     // 非同期ロード中 (Get() が白のプレースホルダを返している間) か。メインスレッド専用
     bool IsPending(AssetID id) const { return pending_.count(id.value) != 0; }
+    // 非同期ロードを投入してまだ公開されていない枚数 (メインスレッド専用。プロファイラ表示用)
+    int PendingAsyncCount() const { return static_cast<int>(pending_.size()); }
 
     // ファイルパスに対応する AssetID (正規化パスのハッシュ)。ロード有無に関わらず同じ値
     static AssetID IdForFile(const std::wstring& path);
@@ -285,6 +287,7 @@ private:
         int w = 0;
         int h = 0;
         bool ok = false;
+        float decodeMs = 0.0f; // ワーカーで測ったデコード時間 (プロファイラの記録用)
     };
     std::thread worker_;
     std::mutex asyncMutex_;

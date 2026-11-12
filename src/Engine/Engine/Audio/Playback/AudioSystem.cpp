@@ -14,6 +14,7 @@
 #include "Engine/Core/Asset/AssetKeyResolver.h"
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Diagnostics/Profiler.h"
 #include "Engine/Engine/Audio/Playback/AudioMixer.h"
 #include "Engine/Engine/Audio/Playback/MusicStream.h"
 #include "Engine/Platform/PathUtil.h"
@@ -876,6 +877,7 @@ AssetID AudioSystem::IdForFile(const std::wstring& path)
 
 AssetID AudioSystem::LoadClipFile(const std::wstring& path)
 {
+    const prof::AssetLoadScope load("audio clip", WideToUtf8(path));
     if (xaudio_ == nullptr) {
         // --no-audio / デバイス無し。鳴らせないものを展開しても意味が無く、BGM の
         // ような大きなファイルでは無駄な時間とメモリになるだけなので何もしない

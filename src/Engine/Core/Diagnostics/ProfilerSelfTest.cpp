@@ -245,6 +245,51 @@ bool RunProfilerSelfTest()
     check(prof::History(0).itemCount == 1 && std::strcmp(prof::History(0).items[0].name, "On") == 0,
           "ItemScope records only while item timing is enabled");
 
+    // ---- アセット読み込みの記録 ----
+    {
+        const uint64_t totalBefore = prof::AssetLoadTotal();
+        prof::RecordAssetLoad("texture", "assets/a.png", 1.5f);
+        prof::RecordAssetLoad("scene", "assets/main.scene.json", 3.0f);
+        prof::RecordAssetLoad("texture", "assets/skipped.png", prof::kMinAssetLoadMs * 0.5f);
+        check(prof::AssetLoadTotal() == totalBefore + 2, "asset loads under the minimum are not recorded");
+        const prof::AssetLoadRecord newest = prof::AssetLoad(0);
+        const prof::AssetLoadRecord older = prof::AssetLoad(1);
+        check(std::strcmp(newest.kind, "scene") == 0 && std::strcmp(newest.name, "assets/main.scene.json") == 0
+                  && newest.ms == 3.0f,
+              "asset load index 0 is the newest record");
+        check(std::strcmp(older.name, "assets/a.png") == 0 && older.atSeconds <= newest.atSeconds,
+              "asset load index 1 is the one before it");
+        check(prof::AssetClockSeconds() >= newest.atSeconds, "asset clock does not run behind the records");
+        // 長い名前は末尾側 (ファイル名のある側) を残す。日本語 (3 バイト文字) の途中から始めない
+        std::string longName(400, 'x');
+        longName += "/\xE5\x9C\xB0\xE9\x9D\xA2.png"; // 地面.png
+        prof::RecordAssetLoad("texture", longName, 2.0f);
+        const prof::AssetLoadRecord tail = prof::AssetLoad(0);
+        const size_t tailLength = std::strlen(tail.name);
+        check(tailLength < static_cast<size_t>(prof::kAssetNameLength), "long asset names are truncated to fit");
+        check(tailLength >= 10 && std::strcmp(tail.name + tailLength - 10, "\xE5\x9C\xB0\xE9\x9D\xA2.png") == 0,
+              "truncation keeps the end of the name");
+        // 3 バイト文字 100 個 + ASCII 1 文字 = 301 バイト。残す長さ (159) が 3 の倍数なので、
+        // 末尾の 1 バイトぶん切れ目が文字の途中へずれる
+        std::string multibyte;
+        for (int i = 0; i < 100; ++i) {
+            multibyte += "\xE5\x9C\xB0";
+        }
+        multibyte += "z";
+        prof::RecordAssetLoad("texture", multibyte, 2.0f);
+        const prof::AssetLoadRecord cut = prof::AssetLoad(0);
+        const size_t cutLength = std::strlen(cut.name);
+        check((static_cast<unsigned char>(cut.name[0]) & 0xC0) != 0x80 && cutLength > 1 && (cutLength - 1) % 3 == 0,
+              "truncation never starts in the middle of a UTF-8 character");
+        // リングの上限
+        for (int i = 0; i < prof::kMaxAssetLoads + 3; ++i) {
+            prof::RecordAssetLoad("texture", "flood", 1.0f);
+        }
+        check(prof::AssetLoadCount() == prof::kMaxAssetLoads, "asset loads are capped at kMaxAssetLoads");
+        check(prof::AssetLoad(prof::kMaxAssetLoads).ms == 0.0f && prof::AssetLoad(-1).ms == 0.0f,
+              "out-of-range asset load returns the empty record");
+    }
+
     MYE_LOG_INFO("==== Profiler self test: %s ====", failCount == 0 ? "PASS" : "FAIL");
     return failCount == 0;
 }

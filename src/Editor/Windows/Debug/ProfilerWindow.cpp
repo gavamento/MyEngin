@@ -29,7 +29,17 @@ constexpr double kBudgetToastCooldownSec = 10.0;
 constexpr int kAvgWindowChoices[] = { 1, 30, 60, 120, prof::kFrameHistory };
 
 // タブの並び = EditorSettings::profilerTab の値
-enum Tab { kTabOverview, kTabCpu, kTabGpu, kTabRender, kTabMemory, kTabSystems, kTabHistory, kTabCount };
+enum Tab {
+    kTabOverview,
+    kTabCpu,
+    kTabGpu,
+    kTabRender,
+    kTabMemory,
+    kTabAssets,
+    kTabSystems,
+    kTabHistory,
+    kTabCount
+};
 
 // フレームグラフの系列 (下から積む順)
 enum class Series { Tick, Render, ImGui, Reload, Present, Other, Count };
@@ -228,8 +238,8 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
     DrawHeader(settings);
 
     const StrId tabLabels[kTabCount] = { StrId::Prof_TabOverview, StrId::Prof_TabCpu, StrId::Prof_TabGpu,
-                                         StrId::Prof_TabRender, StrId::Prof_TabMemory, StrId::Prof_TabSystems,
-                                         StrId::Prof_TabHistory };
+                                         StrId::Prof_TabRender, StrId::Prof_TabMemory, StrId::Prof_TabAssets,
+                                         StrId::Prof_TabSystems, StrId::Prof_TabHistory };
     if (ImGui::BeginTabBar("###ProfTabs")) {
         for (int tab = 0; tab < kTabCount; ++tab) {
             // 保存してあるタブを初回だけ選び直す。以後は選ばれたタブを保存する
@@ -250,6 +260,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
                 case kTabGpu: DrawGpu(settings); break;
                 case kTabRender: DrawRender(ctx); break;
                 case kTabMemory: DrawMemory(ctx, settings); break;
+                case kTabAssets: DrawAssets(ctx, settings); break;
                 case kTabSystems: DrawSystems(ctx); break;
                 default: DrawHistory(settings); break;
                 }
