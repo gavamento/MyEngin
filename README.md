@@ -311,7 +311,7 @@ Release の本体をビルドし、外部プロジェクトのスクリプトを
 
 ### エンジンの入手と更新 (Launcher)
 
-エンジンは GitHub Releases で公開しています（M98、現在の版は **0.86.1**）。[MyEngineLauncher.exe](https://github.com/gavamento/MyEngin/releases/latest/download/MyEngineLauncher.exe) をダウンロードして開き、「インストール」を押すと最新版が `%LOCALAPPDATA%\MyEngine\Engine\<版>\` に入ります。初回は足りない VC++ 再頒布・.NET 8・Git を入れるセットアップが別窓で走ります。「スタートメニューに追加」を押すと、次からはスタートメニューの「MyEngine Launcher」から開けます。版は並べて保持され、一覧から起動・削除できます。エディタはヘルプ → 更新を確認 で新しい版を確かめ、「更新して再起動」で Launcher に入れ替えを任せます。署名が無いため、Launcher と、新しく入れた版のエディタを初めて開くときに「Windows によって PC が保護されました」が出ます（「詳細情報」→「実行」）。公開の手順は [docs/release.md](docs/release.md)、設計は [ADR-037](docs/adr/ADR-037-release-launcher.md) です。
+エンジンは GitHub Releases で公開しています（M98、現在の版は **0.87.1**）。[MyEngineLauncher.exe](https://github.com/gavamento/MyEngin/releases/latest/download/MyEngineLauncher.exe) をダウンロードして開き、「インストール」を押してインストール先のフォルダを選ぶと、最新版が `<選んだフォルダ>\<版>\` に入ります（既定は前回のフォルダ、初回は `%LOCALAPPDATA%\MyEngine\Engine\`）。初回は足りない VC++ 再頒布・.NET 8・Git を入れるセットアップが別窓で走ります。「スタートメニューに追加」を押すと、次からはスタートメニューの「MyEngine Launcher」から開けます。版は並べて保持され、一覧から起動・削除できます。エディタはヘルプ → 更新を確認 で新しい版を確かめ、「更新して再起動」で Launcher に入れ替えを任せます。署名が無いため、Launcher と、新しく入れた版のエディタを初めて開くときに「Windows によって PC が保護されました」が出ます（「詳細情報」→「実行」）。公開の手順は [docs/release.md](docs/release.md)、設計は [ADR-037](docs/adr/ADR-037-release-launcher.md) です。
 
 ゲームの配布とは別に、**エンジン自体を他の人へ渡す配布物**は [tools/make_dist.ps1](tools/make_dist.ps1) が作ります（M92）。Release 本体と C# ホスト・Git サービスをビルドし、exe 一式・`assets/`・C++ スクリプト用の `src/Shared` と `build/Common.props`・ライセンスを `dist_engine/` に集めて zip 化します。受け取った側は展開して [Setup.bat](tools/engine_dist/Setup.bat) を実行すると、足りない VC++ 再頒布・.NET 8・Git を winget で導入し、C++ Build Tools は確認してから導入して Editor を起動します。
 

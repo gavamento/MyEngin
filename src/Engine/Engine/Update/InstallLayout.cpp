@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -31,6 +32,54 @@ std::wstring ReadEnv(const wchar_t* name)
         free(value);
     }
     return out;
+}
+
+constexpr const wchar_t* kEngineDirsFile = L"engine_dirs.json";
+
+// 比較用の正規化: 絶対パス化・. と .. の除去・末尾の区切りを外す
+std::wstring NormalizeDir(const std::wstring& dir)
+{
+    std::error_code ec;
+    fs::path p = fs::absolute(fs::path(dir), ec);
+    if (ec) {
+        p = fs::path(dir);
+    }
+    std::wstring s = p.lexically_normal().wstring();
+    while (s.size() > 3 && (s.back() == L'\\' || s.back() == L'/')) {
+        s.pop_back();
+    }
+    return s;
+}
+
+struct EngineDirsRecord
+{
+    std::vector<std::wstring> dirs; // 既定の <root>\Engine は含めない
+    std::wstring last;
+};
+
+EngineDirsRecord ReadEngineDirs(const std::wstring& root)
+{
+    EngineDirsRecord rec;
+    std::ifstream f(fs::path(root) / kEngineDirsFile, std::ios::binary);
+    if (!f) {
+        return rec;
+    }
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    const nlohmann::json j = nlohmann::json::parse(ss.str(), nullptr, false);
+    if (!j.is_object()) {
+        return rec;
+    }
+    const auto dirs = j.find("dirs");
+    if (dirs != j.end() && dirs->is_array()) {
+        for (const nlohmann::json& d : *dirs) {
+            if (d.is_string() && !d.get<std::string>().empty()) {
+                rec.dirs.push_back(Utf8ToWide(d.get<std::string>()));
+            }
+        }
+    }
+    rec.last = Utf8ToWide(j.value("last", std::string()));
+    return rec;
 }
 
 } // namespace
@@ -101,30 +150,112 @@ bool WriteInstallMarker(const std::wstring& installDir, const InstallMarker& mar
     return WriteFileReplacing((fs::path(installDir) / kInstallMarkerFile).wstring(), root.dump(2));
 }
 
+bool SameEnginesDir(const std::wstring& a, const std::wstring& b)
+{
+    return _wcsicmp(NormalizeDir(a).c_str(), NormalizeDir(b).c_str()) == 0;
+}
+
+std::vector<std::wstring> KnownEnginesDirs(const std::wstring& root)
+{
+    std::vector<std::wstring> out{ EnginesDir(root) };
+    for (const std::wstring& d : ReadEngineDirs(root).dirs) {
+        const bool known = std::any_of(out.begin(), out.end(), [&](const std::wstring& o) { return SameEnginesDir(o, d); });
+        if (!known) {
+            out.push_back(NormalizeDir(d));
+        }
+    }
+    return out;
+}
+
+std::wstring PreferredEnginesDir(const std::wstring& root)
+{
+    const EngineDirsRecord rec = ReadEngineDirs(root);
+    return rec.last.empty() ? EnginesDir(root) : NormalizeDir(rec.last);
+}
+
+bool RememberEnginesDir(const std::wstring& root, const std::wstring& dir)
+{
+    EngineDirsRecord rec = ReadEngineDirs(root);
+    const std::wstring normalized = NormalizeDir(dir);
+    const bool isDefault = SameEnginesDir(normalized, EnginesDir(root));
+    const bool known = std::any_of(rec.dirs.begin(), rec.dirs.end(),
+                                   [&](const std::wstring& d) { return SameEnginesDir(d, normalized); });
+    if (!isDefault && !known) {
+        rec.dirs.push_back(normalized);
+    }
+    rec.last = normalized;
+
+    nlohmann::json j;
+    j["dirs"] = nlohmann::json::array();
+    for (const std::wstring& d : rec.dirs) {
+        j["dirs"].push_back(WideToUtf8(d));
+    }
+    j["last"] = WideToUtf8(rec.last);
+    std::error_code ec;
+    fs::create_directories(root, ec);
+    return WriteFileReplacing((fs::path(root) / kEngineDirsFile).wstring(), j.dump(2));
+}
+
 std::vector<InstalledEngine> ScanInstalledEngines(const std::wstring& root)
 {
     std::vector<InstalledEngine> out;
-    std::error_code ec;
-    for (fs::directory_iterator it(EnginesDir(root), ec), end; !ec && it != end; it.increment(ec)) {
-        if (!it->is_directory(ec)) {
-            continue;
+    for (const std::wstring& enginesDir : KnownEnginesDirs(root)) {
+        // 取り外したドライブなどで見えない置き場は黙って飛ばす (記録は残し、戻れば再び一覧に出る)
+        std::error_code ec;
+        for (fs::directory_iterator it(enginesDir, ec), end; !ec && it != end; it.increment(ec)) {
+            if (!it->is_directory(ec)) {
+                continue;
+            }
+            const std::wstring name = it->path().filename().wstring();
+            if (name.find(kStagingInfix) != std::wstring::npos || name.find(kDeletingInfix) != std::wstring::npos) {
+                continue;
+            }
+            InstalledEngine e;
+            e.dir = it->path().wstring();
+            if (!ReadInstallMarker(e.dir, e.marker) || !ParseEngineVersion(e.marker.version, e.version)
+                || Utf8ToWide(e.version.text) != name) {
+                continue; // 印の無いフォルダや名前と版が食い違うフォルダは Launcher の管理外として触らない
+            }
+            out.push_back(std::move(e));
         }
-        const std::wstring name = it->path().filename().wstring();
-        if (name.find(kStagingInfix) != std::wstring::npos || name.find(kDeletingInfix) != std::wstring::npos) {
-            continue;
-        }
-        InstalledEngine e;
-        e.dir = it->path().wstring();
-        if (!ReadInstallMarker(e.dir, e.marker) || !ParseEngineVersion(e.marker.version, e.version)
-            || Utf8ToWide(e.version.text) != name) {
-            continue; // 印の無いフォルダや名前と版が食い違うフォルダは Launcher の管理外として触らない
-        }
-        out.push_back(std::move(e));
     }
-    std::sort(out.begin(), out.end(), [](const InstalledEngine& a, const InstalledEngine& b) {
+    // 同じ版が複数の置き場にあれば、置き場の一覧の順 (既定が先) で並べる
+    std::stable_sort(out.begin(), out.end(), [](const InstalledEngine& a, const InstalledEngine& b) {
         return CompareEngineVersion(a.version, b.version) > 0;
     });
     return out;
+}
+
+bool IsInsideInstalledEngine(const std::wstring& path)
+{
+    std::error_code ec;
+    for (fs::path p = fs::path(NormalizeDir(path)); !p.empty(); p = p.parent_path()) {
+        if (fs::exists(p / kInstallMarkerFile, ec)) {
+            return true;
+        }
+        if (p == p.root_path()) {
+            break;
+        }
+    }
+    return false;
+}
+
+bool IsInstallWorkFolderName(const std::wstring& name)
+{
+    for (const wchar_t* infix : { kStagingInfix, kDeletingInfix }) {
+        const size_t at = name.find(infix);
+        if (at == std::wstring::npos || at == 0) {
+            continue;
+        }
+        const std::wstring pid = name.substr(at + wcslen(infix));
+        const bool pidIsNumber = !pid.empty()
+            && std::all_of(pid.begin(), pid.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+        EngineVersion v;
+        if (pidIsNumber && ParseEngineVersion(WideToUtf8(name.substr(0, at)), v)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool RecordLauncherLocation(const std::wstring& root, const std::wstring& launcherExe)

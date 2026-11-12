@@ -955,8 +955,12 @@ MYE_STR(Launcher_LaunchFailed,  "Could not start the editor: %s",
 MYE_STR(Launcher_Cancelled,     "Cancelled.",               "取り消しました。")
 MYE_STR(Launcher_UpdateMode,    "Updating MyEngine. The editor reopens %s when done.",
                                 "MyEngine を更新しています。終わるとエディタで %s を開き直します。")
-MYE_STR(Launcher_InstallPlace,  "Installed to: %s (about 400 MB per version)",
-                                "インストール先: %s (1 版あたり約 400 MB)")
+MYE_STR(Launcher_InstallPlace,  "You choose the folder at each install (about 400 MB per version). Last used: %s",
+                                "インストール先はインストールのたびに選びます (1 版あたり約 400 MB)。前回: %s")
+MYE_STR(Launcher_PickInstallDir, "Choose where to install MyEngine (a folder for the version is created inside)",
+                                "MyEngine のインストール先を選ぶ (中に版のフォルダを作ります)")
+MYE_STR(Launcher_InstallDirInsideEngine, "That folder is inside an installed version. Choose another folder.",
+                                "そのフォルダはインストール済みの版の中です。別のフォルダを選んでください。")
 MYE_STR(Launcher_RunSetup,       "Run setup (installs missing VC++ / .NET 8 / Git)",
                                 "セットアップを実行 (足りない VC++ / .NET 8 / Git を入れる)")
 MYE_STR(Launcher_SelfUpdateAvail, "A newer Launcher (%s) is available.", "新しい Launcher (%s) があります。")

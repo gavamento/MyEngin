@@ -39,16 +39,18 @@ struct InstallOutcome
     std::string version; // 表示用 (v を外した表記)
 };
 
-// release を <root>\Engine\<版>\ へ入れる。順序: SHA-256 の取得 → ダウンロード → 照合 →
-// staging へ展開 → install.json → rename。どの段で失敗しても既存の版と <版>\ には触れず、
-// 書きかけ (.part / staging) は消す
+// release を <enginesDir>\<版>\ へ入れる (enginesDir は <root>\Engine か利用者が選んだフォルダ)。
+// .part は <root>\Downloads に置く (読むだけで rename しないので、置き場と別のドライブでもよい)。
+// 順序: SHA-256 の取得 → ダウンロード → 照合 → staging へ展開 → install.json → rename。
+// どの段で失敗しても既存の版と <版>\ には触れず、書きかけ (.part / staging) は消す
 InstallOutcome InstallRelease(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root,
-                              const InstallProgressFn& progress, const std::atomic<bool>* cancel);
+                              const std::wstring& enginesDir, const InstallProgressFn& progress,
+                              const std::atomic<bool>* cancel);
 
 // 先に <版>.deleting-* へ rename してから消す。rename できない (エディタが動いている) ときは何も消さない
 InstallOutcome UninstallEngine(const std::wstring& installDir, const InstallProgressFn& progress);
 
-// 前回の Launcher が落ちて残した staging / deleting / .part を消す。
+// 前回の Launcher が落ちて残した staging / deleting / .part を消す (KnownEnginesDirs のすべて)。
 // 他の Launcher が動いていないとき (単一起動の印を取れたとき) だけ呼ぶ
 void CleanupStaleInstallWork(const std::wstring& root);
 
@@ -77,7 +79,8 @@ public:
     bool Busy() const { return running_.load(); }
     Kind CurrentKind() const;
     void StartCheck(const ReleaseSource& source, bool includePrerelease);
-    void StartInstall(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root);
+    void StartInstall(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root,
+                      const std::wstring& enginesDir);
     void StartUninstall(const std::wstring& installDir);
     void StartSelfUpdate(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& targetExe);
     void Cancel() { cancel_.store(true); }

@@ -10,6 +10,7 @@
 
 #include <Windows.h>
 #include <shellapi.h>
+#include <shobjidl.h> // IFileOpenDialog (インストール先の選択)
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -62,6 +63,57 @@ std::string Format1(StrId id, const std::string& arg)
         snprintf(out.data(), out.size() + 1, fmt, arg.c_str());
     }
     return out;
+}
+
+// OS のフォルダ選択ダイアログ (ProjectManager の PickFolderDialog と同じ手。Launcher は Editor 層に依存しない)。
+// 開いている間は描画ループが止まるが、ワーカーは動かしていない (押せるのは作業中でないときだけ)。キャンセルは空文字
+std::wstring PickInstallFolder(const std::wstring& initialDir)
+{
+    std::wstring result;
+    IFileOpenDialog* dlg = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) {
+        return result;
+    }
+    DWORD opts = 0;
+    dlg->GetOptions(&opts);
+    dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+    dlg->SetTitle(Utf8ToWide(Tr(StrId::Launcher_PickInstallDir)).c_str());
+    IShellItem* initial = nullptr;
+    std::error_code ec;
+    if (std::filesystem::is_directory(initialDir, ec)
+        && SUCCEEDED(SHCreateItemFromParsingName(initialDir.c_str(), nullptr, IID_PPV_ARGS(&initial)))) {
+        dlg->SetFolder(initial);
+        initial->Release();
+    }
+    if (SUCCEEDED(dlg->Show(GetActiveWindow()))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dlg->GetResult(&item))) {
+            PWSTR psz = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &psz))) {
+                result = psz;
+                CoTaskMemFree(psz);
+            }
+            item->Release();
+        }
+    }
+    dlg->Release();
+    return result;
+}
+
+// 置き場を記録してからインストールを始める (記録できないと入れた版が一覧に出ないので、そのときは始めない)
+void StartInstallTo(LauncherState& st, const ReleaseInfo& release, const std::wstring& enginesDir)
+{
+    if (IsInsideInstalledEngine(enginesDir)) {
+        SetMessage(st, Tr(StrId::Launcher_InstallDirInsideEngine), true);
+        return;
+    }
+    if (!RememberEnginesDir(st.options.root, enginesDir)) {
+        SetMessage(st, Format1(StrId::Launcher_InstallFailed, "cannot record the install folder in "
+                                                                  + WideToUtf8(st.options.root)),
+                   true);
+        return;
+    }
+    st.job.StartInstall(st.options.source, release, st.options.root, enginesDir);
 }
 
 const char* StageLabel(InstallStage stage)
@@ -160,7 +212,11 @@ void DrawLatest(LauncherState& st)
             ImGui::BeginDisabled(busy);
             const std::string label = std::string(ICON_FA_DOWNLOAD " ") + Tr(StrId::Launcher_Install);
             if (ImGui::Button(label.c_str())) {
-                st.job.StartInstall(st.options.source, r, st.options.root);
+                // インストールのたびに置き場を選ぶ (既定は前回の置き場)。版は <選んだフォルダ>\<版>\ に入る
+                const std::wstring picked = PickInstallFolder(PreferredEnginesDir(st.options.root));
+                if (!picked.empty()) {
+                    StartInstallTo(st, r, picked);
+                }
             }
             ImGui::EndDisabled();
         }
@@ -184,7 +240,8 @@ void DrawInstalled(LauncherState& st)
     ImGui::TextUnformatted(Tr(StrId::Launcher_InstalledList));
     ImGui::PopFont();
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-    ImGui::TextWrapped("%s", Format1(StrId::Launcher_InstallPlace, WideToUtf8(EnginesDir(st.options.root))).c_str());
+    ImGui::TextWrapped("%s",
+                       Format1(StrId::Launcher_InstallPlace, WideToUtf8(PreferredEnginesDir(st.options.root))).c_str());
     ImGui::PopStyleColor();
 
     if (st.installed.empty()) {
@@ -207,6 +264,13 @@ void DrawInstalled(LauncherState& st)
         if (i == 0) {
             ImGui::SameLine();
             ImGui::TextColored(themeColor::Accent, "%s", Tr(StrId::Launcher_NewestMark));
+        }
+        // 置き場は複数ありうるので、どこに入っているかを行ごとに出す
+        ImGui::SameLine();
+        const std::string place = WideToUtf8(std::filesystem::path(e.dir).parent_path().wstring());
+        ImGui::TextDisabled("%s", place.c_str());
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", place.c_str()); // 長いパスは列の幅で切れるので全体を出す
         }
         ImGui::TableNextColumn();
         if (ImGui::Button(ICON_FA_PLAY)) {
@@ -290,7 +354,11 @@ bool LauncherTick(LauncherState& st)
         st.checkDone = true;
         if (st.options.updateMode && !st.updateFlowDone) {
             if (st.latest.ok && st.latest.found && !IsInstalled(st, st.latest.release.version)) {
-                st.job.StartInstall(st.options.source, st.latest.release, st.options.root);
+                // エディタからの更新は確認を挟まず、前回の置き場に入れる
+                StartInstallTo(st, st.latest.release, PreferredEnginesDir(st.options.root));
+                if (!st.job.Busy()) {
+                    st.updateFlowDone = true; // 始められなかった。画面に理由を出して手で選んでもらう
+                }
             } else if (st.latest.ok) {
                 return FinishUpdateFlow(st); // もう最新が入っている
             } else {

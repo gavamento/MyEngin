@@ -7,7 +7,7 @@ namespace mye {
 // 不一致はプロジェクトマネージャで警告表示する (起動はブロックしない)。
 // 配布 (M98) の正本でもある: GitHub Releases のタグ v<これ> と一致しないと release.yml が止まり、
 // Launcher / エディタの更新確認はこれと Release の版を比べる (EngineRelease.h の ParseEngineVersion の形)
-constexpr const char* kEngineVersion = "0.86.1";
+constexpr const char* kEngineVersion = "0.87.1";
 
 // プロジェクトルート直下のマニフェストファイル名
 constexpr const wchar_t* kProjectManifestFile = L"project.mye.json";

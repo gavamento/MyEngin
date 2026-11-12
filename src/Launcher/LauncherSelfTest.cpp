@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Launcher/LauncherSelfTest.h"
 
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -119,6 +120,7 @@ bool RunLauncherSelfTest()
     std::error_code ec;
     fs::remove_all(tmp, ec);
     const std::wstring root = (tmp / L"root").wstring();
+    const std::wstring engines = EnginesDir(root);
 
     // 1. 正常なインストール
     {
@@ -129,7 +131,7 @@ bool RunLauncherSelfTest()
         bool sawDownload = false;
         bool sawExtract = false;
         const InstallOutcome r = InstallRelease(
-            source, rel, root,
+            source, rel, root, engines,
             [&](InstallStage stage, uint64_t done, uint64_t) {
                 sawDownload = sawDownload || stage == InstallStage::Downloading;
                 sawExtract = sawExtract || stage == InstallStage::Extracting;
@@ -152,7 +154,7 @@ bool RunLauncherSelfTest()
         check(FindManagedInstallDir((tmp / L"a" / L"b" / L"c").wstring()).empty(),
               "layout: a folder without install.json is not managed");
 
-        const InstallOutcome again = InstallRelease(source, rel, root, InstallProgressFn{}, nullptr);
+        const InstallOutcome again = InstallRelease(source, rel, root, engines, InstallProgressFn{}, nullptr);
         check(again.ok && again.alreadyInstalled, "install: the same version again is a no-op");
     }
 
@@ -160,7 +162,7 @@ bool RunLauncherSelfTest()
     {
         const fs::path src = tmp / L"src_new";
         const ReleaseInfo rel = PublishLocal(src, "9.2-rc1", GoodPackage("9.2"));
-        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, InstallProgressFn{}, nullptr);
+        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, engines, InstallProgressFn{}, nullptr);
         const std::vector<InstalledEngine> list = ScanInstalledEngines(root);
         check(r.ok && list.size() == 2 && list[0].version.text == "9.2-rc1" && list[1].version.text == "9.1",
               "install: versions sit side by side, newest first");
@@ -170,7 +172,7 @@ bool RunLauncherSelfTest()
     {
         const fs::path src = tmp / L"src_badhash";
         const ReleaseInfo rel = PublishLocal(src, "9.3", GoodPackage("9.3"), std::string(64, '0'));
-        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, InstallProgressFn{}, nullptr);
+        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, engines, InstallProgressFn{}, nullptr);
         check(!r.ok && r.error.find("SHA-256") != std::string::npos && !fs::exists(fs::path(EnginesDir(root)) / L"9.3")
                   && !HasLeftovers(root),
               "install: SHA-256 mismatch installs nothing");
@@ -180,7 +182,7 @@ bool RunLauncherSelfTest()
     {
         const fs::path src = tmp / L"src_noeditor";
         const ReleaseInfo rel = PublishLocal(src, "9.4", { { "MyEngine/assets/a.txt", "a" } });
-        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, InstallProgressFn{}, nullptr);
+        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, engines, InstallProgressFn{}, nullptr);
         check(!r.ok && !fs::exists(fs::path(EnginesDir(root)) / L"9.4") && !HasLeftovers(root),
               "install: a package without Editor.exe is rejected");
     }
@@ -191,7 +193,7 @@ bool RunLauncherSelfTest()
         auto files = GoodPackage("9.5");
         files.push_back({ "MyEngine/../../../evil.txt", "evil" });
         const ReleaseInfo rel = PublishLocal(src, "9.5", files);
-        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, InstallProgressFn{}, nullptr);
+        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, engines, InstallProgressFn{}, nullptr);
         check(!r.ok && !fs::exists(tmp / L"evil.txt") && !fs::exists(fs::path(EnginesDir(root)) / L"9.5")
                   && !HasLeftovers(root),
               "install: path traversal in the package is rejected");
@@ -202,7 +204,7 @@ bool RunLauncherSelfTest()
         const fs::path src = tmp / L"src_cancel";
         const ReleaseInfo rel = PublishLocal(src, "9.6", GoodPackage("9.6"));
         std::atomic<bool> cancel{ true };
-        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, InstallProgressFn{}, &cancel);
+        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, engines, InstallProgressFn{}, &cancel);
         check(!r.ok && r.cancelled && !fs::exists(fs::path(EnginesDir(root)) / L"9.6") && !HasLeftovers(root),
               "install: cancel leaves nothing behind");
     }
@@ -213,7 +215,7 @@ bool RunLauncherSelfTest()
         WriteText(fs::path(EnginesDir(root)) / L"9.7" / L"mine.txt", "user data");
         const fs::path src = tmp / L"src_foreign";
         const ReleaseInfo rel = PublishLocal(src, "9.7", GoodPackage("9.7"));
-        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, InstallProgressFn{}, nullptr);
+        const InstallOutcome r = InstallRelease(ResolveReleaseSource(src.wstring()), rel, root, engines, InstallProgressFn{}, nullptr);
         check(!r.ok && fs::exists(fs::path(EnginesDir(root)) / L"9.7" / L"mine.txt"),
               "install: a foreign folder with the same name is left alone");
         check(ScanInstalledEngines(root).size() == 2, "scan: folders without install.json are ignored");
@@ -246,6 +248,56 @@ bool RunLauncherSelfTest()
         WriteText(fs::path(DownloadsDir(root)) / L"x.zip.1.part", "partial");
         CleanupStaleInstallWork(root);
         check(!HasLeftovers(root) && ScanInstalledEngines(root).size() == 1, "cleanup: removes leftovers only");
+    }
+
+    // 9b. 利用者が選んだ置き場 (ADR-037 D11): 記録した置き場の版も一覧に出る。既定の置き場は動かさない
+    {
+        const std::wstring libRoot = (tmp / L"libroot").wstring();
+        const fs::path picked = tmp / L"picked drive" / L"MyEngine";
+        check(PreferredEnginesDir(libRoot) == EnginesDir(libRoot) && KnownEnginesDirs(libRoot).size() == 1,
+              "dirs: without a record only the default folder is known");
+        const fs::path src = tmp / L"src_picked";
+        const ReleaseInfo rel = PublishLocal(src, "9.9", GoodPackage("9.9"));
+        const InstallOutcome unlisted =
+            InstallRelease(ResolveReleaseSource(src.wstring()), rel, libRoot, picked.wstring(), InstallProgressFn{}, nullptr);
+        check(unlisted.ok && fs::path(unlisted.installDir) == picked / L"9.9" && ScanInstalledEngines(libRoot).empty(),
+              "dirs: a version in a folder that is not recorded is not listed");
+        check(RememberEnginesDir(libRoot, picked.wstring())
+                  && ScanInstalledEngines(libRoot).size() == 1
+                  && SameEnginesDir(PreferredEnginesDir(libRoot), picked.wstring()),
+              "dirs: a recorded folder is listed and becomes the next default");
+        // 大文字小文字・末尾の区切りの違いは同じ置き場
+        std::wstring variant = picked.wstring() + L"\\";
+        for (wchar_t& c : variant) {
+            c = static_cast<wchar_t>(towupper(c));
+        }
+        check(RememberEnginesDir(libRoot, variant) && KnownEnginesDirs(libRoot).size() == 2
+                  && ScanInstalledEngines(libRoot).size() == 1,
+              "dirs: the same folder written differently is recorded once");
+        // 既定の置き場を選び直すと前回は既定に戻るが、記録した置き場の版は一覧に残る
+        const ReleaseInfo rel2 = PublishLocal(tmp / L"src_default", "9.10", GoodPackage("9.10"));
+        check(RememberEnginesDir(libRoot, EnginesDir(libRoot))
+                  && InstallRelease(ResolveReleaseSource((tmp / L"src_default").wstring()), rel2, libRoot,
+                                    PreferredEnginesDir(libRoot), InstallProgressFn{}, nullptr).ok,
+              "dirs: the default folder can be chosen again");
+        const std::vector<InstalledEngine> both = ScanInstalledEngines(libRoot);
+        check(both.size() == 2 && both[0].version.text == "9.10" && both[1].version.text == "9.9"
+                  && KnownEnginesDirs(libRoot).size() == 2,
+              "dirs: versions from every recorded folder are listed newest first");
+        check(IsInsideInstalledEngine((fs::path(unlisted.installDir) / L"bin").wstring())
+                  && !IsInsideInstalledEngine(picked.wstring()),
+              "dirs: a folder inside an installed version is detected");
+        // 選んだ置き場は利用者の他の物と同居する: 片付けは <版>.staging-<pid> の形だけを消す
+        fs::create_directories(picked / L"9.11.staging-42");
+        fs::create_directories(picked / L"notes.staging-old");
+        fs::create_directories(picked / L"9.11.deleting-draft");
+        CleanupStaleInstallWork(libRoot);
+        check(!fs::exists(picked / L"9.11.staging-42") && fs::exists(picked / L"notes.staging-old")
+                  && fs::exists(picked / L"9.11.deleting-draft") && ScanInstalledEngines(libRoot).size() == 2,
+              "cleanup: in a chosen folder only Launcher leftovers are removed");
+        const InstallOutcome removed = UninstallEngine(unlisted.installDir, InstallProgressFn{});
+        check(removed.ok && !fs::exists(unlisted.installDir) && fs::exists(picked / L"notes.staging-old"),
+              "uninstall: works in a chosen folder");
     }
 
     // 10. Launcher 自身: 置かれた場所の記録・新しい版の取得と入れ替え (スタートメニューは触らない)

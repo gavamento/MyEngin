@@ -16,6 +16,7 @@ namespace mye {
 //   <root>\Engine\<版>.staging-*  展開中 / <版>.deleting-* 削除中
 //   <root>\Launcher\MyEngineLauncher.exe
 //   <root>\Downloads\*.part
+//   <root>\engine_dirs.json       利用者が選んだ版の置き場 (D11)。<選んだフォルダ>\<版>\ も <root>\Engine と同じ形
 // <root> は %LOCALAPPDATA%\MyEngine。検証では MYE_INSTALL_ROOT で差し替える
 constexpr const wchar_t* kInstallRootEnv = L"MYE_INSTALL_ROOT";
 constexpr const wchar_t* kInstallMarkerFile = L"install.json";
@@ -48,8 +49,23 @@ struct InstalledEngine
     std::wstring dir;
     InstallMarker marker;
 };
-// install.json があり、フォルダ名と印の版が一致するものだけ。新しい順
+// 版の置き場 (<版>\ を並べるフォルダ) の一覧。先頭は既定の <root>\Engine、続いて engine_dirs.json に記録した順。
+// 同じフォルダ (大文字小文字・末尾の区切りの違い) は 1 つにまとめる
+std::vector<std::wstring> KnownEnginesDirs(const std::wstring& root);
+// 前回インストールに使った置き場。記録が無ければ <root>\Engine
+std::wstring PreferredEnginesDir(const std::wstring& root);
+// dir を置き場の一覧に加え、前回の置き場にする。一覧に無い置き場の版は Launcher から見えなくなるので、
+// インストールを始める前に呼び、失敗したらインストールしない
+bool RememberEnginesDir(const std::wstring& root, const std::wstring& dir);
+bool SameEnginesDir(const std::wstring& a, const std::wstring& b);
+
+// KnownEnginesDirs のすべてを走査する。install.json があり、フォルダ名と印の版が一致するものだけ。新しい順
 std::vector<InstalledEngine> ScanInstalledEngines(const std::wstring& root);
+// path か、その祖先が配布版のフォルダ (install.json がある) なら true。版の中へ版を入れないために使う
+bool IsInsideInstalledEngine(const std::wstring& path);
+// <版>.staging-<pid> / <版>.deleting-<pid> の形の名前か。利用者が選んだフォルダには他の物もあるので、
+// 片付けはこの形に一致するものだけを対象にする
+bool IsInstallWorkFolderName(const std::wstring& name);
 
 // Launcher が最後に動いた場所 (<root>\launcher_location.json)。エディタの「更新して再起動」が Launcher を探すのに使う。
 // Launcher は自分を勝手に複製しない (自分を写して居座る動きは振る舞い検知に疑われる、ADR-037 D7) ので、

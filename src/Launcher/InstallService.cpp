@@ -60,7 +60,8 @@ bool IsInternetAsset(const ReleaseAsset& asset)
 } // namespace
 
 InstallOutcome InstallRelease(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root,
-                              const InstallProgressFn& progress, const std::atomic<bool>* cancel)
+                              const std::wstring& enginesDir, const InstallProgressFn& progress,
+                              const std::atomic<bool>* cancel)
 {
     InstallOutcome out;
     out.version = release.version.text;
@@ -68,7 +69,7 @@ InstallOutcome InstallRelease(const ReleaseSource& source, const ReleaseInfo& re
         out.error = "the release has no valid version tag";
         return out;
     }
-    const fs::path engines(EnginesDir(root));
+    const fs::path engines(enginesDir);
     const fs::path target = engines / Utf8ToWide(release.version.text);
     out.installDir = target.wstring();
     std::error_code ec;
@@ -104,6 +105,11 @@ InstallOutcome InstallRelease(const ReleaseSource& source, const ReleaseInfo& re
 
     fs::create_directories(DownloadsDir(root), ec);
     fs::create_directories(engines, ec);
+    if (!fs::is_directory(engines, ec)) {
+        // 書き込めない場所 (Program Files など) を選んだときは、大きな zip を落とす前に止める
+        out.error = "cannot create the folder: " + WideToUtf8(engines.wstring());
+        return out;
+    }
     const fs::path part = fs::path(DownloadsDir(root)) / (Utf8ToWide(zipAsset->name) + L"." + PidSuffix() + L".part");
     const fs::path staging = engines / (Utf8ToWide(release.version.text) + kStagingInfix + PidSuffix());
     // ここから先はどこで抜けても書きかけを消す
@@ -226,13 +232,16 @@ InstallOutcome UninstallEngine(const std::wstring& installDir, const InstallProg
 void CleanupStaleInstallWork(const std::wstring& root)
 {
     std::error_code ec;
-    for (fs::directory_iterator it(EnginesDir(root), ec), end; !ec && it != end; it.increment(ec)) {
-        const std::wstring name = it->path().filename().wstring();
-        if (name.find(kStagingInfix) != std::wstring::npos || name.find(kDeletingInfix) != std::wstring::npos) {
-            std::error_code removeEc;
-            fs::remove_all(it->path(), removeEc);
-            MYE_LOG_INFO("launcher: removed leftover %s", WideToUtf8(name).c_str());
+    for (const std::wstring& enginesDir : KnownEnginesDirs(root)) {
+        for (fs::directory_iterator it(enginesDir, ec), end; !ec && it != end; it.increment(ec)) {
+            const std::wstring name = it->path().filename().wstring();
+            if (it->is_directory(ec) && IsInstallWorkFolderName(name)) {
+                std::error_code removeEc;
+                fs::remove_all(it->path(), removeEc);
+                MYE_LOG_INFO("launcher: removed leftover %s", WideToUtf8(it->path().wstring()).c_str());
+            }
         }
+        ec.clear();
     }
     for (fs::directory_iterator it(DownloadsDir(root), ec), end; !ec && it != end; it.increment(ec)) {
         if (it->path().extension() == L".part") {
@@ -335,11 +344,12 @@ void LauncherJob::StartCheck(const ReleaseSource& source, bool includePrerelease
     });
 }
 
-void LauncherJob::StartInstall(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root)
+void LauncherJob::StartInstall(const ReleaseSource& source, const ReleaseInfo& release, const std::wstring& root,
+                               const std::wstring& enginesDir)
 {
-    Launch(Kind::Install, [this, source, release, root] {
+    Launch(Kind::Install, [this, source, release, root, enginesDir] {
         InstallOutcome r = InstallRelease(
-            source, release, root,
+            source, release, root, enginesDir,
             [this](InstallStage stage, uint64_t done, uint64_t total) { SetProgress(stage, done, total); }, &cancel_);
         std::lock_guard<std::mutex> lock(mutex_);
         install_ = std::move(r);
