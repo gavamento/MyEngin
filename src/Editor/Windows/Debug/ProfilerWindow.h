@@ -54,7 +54,8 @@ private:
     void DrawRender(EngineContext& ctx);
     void DrawSystems(EngineContext& ctx);
     void DrawHistory(EditorSettings& settings);
-    void DrawMemory(const EditorSettings& settings);
+    void DrawMemory(EngineContext& ctx, const EditorSettings& settings);
+    void DrawGpuMemory(EngineContext& ctx); // メモリタブの下段
     // 累計カウンタの前フレームとの差を取り、フレームあたりの確保として積む (毎フレーム 1 回)
     void UpdateMemoryHistory();
     void CheckBudgets(const EditorSettings& settings, ToastCenter& toasts);

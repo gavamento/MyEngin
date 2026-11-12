@@ -249,7 +249,7 @@ void ProfilerWindow::OnImGui(EngineContext& ctx, EditorSettings& settings, Toast
                 case kTabCpu: DrawCpu(ctx, settings, selection); break;
                 case kTabGpu: DrawGpu(settings); break;
                 case kTabRender: DrawRender(ctx); break;
-                case kTabMemory: DrawMemory(settings); break;
+                case kTabMemory: DrawMemory(ctx, settings); break;
                 case kTabSystems: DrawSystems(ctx); break;
                 default: DrawHistory(settings); break;
                 }

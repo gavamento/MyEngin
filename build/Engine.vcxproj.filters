@@ -1224,6 +1224,12 @@
     <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.cpp">
       <Filter>Renderer\Compute</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Device\GpuMemorySelfTest.cpp">
+      <Filter>Renderer\Device</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Device\GpuMemoryTracker.cpp">
+      <Filter>Renderer\Device</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Device\GpuResources.cpp">
       <Filter>Renderer\Device</Filter>
     </ClCompile>
@@ -2437,6 +2443,15 @@
       <Filter>Renderer\Compute</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Device\GpuBufferUtil.h">
+      <Filter>Renderer\Device</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuMemorySelfTest.h">
+      <Filter>Renderer\Device</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuMemoryStats.h">
+      <Filter>Renderer\Device</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuMemoryTracker.h">
       <Filter>Renderer\Device</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Device\GpuResources.h">

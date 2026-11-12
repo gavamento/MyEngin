@@ -4,6 +4,8 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include "Engine/Renderer/Device/GpuMemoryTracker.h"
+
 // GPU バッファ生成の共通ヘルパ (M46a)。GpuParticleBackend / PostProcess / DeferredPath が使う。
 // D3D11 の素の呼び出しを畳むだけの薄い層で、状態は持たない (ヘッダオンリー)。
 namespace mye::gpubuf {
@@ -26,6 +28,7 @@ inline bool CreateStructured(ID3D11Device* dev, UINT elemSize, UINT count, const
     if (FAILED(dev->CreateBuffer(&bd, initData ? &init : nullptr, buf.GetAddressOf()))) {
         return false;
     }
+    gpumem::TrackBuffer(buf.Get(), gpumem::Kind::Buffer, "structured buffer");
     if (uav) {
         D3D11_UNORDERED_ACCESS_VIEW_DESC ud = {};
         ud.Format = DXGI_FORMAT_UNKNOWN;
@@ -56,7 +59,11 @@ inline bool CreateConstant(ID3D11Device* dev, UINT size, Microsoft::WRL::ComPtr<
     bd.Usage = D3D11_USAGE_DYNAMIC;
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    return SUCCEEDED(dev->CreateBuffer(&bd, nullptr, out.GetAddressOf()));
+    if (FAILED(dev->CreateBuffer(&bd, nullptr, out.GetAddressOf()))) {
+        return false;
+    }
+    gpumem::TrackBuffer(out.Get(), gpumem::Kind::Buffer, "constant buffer");
+    return true;
 }
 
 // 定数バッファへの全書き換え (WRITE_DISCARD)。Map 失敗時は前の内容が残る

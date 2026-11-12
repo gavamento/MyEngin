@@ -1,5 +1,9 @@
 #include "Engine/Renderer/Device/VolumeTexture.h"
 
+#include <cstdio>
+
+#include "Engine/Renderer/Device/GpuMemoryTracker.h"
+
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -72,6 +76,12 @@ bool VolumeTexture::Create(GraphicsDevice& device, int width, int height, int de
                       depth, static_cast<int>(format));
         Release();
         return false;
+    }
+
+    {
+        char trackedName[gpumem::kNameLength];
+        std::snprintf(trackedName, sizeof(trackedName), "volume %dx%dx%d", width, height, depth);
+        gpumem::TrackTexture3D(tex_.Get(), gpumem::Kind::Volume, trackedName);
     }
 
     // SRV: 明示的に TEXTURE3D で作る (null desc でも同じになるが、2D と読み違えないよう明示)

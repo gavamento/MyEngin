@@ -346,6 +346,8 @@
     <ClCompile Include="..\src\Engine\Renderer\Compute\FxGpuBackend.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Device\GpuMemorySelfTest.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Device\GpuMemoryTracker.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\GpuResources.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\GpuTimer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\GraphicsDevice.cpp" />
@@ -751,6 +753,9 @@
     <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunner.h" />
     <ClInclude Include="..\src\Engine\Renderer\Compute\ProjectComputeRunnerSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\GpuBufferUtil.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuMemorySelfTest.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuMemoryStats.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Device\GpuMemoryTracker.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\GpuResources.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\GpuTimer.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\GraphicsDevice.h" />

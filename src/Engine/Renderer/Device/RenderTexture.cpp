@@ -1,5 +1,9 @@
 #include "Engine/Renderer/Device/RenderTexture.h"
 
+#include <cstdio>
+
+#include "Engine/Renderer/Device/GpuMemoryTracker.h"
+
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Renderer/Device/GraphicsDevice.h"
 
@@ -78,6 +82,14 @@ bool RenderTexture::Create(GraphicsDevice& device, int width, int height, DXGI_F
             Release();
             return false;
         }
+    }
+
+    char trackedName[gpumem::kNameLength];
+    std::snprintf(trackedName, sizeof(trackedName), "render target %dx%d", width, height);
+    gpumem::TrackTexture2D(color_.Get(), gpumem::Kind::RenderTarget, trackedName);
+    if (withDepth) {
+        std::snprintf(trackedName, sizeof(trackedName), "depth %dx%d", width, height);
+        gpumem::TrackTexture2D(depth_.Get(), gpumem::Kind::RenderTarget, trackedName);
     }
 
     width_ = width;

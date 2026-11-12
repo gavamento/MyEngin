@@ -1,4 +1,5 @@
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Device/GpuMemoryTracker.h"
 
 #include <algorithm>
 #include <chrono>
@@ -217,6 +218,9 @@ AssetID MeshLibrary::Register(std::string_view name, std::span<const MeshVertex>
                           name.data());
             return {};
         }
+        const std::string trackedName(name);
+        gpumem::Rename(mesh.vb.Get(), (trackedName + " (vertices)").c_str());
+        gpumem::Rename(mesh.ib.Get(), (trackedName + " (indices)").c_str());
     }
     mesh.indexCount = static_cast<uint32_t>(indices.size());
     if (!lodLevels.empty()) {
@@ -315,8 +319,13 @@ bool MeshLibrary::UploadBuffers(Mesh& mesh, std::span<const MeshVertex> vertices
     D3D11_SUBRESOURCE_DATA iinit = { indices.data(), 0, 0 };
 
     ID3D11Device* dev = device_->Device();
-    return SUCCEEDED(dev->CreateBuffer(&vbd, &vinit, mesh.vb.ReleaseAndGetAddressOf()))
-        && SUCCEEDED(dev->CreateBuffer(&ibd, &iinit, mesh.ib.ReleaseAndGetAddressOf()));
+    if (FAILED(dev->CreateBuffer(&vbd, &vinit, mesh.vb.ReleaseAndGetAddressOf()))
+        || FAILED(dev->CreateBuffer(&ibd, &iinit, mesh.ib.ReleaseAndGetAddressOf()))) {
+        return false;
+    }
+    gpumem::TrackBuffer(mesh.vb.Get(), gpumem::Kind::Mesh, "mesh vertices");
+    gpumem::TrackBuffer(mesh.ib.Get(), gpumem::Kind::Mesh, "mesh indices");
+    return true;
 }
 
 void MeshLibrary::ReleaseGpu()
@@ -700,6 +709,12 @@ bool TextureLibrary::CreateFromPixels(Texture& out, const uint8_t* rgba, int w, 
     if (mips) {
         device_->Context()->GenerateMips(out.srv.Get());
     }
+    {
+        // 名前は呼び出し側 (ファイル読み込みなど) が Rename で付け直す
+        char trackedName[gpumem::kNameLength];
+        std::snprintf(trackedName, sizeof(trackedName), "texture %dx%d", w, h);
+        gpumem::TrackTexture2D(out.tex.Get(), gpumem::Kind::Texture, trackedName);
+    }
     out.width = w;
     out.height = h;
     out.srgb = srgb;
@@ -733,6 +748,7 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
     if (!LoadFileInto(t, path, effSrgb, mips)) {
         return {};
     }
+    gpumem::Rename(t.tex.Get(), WideToUtf8(path).c_str());
     textures_.emplace(id.value, std::move(t));
     names_[id.value] = WideToUtf8(path);
     SetFileRecipe(recipes_[id.value], path, effSrgb, mips);
@@ -902,6 +918,7 @@ bool TextureLibrary::LoadDdsInto(Texture& out, const std::wstring& path, bool sr
                                              out.srv.ReleaseAndGetAddressOf()))) {
         return false;
     }
+    gpumem::TrackTexture2D(out.tex.Get(), gpumem::Kind::Texture, WideToUtf8(path).c_str());
     out.width = static_cast<int>(hdr.width);
     out.height = static_cast<int>(hdr.height);
     out.srgb = srgb;
@@ -1029,6 +1046,9 @@ void TextureLibrary::PollAsyncLoads()
         Texture t;
         if (CreateFromPixels(t, r.pixels.data(), r.w, r.h, imp.srgb == 1,
                              imp.generateMips != 0)) {
+            if (nameIt != names_.end()) {
+                gpumem::Rename(t.tex.Get(), nameIt->second.c_str());
+            }
             textures_[r.id] = std::move(t); // プレースホルダを実体に差し替え
             // 復旧で作り直せるようにする
             SetFileRecipe(recipes_[r.id], path, imp.srgb == 1, imp.generateMips != 0);

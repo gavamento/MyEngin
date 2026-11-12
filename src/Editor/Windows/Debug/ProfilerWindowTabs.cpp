@@ -14,6 +14,7 @@
 #include "Engine/Engine/Particles/ParticleSystem.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Renderer/Device/GpuMemoryStats.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
 #include "Engine/Renderer/Pipeline/RenderPath.h"
 
@@ -619,7 +620,7 @@ void ProfilerWindow::DrawItems(EngineContext& ctx, EditorSettings& settings, Sel
     ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_ItemsNotCovered));
 }
 
-void ProfilerWindow::DrawMemory(const EditorSettings& settings)
+void ProfilerWindow::DrawMemory(EngineContext& ctx, const EditorSettings& settings)
 {
     const StrId tagLabels[prof::kMemTagCount] = { StrId::Prof_MemTagGeneral, StrId::Prof_MemTagAsset,
                                                   StrId::Prof_MemTagTick,    StrId::Prof_MemTagPhysics,
@@ -706,6 +707,86 @@ void ProfilerWindow::DrawMemory(const EditorSettings& settings)
         profui::ValueRowInt(Tr(StrId::Prof_RowMemAllocs), static_cast<long long>(mem.totalAllocs));
         profui::ValueRowInt(Tr(StrId::Prof_RowMemFrees), static_cast<long long>(mem.totalFrees));
         profui::EndValueTable();
+    }
+    DrawGpuMemory(ctx);
+}
+
+void ProfilerWindow::DrawGpuMemory(EngineContext& ctx)
+{
+    const StrId kindLabels[gpumem::kKindCount] = { StrId::Prof_GpuKindTexture, StrId::Prof_GpuKindRenderTarget,
+                                                   StrId::Prof_GpuKindBuffer, StrId::Prof_GpuKindMesh,
+                                                   StrId::Prof_GpuKindVolume };
+    const gpumem::Totals totals = gpumem::GetTotals();
+    uint64_t trackedBytes = 0;
+    uint32_t trackedCount = 0;
+    for (int kind = 0; kind < gpumem::kKindCount; ++kind) {
+        trackedBytes += totals.bytes[kind];
+        trackedCount += totals.count[kind];
+    }
+
+    ImGui::SeparatorText(Tr(StrId::Prof_SecGpuMemory));
+    if (ImGui::BeginTable("##ProfGpuMem", 3, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 3.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCount), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColSize), ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableHeadersRow();
+        auto row = [](const char* label, bool dim, bool showCount, uint32_t count, double bytes) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            if (dim) {
+                ImGui::TextColored(themeColor::TextDim, "%s", label);
+            } else {
+                ImGui::TextUnformatted(label);
+            }
+            if (showCount) {
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%u", count);
+            }
+            ImGui::TableSetColumnIndex(2);
+            profui::BytesText(bytes);
+        };
+        for (int kind = 0; kind < gpumem::kKindCount; ++kind) {
+            row(Tr(kindLabels[kind]), false, true, totals.count[kind], static_cast<double>(totals.bytes[kind]));
+        }
+        row(Tr(StrId::Prof_GpuMemTracked), true, true, trackedCount, static_cast<double>(trackedBytes));
+        // プロセス全体との差 = 追跡口を通っていないリソースと、ドライバの内部確保
+        if (ctx.device) {
+            const gpumem::VideoMemory video = gpumem::QueryVideoMemory(*ctx.device);
+            if (video.valid) {
+                row(Tr(StrId::Prof_GpuMemProcess), true, false, 0, static_cast<double>(video.usageBytes));
+                if (video.usageBytes > trackedBytes) {
+                    row(Tr(StrId::Prof_GpuMemUntracked), true, false, 0,
+                        static_cast<double>(video.usageBytes - trackedBytes));
+                }
+                row(Tr(StrId::Prof_GpuMemBudget), true, false, 0, static_cast<double>(video.budgetBytes));
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Prof_GpuMemNote));
+
+    constexpr int kLargestRows = 24;
+    gpumem::Entry largest[kLargestRows];
+    const int largestCount = gpumem::CopyLargest(largest, kLargestRows);
+    ImGui::SeparatorText(Tr(StrId::Prof_GpuMemLargest));
+    if (ImGui::BeginTable("##ProfGpuMemLargest", 3, profui::kTableFlags)) {
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColName), ImGuiTableColumnFlags_WidthStretch, 4.0f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColCategory), ImGuiTableColumnFlags_WidthStretch, 1.5f);
+        ImGui::TableSetupColumn(Tr(StrId::Prof_ColSize), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < largestCount; ++i) {
+            if (!PassesFilter(largest[i].name)) {
+                continue;
+            }
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(largest[i].name);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextColored(themeColor::TextDim, "%s", Tr(kindLabels[static_cast<int>(largest[i].kind)]));
+            ImGui::TableSetColumnIndex(2);
+            profui::BytesText(static_cast<double>(largest[i].bytes));
+        }
+        ImGui::EndTable();
     }
 }
 

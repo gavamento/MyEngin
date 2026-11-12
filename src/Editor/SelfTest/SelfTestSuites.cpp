@@ -38,6 +38,7 @@
 #include "Engine/Core/Ecs/EcsSelfTest.h"
 #include "Engine/Core/Jobs/JobSystemSelfTest.h"
 #include "Engine/Core/Localization/LocalizationSelfTest.h"
+#include "Engine/Renderer/Device/GpuMemorySelfTest.h"
 #include "Engine/Engine/Feel/FeelLibrarySelfTest.h"
 #include "Engine/Engine/Feel/FeelMathSelfTest.h"
 #include "Engine/Engine/Feel/FeelSystemSelfTest.h"
@@ -158,6 +159,7 @@ const SelfTestSuite kSuites[] = {
     { "rt", mye::RunRtSelfTest, SelfTestTier::Fast, "" },
     { "localization", mye::RunLocalizationSelfTest, SelfTestTier::Fast, "" },
     { "profiler", mye::RunProfilerSelfTest, SelfTestTier::Fast, "M102: スコープの順序と合算、フレーム履歴" },
+    { "gpumemory", mye::RunGpuMemorySelfTest, SelfTestTier::Fast, "M102: テクスチャのバイト数の見積もり" },
     { "skeleton", mye::RunSkeletonSelfTest, SelfTestTier::Fast, "" },
     { "part", mye::RunPartSelfTest, SelfTestTier::Fast, "" },
     { "schema", mye::RunSchemaSelfTest, SelfTestTier::Fast, "" },
