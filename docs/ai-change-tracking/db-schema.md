@@ -259,6 +259,23 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 | `coverage_gap` | `reason`、`from_at`、`to_at`、`scope` |
 | `client_hello` | pipe の `hello` を通った接続の証跡 (M104f): `role`、`pid` (pipe から得た値)、`claimedPid` (申告)、`processStartedAt` (PID のプロセスの開始時刻)。派生の表には反映しない |
 
+セッションと操作の op (M104g) も `Store::record_event` を通し、`sessions` / `operations` / `attribution_evidence` と `change_revisions` の `actor` / `attribution` / `operation_id` は、このイベントから導ける派生の表になる。通常の記録も `rebuild_derived` も `Deriver` (`revision.rs`) → `session::apply_event` を通る。イベントに無い情報を派生の表だけに書かない。
+
+| kind | payload |
+|---|---|
+| `session_begin` | `session_id`、`provider`、`source`、`client_session_id`、`workspace` (正規化した絶対パス)、`workspace_rel` (ルートからの相対。ルートなら空)、`base_commit`、`process_id` / `process_start` (`mcp` の接続だけ。pipe から得た値)、`isolated`、`worktree_eligible` (申告 + リンクされた作業ツリー + Editor 不在。開始時に決まる 3 条件)、`capabilities` |
+| `session_resumed` | `session_id`、`process_id` / `process_start` (`mcp` の再接続で更新) |
+| `session_end` | `session_id` |
+| `session_interrupted` | `session_id`、`reason` (`process_exited` / `idle` / `startup`) |
+| `op_begin` | `operation_id`、`session_id`、`operation_type`、`targets[]` = `{path, hash}` (`op_begin` で取ったハッシュ。無ければ null)、`client_op_id`、`declared_edit` = `{blob_hash, size}` または null (編集の中身は Blob)、`declared_after_hash`、`declared_path`、`begin_flushed` |
+| `op_end` | `operation_id`、`result` (`ok` / `failed`) |
+| `op_abandoned` | `operation_id`、`reason` (`timeout` / `startup`) |
+| `reported` | `operation_id` (申告そのものの ID。`operation_type = report` の操作になる)、`session_id`、`linked_operation_id`、`paths[]` = `{path, before_hash, after_hash}` |
+
+- `observed` の `source` に、管理された操作の読み取りとして `managed_begin` (`op_begin` の前に未記録の変更を確定する) と `managed` (`op_end` / `report` の即時の読み取り) が加わる。どちらも `completeness` は `gap` にならない。
+- 派生の表の JSON 列 (列は v1 のまま): `sessions.coverage` = `{startedAt, journalPos (session_begin のジャーナルの位置)、lastActivityAt、isolated、worktreeEligible、workspaceRel、capabilities}`。`operations.reported_targets` = `{targets[], clientOpId, declaredAfterHash, declaredPath, beginFlushed}` (操作)、または `{report: {paths[]}, linkedOperationId}` (`report`)。`operations.observed_targets` は操作に結び付いた Revision の `{path, afterHash}`。`operations.declared_edit` が指す `snapshots` は `kind = declared_edit`。
+- 時刻は、記録した時刻ではなくイベントの時刻 `at` を使う (作り直しで同じ値になる)。根拠の `recorded_at` も `at`。
+
 - 除外パターンのファイルは `hash` を null にする (ハッシュも残さない)。`excluded: true`。
 - `window` は、近い時刻 (デバウンスの幅以内) に届いたイベントのパスを結ぶ印。別ディレクトリへの移動は削除と作成のイベントで、同じ `window` に入る。`window` が同じで内容ハッシュも同じ削除と作成は、記録する前に 1 件の `change_type = renamed` (`old_path` 付き) にまとめる (M104e。規則は [architecture.md](architecture.md) §5)。まとめた後の 1 件だけが `observed` に入る。
 - `before` は「最後に確認できた内容」で、無ければ null (新規、または `no_before`)。
@@ -267,14 +284,14 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 0. (起動の最初) `blobs\` の下の書きかけの一時ファイル (`.tmp-*`) を消す。自分が書いたもので、どこからも指されない。サービスは 1 つだけ動く前提なので、起動時なら安全。
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
-   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed`) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
+   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed` とセッション・操作のイベント) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` と、`sessions` / `operations` / `attribution_evidence` (M104g) を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
    退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。
 3. (前段) 前回の最後のイベントの 10 分前から後に書かれた Blob を読み、ハッシュが名前と違えば消す (§4)。続けて、`snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする (前段で消したものを含む)。
 4. どの `snapshots` からも指されていない Blob を数える。消すのは §7 の回収のときだけで、起動時には消さない。
 5. `sessions.status = running` のまま残っている行を、プロセスの生死 (PID と開始時刻) で確かめ、居なければ `interrupted` にする。
    PID が記録されていない行も `interrupted` にする (生死を確かめられない)。プロセスの同一性は PID と開始時刻 (誤差 2 秒) の組。
-6. `operations.finished_at` が NULL のまま残っている行を `abandoned` にする (`result = abandoned`。実際の終了時刻は分からないので `finished_at` は NULL のまま)。
+6. `operations.finished_at` が NULL のまま残っている行を `abandoned` にする (`result = abandoned`。M104g から、5 と 6 は表を直接書き換えず `session_interrupted` / `op_abandoned` のイベントにして反映する。`finished_at` は整理した時刻)。
 7. 前回の `service_stop` (無ければ最後のイベント) から今までを `coverage_gaps` に `service_down` で足し、ベースラインを取り直す。
 
 どの段で失敗しても、サービスは「記録できない状態」で pipe には答え続ける。Editor の起動は待たせない。3〜6 で失敗した段と理由は `status` の `db.failedSteps` に出る ([ipc-contract.md](ipc-contract.md) §9.4)。

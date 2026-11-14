@@ -66,6 +66,9 @@ git の差分では AI 以前の未コミット変更が混ざり、シーンは
 | D32 | ipc §4.2 の `op_end` は `operationId` を取るが、フックは pre と post が別のプロセスで、pre が受け取った `operationId` を post へ渡す場所が無い | 公式文書 (D14): pre / post の両方に `session_id` と `tool_use_id` が入る | — | `op_begin` が `clientOpId` を受け、`op_end` は `clientSessionId` + `clientOpId` でも引ける。`session_begin` は同じ `clientSessionId` なら既存を返す。却下: フックが一時ファイルに `operationId` を書いて渡す (フックがファイルを書くことになり、後始末と競合が増える) |
 | D33 | attr §6.2 の `worktree` は「その `workspace` を登録しているセッションが 1 つだけ」で Verified にする。`workspace` がプロジェクトのルート (普通の使い方) だと、人の編集まで Verified になる | 要求 §4.3「申告だけで Verified にしない」「隔離された作業領域を照合できたら Verified」 | 未確認 | 4 条件を全部満たすときだけ `worktree` を付ける: `isolated` の申告、プロジェクトルートが git のリンクされた作業ツリー (`.git` がファイル)、その `workspace` の running のセッションが 1 つ、Editor の接続が無い。却下: (a) attr §6.2 のまま (誤って確定する) (b) `worktree` を作らず Claimed を上限にする (要求 §4.3 の「隔離された作業領域」を満たす手段が無くなる) |
 
+| D34 | `notify` の読み取りバッファは 16 KiB 固定で、2500 ファイルの作成でも、読む側が CPU を取れないとあふれて黙って失う | sub-06 round 2 の調査: `notify-8.2.2\src\windows.rs` の `BUF_SIZE = 16384`。CPU 負荷の下で、sub-05 の版でも再現。落ちた回は連番の 54〜130 件が届かず、処理待ちは 0 | 未確認 | (1) sub-06 の受け入れ条件 19 は、試験の前提が誤りだったので書き直す (取りこぼしが起きても起きなくても通る形 + 決定的な別の試験)。(2) 取りこぼしを減らす手は新しい sub-22 で行う。先に安い手 = **無視するディレクトリ (`bin` / `obj` / `target` / `cache` / `.git` など) を監視の対象から外し、ビルドの出力の洪水が追跡対象と同じバッファを取り合わないようにする** (最上位と、既知の入れ子)。それで足りなければ自前の `ReadDirectoryChangesW` (大きいバッファ + あふれの検出)。却下: (a) 今すぐ自前の監視へ置き換える (coder の試作 3 版が別の欠陥で未完。先に安い手を測る) (b) 何もしない (フックの無いクライアントの変更が、ビルドと重なると `gap` / Unknown に落ち続ける) |
+| D35 | `gap` の Revision を一律に `preexisting` → `unknown` にすると、監視の取りこぼしを検証の走査が先に拾った場合、宣言と一致した AI の変更まで Unknown になる | sub-06 round 2 の報告。attr §4 の「止まっていた間は見ていない」は、サービスが止まっていた区間の話 | 未確認 | 起動時の `gap` は今までどおり `unknown`。動いている間の取りこぼし (`verify_gap`) は、**時刻による根拠を作らず、内容による根拠 (`before_match` + `declared_edit_match`、`report_hash_match`) だけを数える**。内容が宣言と一致していることは、いつ観測したかに依らない。却下: (a) `gap` は全部 `unknown` のまま (正しいが、根拠があるのに捨てる) (b) `verify_gap` を通常の Revision と同じに扱う (`observed_at` が走査の時刻なので、時刻の窓や `time_near` が誤って当たる) |
+
 ## 3. スコープ
 
 - やる: 計画の進捗表 M104b〜M104t (Phase 0 の試作 〜 Phase 6)。順序は要求 §19 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較)。最後に、エンジン配布物へのサービス同梱 (M104u、D5)。
@@ -146,7 +149,8 @@ harness の sub-NN と計画の M104x は 1 対 1。コミット件名は `M104x
 | sub-04 | M104e | 1 | 行 diff、Hunk、Revision、リネーム | sub-21 | A4 | `M104e: 追跡サービスに行 diff と Revision の確定を足す` |
 | sub-05 | M104f | 1 | pipe サーバ、`hello`、取得の op、`track_verify.bat` | sub-04 | A5、A20 | `M104f: 追跡サービスに名前付きパイプと履歴取得を足す` |
 | sub-06 | M104g | 2 | セッション、操作、帰属 | sub-05 | A6 | `M104g: 追跡サービスにセッションと帰属の判定を足す` |
-| sub-07 | M104h | 2 | MCP の 5 ツール | sub-06 | A7 | `M104h: MCP に変更追跡の道具を 5 つ足す` |
+| sub-22 | M104g2 | 2 | 監視の取りこぼしを減らす (無視するディレクトリを監視から外す) | sub-06 | A3 |
+| sub-07 | M104h | 2 | MCP の 5 ツール | sub-22 | A7 | `M104h: MCP に変更追跡の道具を 5 つ足す` |
 | sub-08 | M104i | 2 | フック CLI | sub-07 | A8、A20 | `M104i: 追跡サービスにフック CLI を足す` |
 | sub-09 | M104j | 3 | Editor の pipe クライアント、モデル、規則 19 | sub-08 | A9 | `M104j: エディタに追跡サービスのクライアントと規則 19 を足す` |
 | sub-10 | M104k | 3 | AI Changes 窓、Diff 表示部品 | sub-09 | A10 | `M104k: AI Changes 窓と行 diff の表示を足す` |
@@ -210,6 +214,8 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-06 の VERDICT round 3 と見直し): sub-07 を詳細に書き直した (プロジェクトの決め方、依存を足さずに SHA-256 を自前で持つ、`MYE_TRACK_EXE` が設定されていればそれだけを使う、サービスを伴うシナリオは `track_verify` 側、受け入れ条件 14 件)。sub-22 は変更なしで着手可。
+- 2026-11-15 (planner、sub-06 の VERDICT round 2): D34、D35 を追加。sub-06 の受け入れ条件 19 を書き直し (試験の前提が誤りだった)、21 (`verify_gap` の帰属) を足した。sub-06 と sub-07 の間に **sub-22 (M104g2)** を足し、sub-07 の依存を sub-22 にした。
 - 2026-11-15 (planner、sub-05 の VERDICT round 1 と Phase 2 の見直し): D30〜D33 を追加。sub-06 を詳細に書き直した (セッションの基準、管理された操作の即時 flush、`clientOpId`、`worktree` の条件、派生の表の作り直し、受け入れ条件 18 件)。sub-07、sub-08 に Phase 1 の結果と sub-06 の決定を足した。§6.2 に質問の運用の変更 (推奨で進める) を書いた。A1〜A21 は変えていない。
 - 2026-11-15 (planner、sub-04 の VERDICT round 1): sub-05 に、`describe` が `diff_mode` を返すこと、sub-05 のコミット以降は `v1.sql` を変えず移行で足すこと (スキーマの凍結)、db §6 の制限の追記を足した。受け入れ条件は変えていない。
 - 2026-11-15 (planner、sub-21 の VERDICT round 1): sub-21 の結果 (`verify_gap`、`status` の項目、ベースラインの実測 = このリポジトリで約 488 MB・12〜35 秒) を sub-04、sub-05、sub-09 に書き足した。sub-04 に試験の一時ディレクトリの後始末を足した。受け入れ条件とサブの数は変えていない。

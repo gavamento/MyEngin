@@ -108,15 +108,21 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 
 | op | 役割 | 引数 | 結果 |
 |---|---|---|---|
-| `session_begin` | mcp, hook | `provider`, `workspace`, `clientSessionId?`, `source` | `sessionId`, `status`, `trackingCapabilities`, `baseCommit` |
-| `session_end` | mcp, hook | `sessionId` | `status`, `changeCount` |
-| `op_begin` | mcp, hook | `sessionId`, `operationType`, `targets`: パスの配列, `declaredEdit?` | `operationId`, 各パスの現在のハッシュ |
-| `op_end` | mcp, hook | `sessionId`, `operationId`, `result` | 結び付いた変更の ID と帰属 |
-| `report` | mcp | `sessionId`, `operationId?`, `paths`, `beforeHashes`, `afterHashes` | 各パスの照合結果 (一致 / 不一致 / 観測なし) と帰属 |
+| `session_begin` | mcp, hook | `provider` (`claude` / `codex` / `gemini` / `other`), `workspace`, `source` (`terminal` / `mcp` / `external`), `clientSessionId?`, `isolated?` | `sessionId`, `status`, `resumed`, `trackingCapabilities`, `baseCommit` |
+| `session_end` | mcp, hook | `sessionId` または `clientSessionId` | `status`, `changeCount` |
+| `op_begin` | mcp, hook | `sessionId` または `clientSessionId`, `operationType` (`edit` / `write` / `delete` / `rename` / `report` / `other`), `targets`: パスの配列, `declaredEdit?`, `clientOpId?` | `operationId`, 各パスの現在のハッシュ (無ければ null) |
+| `op_end` | mcp, hook | `operationId`、または `clientSessionId` + `clientOpId`。`result` (`ok` / `failed`) | 結び付いた Revision の ID と帰属 (`revisions`)、`pending` |
+| `report` | mcp | `sessionId` または `clientSessionId`, `operationId?`, `paths`, `beforeHashes?`, `afterHashes?` | パスごとの照合結果 (`matched` / `mismatch` / `not_observed`) と帰属、`pending` |
 
 - `baseCommit` はサービスが自分で `git rev-parse HEAD` 相当を読んで決める (`.git\HEAD` と参照ファイルを読むだけで、git を起動しない)。git のリポジトリでなければ空。
-- `op_begin` を受けた時点で、サービスは対象パスの内容を Blob に保存する。これが管理された操作の Before になる (仕様書 §5.2)。
-- `declaredEdit` はフックが渡す編集内容 (置換前後の文字列、または書き込む全文)。帰属の Verified 判定に使う ([attribution-rules.md](attribution-rules.md) §3)。
+- `op_begin` を受けた時点で、サービスは対象パスを先に確定する (未記録の変更があれば独立した Revision にする)。その後の内容が管理された操作の Before になる (仕様書 §5.2)。`op_end` と `report` も、監視を待たずに対象パスを自分で読む (全体で 2 秒まで。間に合わなければ `pending: true`。[attribution-rules.md](attribution-rules.md) §6.1)。
+- `declaredEdit` はフックが渡す編集内容。`{"kind":"replace","oldString":..,"newString":..,"replaceAll":bool}` か `{"kind":"write","content":..}`。対象は `targets` の 1 つ目だけ。1 行の上限 (1 MiB) に収まる分だけで、超える宣言はフックの側で送らない。サービスは内容を Blob に入れてハッシュだけを記録する (除外パターンのパスへの宣言は保存しない)。帰属の Verified 判定に使う ([attribution-rules.md](attribution-rules.md) §3)。
+- `workspace` と `targets` / `paths` はサービス側で正規化する。相対パスは `workspace` 基準ではなくプロジェクトルート基準で、絶対パスも受ける。プロジェクトルートの外を指すもの (`..` で出るもの、別のドライブ、UNC、`:` などの使えない文字) は `bad_args`。字面の正規化だけで、シンボリックリンクは辿らない。
+- `sessionId` と `operationId` は OS の乱数から作る UUID v4。`session_begin` は同じ `clientSessionId` の running / interrupted のセッションがあれば、新しく作らずそれを返す (`resumed: true`。interrupted なら running に戻す)。`trackingCapabilities` はこのセッションで出せる根拠の種類。`isolated: true` は専用の作業ツリーの申告で、構造で確かめられたときだけ `worktree` の根拠になる ([attribution-rules.md](attribution-rules.md) §6.2)。
+- `op_end` の結果: `revisions` (操作に結び付いた Revision の `revisionId` / `path` / `completeness` / `actor` / `attribution`)、`otherChanges` (操作の窓に入ったが別の操作・複数候補に結び付いたもの)、`pending`、`alreadyFinished`。フックは pre と post が別のプロセスなので、`operationId` の代わりに `clientSessionId` + `clientOpId` (Claude Code の `tool_use_id`) で引ける。
+- `report` の結果の `results[]` は `path`、`result` (`matched` = ハッシュが Before / After の両方と一致した変更がある、`mismatch` = 変更はあるが一致しない (ハッシュを渡していない場合を含む)、`not_observed` = セッション開始後の変更が無い)、`revisionId`、`actor`、`attribution`。`beforeHashes` / `afterHashes` は `paths` と同じ並びの配列、またはパスをキーにしたオブジェクト。申告だけでは `verified` にならない (要求 §4.3)。
+- 接続の PID と開始時刻: `mcp` の接続は、pipe から得た PID とプロセスの開始時刻をセッションに持つ (申告の値は使わない)。`hook` の接続は短命なので持たない。
+- 記録を伴う op は Writer のキューを通し、あふれていたら `busy`。DB へ書けない状態では `db_degraded`。
 - `report` は MCP の `change_report` の中身。申告と観測を突き合わせた結果を返すので、AI は自分の申告が通ったかどうかを知れる。
 
 ### 4.3 取得
@@ -218,7 +224,7 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 
 起動の順序: mutex → `service.lock` → トークン → pipe の最初の 1 本 → `service.json` → DB を開く → Tracker (ベースラインは別スレッド)。pipe は DB を開く前から繋がるので、クライアントは先に繋げて、応答は受付が始まってから返る。
 
-**終了の合図** (標準入力の EOF では終わらない): pipe の `shutdown`、接続が 0 のまま `--idle-timeout-ms` (既定 10 分。起動からも数える)、Ctrl+C / Ctrl+Break / コンソールを閉じる。どれも `service_stop` (理由は `shutdown_op` / `idle_timeout` / `signal`) を残し、`service.json` を消す。
+**終了の合図** (標準入力の EOF では終わらない): pipe の `shutdown`、接続が 0 のまま `--idle-timeout-ms` (既定 10 分。起動からも数える)。ベースライン・再走査の最中と、running のセッションがある間は数えない (§9.7)、Ctrl+C / Ctrl+Break / コンソールを閉じる。どれも `service_stop` (理由は `shutdown_op` / `idle_timeout` / `signal`) を残し、`service.json` を消す。
 
 ### 9.2 `service.json`
 
@@ -230,15 +236,15 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 - 空行は無視する。行末の CR は取る。JSON として読めない・`id` が正の整数でない・知らない項目がある行は `bad_args` (`id` が読めればそれを返し、読めなければ `null`)。`hello` の前でも同じ (形が読めないので `need_hello` にはならない)。
 - `hello` の検査の順: 形 (`proto` / `role` / `token` / `projectRoot` が要り、`pid` は任意、他は `bad_args`) → 版 (`proto_mismatch`。detail にサービスの版) → 役割 (知らない値は `bad_args`) → トークン (`bad_token`) → プロジェクト (`wrong_project`。`projectId` が合うかだけを見て、DB は開き直さない)。失敗したら応答のあと切る。`hello` より前の要求 (知らない op を含む) は `need_hello` で切る。2 回目の `hello` は `bad_args` (接続は残る)。
 - 成功した `hello` は証跡を `events` に残す (`client_hello`。db-schema.md §5.1)。申告した `pid` と違えば、パイプから得た値を採る。Writer のキューが上限 (1024 件) を超えていたら `busy` で `hello` を断る。
-- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`shutdown`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
+- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`shutdown`、`session_begin`、`session_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
 - 取得の op は読み取り専用の SQLite 接続で引く (WAL なので書き手を止めない。接続ごとに 1 本、最初に必要になったとき開く)。ベースラインの最中も答える。DB へ書けない状態 (`db_degraded`) では `list` / `describe` / `sessions` が `db_degraded` を返し、`status` は答える。
 
 ### 9.4 op の引数と結果 (JSON は camelCase、時刻は UTC ミリ秒)
 
 - `status`: `proto`、`projectId`、`pid`、`startedAt`、`uptimeMs`、`phase` (`starting` / `baselining` / `watching` / `failed` / `stopped`)、`failure`、`trackedFiles`、`baseline` (`firstRun`、`files`、`bytes`、`elapsedMs`、`scanDone`、`scanTotal`、`walkMs` / `readMs` / `hashMs` / `commitMs`)、`verify` (`runs`、`gaps`、`lastScanMs` = 直近の検証の走査の前半だけの所要時間)、`recent.recordUs` (直近に記録した観測 1 件あたりの Writer への往復、マイクロ秒)、`overflows`、`unrecorded` (記録に失敗している区間 `sinceMs` / `reason`、無ければ `null`)、`db` (`state` = `recording` / `db_degraded`、`reason`、`failedSteps` = 起動時の検査 3〜6 で失敗した段と理由、`brokenDb`、`replayedEvents`、`blobsMarkedMissing`、`blobsCorrupted`、`orphanBlobs` ほか)、`blobs` (`count`、`bytes` = 重複を除いた存在する Blob)、`gaps` (`count`、`recent` = 新しい順に 20 件)。
-- `list`: 引数は `path` (完全一致。末尾が `/` なら前方一致。リネーム前のパスにも当たる)、`from` / `to` (`observedAt` の範囲、両端を含む)、`changeType` (`added` / `modified` / `deleted` / `renamed`)、`sessionId`、`review`、`attribution`、`cursor`、`limit` (既定 50、最大 200。超えたら 200 に切る。1 未満は `bad_args`)。新しい Revision から順に返し、`cursor` は直前のページの最後の `revisionId` (それより古いものを返す)。結果は `items`、`nextCursor` (最後なら `null`)、`limit`、`coverage` (`phase`、`baselining`、`baselineScanned` / `baselineTotal`、`unrecorded`。**`baselining` が真の間は、一覧が不完全でありうる**)。1 件は `revisionId`、`changeId`、`seq`、`path`、`oldPath`、`changeType`、`contentKind`、`changeState` (`superseded` の Change も出す)、`observedAt`、`completeness`、`actor`、`attribution`、`diffMode`、`operationId`、`beforeSize`、`afterSize`、`hunkCount`、`review`。Blob と Hunk の本文は入れない。`sessionId` / `review` / `attribution` にデータが入るのは sub-06 以降 (今は帰属が全部 `unknown`、レビューが全部 `pending`)。
-- `describe` (`revisionId`): 一覧の項目に加えて `before` / `after` (`hash`、`size`、`blobState`。無ければ `null`)、`hunks` (`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`eolOnly`、`state`。本文は返さない)、`restorable` (Before の Blob が有る、または新規 = 削除で戻せる。Before を見ていない・Blob が無いものは `false`)。無ければ `not_found`。`diffMode` が `lines` 以外のときは Hunk が無い理由が分かる (db-schema.md §3.2)。
-- `sessions`: 引数は `cursor` (直前のページの最後の `<startedAt>:<sessionId>`)、`limit`。結果は `items` (セッションの一覧。登録は sub-06 から)、`nextCursor`、`limit`。
+- `list`: 引数は `path` (完全一致。末尾が `/` なら前方一致。リネーム前のパスにも当たる)、`from` / `to` (`observedAt` の範囲、両端を含む)、`changeType` (`added` / `modified` / `deleted` / `renamed`)、`sessionId`、`review`、`attribution`、`cursor`、`limit` (既定 50、最大 200。超えたら 200 に切る。1 未満は `bad_args`)。新しい Revision から順に返し、`cursor` は直前のページの最後の `revisionId` (それより古いものを返す)。結果は `items`、`nextCursor` (最後なら `null`)、`limit`、`coverage` (`phase`、`baselining`、`baselineScanned` / `baselineTotal`、`unrecorded`。**`baselining` が真の間は、一覧が不完全でありうる**)。1 件は `revisionId`、`changeId`、`seq`、`path`、`oldPath`、`changeType`、`contentKind`、`changeState` (`superseded` の Change も出す)、`observedAt`、`completeness`、`actor`、`attribution`、`diffMode`、`operationId`、`beforeSize`、`afterSize`、`hunkCount`、`review`。Blob と Hunk の本文は入れない。`sessionId` は、そのセッションが候補に入っている Revision (結論が 1 つの操作に絞れていればその操作、複数候補・操作の無い根拠は根拠のセッション)。`attribution` は M104g から実データ、`review` は全部 `pending` (レビューは後続のサブ)。
+- `describe` (`revisionId`): 一覧の項目に加えて `before` / `after` (`hash`、`size`、`blobState`。無ければ `null`)、`hunks` (`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`eolOnly`、`state`。本文は返さない)、`restorable` (Before の Blob が有る、または新規 = 削除で戻せる。Before を見ていない・Blob が無いものは `false`)、`evidence[]` (`kind`、`sessionId`、`operationId`、`detail`、`recordedAt`。増えるだけ)、`candidateSessions` (根拠から決まる候補のセッション)。無ければ `not_found`。`diffMode` が `lines` 以外のときは Hunk が無い理由が分かる (db-schema.md §3.2)。
+- `sessions`: 引数は `cursor` (直前のページの最後の `<startedAt>:<sessionId>`)、`limit`。結果は `items` (セッションの一覧。`sessionId`、`provider`、`source`、`clientSessionId`、`workspace`、`baseCommit`、`startedAt`、`endedAt`、`status`)、`nextCursor`、`limit`。
 - `shutdown`: 結果は `{}`。応答を返したあと、サービスが止まる。
 
 ### 9.5 クライアント
@@ -252,3 +258,15 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 `tools\track_verify.bat` が `tests\track\*.ndjson` を `mye_track client` 経由でサービスへ流し、`*.expected.ndjson` と比べる (書式と置換、`# write` などのディレクティブは `tools\track_verify.ps1` の冒頭)。`cargo test` の `tests\pipe.rs` は、二重起動 (同じ projectId、ジャンクション経由の別名)、再起動をまたぐ履歴と `gap`、接続 0 の時間切れと `service_stop`、pipe の DACL の読み戻しとリモート形式の拒否、複数接続を、実際に `mye_track.exe serve` を起動して確かめる。
 
 **未確認**: 別のユーザーの接続の拒否 (DACL の読み戻しだけ)、本物のリモートからの接続、Editor・MCP・フックのクライアントとの接続 (後続のサブ)。
+
+### 9.7 セッションと操作の寿命 (M104g)
+
+| 対象 | 変わる条件 | 値 |
+|---|---|---|
+| `mcp` のセッション | 持っている PID + 開始時刻のプロセスが居なくなったら `interrupted` (1 秒ごとの確認)。接続が切れただけでは変えない (MCP は要求ごとに接続する) | — |
+| `hook` のセッション | 最後の活動から無活動で `interrupted`。同じ `clientSessionId` の `session_begin` / `op_begin` / `report` が来たら running に戻る | 30 分 |
+| 操作 | `op_end` が来ないまま打ち切りで `abandoned`。その間に窓へ入った Revision の根拠は残る | 10 分 |
+| 起動時の整理 | 前の起動から残った running のセッション (プロセスの居ないもの、プロセスを持たないもの) を `interrupted`、終わっていない操作を `abandoned` | db-schema.md §6 の 5、6 |
+| サービス | 接続が 0 でも、ベースライン・再走査の最中と、running のセッションがある間は無接続の時間切れで終わらない | — |
+
+どの変化も `events` に残り (`session_interrupted` / `op_abandoned`)、作り直しで同じ状態になる (db-schema.md §5.1)。定数は `tools\track\src\session.rs` の `LifecycleConfig`、窓の猶予と `time_near` の幅は `attribution.rs`。

@@ -1,10 +1,12 @@
-# 役割 hook: list / describe / shutdown は forbidden、知らない op と未実装の op は unknown_op
+# 役割 hook: list / describe / shutdown / report は forbidden、知らない op は unknown_op、session_begin / op_begin は引数の検査 (bad_args)
 {"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
 {"id":2,"op":"list"}
 {"id":3,"op":"describe","args":{"revisionId":1}}
 {"id":4,"op":"shutdown"}
 {"id":5,"op":"nosuchop"}
 {"id":6,"op":"session_begin","args":{}}
+{"id":7,"op":"op_begin","args":{}}
+{"id":8,"op":"report","args":{}}
 # reconnect
 # 役割 mcp: shutdown は forbidden。形の悪い要求は bad_args
 {"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}

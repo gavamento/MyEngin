@@ -22,7 +22,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104d2 | 1 | 完了 | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
 | M104e | 1 | 完了 | 行 diff (Myers)、Hunk、Change / Revision の確定 (`write_revision`)、リネームのまとめ (窓をまたぐ預かり込み)、DB の作り直しの再構成、Diff ワーカー。保存形式は db-schema.md §3.2、規則と上限の実測は architecture.md §5 |
 | M104f | 1 | 実装済み (判定待ち) | pipe サーバ (`mye_track serve`)、`hello`、単一インスタンス (mutex + `service.lock` + pipe 名)、`status` / `list` / `describe` / `sessions` / `shutdown`、`mye_track client`、`tools\build_track.bat`、`tools\track_verify.bat` (シナリオ 11 本)、CI への段の追加 (CI での実走は未確認)。プロトコルは ipc-contract.md §9 |
-| M104g | 2 | 未着手 | セッションと操作の登録、帰属の判定、セッションの基準、複数セッション |
+| M104g | 2 | 実装済み (判定待ち) | `session_begin` / `session_end` / `op_begin` / `op_end` / `report` (pipe。mcp・hook)、帰属 (根拠 10 種 + `conclude`、後から届く根拠で計算し直す)、セッションの基準 (時刻とジャーナルの位置、D30)、管理された操作の即時の読み取り (D31)、`clientOpId` (D32)、`worktree` の構造確認 (D33)、宣言された編集の適用、`.git` の読み取り (`baseCommit`)、寿命 (中断・放棄・無接続の時間切れの条件)。セッション・操作・根拠はイベントから作り直せる。`tools	rack` の中だけ (MCP は M104h、フックは M104i)。設計文書 (attribution-rules / ipc-contract / db-schema) を同時に更新 |
 | M104h | 2 | 未着手 | MCP の 5 ツール、`track_client.rs`、規則 15 の許可表、ADR-032 と `docs\mcp-server.md` の更新 |
 | M104i | 2 | 未着手 | フック CLI (`mye_track.exe hook`)、Claude Code のフック設定の手順 |
 | M104j | 3 | 未着手 | Editor の pipe クライアント、モデル、規則 19、`changetracking` スイート |

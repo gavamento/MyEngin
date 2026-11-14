@@ -7,7 +7,9 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Value};
 
+use crate::attribution;
 use crate::protocol::{code, Args, OpError, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT};
+use crate::session::session_candidate_sql;
 
 /// 取得用の読み取り専用接続を開く。WAL なので書き手を止めない。
 pub fn open_reader(db_path: &std::path::Path) -> rusqlite::Result<Connection> {
@@ -101,7 +103,7 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     }
     if let Some(s) = session_id {
         let n = bind(&mut values, SqlValue::Text(s));
-        conditions.push(format!("r.operation_id IN (SELECT operation_id FROM operations WHERE session_id = ?{n})"));
+        conditions.push(session_candidate_sql(n));
     }
     if let Some(state) = review {
         let n = bind(&mut values, SqlValue::Text(state));
@@ -240,6 +242,29 @@ pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         })
         .map_err(internal)?;
     detail["hunks"] = Value::Array(hunks.collect::<rusqlite::Result<_>>().map_err(internal)?);
+
+    // 区分だけでなく根拠の一覧と候補のセッションを出す (attribution-rules.md §8)
+    let mut stmt = conn
+        .prepare(
+            "SELECT kind, session_id, operation_id, detail, recorded_at FROM attribution_evidence
+              WHERE revision_id = ?1 ORDER BY evidence_id",
+        )
+        .map_err(internal)?;
+    let evidence = stmt
+        .query_map([revision_id], |r| {
+            let detail: String = r.get(3)?;
+            Ok(json!({
+                "kind": r.get::<_, String>(0)?,
+                "sessionId": r.get::<_, Option<String>>(1)?,
+                "operationId": r.get::<_, Option<String>>(2)?,
+                "detail": serde_json::from_str::<Value>(&detail).unwrap_or(Value::Null),
+                "recordedAt": r.get::<_, i64>(4)?,
+            }))
+        })
+        .map_err(internal)?;
+    detail["evidence"] = Value::Array(evidence.collect::<rusqlite::Result<_>>().map_err(internal)?);
+    let conclusion = attribution::current_conclusion(conn, revision_id).map_err(internal)?;
+    detail["candidateSessions"] = json!(conclusion.candidates);
     Ok(detail)
 }
 

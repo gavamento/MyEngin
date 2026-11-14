@@ -1,0 +1,11 @@
+# サービスが止まると、プロセスを持たない (フックの) セッションは interrupted になり、同じ clientSessionId で running に戻る
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"session_begin","args":{"provider":"claude","workspace":".","source":"terminal","clientSessionId":"keep"}}
+# stop
+# start
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"session_begin","args":{"provider":"claude","workspace":".","source":"terminal","clientSessionId":"keep"}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"sessions"}

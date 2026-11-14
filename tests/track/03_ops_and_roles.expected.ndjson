@@ -3,7 +3,9 @@
 {"error":{"code":"forbidden","detail":"役割 hook は describe を呼べない"},"id":3,"ok":false}
 {"error":{"code":"forbidden","detail":"役割 hook は shutdown を呼べない"},"id":4,"ok":false}
 {"error":{"code":"unknown_op","detail":"知らない op: nosuchop"},"id":5,"ok":false}
-{"error":{"code":"unknown_op","detail":"知らない op: session_begin"},"id":6,"ok":false}
+{"error":{"code":"bad_args","detail":"provider が要る"},"id":6,"ok":false}
+{"error":{"code":"bad_args","detail":"sessionId か clientSessionId が要る"},"id":7,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 hook は report を呼べない"},"id":8,"ok":false}
 {"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
 {"error":{"code":"forbidden","detail":"役割 mcp は shutdown を呼べない"},"id":2,"ok":false}
 {"error":{"code":"bad_args","detail":"知らない引数: nosuchfilter"},"id":3,"ok":false}

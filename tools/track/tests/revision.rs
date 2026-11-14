@@ -602,6 +602,7 @@ fn events_replayed_from_the_journal_also_rebuild_their_revision() {
             .unwrap();
         conn.execute_batch(&format!(
             "DELETE FROM events WHERE event_id >= {event_id};
+             DELETE FROM attribution_evidence;
              DELETE FROM change_hunks;
              DELETE FROM change_revisions;
              DELETE FROM changes;

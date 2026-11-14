@@ -1,0 +1,21 @@
+# 記録の op の役割と引数の検査。editor は呼べない、hook は report を呼べない、プロジェクトの外のパスは bad_args
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"session_begin","args":{"provider":"claude","workspace":".","source":"terminal"}}
+{"id":3,"op":"op_begin","args":{}}
+{"id":4,"op":"report","args":{}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"report","args":{"sessionId":"x","paths":["a.txt"]}}
+{"id":3,"op":"session_begin","args":{}}
+{"id":4,"op":"session_begin","args":{"provider":"nobody","workspace":".","source":"terminal"}}
+{"id":5,"op":"session_begin","args":{"provider":"claude","workspace":"..","source":"terminal"}}
+{"id":6,"op":"session_begin","args":{"provider":"claude","workspace":".","source":"terminal","extra":1}}
+{"id":7,"op":"session_begin","args":{"provider":"claude","workspace":".","source":"terminal","clientSessionId":"e1"}}
+{"id":8,"op":"op_begin","args":{"clientSessionId":"e1","operationType":"edit","targets":["../outside.txt"]}}
+{"id":9,"op":"op_begin","args":{"clientSessionId":"e1","operationType":"edit","targets":[]}}
+{"id":10,"op":"op_begin","args":{"clientSessionId":"e1","operationType":"dance","targets":["a.txt"]}}
+{"id":11,"op":"op_begin","args":{"clientSessionId":"nobody","operationType":"edit","targets":["a.txt"]}}
+{"id":12,"op":"op_begin","args":{"clientSessionId":"e1","operationType":"edit","targets":["a.txt"],"declaredEdit":{"kind":"explode"}}}
+{"id":13,"op":"op_end","args":{"operationId":"no-such-op","result":"ok"}}
+{"id":14,"op":"op_end","args":{"clientSessionId":"e1","result":"ok"}}
+{"id":15,"op":"session_end","args":{}}

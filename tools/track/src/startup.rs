@@ -14,9 +14,9 @@ use crate::db::{open_and_migrate, Opened};
 use crate::diff::DiffLimits;
 use crate::hash::sha256_hex;
 use crate::journal::{self, Journal, JournalPos};
-use crate::process::is_alive;
 use crate::revision::{rebuild_derived, Deriver, RebuildReport};
 use crate::schema::{Migration, MIGRATIONS};
+use crate::session;
 use crate::store::{Mode, Paths, Store};
 
 /// 前回の最後のイベントからこれだけ遡って書かれた Blob の中身を、起動時に確かめる。
@@ -127,6 +127,7 @@ pub fn open_project_with(
     let mut store = Store {
         stats: Default::default(),
         inject_journal_error: None,
+        attribution: Default::default(),
         blobs: BlobStore::new(paths.blobs.clone(), options.exclude_patterns),
         paths,
         mode,
@@ -154,8 +155,16 @@ pub fn open_project_with(
         run_step(&mut report, "直近の Blob の内容確認", |r| verify_recent_blobs(conn, &store.paths.blobs, r));
         run_step(&mut report, "Blob の有無の確認", |r| mark_missing_blobs(conn, &store.blobs, r));
         run_step(&mut report, "孤児 Blob の計数", |r| count_orphan_blobs(conn, &store.paths.blobs, r));
-        run_step(&mut report, "残った session の整理", |r| interrupt_dead_sessions(conn, r));
-        run_step(&mut report, "残った operation の整理", |r| abandon_open_operations(conn, r));
+    }
+    if store.conn.is_some() {
+        // 整理はイベントにして派生の表へ反映する (作り直した DB が同じ状態になる)
+        match session::startup_cleanup(&mut store, now) {
+            Ok(done) => {
+                report.sessions_interrupted = done.interrupted;
+                report.operations_abandoned = done.abandoned;
+            }
+            Err(e) => report.failed_steps.push(StepFailure { step: "残った session の整理", reason: e.to_string() }),
+        }
     }
     report.state = Some(match &store.mode {
         Mode::Recording => ServiceState::Recording,
@@ -224,13 +233,13 @@ fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport, deriv
                         params![entry.at, entry.kind, line.pos.to_string(), entry.payload.to_string()],
                     )
                     .map_err(|e| e.to_string())?;
-                if derive && inserted == 1 && matches!(entry.kind.as_str(), "baseline" | "observed") {
+                if derive && inserted == 1 && Deriver::wants(&entry.kind) {
                     if deriver.is_none() {
                         deriver = Some(Deriver::from_db(&tx).map_err(|e| e.to_string())?);
                     }
                     if let Some(deriver) = deriver.as_mut() {
                         deriver
-                            .apply_event(&tx, &store.blobs, &entry.kind, entry.at, &entry.payload, &DiffLimits::default())
+                            .apply_event(&tx, &store.blobs, &entry.kind, entry.at, &entry.payload, &line.pos.to_string(), &DiffLimits::default())
                             .map_err(|e| e.to_string())?;
                     }
                 }
@@ -331,35 +340,5 @@ fn count_orphan_blobs(conn: &mut Connection, blobs_dir: &Path, report: &mut Star
             }
         }
     }
-    Ok(())
-}
-
-/// §6 の 5: `running` のまま残った session のうち、プロセスが居ないものを `interrupted` にする。
-/// PID が記録されていない session は生死を確かめられないので `interrupted` 側に倒す。
-fn interrupt_dead_sessions(conn: &mut Connection, report: &mut StartupReport) -> rusqlite::Result<()> {
-    let running: Vec<(String, Option<i64>, Option<i64>)> = {
-        let mut stmt =
-            conn.prepare("SELECT session_id, process_id, process_start FROM sessions WHERE status = 'running'")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-        rows.collect::<rusqlite::Result<_>>()?
-    };
-    for (id, pid, start) in running {
-        let alive = pid.is_some_and(|p| u32::try_from(p).is_ok_and(|p| is_alive(p, start)));
-        if !alive {
-            conn.execute("UPDATE sessions SET status = 'interrupted' WHERE session_id = ?1", [&id])?;
-            report.sessions_interrupted += 1;
-        }
-    }
-    Ok(())
-}
-
-/// §6 の 6: `finished_at` が NULL のまま残った operation を `abandoned` にする。
-/// 実際の終了時刻は分からないので `finished_at` は NULL のまま残す。
-fn abandon_open_operations(conn: &mut Connection, report: &mut StartupReport) -> rusqlite::Result<()> {
-    let n = conn.execute(
-        "UPDATE operations SET result = 'abandoned' WHERE finished_at IS NULL AND result IS NULL",
-        [],
-    )?;
-    report.operations_abandoned += n;
     Ok(())
 }

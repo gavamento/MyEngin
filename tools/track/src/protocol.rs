@@ -43,7 +43,9 @@ impl Role {
 }
 
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
-pub const IMPLEMENTED_OPS: &[&str] = &["hello", "status", "list", "describe", "sessions", "shutdown"];
+pub const IMPLEMENTED_OPS: &[&str] = &[
+    "hello", "status", "list", "describe", "sessions", "shutdown", "session_begin", "session_end", "op_begin", "op_end", "report",
+];
 
 /// 役割が op を呼べるか。`hello` は役割を決める前なので表に含めない。
 pub fn role_allows(role: Role, op: &str) -> bool {
@@ -52,6 +54,10 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         "list" | "describe" | "sessions" => matches!(role, Role::Mcp | Role::Editor),
         // サービスの終了は Editor だけ (MCP・フックが他の利用者のサービスを止めない)
         "shutdown" => role == Role::Editor,
+        // 記録を伴う op は AI 側 (MCP・フック) だけ。Editor は自分の保存・復元を別の op で知らせる (sub-09 以降)
+        "session_begin" | "session_end" | "op_begin" | "op_end" => matches!(role, Role::Mcp | Role::Hook),
+        // 申告は MCP の change_report だけ (フックは編集の前後を op_begin / op_end で知らせる)
+        "report" => role == Role::Mcp,
         _ => false,
     }
 }
@@ -173,6 +179,45 @@ impl Args {
 
     pub fn required_int(&mut self, key: &str) -> Result<i64, OpError> {
         self.int(key)?.ok_or_else(|| OpError::bad_args(format!("{key} が要る")))
+    }
+
+    pub fn bool(&mut self, key: &str) -> Result<Option<bool>, OpError> {
+        match self.take(key) {
+            None => Ok(None),
+            Some(Value::Bool(b)) => Ok(Some(b)),
+            Some(_) => Err(OpError::bad_args(format!("{key} は真偽値でなければならない"))),
+        }
+    }
+
+    /// 取り出した生の値 (配列・オブジェクトの引数用)。無い・null は None。
+    pub fn value(&mut self, key: &str) -> Option<Value> {
+        self.take(key)
+    }
+
+    /// 文字列の配列。
+    pub fn string_list(&mut self, key: &str) -> Result<Option<Vec<String>>, OpError> {
+        match self.take(key) {
+            None => Ok(None),
+            Some(Value::Array(items)) => items
+                .into_iter()
+                .map(|v| match v {
+                    Value::String(s) => Ok(s),
+                    _ => Err(OpError::bad_args(format!("{key} の要素は文字列でなければならない"))),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Some),
+            Some(_) => Err(OpError::bad_args(format!("{key} は配列でなければならない"))),
+        }
+    }
+
+    /// 文字列で、`allowed` のどれかでなければならない。
+    pub fn choice(&mut self, key: &str, allowed: &[&str]) -> Result<Option<String>, OpError> {
+        match self.string(key)? {
+            Some(s) if !allowed.contains(&s.as_str()) => {
+                Err(OpError::bad_args(format!("{key} は {} のどれか", allowed.join(" / "))))
+            }
+            other => Ok(other),
+        }
     }
 
     /// 取り出していない引数が残っていれば `bad_args`。

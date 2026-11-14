@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use rusqlite::{params, Connection};
 
+use crate::attribution::AttributionConfig;
 use crate::blob::{BlobError, BlobStore, PutOutcome};
 use crate::hash::sha256_hex;
 use crate::journal::{Journal, JournalEntry, JournalPos};
@@ -99,6 +100,8 @@ pub struct Store {
     /// 試験用: Some(OS のエラー番号) の間、`record_event` がそのエラーで失敗する (ジャーナルへ書けない状態を模す)。
     #[doc(hidden)]
     pub inject_journal_error: Option<i32>,
+    /// 帰属の計算の設定 (操作の窓の猶予、`time_near` の幅)。
+    pub attribution: AttributionConfig,
     pub paths: Paths,
     pub mode: Mode,
     pub conn: Option<Connection>,

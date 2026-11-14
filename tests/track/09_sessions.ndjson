@@ -1,4 +1,4 @@
-# セッションはまだ登録できない (sub-06)。空の配列を返し、形の悪い引数は bad_args
+# セッションが無ければ空の配列を返し、形の悪い引数は bad_args
 {"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
 {"id":2,"op":"sessions"}
 {"id":3,"op":"sessions","args":{"limit":5,"cursor":"5:abc"}}

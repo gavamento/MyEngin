@@ -1,0 +1,16 @@
+# 管理された編集: 宣言どおりに書くと ai / verified。pre と post は別の接続で、clientSessionId + clientOpId で引く
+# write x.txt alpha\nbeta\ngamma\n
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"session_begin","args":{"provider":"claude","workspace":".","source":"terminal","clientSessionId":"s1"}}
+{"id":3,"op":"op_begin","args":{"clientSessionId":"s1","operationType":"edit","targets":["x.txt"],"clientOpId":"t1","declaredEdit":{"kind":"replace","oldString":"beta","newString":"BETA","replaceAll":false}}}
+# write x.txt alpha\nBETA\ngamma\n
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"op_end","args":{"clientSessionId":"s1","clientOpId":"t1","result":"ok"}}
+{"id":3,"op":"session_end","args":{"clientSessionId":"s1"}}
+# 結果は mcp から読む (list / describe は hook に許していない)
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list","args":{"attribution":"verified"}}
+{"id":3,"op":"describe","args":{"revisionId":1}}
+{"id":4,"op":"sessions"}

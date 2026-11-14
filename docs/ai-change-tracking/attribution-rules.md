@@ -36,6 +36,21 @@
 | `overlap` | 同じパスに、別のセッションの操作の窓が重なっている | サービス自身 |
 | `preexisting` | この変更はセッションの開始より前から作業ツリーにあった | サービス自身 (ベースライン) |
 
+### 2.1 各根拠の定義 (M104g の実装)
+
+正本は `tools\track\src\attribution.rs`。時刻はすべて、監視のイベントの時刻 (`observed_at`。記録した時刻ではない)。
+
+| kind | 定義 |
+|---|---|
+| `op_window` | Revision の `observed_at` が、その操作の `op_begin` から `op_end` + 猶予 (既定 2 秒) の間にあり、Revision のパス (リネームなら旧パスも) が操作の `targets` に入っている。`op_end` が来ていない操作は、打ち切り (既定 10 分) まで開いている |
+| `before_match` | Revision の Before のハッシュが、`op_begin` で取ったそのパスのハッシュと同じ (新規ファイル = 無い、同士も一致)。除外パターンのファイルと、Before を見ていない変更 (`no_before`) は照合に使えない |
+| `declared_edit_match` | `op_begin` の `declaredEdit` を、その時点の内容 (`targets` の 1 つ目) に当てた結果のハッシュが、Revision の After と同じ。かつ `before_match` が成り立つ |
+| `report_hash_match` | `report` が Before / After の**両方**のハッシュを渡し、セッション開始より後のそのパスの Revision のどれかと両方一致 |
+| `report_only` | 上以外 (片方だけ・不一致・ハッシュなし)。申告の時点でそのパスの最後の Revision (と、申告から 10 秒以内に観測された Revision) にだけ付ける。申告が先に届いて Revision が後から来ても、10 秒以内なら付く |
+| `time_near` | 申告も窓も無い Revision の `observed_at` が、running のセッションの活動時刻 (`session_begin` / `op_begin` / `op_end` / `report` を受けた時刻) のどれかから 2 秒以内 (定数、設定可)。操作の直前の読み取り (`op_begin` が先に確定する、人の未記録の変更) には付けない |
+| `overlap` | 同じパスについて、Revision の `observed_at` を含む窓を持つ操作が、別々のセッションに 2 つ以上ある |
+| `preexisting` | (a) セッションの開始より前の Revision に、そのセッションが申告した、または開始のすぐ前 (`time_near` の幅以内) だった。そのセッションに付き、そのセッションの根拠を結論から外す (b) `completeness = gap` の Revision のうち、止まっていた間の再走査 (`startup_gap`) と監視のあふれ (`overflow_gap`) が作ったもの。セッションに属さず、他の根拠より強い (結論は `unknown`)。サービスが動いている間の取りこぼしを検証の走査が拾った Revision (`verify_gap`) は `preexisting` にしない (§4) |
+
 ## 3. 区分の決め方
 
 上から順に当てはめ、最初に成り立ったものを採る。
@@ -73,10 +88,11 @@
 
 仕様書 §16.1「変更前から存在した人間の未コミット変更を AI 変更として混入させない」に対応する。
 
-- セッションの開始時 (`session_begin`) に、サービスはその時点の全ファイルの内容ハッシュを基準として覚える。これはサービスの起動時のベースラインとは別に、セッションごとに持つ。
-- セッションの変更として数えるのは、基準より**後に**観測された変更だけ。
+- セッションの基準は、`session_begin` の**時刻とジャーナルの位置**。全ファイルのハッシュの写しは持たない (サービスは常時記録しているので、基準より後の変更 = `observed_at >= started_at` の Revision で決まる。時刻とジャーナルの位置は `sessions.coverage`)。
+- セッションの変更として数えるのは、開始より**後に**観測された変更だけ。開始より前の Revision は `preexisting`。ベースライン・起動時の再走査の最中に `session_begin` が来ても待たずに受け付け、走査が作る Revision は `gap` なので `preexisting` で落ちる。
 - git の HEAD との差は使わない。HEAD との差には、セッションより前の未コミットの変更が全部含まれる。`base_commit` は表示のための情報で、判定には使わない。
-- サービスが止まっていた間に起きた変更 (`completeness = gap`) は、その間にセッションが動いていたとしても `unknown` にする。止まっていた間のことは見ていない。
+- サービスが止まっていた間に起きた変更 (起動時の再走査が作った `gap`) と、監視のあふれの後の再走査が作った `gap` は、その間にセッションが動いていたとしても `unknown` にする。止まっていた間のことは見ていない。
+- **サービスが動いている間の取りこぼし** (`source = verify_gap`。検証の走査が拾った) は別扱いにする (spec D35)。`observed_at` が走査の時刻で、書かれた時刻ではないので、**時刻による根拠 (`op_window`、`time_near`、`worktree`、`report_only`) は作らない**。内容による根拠だけを数える: `before_match` + `declared_edit_match` がそろえば `verified` (内容が宣言と一致していることは、いつ観測したかに依らない)、`report_hash_match` なら `claimed`、どちらも無ければ `unknown`。操作の窓は終わりを問わず (`op_begin` より後なら) 照合する。`op_end` の即時の読み取りが「変更なし」だったときも、窓の中の `verify_gap` の Revision はこの規則で見直される。
 
 ## 5. 複数のセッション
 
@@ -86,7 +102,9 @@
 - 同じパスに 2 つ以上のセッションの操作の窓が重なったら、その変更に `overlap` を付ける。
   - `declared_edit_match` が一方にだけ成り立つなら、候補はそのセッション 1 つに絞る。ただし確かさは §3 の表のとおり `claimed` にとどめる (窓が重なっている間は `verified` にしない。安全側)。
   - どちらにも成り立たないなら、両方を候補として残し、結論は `actor = ai`、`attribution = unknown` にする。
-- 候補は消さない。あとから `change_report` が届いて区別できるようになったら、結論を計算し直して `attribution_updated` を通知する。
+- 候補は消さない。あとから `change_report` が届いて区別できるようになったら、結論を計算し直して `attribution_updated` を通知する (通知は M104j)。
+- **帰属は後から変わる**: 根拠は Revision の記録より後に届くことがある (監視の方が `op_end` より遅い、`report` が後から来る)。根拠が増えるたびに、その Revision の結論を計算し直す。根拠の行は増えるだけで消えない。
+- 候補のセッションは `list` の `sessionId` で絞れる。結論が 1 つの操作に絞れていればその操作で、複数候補・操作の無い根拠 (申告・時刻・作業ツリー) は根拠のセッションで引く。`describe` は根拠の一覧と `candidateSessions` を返す。
 
 ## 6. 管理された編集経路
 
@@ -97,7 +115,9 @@
 `mye_track.exe hook pre` / `hook post` は、フックの入力 (JSON) を標準入力から読み、pipe で `op_begin` / `op_end` を送って終わる使い捨てのコマンド。
 
 - フックは AI の編集を止めない。サービスに届かなくても終了コード 0 で返り、追跡に欠落が残るだけにする (仕様書 §1.3)。時間切れは 5 秒 ([ipc-contract.md](ipc-contract.md) §6)。
-- セッションは、フックの入力に含まれるクライアント側のセッション ID を `clientSessionId` として結び付ける。同じ `clientSessionId` の `session_begin` が無ければ、フックが自分で登録する。
+- セッションは、フックの入力に含まれるクライアント側のセッション ID を `clientSessionId` として結び付ける。同じ `clientSessionId` の `session_begin` が無ければ、フックが自分で登録する。同じ `clientSessionId` の running / interrupted のセッションがあれば、新しく作らずそれを返す (interrupted なら running に戻す)。
+- フックは pre と post が別のプロセスなので、`op_end` は `operationId` の代わりに `clientOpId` (Claude Code の `tool_use_id`) と `clientSessionId` で操作を引く。`op_begin` が `clientOpId` を覚える。
+- 管理された操作は、監視のデバウンスを待たずにサービスが自分でパスを読む (要求 §5.2)。`op_begin` は対象パスを先に確定する (未記録の人の変更があれば、それを先に独立した Revision にする。その後の内容がこの操作の Before)。`op_end` は対象パスをすぐ確定し、できた Revision をこの操作に結び付ける。`report` も照合の前に申告されたパスを確定する。確定は全体で 2 秒まで。間に合わなければ `pending: true` で返し、帰属は後から付く (AI を待たせない。[ipc-contract.md](ipc-contract.md) §6 の 5 秒の内側)。
 
 | クライアント | 編集前後のフック | 状況 |
 |---|---|---|
@@ -132,8 +152,16 @@
 
 ### 6.2 専用の作業ツリー
 
-セッションが `git worktree` などで自分専用のディレクトリを使い、`session_begin` の `workspace` がそれを指している場合、その中の変更はそのセッションのものとして `verified` にできる。
-条件は「その `workspace` を登録しているセッションが 1 つだけ」。サービスは作業ツリーを作らない (作るのは利用者かクライアント)。
+セッションが `git worktree` などで自分専用のディレクトリを使い、`session_begin` の `workspace` がそれを指している場合、その中の変更はそのセッションのものとして `verified` にできる。サービスは作業ツリーを作らない (作るのは利用者かクライアント)。
+
+`workspace` がプロジェクトのルートで、セッションが 1 つだけ、という普通の使い方では、人の編集まで Verified になってしまう。**根拠は構造で確かめられるときだけ**付ける。条件を全部満たすとき:
+
+1. `session_begin` が `isolated: true` を申告した。
+2. サービスのプロジェクトルートが git のリンクされた作業ツリー (`.git` がディレクトリではなくファイルで、`gitdir:` の行を持ち、その指す先が `worktrees` ディレクトリの下。サブモジュールの `.git` ファイルは `modules` の下を指すので成り立たない。読むだけで git は起動しない)。
+3. その `workspace` を登録している running のセッションが 1 つだけ (変更ごとに確かめる)。
+4. `role = editor` の接続が無い (開始時に確かめる。Editor が居れば、人が同じ作業ツリーを編集している)。
+
+1 つでも欠ければ `worktree` を付けない (`claimed` 以下に落ちる)。
 
 ### 6.3 MCP 経由
 

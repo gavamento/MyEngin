@@ -84,6 +84,6 @@ fn serve(args: &[String]) -> ExitCode {
     unsafe {
         SetConsoleCtrlHandler(Some(on_ctrl), 1);
     }
-    let options = ServeOptions { idle_timeout, tracker: TrackerConfig::default() };
+    let options = ServeOptions { idle_timeout, tracker: TrackerConfig::default(), ..ServeOptions::default() };
     ExitCode::from(mye_track::server::run(&root, options, stop_tx, stop_rx))
 }

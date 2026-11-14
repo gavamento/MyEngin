@@ -10,6 +10,7 @@ use std::time::SystemTime;
 use rusqlite::params;
 use serde_json::{json, Value};
 
+use crate::attribution;
 use crate::baseline::{ContentKind, FileState};
 use crate::blob::BlobError;
 use crate::revision::{write_revision, DiffPlan, RevisionInput};
@@ -86,6 +87,10 @@ pub enum Source {
     OverflowGap,
     /// 検証の走査 (取りこぼしの検出、記録に失敗した後の突き合わせ)。
     VerifyGap,
+    /// 管理された操作 (`op_begin`) の前に、未記録の変更を先に確定する読み取り。操作の変更とは別の Revision になる。
+    ManagedBegin,
+    /// 管理された操作の終わり (`op_end` / `report`) の即時の読み取り。デバウンスを待たない。
+    Managed,
 }
 
 impl Source {
@@ -95,10 +100,12 @@ impl Source {
             Source::StartupGap => "startup_gap",
             Source::OverflowGap => "overflow_gap",
             Source::VerifyGap => "verify_gap",
+            Source::ManagedBegin => "managed_begin",
+            Source::Managed => "managed",
         }
     }
     pub fn is_gap(self) -> bool {
-        !matches!(self, Source::Watch)
+        !matches!(self, Source::Watch | Source::ManagedBegin | Source::Managed)
     }
 }
 
@@ -270,8 +277,12 @@ fn apply_one(store: &mut Store, o: Observation, plan: Result<DiffPlan, String>) 
         // Revision と Hunk は 1 つの塊で確定する (revision.rs)。失敗したら何も残さず Err
         let before_snapshot = o.before.as_ref().and_then(|s| s.snapshot_id);
         let after_snapshot = after_state.as_ref().and_then(|s| s.snapshot_id);
-        write_revision(conn, &input, before_snapshot, after_snapshot, &plan)
+        let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan)
             .map_err(|e| RecordFailure::from_store(&StoreError::Sqlite(e)))?;
+        // 帰属の計算に失敗しても Revision は残す (結論は unknown のまま。次の作り直しで直る)
+        if let Err(e) = attribution::evaluate_new_revision(conn, &store.attribution, revision_id, o.observed_at, o.source.as_str()) {
+            eprintln!("[track] 帰属を計算できない: {}: {e}", o.path);
+        }
     }
     Ok(after_state)
 }

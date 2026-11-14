@@ -1,0 +1,19 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"editor","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 editor は session_begin を呼べない"},"id":2,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 editor は op_begin を呼べない"},"id":3,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 editor は report を呼べない"},"id":4,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"hook","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 hook は report を呼べない"},"id":2,"ok":false}
+{"error":{"code":"bad_args","detail":"provider が要る"},"id":3,"ok":false}
+{"error":{"code":"bad_args","detail":"provider は claude / codex / gemini / other のどれか"},"id":4,"ok":false}
+{"error":{"code":"bad_args","detail":"パスがプロジェクトの外を指している: .."},"id":5,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: extra"},"id":6,"ok":false}
+{"id":7,"ok":true,"result":{"baseCommit":null,"resumed":false,"sessionId":"<UUID>","status":"running","trackingCapabilities":["observed","op_window","before_match","declared_edit_match","time_near","preexisting","overlap"]}}
+{"error":{"code":"bad_args","detail":"パスがプロジェクトの外を指している: ../outside.txt"},"id":8,"ok":false}
+{"error":{"code":"bad_args","detail":"targets は 1 件以上"},"id":9,"ok":false}
+{"error":{"code":"bad_args","detail":"operationType は edit / write / delete / rename / report / other のどれか"},"id":10,"ok":false}
+{"error":{"code":"not_found","detail":"そのセッションは無い"},"id":11,"ok":false}
+{"error":{"code":"bad_args","detail":"declaredEdit.kind は replace / write のどちらか"},"id":12,"ok":false}
+{"error":{"code":"not_found","detail":"その操作は無い"},"id":13,"ok":false}
+{"error":{"code":"bad_args","detail":"operationId か、clientSessionId と clientOpId が要る"},"id":14,"ok":false}
+{"error":{"code":"bad_args","detail":"sessionId か clientSessionId が要る"},"id":15,"ok":false}

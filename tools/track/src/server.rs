@@ -17,19 +17,20 @@ use std::time::{Duration, Instant};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
-use windows_sys::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 
 use crate::collector::TrackerConfig;
 use crate::db::now_ms;
 use crate::ops;
+use crate::ops_record::{self, Caller, RecordEnv, DEFAULT_FLUSH_BUDGET};
 use crate::pipe::{self, PipeInstance, PipeListener};
-use crate::process::process_start_ms;
+use crate::process::{is_alive, process_start_ms};
 use crate::project::{project_id, project_id_source};
 use crate::protocol::{
     clip, code, error_response, ok_response, parse_request, role_allows, Args, OpError, Request, Role, IMPLEMENTED_OPS,
     MAX_LINE_BYTES, PROTO_VERSION,
 };
+use crate::session::{self, LifecycleConfig};
 use crate::startup::{open_project, ServiceState, StartupReport};
 use crate::store::Paths;
 use crate::watch::{Phase, StatusReader, Tracker, TrackerStatus};
@@ -50,11 +51,16 @@ const SHARING_VIOLATION: i32 = 32;
 pub struct ServeOptions {
     pub idle_timeout: Duration,
     pub tracker: TrackerConfig,
+    pub lifecycle: LifecycleConfig,
 }
 
 impl Default for ServeOptions {
     fn default() -> Self {
-        ServeOptions { idle_timeout: DEFAULT_IDLE_TIMEOUT, tracker: TrackerConfig::default() }
+        ServeOptions {
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            tracker: TrackerConfig::default(),
+            lifecycle: LifecycleConfig::default(),
+        }
     }
 }
 
@@ -82,19 +88,6 @@ fn acquire_mutex(name: &str) -> io::Result<Option<HandleGuard>> {
         let guard = HandleGuard(handle);
         Ok((GetLastError() != ERROR_ALREADY_EXISTS).then_some(guard))
     }
-}
-
-/// OS の乱数源から 16 バイトを取り、16 進にする (sim の決定性とは無関係。`rand` crate は足さない)。
-fn random_token() -> io::Result<String> {
-    let mut bytes = [0u8; 16];
-    // SAFETY: bytes は 16 バイトの出力先
-    let status = unsafe {
-        BCryptGenRandom(std::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
-    };
-    if status != 0 {
-        return Err(io::Error::other(format!("BCryptGenRandom が失敗: 0x{status:08x}")));
-    }
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// `service.json` (PID、開始時刻、pipe 名、起動ごとのトークン)。一時ファイルへ書いてから置き換える。
@@ -136,6 +129,8 @@ struct Context {
     db_summary: Value,
     status: StatusReader,
     writer: Arc<Writer>,
+    /// 記録を伴う op (セッション・操作・申告) が使う状態。
+    record: RecordEnv,
     stop_tx: Sender<&'static str>,
     connections: AtomicUsize,
     idle_since: Mutex<Instant>,
@@ -218,10 +213,29 @@ fn coverage_json(status: &TrackerStatus) -> Value {
     })
 }
 
+/// Editor の接続の間だけ Editor の数を 1 つ増やす (`worktree` の根拠の条件 (d))。
+struct EditorGuard(Arc<AtomicUsize>);
+
+impl EditorGuard {
+    fn enter(counter: &Arc<AtomicUsize>) -> EditorGuard {
+        counter.fetch_add(1, Ordering::SeqCst);
+        EditorGuard(Arc::clone(counter))
+    }
+}
+
+impl Drop for EditorGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// 接続の中の状態。
 struct ConnState {
     role: Option<Role>,
+    /// pipe から得た接続元の PID (申告ではない)。
+    pid: Option<u32>,
     reader: Option<Connection>,
+    _editor: Option<EditorGuard>,
 }
 
 /// 1 行の読み取り結果。
@@ -302,7 +316,7 @@ fn serve_connection(ctx: &Context, instance: PipeInstance) {
     let client_pid = instance.client_pid();
     let file = instance.file();
     let mut reader = BufReader::with_capacity(64 * 1024, file);
-    let mut conn = ConnState { role: None, reader: None };
+    let mut conn = ConnState { role: None, pid: None, reader: None, _editor: None };
     loop {
         let line = match read_line(&mut reader, MAX_LINE_BYTES) {
             Ok(Line::Data(line)) => line,
@@ -340,8 +354,12 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
             return Outcome::err_and_close(id, &OpError::new(code::NEED_HELLO, "最初の要求は hello"));
         }
         return match hello(ctx, request, client_pid) {
-            Ok((role, result)) => {
+            Ok((role, result, pid)) => {
                 conn.role = Some(role);
+                conn.pid = pid;
+                if role == Role::Editor {
+                    conn._editor = Some(EditorGuard::enter(&ctx.record.editor_connections));
+                }
                 Outcome::ok(id, result)
             }
             Err(e) => Outcome::err_and_close(id, &e),
@@ -368,6 +386,7 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         "describe" => with_reader(ctx, conn, |db| ops::describe(db, args)),
         "sessions" => with_reader(ctx, conn, |db| ops::sessions(db, args)),
         "shutdown" => args.finish().map(|()| json!({})),
+        "session_begin" | "session_end" | "op_begin" | "op_end" | "report" => record_op(ctx, conn, role, &request.op, args),
         other => Err(OpError::new(code::INTERNAL, format!("op の配線が無い: {other}"))),
     };
     match result {
@@ -376,6 +395,22 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
             Outcome { response: ok_response(id, value), close: shutdown, stop: shutdown }
         }
         Err(e) => Outcome::err(id, &e),
+    }
+}
+
+/// 記録を伴う op。DB へ書けない状態では断る。
+fn record_op(ctx: &Context, conn: &ConnState, role: Role, op: &str, args: Args) -> Result<Value, OpError> {
+    if !ctx.db_recording {
+        return Err(OpError::new(code::DB_DEGRADED, "DB へ書けない状態 (status の db を見る)"));
+    }
+    let caller = Caller { role, pid: conn.pid };
+    let env = &ctx.record;
+    match op {
+        "session_begin" => ops_record::session_begin(env, &caller, args),
+        "session_end" => ops_record::session_end(env, &caller, args),
+        "op_begin" => ops_record::op_begin(env, &caller, args),
+        "op_end" => ops_record::op_end(env, &caller, args),
+        _ => ops_record::report(env, &caller, args),
     }
 }
 
@@ -398,7 +433,7 @@ fn with_reader(
 }
 
 /// `hello` の検査: 形 → 版 → 役割 → トークン → プロジェクト。通ったら接続元を証跡に残す。
-fn hello(ctx: &Context, request: &Request, client_pid: Option<u32>) -> Result<(Role, Value), OpError> {
+fn hello(ctx: &Context, request: &Request, client_pid: Option<u32>) -> Result<(Role, Value, Option<u32>), OpError> {
     let mut args = Args::new(request.args.clone());
     let proto = args.required_int("proto")?;
     let role_text = args.required_string("role")?;
@@ -448,6 +483,7 @@ fn hello(ctx: &Context, request: &Request, client_pid: Option<u32>) -> Result<(R
             "connectionPid": pid,
             "coverage": coverage_json(&status),
         }),
+        pid,
     ))
 }
 
@@ -537,6 +573,33 @@ fn accept_loop(ctx: Arc<Context>, mut listener: PipeListener, first: PipeInstanc
     }
 }
 
+/// 寿命の確認 (プロセスの居ないセッション、無活動のフック、打ち切りの操作) を Writer へ頼む。詰まっていれば次の機会に回す。
+fn schedule_lifecycle_tick(ctx: &Context, cfg: &LifecycleConfig) {
+    let cfg = cfg.clone();
+    let _ = ctx.writer.submit_bounded(WRITER_QUEUE_LIMIT, move |store| {
+        if let Err(e) = session::tick(store, now_ms(), &cfg, &is_alive) {
+            eprintln!("[track] 寿命の確認に失敗: {e}");
+        }
+    });
+}
+
+/// 接続が無くても終わらない状態か: ベースライン・再走査の最中 (終わらないまま消すと次の起動でやり直し)、
+/// running のセッションがある間 (途中で消えると、その間が `service_down` の欠落になる)。
+fn must_stay_alive(ctx: &Context) -> bool {
+    let status = ctx.status.status();
+    let scanning =
+        matches!(status.phase, Phase::Starting | Phase::Baselining) || status.scan_done < status.scan_total;
+    if scanning {
+        return true;
+    }
+    if !ctx.db_recording {
+        return false;
+    }
+    ops::open_reader(&ctx.db_path)
+        .and_then(|db| db.query_row("SELECT EXISTS (SELECT 1 FROM sessions WHERE status = 'running')", [], |r| r.get::<_, i64>(0)))
+        .is_ok_and(|n| n != 0)
+}
+
 /// 受付ループの `ConnectNamedPipe` を起こすため、自分に 1 回繋ぐ。
 fn wake_accept_loop(pipe_name: &str) {
     let _ = pipe::open_client(pipe_name);
@@ -587,7 +650,7 @@ pub fn run(
         }
     };
 
-    let token = match random_token() {
+    let token = match crate::random::random_token() {
         Ok(token) => token,
         Err(e) => {
             eprintln!("[track] トークンを作れない: {e}");
@@ -624,6 +687,15 @@ pub fn run(
     let degraded = !matches!(report.state, Some(ServiceState::Recording));
 
     let tracker = Tracker::start(root, store, options.tracker);
+    let record = RecordEnv {
+        root: root.to_path_buf(),
+        db_path: paths.db.clone(),
+        writer: Arc::clone(tracker.writer()),
+        flush: tracker.flush_handle(),
+        editor_connections: Arc::new(AtomicUsize::new(0)),
+        queue_limit: WRITER_QUEUE_LIMIT,
+        flush_budget: DEFAULT_FLUSH_BUDGET,
+    };
     let ctx = Arc::new(Context {
         project_id: id,
         root_text: root.to_string_lossy().into_owned(),
@@ -636,6 +708,7 @@ pub fn run(
         db_summary: summarize_startup(&report),
         status: tracker.status_reader(),
         writer: Arc::clone(tracker.writer()),
+        record,
         stop_tx,
         connections: AtomicUsize::new(0),
         idle_since: Mutex::new(Instant::now()),
@@ -658,11 +731,16 @@ pub fn run(
         return 1;
     }
 
+    let mut last_tick = Instant::now();
     let reason = loop {
         match stop_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(reason) => break reason,
             Err(RecvTimeoutError::Timeout) => {
-                if ctx.idle_for() >= options.idle_timeout {
+                if !degraded && last_tick.elapsed() >= options.lifecycle.check_interval {
+                    last_tick = Instant::now();
+                    schedule_lifecycle_tick(&ctx, &options.lifecycle);
+                }
+                if ctx.idle_for() >= options.idle_timeout && !must_stay_alive(&ctx) {
                     break "idle_timeout";
                 }
             }

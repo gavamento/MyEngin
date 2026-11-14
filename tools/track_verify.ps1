@@ -23,7 +23,7 @@
 #   # start                       サービスを起動し直す (ベースラインが終わるまで待つ)
 # サービスは最初の要求行か wait-recorded / start のときに起動する。
 #
-# 出力は比較の前に正規化する: トークン・projectId・時刻・PID・所要時間 -> <TOKEN> / <PROJECT_ID> / <N>、
+# 出力は比較の前に正規化する: トークン・projectId・UUID (sessionId / operationId)・時刻・PID・所要時間 -> <TOKEN> / <PROJECT_ID> / <UUID> / <N>、プロジェクトのパス -> <ROOT>、
 # 同じ文字の 100 回以上の連なり -> <文字>*<回数>。
 [CmdletBinding()]
 param(
@@ -208,8 +208,13 @@ function Page-Through([int]$limit) {
 }
 
 function Normalize([string]$line) {
-    $t = [regex]::Replace($line, '"token":"[0-9a-f]{32}"', '"token":"<TOKEN>"')
+    # 一時プロジェクトのパス (プロセス ID を含む) は <ROOT> にする
+    $t = $line.Replace((Escape-Json $script:proj), '<ROOT>')
+    $t = [regex]::Replace($t, '"token":"[0-9a-f]{32}"', '"token":"<TOKEN>"')
+    # 観測の出どころは、監視が先か管理された操作の読み取りが先かで変わる (どちらでも結論は同じ)
+    $t = [regex]::Replace($t, '"source":"(watch|managed|managed_begin)"', '"source":"<SRC>"')
     $t = [regex]::Replace($t, '"projectId":"[0-9a-f]{16}"', '"projectId":"<PROJECT_ID>"')
+    $t = [regex]::Replace($t, '"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"', '"<UUID>"')
     $t = [regex]::Replace($t, '"(\w*(?:At|Ms|Us)|pid|connectionPid)":-?\d+', '"$1":<N>')
     return [regex]::Replace($t, '(.)\1{99,}', { param($m) $m.Groups[1].Value + '*' + $m.Length })
 }

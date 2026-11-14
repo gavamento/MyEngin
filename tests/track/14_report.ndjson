@@ -1,0 +1,12 @@
+# 申告 (report): ハッシュが Before / After の両方と一致すれば matched、変更が無ければ not_observed。申告だけでは verified にならず claimed
+# write m.txt m0\n
+# write n.txt n0\n
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"session_begin","args":{"provider":"codex","workspace":".","source":"external","clientSessionId":"r1"}}
+# write m.txt m1\n
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"report","args":{"clientSessionId":"r1","paths":["m.txt","n.txt"],"beforeHashes":{"m.txt":"6271f7cd018b8241b74038e6d74f90c10540415eb506e6e18e67eef4cc39ef7a"},"afterHashes":{"m.txt":"7b14e2d92338aed25808bbc74dabe3a37da6be8f335f2106d11aa36e5e31f7ea"}}}
+{"id":3,"op":"list","args":{"attribution":"claimed"}}
+{"id":4,"op":"list","args":{"attribution":"verified"}}
+{"id":5,"op":"describe","args":{"revisionId":1}}

@@ -236,9 +236,45 @@ fn verification_scan_with_no_changes_makes_nothing() {
 }
 
 /// 長い flush の間に溜まった処理待ちのイベントを、取りこぼしと取り違えない (検証の走査の前にキューを空にする)。
+/// 取りこぼしが起きえない件数 (20 ファイル) で、処理待ちを人為的に作る決定的な試験: Writer を塞いで flush を止め、
+/// その間に書いたファイルのイベントを 1 件 40 ms かけて処理させる。キューを空にする `drain_events` を外すと、
+/// 検証の走査が処理待ちのファイルを `gap` として拾い、必ず落ちる。
 #[test]
 fn backlog_of_unprocessed_events_is_not_mistaken_for_a_miss() {
     let mut fx = Fixture::new("backlog");
+    let tracker = fx.start(TrackerConfig {
+        verify_quiet: Duration::from_millis(100),
+        verify_interval: Duration::from_millis(100),
+        ..cfg()
+    });
+    tracker.delay_event_handling(Duration::from_millis(40));
+    // Writer を 1.5 秒塞ぐ。A の flush はそこで止まり、監視スレッドは待つ
+    let blocker = tracker.writer().submit(|_| std::thread::sleep(Duration::from_millis(1500))).unwrap();
+    fx.write("a.txt", b"a");
+    std::thread::sleep(Duration::from_millis(500));
+    const N: usize = 20;
+    for i in 0..N {
+        // ディレクトリを作ると、その作成の flush が中のファイルをまとめて読んでしまう。ルートの直下に書く
+        fx.write(&format!("f{i:02}.txt"), format!("v1 {i}").as_bytes());
+    }
+    blocker.recv().unwrap();
+    wait_until("all recorded", Duration::from_secs(60), || {
+        fx.count("SELECT COUNT(DISTINCT change_id) FROM change_revisions") >= (N + 1) as i64
+    });
+    let runs = tracker.status().verify_runs;
+    wait_until("scans", WAIT_LIMIT, || tracker.status().verify_runs >= runs + 2);
+    assert_eq!(fx.count("SELECT COUNT(*) FROM change_revisions"), (N + 1) as i64, "二重または欠け");
+    assert_eq!(fx.count("SELECT COUNT(*) FROM change_revisions WHERE completeness = 'gap'"), 0, "処理待ちを取りこぼしと取り違えた");
+    assert_eq!(fx.count("SELECT COUNT(*) FROM coverage_gaps WHERE reason = 'watcher_overflow'"), 0);
+    tracker.stop("test");
+}
+
+/// 大量 (2500 ファイル) の一括書き込み。notify の読み取りバッファ (16 KiB) は、読む側が CPU を取れないとあふれて
+/// イベントを黙って失う (spec D34)。取りこぼしが起きても起きなくても通る: 全ファイルが「通常の Revision」か
+/// 「`gap` の Revision」のどちらか 1 つとして記録され、`gap` があれば `watcher_overflow` の区間がある。
+#[test]
+fn bulk_writes_are_each_recorded_once_as_a_normal_or_a_gap_revision() {
+    let mut fx = Fixture::new("bulk");
     let tracker = fx.start(TrackerConfig {
         verify_quiet: Duration::from_millis(100),
         verify_interval: Duration::from_millis(100),
@@ -253,9 +289,23 @@ fn backlog_of_unprocessed_events_is_not_mistaken_for_a_miss() {
     });
     let runs = tracker.status().verify_runs;
     wait_until("scans", WAIT_LIMIT, || tracker.status().verify_runs >= runs + 2);
-    // 実際に取りこぼしていなければ (2500 件では起きない)、gap は 1 件も無い
-    assert_eq!(fx.count("SELECT COUNT(*) FROM change_revisions WHERE completeness = 'gap'"), 0);
-    assert_eq!(fx.count("SELECT COUNT(*) FROM coverage_gaps WHERE reason = 'watcher_overflow'"), 0);
+    // 記録なし 0、二重 0: 全ファイルがちょうど 1 つの Revision を持つ
+    assert_eq!(fx.count("SELECT COUNT(*) FROM change_revisions"), N as i64);
+    assert_eq!(fx.count("SELECT COUNT(DISTINCT change_id) FROM change_revisions"), N as i64);
+    let gaps = fx.count("SELECT COUNT(*) FROM change_revisions WHERE completeness = 'gap'");
+    let intervals = fx.count("SELECT COUNT(*) FROM coverage_gaps WHERE reason = 'watcher_overflow'");
+    if gaps > 0 {
+        assert!(intervals > 0, "gap の Revision が {gaps} 件あるのに watcher_overflow の区間が無い");
+    } else {
+        assert_eq!(intervals, 0, "取りこぼしが無いのに区間がある");
+    }
+    // 最後の Revision の After が実際の内容と一致する
+    for i in [0, N / 2, N - 1] {
+        let path = format!("bulk/f{i:04}.txt");
+        let revs = fx.revisions(&path);
+        assert_eq!(revs.len(), 1, "{path}");
+        assert_eq!(revs[0].after.as_deref(), Some(sha256_hex(format!("v1 {i}").as_bytes()).as_str()), "{path}");
+    }
     tracker.stop("test");
 }
 

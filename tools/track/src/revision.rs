@@ -9,10 +9,12 @@ use std::collections::HashMap;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::attribution::{self, AttributionConfig};
 use crate::baseline::ContentKind;
 use crate::blob::BlobStore;
 use crate::diff::{diff_lines, DiffLimits, Hunk};
 use crate::observe::{ChangeType, Completeness};
+use crate::session;
 use crate::store::Store;
 
 /// Revision の Hunk の作り方 (`change_revisions.diff_mode`)。
@@ -285,12 +287,14 @@ pub struct RebuildReport {
 pub struct Deriver {
     /// (パス, Blob のハッシュ) → その内容の最新のスナップショット。Revision の Before の解決に使う。
     latest: HashMap<(String, Option<String>), i64>,
+    /// 帰属の計算の設定。通常の記録と同じ値を使う (違うと作り直した DB が元と変わる)。
+    pub cfg: AttributionConfig,
     pub report: RebuildReport,
 }
 
 impl Deriver {
     pub fn empty() -> Deriver {
-        Deriver { latest: HashMap::new(), report: RebuildReport::default() }
+        Deriver { latest: HashMap::new(), cfg: AttributionConfig::default(), report: RebuildReport::default() }
     }
 
     /// 今の DB の `snapshots` から始める (起動時の入れ直しが、途中のイベントから続けるとき)。
@@ -305,7 +309,12 @@ impl Deriver {
         Ok(deriver)
     }
 
-    /// 1 つのイベントを派生の表へ反映する。`baseline` と `observed` 以外は何もしない。
+    /// 派生の表へ反映するイベントか (`baseline` / `observed` / セッション・操作のイベント)。
+    pub fn wants(kind: &str) -> bool {
+        matches!(kind, "baseline" | "observed") || session::is_session_event(kind)
+    }
+
+    /// 1 つのイベントを派生の表へ反映する。対象外の kind は何もしない。`pos` はそのイベントのジャーナルの位置。
     pub fn apply_event(
         &mut self,
         conn: &Connection,
@@ -313,6 +322,7 @@ impl Deriver {
         kind: &str,
         at: i64,
         payload: &Value,
+        pos: &str,
         limits: &DiffLimits,
     ) -> rusqlite::Result<()> {
         match kind {
@@ -347,11 +357,12 @@ impl Deriver {
                 // 計算できなかった (読み取りの失敗) ときは、Hunk の無い Revision として残す。作り直しは止めない
                 let plan = plan_diff(blobs, &input, None, limits)
                     .unwrap_or_else(|_| DiffPlan::without_hunks(DiffMode::Unavailable));
-                write_revision(conn, &input, before_snapshot, after_snapshot, &plan)?;
+                let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan)?;
+                attribution::evaluate_new_revision(conn, &self.cfg, revision_id, at, payload["source"].as_str().unwrap_or(""))?;
                 self.report.revisions += 1;
                 self.report.hunks += plan.hunks.len();
             }
-            _ => {}
+            other => session::apply_event(conn, blobs, &self.cfg, other, at, payload, pos)?,
         }
         Ok(())
     }
@@ -392,16 +403,25 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
         return Err(rusqlite::Error::InvalidParameterName("DB 接続が無い".into()));
     };
     let tx = conn.transaction()?;
-    tx.execute_batch("DELETE FROM change_hunks; DELETE FROM change_revisions; DELETE FROM changes; DELETE FROM snapshots;")?;
+    // 参照する側から先に消す (外部キー)
+    tx.execute_batch(
+        "DELETE FROM attribution_evidence; DELETE FROM change_hunks; DELETE FROM change_revisions;
+         DELETE FROM operations; DELETE FROM sessions; DELETE FROM changes; DELETE FROM snapshots;",
+    )?;
     let mut deriver = Deriver::empty();
+    deriver.cfg = store.attribution.clone();
     {
-        let mut stmt =
-            tx.prepare("SELECT at, kind, payload FROM events WHERE kind IN ('baseline', 'observed') ORDER BY event_id")?;
+        let mut stmt = tx.prepare(
+            "SELECT at, kind, payload, journal_pos FROM events
+              WHERE kind IN ('baseline', 'observed', 'session_begin', 'session_resumed', 'session_end', 'session_interrupted',
+                             'op_begin', 'op_end', 'op_abandoned', 'reported')
+              ORDER BY event_id",
+        )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
-            let (at, kind, payload): (i64, String, String) = (row.get(0)?, row.get(1)?, row.get(2)?);
+            let (at, kind, payload, pos): (i64, String, String, String) = (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
             let Ok(payload) = serde_json::from_str::<Value>(&payload) else { continue };
-            deriver.apply_event(&tx, &store.blobs, &kind, at, &payload, limits)?;
+            deriver.apply_event(&tx, &store.blobs, &kind, at, &payload, &pos, limits)?;
         }
     }
     tx.commit()?;

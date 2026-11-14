@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::attribution::AttributionConfig;
 use crate::baseline::{classify, Baseline, ContentKind};
 use crate::blob::BlobStore;
 use crate::content::{peek_len, peek_stat, read_stable, LenOutcome, ReadOutcome, StatOutcome};
@@ -65,6 +66,8 @@ pub struct TrackerConfig {
     pub baseline_chunk_pause: Duration,
     /// 行 diff の計算量の上限 (超えたら Revision 全体を 1 Hunk にする)。
     pub diff_limits: DiffLimits,
+    /// 帰属の計算の設定 (操作の窓の猶予、`time_near` の幅)。
+    pub attribution: AttributionConfig,
 }
 
 impl Default for TrackerConfig {
@@ -85,6 +88,7 @@ impl Default for TrackerConfig {
             unrecorded_retry: Duration::from_secs(1),
             baseline_chunk_pause: Duration::ZERO,
             diff_limits: DiffLimits::default(),
+            attribution: AttributionConfig::default(),
         }
     }
 }
@@ -123,6 +127,15 @@ pub struct Deferred {
     pub delay: Duration,
     /// 元の観測の窓。待っている間、同じ窓の削除をリネームのまとめのために預かる。
     pub window: String,
+}
+
+/// `observe_managed` の結果。
+#[derive(Clone, Debug)]
+pub struct ManagedFlush {
+    /// 観測に付けた時刻。
+    pub observed_at: i64,
+    /// 読めなかったパス。
+    pub unreadable: Vec<String>,
 }
 
 /// ベースラインの所要時間の内訳 (ミリ秒)。`commit_ms` は Writer へ渡して戻るまで (Blob・ジャーナル・DB を含む)。
@@ -815,6 +828,40 @@ impl Collector {
         }
         self.drain(&mut batch);
         changes
+    }
+
+    /// 管理された操作 (`op_begin` / `op_end` / `report`) のための即時の読み取り。デバウンスを待たず、
+    /// 指定したパスの今の状態をベースラインと比べて観測にする。読めなかった (他のプロセスが共有なしで開いている)
+    /// パスは `unreadable` で返し、呼び出し側が少し待ってやり直す。
+    pub fn observe_managed(&mut self, paths: Vec<String>, source: Source) -> ManagedFlush {
+        self.release_held();
+        let observed_at = now_ms();
+        let window = self.new_window();
+        let mut batch = Batch::default();
+        let mut unreadable = Vec::new();
+        for rel in paths {
+            if self.ignore.is_ignored(&rel, false) {
+                continue;
+            }
+            let (eval, modified) = match self.read_item(&rel) {
+                ReadOutcome::Content { bytes, coalesced, modified } => (Eval::Present { bytes, coalesced, modified }, modified),
+                ReadOutcome::Missing | ReadOutcome::NotFile => (Eval::Gone, None),
+                ReadOutcome::Busy | ReadOutcome::Failed(_) => {
+                    unreadable.push(rel);
+                    continue;
+                }
+            };
+            match self.decide(&rel, eval, false, source, &window, observed_at) {
+                Some(o) => self.push(&mut batch, o),
+                None => {
+                    if let Some(st) = self.baseline.files.get_mut(&rel) {
+                        st.modified = modified.or(st.modified);
+                    }
+                }
+            }
+        }
+        self.drain(&mut batch);
+        ManagedFlush { observed_at, unreadable }
     }
 
     /// 最初の起動: 追跡対象の全ファイルの内容ハッシュを取り、`baseline` のスナップショットに残す。

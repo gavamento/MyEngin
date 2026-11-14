@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -16,12 +16,68 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::json;
 
 use crate::baseline::{load_from_db, LoadedState};
-use crate::collector::{Collector, Deferred, DueItem, ScanProgress, ScanTimings, TrackerConfig};
+use crate::collector::{Collector, Deferred, DueItem, ManagedFlush, ScanProgress, ScanTimings, TrackerConfig};
 use crate::db::now_ms;
 use crate::ignore::under_always_ignored_dir;
 use crate::observe::{record_gap, Source};
 use crate::store::Store;
 use crate::writer::Writer;
+
+/// 管理された操作が、監視スレッドへ「このパスを今すぐ読んで」と頼む要求。
+struct FlushCmd {
+    paths: Vec<String>,
+    source: Source,
+    reply: Sender<ManagedFlush>,
+}
+
+/// 即時の読み取りの結果。
+#[derive(Clone, Debug)]
+pub struct FlushOutcome {
+    /// 全パスを予算の時間内に読めた (false = 帰属は後から付く)。
+    pub done: bool,
+    /// 読み取りに使った観測の時刻のうち最後のもの。何も読めなければ None。
+    pub observed_at: Option<i64>,
+}
+
+/// 監視スレッドへ即時の読み取りを頼む取っ手 (複製できる)。
+#[derive(Clone)]
+pub struct FlushHandle {
+    tx: Arc<Mutex<Sender<FlushCmd>>>,
+}
+
+/// 読めなかったパスをやり直す間隔。
+const FLUSH_RETRY: Duration = Duration::from_millis(100);
+
+impl FlushHandle {
+    /// `paths` を今すぐ観測にする。読めないパスは `budget` の間やり直し、間に合わなければ `done = false`。
+    /// 監視スレッドがベースライン・再走査の最中でも、予算の時間で返る (呼び出しを塞がない)。
+    pub fn flush(&self, paths: Vec<String>, source: Source, budget: Duration) -> FlushOutcome {
+        let deadline = Instant::now() + budget;
+        let mut remaining = paths;
+        let mut observed_at = None;
+        while !remaining.is_empty() {
+            let (reply, replies) = channel::<ManagedFlush>();
+            let sent = self.tx.lock().unwrap().send(FlushCmd { paths: remaining.clone(), source, reply }).is_ok();
+            if !sent {
+                return FlushOutcome { done: false, observed_at };
+            }
+            match replies.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(done) => {
+                    observed_at = observed_at.max(Some(done.observed_at));
+                    remaining = done.unreadable;
+                }
+                Err(_) => return FlushOutcome { done: false, observed_at },
+            }
+            if !remaining.is_empty() {
+                if Instant::now() + FLUSH_RETRY >= deadline {
+                    return FlushOutcome { done: false, observed_at };
+                }
+                std::thread::sleep(FLUSH_RETRY);
+            }
+        }
+        FlushOutcome { done: true, observed_at }
+    }
+}
 
 /// 届いた時刻 (監視のコールバックの中で付ける) 付きのイベント。処理が遅れても、書き込みの間隔を正しく測れる。
 type Stamped = (Instant, notify::Result<Event>);
@@ -103,15 +159,18 @@ pub struct Tracker {
     shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
     drop_events: Arc<AtomicBool>,
+    event_delay_us: Arc<AtomicU64>,
     inject: Sender<Stamped>,
     progress: Arc<ScanProgress>,
+    flush: FlushHandle,
     thread: Option<JoinHandle<()>>,
     stopped: bool,
 }
 
 impl Tracker {
     /// Store を Writer へ移し、監視スレッドを起動する。ベースラインはそのスレッドで取る (`wait_ready` で待てる)。
-    pub fn start(root: &Path, store: Store, cfg: TrackerConfig) -> Tracker {
+    pub fn start(root: &Path, mut store: Store, cfg: TrackerConfig) -> Tracker {
+        store.attribution = cfg.attribution.clone();
         let blob_reader = store.blobs.reader();
         let writer = Arc::new(Writer::spawn(store));
         let shared = Arc::new(Shared {
@@ -137,8 +196,10 @@ impl Tracker {
         });
         let stop = Arc::new(AtomicBool::new(false));
         let drop_events = Arc::new(AtomicBool::new(false));
+        let event_delay_us = Arc::new(AtomicU64::new(0));
         let (tx, rx) = channel::<Stamped>();
         let progress = Arc::new(ScanProgress::default());
+        let (flush_tx, flush_rx) = channel::<FlushCmd>();
 
         let thread = {
             let mut collector = Collector::new(root.to_path_buf(), cfg.clone(), Arc::clone(&writer), Arc::clone(&stop), Arc::clone(&progress), blob_reader);
@@ -148,11 +209,13 @@ impl Tracker {
                 cfg: cfg.clone(),
                 writer: Arc::clone(&writer),
                 collector,
+                flush_rx,
                 window,
                 window_last_event: Instant::now(),
                 shared: Arc::clone(&shared),
                 stop: Arc::clone(&stop),
                 drop_events: Arc::clone(&drop_events),
+                event_delay_us: Arc::clone(&event_delay_us),
                 pending: HashMap::new(),
                 last_from: None,
                 last_good_ms: now_ms(),
@@ -173,7 +236,8 @@ impl Tracker {
                 .spawn(move || watch.run(tx_watcher, rx))
                 .expect("watch thread")
         };
-        Tracker { writer, shared, stop, drop_events, inject: tx, progress, thread: Some(thread), stopped: false }
+        let flush = FlushHandle { tx: Arc::new(Mutex::new(flush_tx)) };
+        Tracker { writer, shared, stop, drop_events, event_delay_us, inject: tx, progress, flush, thread: Some(thread), stopped: false }
     }
 
     pub fn status(&self) -> TrackerStatus {
@@ -203,11 +267,22 @@ impl Tracker {
         &self.writer
     }
 
+    /// 管理された操作が、パスを今すぐ読んでもらうための取っ手。
+    pub fn flush_handle(&self) -> FlushHandle {
+        self.flush.clone()
+    }
+
     /// 試験用: `notify` のコールバックへ値を差し込む。`Err` や再走査フラグ付きのイベントで、
     /// 監視バッファのあふれの報告を模す (本物のあふれは notify 8 が Windows で報告しない。architecture.md §4)。
     #[doc(hidden)]
     pub fn inject_event(&self, item: notify::Result<Event>) {
         let _ = self.inject.send((Instant::now(), item));
+    }
+
+    /// 試験用: イベント 1 件の処理に毎回この時間を足す (処理待ちのイベントが溜まる状態を、決定的に作る)。
+    #[doc(hidden)]
+    pub fn delay_event_handling(&self, per_event: Duration) {
+        self.event_delay_us.store(per_event.as_micros() as u64, Ordering::SeqCst);
     }
 
     /// 試験用: 届いたイベントを捨てる (取りこぼしを模す)。
@@ -296,9 +371,11 @@ struct WatchLoop {
     cfg: TrackerConfig,
     writer: Arc<Writer>,
     collector: Collector,
+    flush_rx: Receiver<FlushCmd>,
     shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
     drop_events: Arc<AtomicBool>,
+    event_delay_us: Arc<AtomicU64>,
     pending: HashMap<String, Pending>,
     /// 直前のイベントが `Name(From)` だったときの旧パス。
     last_from: Option<String>,
@@ -386,6 +463,17 @@ impl WatchLoop {
         if self.last_check.elapsed() >= check_every {
             self.last_check = Instant::now();
             self.flush_due(false);
+        }
+        self.serve_flush_commands(rx);
+    }
+
+    /// 管理された操作からの即時の読み取りの要求に答える。届いているイベントを先に取り込み、
+    /// 操作の前に起きた変更が、操作の変更と混ざらないようにする。
+    fn serve_flush_commands(&mut self, rx: &Receiver<Stamped>) {
+        while let Ok(cmd) = self.flush_rx.try_recv() {
+            self.drain_events(rx);
+            let done = self.collector.observe_managed(cmd.paths, cmd.source);
+            let _ = cmd.reply.send(done);
         }
     }
 
@@ -609,6 +697,10 @@ impl WatchLoop {
     /// イベントの種別では変更かどうかを決めない。パスを待ち行列へ入れるだけ
     /// (リネームの `Name(From)` の直後の `Name(To)` だけは対にする)。
     fn handle_event(&mut self, event: Event, now: Instant) {
+        let delay = self.event_delay_us.load(Ordering::Relaxed);
+        if delay > 0 {
+            std::thread::sleep(Duration::from_micros(delay));
+        }
         if event.need_rescan() {
             self.handle_overflow("rescan flag");
             return;
