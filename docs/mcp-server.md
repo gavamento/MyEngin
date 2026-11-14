@@ -67,9 +67,19 @@ claude mcp add --scope local mye-engine -- C:\HAL\MyEngin\tools\mcp\target\relea
 | `verify_job` | `op` = `start` / `poll`。start は `job` と `ticks` (1〜100000、既定 600)、poll は `jobId` | start: `{jobId, job, ticks, logPath}`。poll: `{state:"running"}` か `{state:"done", exitCode, summary}` |
 | `note_read` | `topic` (省略 = 一覧)、`latest` (1〜50、既定 5。topic が要る) | 一覧: `{topics:[{topic, bytes, lastHeading}]}` (topic 名順)。topic 指定: `{topic, total, truncated, entries:[{heading, text}]}` (古い順。見出しと本文を JSON 文字列に直した長さの合計が 64 KB を超えたら古い側を落として `truncated: true`。応答は同じ内容を `content` の text (JSON をさらに文字列にしたもの) と `structuredContent` の 2 か所に載せるので、応答 1 行は 64 KB の 2〜3 倍になる。`"` だけの 65536 バイトの本文で 196,842 B を実測) |
 | `note_append` | `topic`、`text` (1〜65536 バイト)、`title` (任意、1 行 120 文字以内) | `{path, bytes}` (path はプロジェクトからの相対、bytes は追記後のファイルサイズ) |
+| `change_session_begin` | `provider` (`claude` / `codex` / `gemini` / `other`)、`workspace`、`clientSessionId`、`isolated` (`provider` 以外は任意) | `{sessionId, status, resumed, trackingCapabilities, baseCommit}`。追跡サービスが居なければ起動する |
+| `change_session_end` | `sessionId` | `{status, changeCount}` |
+| `change_report` | `sessionId`、`paths` (1 件以上)、`operationId`、`beforeHashes` / `afterHashes` (任意。配列かパスをキーにしたオブジェクト) | パスごとの `matched` / `mismatch` / `not_observed` と帰属。申告だけでは `verified` にならない (`claimed`) |
+| `change_list` | `sessionId`、`path`、`from` / `to`、`review`、`attribution`、`changeType`、`cursor`、`limit` (すべて任意) | `{items, nextCursor, coverage}`。Blob と Hunk の本文は入らない |
+| `change_describe` | `revisionId` | Before / After、Hunk の要約、帰属と根拠。hunks と evidence は合計 64 KB で切り `truncated` |
 
 `search` の `kind` は `component` / `field` / `cli` / `abi` / `adr` / `spec` / `golden` / `note`。`src` は `engine` か `notes` で、
 メモ (notes) はエンジンの権威情報と混ぜずに `src: "notes"` で区別する。
+
+変更追跡の 5 道具 (M104h) は、引数を検査して追跡サービス `mye_track.exe` の名前付きパイプへ取り次ぐだけで、判定はサービスがする。
+追跡するプロジェクトは notes と同じ決め方 (`--project`、無ければ `--root` / 見つけたリポジトリのルート)。
+サービスが居なければ `MYE_TRACK_EXE`、`mye_mcp.exe` の隣、`tools\track\target\release` の順に `mye_track.exe` を探して切り離して起動する (`MYE_TRACK_EXE` があればそれだけを使う)。
+MCP は `.mye\ai_changes\` を書かない。正本は `docs\ai-change-tracking\ipc-contract.md`。
 
 ### verify_job
 

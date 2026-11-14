@@ -17,11 +17,12 @@ AI クライアントがエンジンで作業するとき、(1) `replay_verify.b
    MCP の legacy (2025-03-26〜2025-11-25) と modern (2026-07-28) の両方に答える。
 2. **エンジン (sim / Runtime / GameLogic / Shared / Server) から索引ダンプ (`Editor/Tools/EngineIndexDump`) を include しない。**
    索引ダンプは Editor 層の機能で、`Editor.exe --dump-index` が実行時の登録表から出す。規則 15-a / 15-b。
-3. **道具は 5 つ**: `search` / `describe` (索引。読み取り専用)、`verify_job` (固定 22 ジョブの起動と結果の構造化)、
-   `note_read` / `note_append` (追記専用のメモ)。
+3. **道具は 10 個**: `search` / `describe` (索引。読み取り専用)、`verify_job` (固定 22 ジョブの起動と結果の構造化)、
+   `note_read` / `note_append` (追記専用のメモ)、`change_session_begin` / `change_session_end` / `change_report` / `change_list` / `change_describe`
+   (M104h。AI の変更追跡サービスへ取り次ぐ。ADR-039 決定 4)。
 4. **外へ手を伸ばす経路をファイル単位で閉じ込める** (`tools\check_rules.ps1` の規則 15-c / 15-d)。
-   子プロセスを起動してよいのは `verify.rs` だけ。ファイルを書く API を使ってよいのは (ファイル x API) の組で許可された所だけ:
-   `verify.rs` は `create_dir_all`、`notes.rs` は `create_dir_all` と `OpenOptions` (追記モード)。
+   子プロセスを起動してよいのは `verify.rs` と `track_client.rs` (追跡サービスの起動) だけ。ファイルを書く API を使ってよいのは (ファイル x API) の組で許可された所だけ:
+   `verify.rs` は `create_dir_all`、`notes.rs` は `create_dir_all` と `OpenOptions` (追記モード)、`track_client.rs` は `OpenOptions` (追跡サービスの pipe を開く)。
    job 名は enum で受け、シェルに任意の文字列を渡さない。
 5. **notes は追記専用で、書き先は `<project>\.mye\notes` (`--project`) か `<repo>\.mye\notes`。** 上書き・削除・改名の手段を持たない
    (自前ループの LLM が無条件に叩く前提で、不可逆な操作を持たせない)。topic は `[A-Za-z0-9_-]{1,64}` と Windows の予約デバイス名の拒否、

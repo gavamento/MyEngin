@@ -206,6 +206,11 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 
 MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wrap()` の形で返すだけにする。判定はすべてサービス側で行う。
 
+実装 (M104h、`tools\mcp\src\track_client.rs`): 道具の呼び出しごとに接続し、`hello` (`role = mcp`) → op の順に 1 往復する。サービスのエラーは `isError` の結果にコードと文面をそのまま入れる。
+追跡するプロジェクトは MCP の notes と同じ決め方 (`--project`、無ければ `--root` / 見つけたリポジトリのルート)。projectId は `tools\mcp` が自前で計算し (SHA-256 も自前。依存を足さない)、`hello` の結果の `projectId` が自分の計算と一致することを確かめる。
+読み取りは別スレッドで行い、時間切れ (記録の op 5 秒、取得の op 30 秒) でも MCP 全体を止めない。時間切れの接続は読み取りで止まったスレッドごと残るが、次の呼び出しは別の接続を張る。
+`change_describe` は `hunks` と `evidence` を合計 64 KB で切り、切ったら `truncated: true` を返す。
+
 ## 9. 実装 (M104f)
 
 正本は `tools\track\src\protocol.rs` (版・上限・op と役割の表・エラーコード)、`server.rs` (常駐)、`ops.rs` (取得の op)、`client.rs` (クライアント)。この節は実装で決めたことの要約。
@@ -251,7 +256,10 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 
 `mye_track.exe client (--project <root> | --pipe <name>) [--wait-ms <n>]`: 標準入力の 1 行を要求として pipe へ送り、応答の 1 行を標準出力へ出す (hello は自動で行わない = hello の失敗も流せる)。pipe が無ければ `--wait-ms` (既定 5000) の間待ち、それでも無ければ終了コード 4。サービスが接続を切っていたら `{"client":"closed"}` を出して終わる。`ERROR_PIPE_BUSY` は `WaitNamedPipeW` で最大 2 秒待って開き直す (§1)。この接続の実装 (`client.rs`) は、フックの CLI (sub-08) と共有する。
 
-`mye_track.exe` を探す順 (Editor・MCP・フックが起動するとき。実装は sub-08 / sub-09): (1) 環境変数 `MYE_TRACK_EXE` (2) 自分の exe の隣 (3) MCP だけ `..\..\..\track\target\release\mye_track.exe`。`tools\build_track.bat` が `bin\x64\Debug` と `bin\x64\Release` の両方へ置くので、どちらの構成の Editor からも (2) で見つかる。
+MCP の起動の作法 (`track_client.rs`): `mye_track.exe serve --project <root>` を、標準入出力を 3 本とも null にして、`CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` で起動する (`ERROR_ACCESS_DENIED` なら `CREATE_BREAKAWAY_FROM_JOB` を外してやり直す)。子は待たない。
+Rust の `Command` は継承可能なハンドルを子へ複製するため、起動のあいだだけ自分の標準入出力のハンドルを継承不可にする (これをしないと、サービスが MCP の stdout を掴んで、クライアントから MCP の終了が見えない。`tools\track_verify.ps1` の `# mcp` がこれを見る)。
+
+`mye_track.exe` を探す順 (Editor・MCP・フックが起動するとき。MCP は M104h で実装、フックと Editor は sub-08 / sub-09): (1) 環境変数 `MYE_TRACK_EXE` (2) 自分の exe の隣 (3) MCP だけ `..\..\..\track\target\release\mye_track.exe`。**`MYE_TRACK_EXE` が設定されているときは (1) だけを使い、そのファイルが無ければ (2) (3) を探さずに起動に失敗する** (検証でサービスの不在を決定的に作るため。空文字列は未設定と同じ)。`tools\build_track.bat` が `bin\x64\Debug` と `bin\x64\Release` の両方へ置くので、どちらの構成の Editor からも (2) で見つかる。
 
 ### 9.6 検証
 

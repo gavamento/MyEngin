@@ -1,0 +1,13 @@
+# MCP がサービスを起動する (居ない状態から): session_begin -> 編集 -> report (ハッシュが両方一致) -> list -> describe -> session_end。申告だけなので claimed で、verified にならない。
+# MCP の終了後もサービスが動いている (後の editor の接続が通る)。mye_mcp.exe の stdin を閉じると出力の終わりまで読める (サービスが stdout を掴んでいない)
+# write base.txt b0\n
+# mcp {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"change_session_begin","arguments":{"provider":"claude","clientSessionId":"mcp-cold"}}}
+# wait-watching
+# write base.txt b1\n
+# mcp {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"change_report","arguments":{"sessionId":"{SESSION}","paths":["base.txt"],"beforeHashes":["321c7d264774f298d682321e88692b1e8cd75614da07163388b865ca74c7bae6"],"afterHashes":["e10a1287bfc72ab847878fa7737ea038aa327a3920d6c8c28b8e6484e013e913"]}}}
+# mcp {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"change_list","arguments":{"sessionId":"{SESSION}"}}}
+# mcp {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"change_list","arguments":{"attribution":"verified"}}}
+# mcp {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"change_describe","arguments":{"revisionId":1}}}
+# mcp {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"change_session_end","arguments":{"sessionId":"{SESSION}"}}}
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"sessions"}

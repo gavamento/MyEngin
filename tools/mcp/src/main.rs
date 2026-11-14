@@ -11,6 +11,7 @@ mod rpc;
 mod search;
 mod stdio;
 mod tools;
+mod track_client;
 mod verify;
 
 use std::io::BufReader;

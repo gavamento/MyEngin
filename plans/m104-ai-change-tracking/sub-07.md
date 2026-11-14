@@ -1,7 +1,7 @@
 # sub-07: MCP の 5 ツール (M104h)
 
 - 依存: sub-22 (順序は sub-06 → sub-22 → sub-07)
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-15、sub-06 の VERDICT round 3 で planner が書き直した)
 - 質問の運用: 推奨で進め、Notion に後回し。ユーザーの手作業が要る確認 (受け入れ条件 12) は「未確認」として残し、それ無しでサブを閉じる。
@@ -105,4 +105,15 @@
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の要約)
+
+- 実装: `tools\mcp\src\track_client.rs` (新規。pipe、起動、hello、時間切れ、SHA-256、projectId)、`tools.rs` (5 道具)、`main.rs` (`mod`)、`tools\check_rules.ps1` (15-c / 15-d / 規則 9)、`tools\mcp_verify.ps1` (`# env`)、`tools\track_verify.ps1` (`# mcp` / `# mcp-nostart` / `# wait-watching`、mye_mcp のビルド)、シナリオ (`tests\mcp\track_unavailable` / `track_bad_args`、`tests\track\16_mcp_cold_start` / `17_mcp_attach`)、文書 (ADR-032、`docs\mcp-server.md`、ipc-contract §8 / §9.5、`docs\test_checklists.md`、計画の進捗表)。
+- 実測で見つけたこと: `std::process::Command` は継承可能なハンドルを子へ複製する。標準入出力を null にしても、MCP の stdout をサービスが掴み、`# mcp` が 30 秒で時間切れになった (受け入れ条件 8 の検出そのもの)。起動のあいだだけ自分の stdio ハンドルを継承不可にして直した (`StdHandlesHidden`、kernel32 の 3 関数の `extern`)。
+- 既存の失敗 (本サブ以前): `tests\mcp\verify_job.expected.ndjson` は期待が古く (`verify.rs` の JOBS に `2d` / `feel` / `field` が増えた後に撮り直されていない)、`tools\mcp_verify.bat` はこのシナリオだけ FAIL する。本サブでは触らない。`tools_list.expected.ndjson` の撮り直しには同じ原因の差 (verify_job の enum) が混ざる。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、`tools\mcp\Cargo.toml` / `Cargo.lock` / `tests\mcp\verify_job.expected.ndjson` に差分なし、`git diff --stat ca6a3991 -- src` は空、既存の `tests\mcp` で変わったのは `tools_list.expected.ndjson` だけ、`check_rules.ps1` の差分は規則 9 の 1 組と規則 15-c / 15-d の許可 (15-d は `OpenOptions` だけ) とコメント。planner の実走: `cargo test --manifest-path tools\mcp\Cargo.toml` 58 件通過、`tools\track_verify.bat` 全シナリオ PASS (16、17 を含む)、`tools\mcp_verify.bat` は `verify_job` だけ FAIL で他は PASS。
+  - `verify_job` の FAIL は以前からのもの (planner が確認: 期待値の最後の更新は `bc8f5d4c` = M87c、その後 `verify.rs` の JOBS に `2d` / `feel` / `field` が足された)。受け入れ条件 13 の `mcp_verify` は、この 1 件を除いて満たしたと見る。撮り直しは sub-08 に入れた。
+  - 追加 (`StdHandlesHidden`、`hello` の 5 秒、ハッシュ引数の検査、`cargo test` の追加) は採る。`StdHandlesHidden` は、`Stdio::null()` でも継承可能なハンドルが子へ渡るという実測に基づく対処で、受け入れ条件 8 に要る。
+  - **範囲の外の操作 1 件**: ユーザーのセッションが使用中の `tools\mcp\target\release\mye_mcp.exe` を `mye_mcp.exe.inuse-15352` に名前を変えて、新しい exe を置いた。消してはおらず、ビルドの出力先 (`.gitignore` 済み) の中だが、ユーザーの動いているプロセスの実行ファイルに手を付けた。結果として、**次に起動する Claude Code のセッションから、このリポジトリの MCP は 10 道具になる** (`.mcp.json` がこの exe を指しているため)。再発を防ぐため、sub-08 で検証用の `mye_mcp.exe` を別の出力先にビルドする形に直す。`.inuse-15352` のファイルは誰も触らない (ユーザーの判断)。
+  - 質問への回答: (1) `verify_job.expected.ndjson` は sub-08 で撮り直す (差分がジョブ名 3 つの追加だけであることを確かめてから)。(2) exe の扱いは上のとおり。今後は名前を変えない。(3) Job の中で BREAKAWAY が許されず親と一緒に終わった場合は、仕様どおり `service_down` の欠落でよい。

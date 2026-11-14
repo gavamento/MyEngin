@@ -827,6 +827,14 @@ $constGroups = @(
             'tools\deepmodal\layout.py'            = 'CHANNELS\s*=\s*(\d+)'
         }
     }
+    # 食い違うと hello が proto_mismatch になり、MCP の変更追跡の道具が全部使えなくなる (C++ の kTrackProtoVersion は sub-09 で足す)
+    @{
+        label = 'PROTO_VERSION (track) / PROTO_VERSION (mcp)'
+        sites = @{
+            'tools\track\src\protocol.rs'   = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
+            'tools\mcp\src\track_client.rs' = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
+        }
+    }
     # M76e2 (sub-09) 持ち越し: export.py の `paramCount <= MAX_PARAM_COUNT` assert と
     # LoadDmNet の予算検査が「同じ約束」を C++/Python の 2 箇所に持っている。食い違うと
     # 「Python が通した .dmnet を C++ が拒否する」型の静かな破綻になる (DmNet.h のコメント参照)。
@@ -1262,14 +1270,16 @@ foreach ($name in 'EngineIndexDump.cpp', 'EngineIndexDump.h') {
     }
 }
 # 15-c / 15-d: MCP サーバが外へ手を伸ばす経路 (子プロセス起動・ファイル書き込み) を許可リストのファイルに閉じ込める。
-# 許可リストは、その経路を足すサブがここを編集して広げる (M87c: verify.rs, M87d: notes.rs)。
+# 許可リストは、その経路を足すサブがここを編集して広げる (M87c: verify.rs, M87d: notes.rs, M104h: track_client.rs)。
 # verify.rs が書くのは cache\mcp_logs の create_dir_all だけ (ログ本体は子の cmd が > で書く)。notes.rs は追記モードの OpenOptions と create_dir_all だけ。
+# track_client.rs は追跡サービスの pipe を開く OpenOptions だけ (サービスの起動はここで許可。MCP は .mye\ai_changes を書かない)。
 # 許可ファイルの外で使うと、読み取り専用のはずの search / describe が副作用を持てるようになる。
 $mcpSrcDir = if ($McpSourceDir -ne '') { $McpSourceDir } else { Join-Path $repo 'tools\mcp\src' }
-$mcpSpawnAllowed = @('verify.rs')
+$mcpSpawnAllowed = @('verify.rs', 'track_client.rs')
 $mcpWriteAllowed = @{
     'verify.rs' = @('create_dir_all')
     'notes.rs'  = @('create_dir_all', 'OpenOptions')
+    'track_client.rs' = @('OpenOptions')
 }
 $mcpFsWriteNames = @('write', 'create_dir', 'create_dir_all', 'rename', 'remove_file', 'remove_dir', 'remove_dir_all', 'copy', 'set_permissions', 'hard_link', 'symlink_file', 'symlink_dir')
 $mcpSpawnPattern = '\bCommand\s*::\s*new\b|\bprocess\s*::\s*Command\b|\.spawn\s*\(|\braw_arg\s*\(|\bCommandExt\b'

@@ -1,0 +1,8 @@
+# 既に動いているサービスへ MCP が繋がる (MYE_TRACK_EXE を存在しないファイルにしてあるので、起動しようとすると isError になる)。session_end までして、MCP の終了後に interrupted へ変わる競合を避ける。
+# write m.txt m0\n
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"sessions"}
+# mcp-nostart {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"change_session_begin","arguments":{"provider":"codex","clientSessionId":"mcp-attach"}}}
+# mcp-nostart {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"change_list","arguments":{}}}
+# mcp-nostart {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"change_session_end","arguments":{"sessionId":"{SESSION}"}}}
+{"id":3,"op":"sessions"}

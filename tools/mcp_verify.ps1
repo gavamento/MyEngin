@@ -17,6 +17,7 @@
 # 他のディレクティブ ('# ' + 名前 + 引数):
 #   junction <相対パス>   起動前に {PROJ}\<相対パス> を、プロジェクトの外の空ディレクトリへのジャンクションにする
 #   expect-untouched      起動後、プロジェクト (junction があればその行き先) にファイルが増えていないこと
+#   env NAME=VALUE        そのシナリオの mye_mcp.exe の起動だけ、環境変数 NAME を VALUE にする (追跡サービスの不在を作る MYE_TRACK_EXE など)
 # 要求行の @@REP:<1 文字>:<回数>@@ は、その文字の繰り返しに展開する (64 KB 打ち切りの試験用)。
 #
 # 出力は比較の前に正規化する: UTC 時刻 -> <TS>、同じ文字の 100 回以上の連なり -> <文字>*<回数>
@@ -138,15 +139,17 @@ foreach ($path in $scenarios) {
     $extraArgs = $defaultArgs
     $junctionRel = $null
     $expectUntouched = $false
+    $envSettings = @{}
     $requests = New-Object System.Collections.Generic.List[string]
     foreach ($raw in [System.IO.File]::ReadAllLines($path)) {
         $line = $raw.Trim()
         if ($line -eq '') { continue }
         if ($line.StartsWith('#')) {
-            # ディレクティブ ('# args' 'junction' 'expect-untouched') 以外の '#' 行は説明
+            # ディレクティブ ('# args' 'junction' 'expect-untouched' 'env') 以外の '#' 行は説明
             if ($line -match '^#\sargs\s+(.+)$') { $extraArgs = $Matches[1] }
             if ($line -match '^#\sjunction\s+(.+)$') { $junctionRel = $Matches[1] }
             if ($line -match '^#\sexpect-untouched\s*$') { $expectUntouched = $true }
+            if ($line -match '^#\senv\s+(\w+)=(.*)$') { $envSettings[$Matches[1]] = $Matches[2] }
             continue
         }
         $requests.Add([regex]::Replace($line, '@@REP:(.):(\d+)@@', { param($m) [string]::new($m.Groups[1].Value[0], [int]$m.Groups[2].Value) }))
@@ -172,8 +175,18 @@ foreach ($path in $scenarios) {
     $outFile = Join-Path $work "$name.out"
     $errFile = Join-Path $work "$name.err"
     [System.IO.File]::WriteAllText($inFile, (($requests -join "`n") + "`n"), $utf8NoBom)
-    & cmd /c "`"$exe`" --root `"$repo`" $extraArgs < `"$inFile`" > `"$outFile`" 2> `"$errFile`""
-    $exitCode = $LASTEXITCODE
+    # 環境変数はこのシナリオの起動だけに効かせる (元の値は戻す)
+    $savedEnv = @{}
+    foreach ($key in $envSettings.Keys) {
+        $savedEnv[$key] = [System.Environment]::GetEnvironmentVariable($key)
+        [System.Environment]::SetEnvironmentVariable($key, $envSettings[$key])
+    }
+    try {
+        & cmd /c "`"$exe`" --root `"$repo`" $extraArgs < `"$inFile`" > `"$outFile`" 2> `"$errFile`""
+        $exitCode = $LASTEXITCODE
+    } finally {
+        foreach ($key in $savedEnv.Keys) { [System.Environment]::SetEnvironmentVariable($key, $savedEnv[$key]) }
+    }
 
     # 起動後の確認: ファイルが増えていないこと (ジャンクションがあればその行き先、無ければプロジェクト)
     $untouched = $true

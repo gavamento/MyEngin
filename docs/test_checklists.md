@@ -1009,3 +1009,18 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `bin\x64\Debug\Editor.exe --selftest-full` と `bin\x64\Release\Editor.exe --selftest-full` が全スイート PASS する (`disturbancelong` の「final hash at tick 600 equals the baked value」は基点 `d52e91f3` でも FAIL する別件)
 - [ ] `tools\cull_verify.bat` が PASS する (Release と Debug をビルドした後。CI でも `MYE_CULL_SKIP_CONFIGS=1` で回る)
 - [ ] `tools\check_rules.ps1` が 0 error、`tools\replay_verify.bat` が全ジョブ PASS、`tools\shot_verify.bat` が PASS する (`flow_title` の差 (diffPixels=944) は M99 着手前の基点 `d52e91f3` でも同じに出る別件)
+
+## M104h: AI Change Tracking の MCP 道具 (手動確認)
+
+自動の検証 (`tools\mcp_verify.bat`、`tools\track_verify.bat`) は合成の親プロセスでしか確かめていない。本物のクライアントの Job の中でのサービスの生存は、ここで確かめる。
+
+### 本物の Claude Code を終了した後にサービスが生き残るか (受け入れ条件 12)
+
+実行者はユーザー。AI は自分を動かしているクライアントを終了させることになるので実行しない。結果がどちらでも設計は成り立つ (生き残らなければ、Claude Code を終えた後は `service_down` の欠落として記録される)。
+
+- [ ] 準備: `tools\build_track.bat Release` と `cargo build --release --manifest-path tools\mcp\Cargo.toml` を済ませる。追跡したい一時プロジェクト (リポジトリの外の空のディレクトリ。このリポジトリのルートは避ける) を用意し、そこで Claude Code を `mye-engine` の MCP 付きで起動する (`mye_mcp.exe --project <一時プロジェクト>` を登録する)。`mye_track.exe` が動いていないことを `Get-Process mye_track -ErrorAction SilentlyContinue` で確かめる
+- [ ] Claude Code に `change_session_begin` (provider = claude) を呼ばせる。`Get-Process mye_track` に 1 行出て、`<一時プロジェクト>\.mye\ai_changes\service.json` ができる (`pid` が `Get-Process` の Id と一致する)
+- [ ] `change_session_end` まで呼ばせてから、Claude Code を終了する (`/exit`、または端末を閉じる。両方試す)
+- [ ] 終了の 5 秒後に `Get-Process mye_track` と `service.json` を見る。**生きていれば**: 設計どおり (`CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` が効いた)。その後、接続 0 のまま 10 分で `idle_timeout` で終わり `service.json` が消える (running のセッションが無いこと。`change_session_end` を呼んでおく)
+- [ ] **死んでいれば**: Claude Code の Job がサービスを巻き込んでいる。`mye_track.exe` の終了コードとイベントログ、`service.json` が残っているか (残っていれば異常終了) を控え、planner へ「生存しない」と伝える。再び Claude Code を起動して `change_list` を呼ぶと、サービスが起動し直されて `service_stop` が無い区間が `coverage` に出るか確かめる
+- [ ] 後始末: 動いている `mye_track.exe` が残っていたら、Editor ではなく `mye_track.exe client --project <一時プロジェクト>` から `shutdown` を送って止める (`service.json` のトークンで `role = editor` の `hello` の後に `{"id":2,"op":"shutdown"}`)

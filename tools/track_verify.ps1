@@ -21,6 +21,15 @@
 #   # reconnect                   シナリオの接続を閉じて開き直す (hello から)
 #   # stop                        pipe の shutdown でサービスを止める (終了コード 0 を確かめる)
 #   # start                       サービスを起動し直す (ベースラインが終わるまで待つ)
+#   # mcp <行>                    mye_mcp.exe を --project <一時プロジェクト> で 1 回起動し、JSON-RPC の 1 行を流して stdin を閉じ、
+#                               出力の終わりまで読む (サービスが MCP の stdout を掴んでいると、ここで止まって失敗する)。
+#                               MYE_TRACK_EXE は mye_track.exe を指すので、サービスが居なければ MCP が起動する。応答は
+#                               {"mcp":{"isError":..,"body":<structuredContent>}} の 1 行で出力に足す。
+#                               行の {SESSION} は、直前までの change_session_begin の sessionId。MCP が起動したサービスは、
+#                               以後このスクリプトが管理する (# stop や終了時の shutdown の対象)
+#   # mcp-nostart <行>            # mcp と同じだが、MYE_TRACK_EXE を存在しないファイルにする (既に動いているサービスへ
+#                               繋がることの確認。起動しようとすると isError になる)
+#   # wait-watching               サービスが phase = watching になるまで待つ (MCP が起動したサービスのベースライン待ち)
 # サービスは最初の要求行か wait-recorded / start のときに起動する。
 #
 # 出力は比較の前に正規化する: トークン・projectId・UUID (sessionId / operationId)・時刻・PID・所要時間 -> <TOKEN> / <PROJECT_ID> / <UUID> / <N>、プロジェクトのパス -> <ROOT>、
@@ -36,12 +45,19 @@ $repo = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $repo 'tools\track\target\release\mye_track.exe'
 $scenarioDir = Join-Path $repo 'tests\track'
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("mye_trackvf_" + [System.Diagnostics.Process]::GetCurrentProcess().Id)
+$mcpManifest = Join-Path $repo 'tools\mcp\Cargo.toml'
+$mcpExe = Join-Path $repo 'tools\mcp\target\release\mye_mcp.exe'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$mcpLimitMs = 30000
 $readyLimitMs = 60000
 $requestLimitMs = 60000
 
 Set-Location $repo
 if (-not (Test-Path $exe)) { Write-Host "[track_verify] $exe not found (run tools\build_track.bat first)"; exit 1 }
+# `# mcp` のシナリオが使う mye_mcp.exe (release)。変更が無ければ cargo は何もしない
+& cargo build --release --manifest-path $mcpManifest 2>&1 | ForEach-Object { Write-Host "[track_verify] cargo: $_" }
+if ($LASTEXITCODE -ne 0) { Write-Host "[track_verify] cargo build of tools\mcp failed (is mye_mcp.exe running and locked?)"; exit 1 }
+if (-not (Test-Path $mcpExe)) { Write-Host "[track_verify] $mcpExe not found"; exit 1 }
 
 # --- 1 つのシナリオの実行状態 -------------------------------------------------------------
 
@@ -50,6 +66,8 @@ $script:client = $null    # シナリオの接続 (mye_track client の Process)
 $script:proj = $null      # 一時プロジェクトのパス
 $script:svcErr = $null    # サービスの標準エラーの出力先
 $script:svcStopping = $false  # シナリオの中で shutdown を送った (サービスは自分で終わる)
+$script:svcAdopted = $false   # svc は MCP が起動したものを service.json の pid で掴んだ (子ではない)
+$script:session = $null   # 直近の change_session_begin (MCP) が返した sessionId
 $script:failures = New-Object System.Collections.Generic.List[string]
 
 function Escape-Json([string]$text) { return $text.Replace('\', '\\').Replace('"', '\"') }
@@ -107,6 +125,10 @@ function Start-Tracker {
     $script:svc = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden `
         -ArgumentList @('serve', '--project', "`"$($script:proj)`"", '--idle-timeout-ms', '90000') `
         -RedirectStandardError $errFile -RedirectStandardOutput ($errFile + '.out')
+    Wait-Watching
+}
+
+function Wait-Watching {
     $deadline = [DateTime]::UtcNow.AddMilliseconds($readyLimitMs)
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($script:svc.HasExited) { throw "mye_track serve exited early (code $($script:svc.ExitCode))" }
@@ -115,6 +137,53 @@ function Start-Tracker {
         Start-Sleep -Milliseconds 100
     }
     throw 'the service did not reach phase = watching'
+}
+
+# MCP が起動したサービスを、このスクリプトが起動したものと同じに扱う (service.json の pid で掴む)
+function Adopt-Service {
+    if ($script:svc) { return }
+    $path = Join-Path $script:proj '.mye\ai_changes\service.json'
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    $json = [System.IO.File]::ReadAllText($path, $utf8NoBom) | ConvertFrom-Json
+    $script:svc = [System.Diagnostics.Process]::GetProcessById([int]$json.pid)
+    $script:svcErr = Join-Path $work 'adopted.err'
+    $script:svcAdopted = $true
+}
+
+# mye_mcp.exe を 1 回起動して 1 行を流す。stdin を閉じて出力の終わりまで読めること自体が、サービスが MCP の stdio を掴んでいない確認
+function Invoke-Mcp([string]$requestLine, [bool]$noStart) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $mcpExe
+    $psi.Arguments = "--project `"$($script:proj)`""
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.StandardInputEncoding = $utf8NoBom
+    $psi.StandardOutputEncoding = $utf8NoBom
+    $psi.StandardErrorEncoding = $utf8NoBom
+    $psi.Environment['MYE_TRACK_EXE'] = if ($noStart) { Join-Path $work 'no_such\mye_track.exe' } else { $exe }
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync()
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $p.StandardInput.NewLine = "`n"
+    $p.StandardInput.WriteLine($requestLine)
+    $p.StandardInput.Close()
+    if (-not $outTask.Wait($mcpLimitMs)) {
+        $p.Kill()
+        throw "mye_mcp did not reach the end of its output within ${mcpLimitMs} ms (does the service hold its stdout?)"
+    }
+    if (-not $p.WaitForExit($mcpLimitMs)) { $p.Kill(); throw 'mye_mcp did not exit after its stdin was closed' }
+    if ($p.ExitCode -ne 0) { throw "mye_mcp exited with $($p.ExitCode): $($errTask.Result)" }
+    $lines = @($outTask.Result -split "`n" | Where-Object { $_ -ne '' })
+    if ($lines.Count -ne 1) { throw "mye_mcp wrote $($lines.Count) lines for 1 request" }
+    $response = $lines[0]
+    $body = if ($response -match '"structuredContent":(\{.*\})\}\}$') { $Matches[1] } else { $response }
+    $isError = if ($response -match '"isError":true') { 'true' } else { 'false' }
+    if ($requestLine -match '"change_session_begin"' -and $body -match '"sessionId":"([0-9a-f-]{36})"') { $script:session = $Matches[1] }
+    Adopt-Service
+    return '{"mcp":{"isError":' + $isError + ',"body":' + $body + '}}'
 }
 
 function Stop-Tracker {
@@ -127,8 +196,10 @@ function Stop-Tracker {
             throw "the service did not stop after shutdown: $((Get-Content -LiteralPath $script:svcErr -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ')"
         }
     }
-    if ($script:svc.ExitCode -ne 0) { throw "the service exited with $($script:svc.ExitCode)" }
+    # MCP が起動したサービスは子ではないので、終了コードを読めない (終了したことだけを確かめる)
+    if (-not $script:svcAdopted -and $script:svc.ExitCode -ne 0) { throw "the service exited with $($script:svc.ExitCode)" }
     $script:svc = $null
+    $script:svcAdopted = $false
     $script:svcStopping = $false
 }
 
@@ -275,6 +346,11 @@ try {
                         Stop-Tracker
                     } elseif ($line -match '^#\sstart\s*$') {
                         Start-Tracker
+                    } elseif ($line -match '^#\swait-watching\s*$') {
+                        Wait-Watching
+                    } elseif ($line -cmatch '^#\smcp(-nostart)?\s(.+)$') {
+                        $mcpLine = $Matches[2].Replace('{SESSION}', [string]$script:session)
+                        $actual.Add((Normalize (Invoke-Mcp $mcpLine ($Matches[1] -eq '-nostart'))))
                     }
                     continue
                 }
@@ -295,6 +371,7 @@ try {
             Close-Client
             if ($script:svc -and -not $script:svc.HasExited) { $script:svc.Kill(); $script:svc.WaitForExit(10000) | Out-Null }
             $script:svc = $null
+            $script:svcAdopted = $false
             $script:svcStopping = $false
         }
         if ($errorText) {

@@ -22,9 +22,9 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104d2 | 1 | 完了 | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
 | M104e | 1 | 完了 | 行 diff (Myers)、Hunk、Change / Revision の確定 (`write_revision`)、リネームのまとめ (窓をまたぐ預かり込み)、DB の作り直しの再構成、Diff ワーカー。保存形式は db-schema.md §3.2、規則と上限の実測は architecture.md §5 |
 | M104f | 1 | 実装済み (判定待ち) | pipe サーバ (`mye_track serve`)、`hello`、単一インスタンス (mutex + `service.lock` + pipe 名)、`status` / `list` / `describe` / `sessions` / `shutdown`、`mye_track client`、`tools\build_track.bat`、`tools\track_verify.bat` (シナリオ 11 本)、CI への段の追加 (CI での実走は未確認)。プロトコルは ipc-contract.md §9 |
-| M104g | 2 | 実装済み (判定待ち) | `session_begin` / `session_end` / `op_begin` / `op_end` / `report` (pipe。mcp・hook)、帰属 (根拠 10 種 + `conclude`、後から届く根拠で計算し直す)、セッションの基準 (時刻とジャーナルの位置、D30)、管理された操作の即時の読み取り (D31)、`clientOpId` (D32)、`worktree` の構造確認 (D33)、宣言された編集の適用、`.git` の読み取り (`baseCommit`)、寿命 (中断・放棄・無接続の時間切れの条件)。セッション・操作・根拠はイベントから作り直せる。`tools	rack` の中だけ (MCP は M104h、フックは M104i)。設計文書 (attribution-rules / ipc-contract / db-schema) を同時に更新 |
+| M104g | 2 | 実装済み (判定待ち) | `session_begin` / `session_end` / `op_begin` / `op_end` / `report` (pipe。mcp・hook)、帰属 (根拠 10 種 + `conclude`、後から届く根拠で計算し直す)、セッションの基準 (時刻とジャーナルの位置、D30)、管理された操作の即時の読み取り (D31)、`clientOpId` (D32)、`worktree` の構造確認 (D33)、宣言された編集の適用、`.git` の読み取り (`baseCommit`)、寿命 (中断・放棄・無接続の時間切れの条件)。セッション・操作・根拠はイベントから作り直せる。`tools\track` の中だけ (MCP は M104h、フックは M104i)。設計文書 (attribution-rules / ipc-contract / db-schema) を同時に更新 |
 | M104g2 | 2 | 実装済み (判定待ち) | 監視の取りこぼしを減らす。先に計測 (`mye_track bench flood` / `burst` / `plan`。洪水の最中の追跡対象 200 件が、CPU 負荷のもとで 8〜21 件 `gap` になると確認)、監視を分ける (`tools\track\src\watch_plan.rs`: 無視するディレクトリを含む所は非再帰、含まない子は再帰。付け替え、上限 256 本、`status` の `watches`)。分けた後は 12 回とも `gap` 0。自前の `ReadDirectoryChangesW` は、入れる根拠の実測が無く、試作の欠陥の原因も未解明なので入れていない。値と手順は [performance.md](../docs/ai-change-tracking/performance.md) §8 |
-| M104h | 2 | 未着手 | MCP の 5 ツール、`track_client.rs`、規則 15 の許可表、ADR-032 と `docs\mcp-server.md` の更新 |
+| M104h | 2 | 実装済み (判定待ち) | MCP の 5 ツール (`change_session_begin` / `change_session_end` / `change_report` / `change_list` / `change_describe`)、`tools\mcp\src\track_client.rs` (pipe クライアント、サービスの切り離し起動、SHA-256 と projectId を自前で持つ。依存は増やさない)、規則 15-c / 15-d の許可表と規則 9 の版定数の組、`tools\mcp_verify.ps1` の `# env`、`tools\track_verify.ps1` の `# mcp` / `# mcp-nostart` / `# wait-watching` とシナリオ 16 / 17 (MCP がサービスを起動して記録が通る)、ADR-032 と `docs\mcp-server.md` の更新。起動のとき自分の標準入出力を継承不可にする (しないとサービスが MCP の stdout を掴む。`# mcp` が実測で検出した)。**未確認**: 本物の Claude Code 終了後のサービスの生存 (手順は `docs\test_checklists.md`) |
 | M104i | 2 | 未着手 | フック CLI (`mye_track.exe hook`)、Claude Code のフック設定の手順 |
 | M104j | 3 | 未着手 | Editor の pipe クライアント、モデル、規則 19、`changetracking` スイート |
 | M104k | 3 | 未着手 | AI Changes 窓、セッション履歴、Diff 表示部品 (インライン / 左右) |
@@ -85,10 +85,10 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
 
 | ファイル | 変更 | サブ |
 |---|---|---|
-| `tools\check_rules.ps1` | 規則 9 に版定数の組、規則 15-c / 15-d の許可表に `track_client.rs`、規則 19 を新設 | M104h、M104j |
-| `tools\mcp\src\tools.rs`、`main.rs` | 道具 5 つの定義と振り分け、`mod` 宣言 | M104h |
-| `tests\mcp\tools_list.expected.ndjson` | 撮り直し (道具が 10 になる) | M104h |
-| `docs\adr\ADR-032-engine-mcp-server.md`、`docs\mcp-server.md` | 「道具は 5 つ」と許可表の記述 | M104h |
+| `tools\check_rules.ps1` | 規則 9 に版定数の組、規則 15-c / 15-d の許可表に `track_client.rs`、規則 19 を新設 | M104h (規則 9 と 15 は済み)、M104j (規則 19) |
+| `tools\mcp\src\tools.rs`、`main.rs` | 道具 5 つの定義と振り分け、`mod` 宣言 | M104h (済み) |
+| `tests\mcp\tools_list.expected.ndjson` | 撮り直し (道具が 10 になる) | M104h (済み) |
+| `docs\adr\ADR-032-engine-mcp-server.md`、`docs\mcp-server.md` | 「道具は 5 つ」と許可表の記述 | M104h (済み) |
 | `src\Engine\Engine\HotReload\ReloadHub.h` / `.cpp` | 開いているシーンの外部変更を適用してよいか問う口 | M104n |
 | `src\Editor\App\EditorApp.h` / `.cpp` | 窓の登録、サービスの起動、ゲート入力の共有、外部変更の確認 | M104j、M104k、M104n、M104p |
 | `src\Editor\Windows\Scene\HierarchyWindow.cpp`、`InspectorWindow.cpp`、`SceneViewWindow.cpp` | バッジ、Field 差分、ワイヤ箱 | M104m |

@@ -1,0 +1,25 @@
+# 追跡の道具の引数の誤り (知らない引数・型違い・必須の欠落・範囲外) は、サービスへ届く前に isError になる。
+# expect-untouched
+# env MYE_TRACK_EXE=cache\mcp_verify\no_such\mye_track.exe
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"change_session_begin","arguments":{"provider":"claude","bogus":1}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"change_session_begin","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"change_session_begin","arguments":{"provider":"nobody"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"change_session_begin","arguments":{"provider":"claude","isolated":"yes"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"change_session_begin","arguments":{"provider":"claude","workspace":5}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"change_session_end","arguments":{"bogus":1}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"change_session_end","arguments":{}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"change_session_end","arguments":{"sessionId":3}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"change_report","arguments":{"sessionId":"s","paths":["a"],"bogus":1}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"change_report","arguments":{"paths":["a"]}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"change_report","arguments":{"sessionId":"s"}}}
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"change_report","arguments":{"sessionId":"s","paths":[]}}}
+{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"change_report","arguments":{"sessionId":"s","paths":"a.txt"}}}
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"change_report","arguments":{"sessionId":"s","paths":["a"],"beforeHashes":5}}}
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"change_list","arguments":{"bogus":1}}}
+{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"change_list","arguments":{"limit":"9"}}}
+{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"change_list","arguments":{"from":"yesterday"}}}
+{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"change_list","arguments":{"changeType":"moved"}}}
+{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"change_describe","arguments":{"bogus":1}}}
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"change_describe","arguments":{}}}
+{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"change_describe","arguments":{"revisionId":"1"}}}
+{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"change_describe","arguments":{"revisionId":0}}}
