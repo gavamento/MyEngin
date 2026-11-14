@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -156,6 +156,10 @@ impl ScanStats {
 pub struct ScanProgress {
     pub total: AtomicUsize,
     pub done: AtomicUsize,
+    /// 直近に記録した観測 1 件あたりの Writer への往復 (マイクロ秒)。記録していなければ 0。
+    pub last_record_us: AtomicU64,
+    /// 直近の検証の走査の前半 (`detect_changed`) だけの所要時間 (ミリ秒)。走らせていなければ 0。
+    pub last_verify_scan_ms: AtomicU64,
 }
 
 /// 記録に失敗した観測の区間 (書けるようになったら `coverage_gaps` に残す)。
@@ -355,8 +359,14 @@ impl Collector {
             self.note_unrecorded(first_at, &RecordFailure { reason: GAP_WRITE_FAILED, detail: "Diff ワーカーが観測を返さなかった".to_string() });
             return;
         }
+        let batch_started = std::time::Instant::now();
+        let batch_len = meta.len().max(1) as u64;
         let results = match self.writer.call(move |store| apply_observations(store, observations, plans)) {
-            Ok(r) => r,
+            Ok(r) => {
+                let per_item_us = batch_started.elapsed().as_micros() as u64 / batch_len;
+                self.progress.last_record_us.store(per_item_us, Ordering::Relaxed);
+                r
+            }
             Err(e) => {
                 eprintln!("[track] 観測を Writer へ渡せない: {e}");
                 self.note_unrecorded(first_at, &RecordFailure { reason: GAP_WRITE_FAILED, detail: e.to_string() });
@@ -738,6 +748,7 @@ impl Collector {
     /// 違うパスを返す。内容は読まず、観測も作らない (後半の `observe_paths` が、イベントが遅れて届く時間を
     /// 待ってから読む)。戻り値の bool は、走査を取り終えたか。
     pub fn detect_changed(&mut self) -> (Vec<String>, bool) {
+        let started = std::time::Instant::now();
         let mut files = Vec::new();
         self.walk("", &mut files);
         let present: HashSet<&String> = files.iter().collect();
@@ -769,6 +780,7 @@ impl Collector {
             }
         }
         self.progress.done.store(files.len(), Ordering::Relaxed);
+        self.progress.last_verify_scan_ms.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
         (changed, true)
     }
 

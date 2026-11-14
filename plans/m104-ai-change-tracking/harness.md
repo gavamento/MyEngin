@@ -12,8 +12,8 @@
 | sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | OK | 2 | 79008917 | round 1 REWORK (projectId が末尾の区切りで変わる。仕様側の誤り) → round 2 OK。nit: failed_steps の発生経路のテストは sub-05 で足す |
 | sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | OK | 2 | 76d0e2df | round 1 REWORK (負荷の下で 1 回の保存が coalesced になる) → round 2 OK。nit: sub-03.md の実装メモに round 2 が無い |
 | sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | OK | 1 | 35da2917 | should: 試験の一時ディレクトリの後始末は sub-04 で対応。nit: 検証の走査の所要時間は sub-05 の status で実測 |
-| sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | 実装中 | 0 | | |
-| sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | 未着手 | | | 着手前にユーザー確認 (未決事項 2、exe の置き場所)。Phase 1 の最後 |
+| sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | OK | 1 | 8a07401a | nit: Hunk 書き込み失敗 + DB 作り直しで Revision が 2 件になる制限を sub-05 で db-schema.md §6 に書く。sub-05 のコミット以降は v1.sql を凍結 |
+| sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | OK | 1 | (M104f のコミット) | nit 2 件は sub-06 で対応 (時間切れの発火条件、pipe 越しの busy の試験)。CI での実走は未確認 (未 push) 着手前にユーザー確認 (未決事項 2、exe の置き場所)。Phase 1 の最後 |
 | sub-06 (M104g) セッション、操作、帰属 | 未着手 | | | 骨子。planner の見直し後に着手 |
 | sub-07 (M104h) MCP の 5 ツール | 未着手 | | | 骨子 |
 | sub-08 (M104i) フック CLI | 未着手 | | | 骨子。Phase 2 の最後 |
@@ -35,7 +35,7 @@
 |---|---|---|---|
 
 ## ユーザー判断
-- 質問の運用: その場で聞く (2026-11-14)
+- 質問の運用: 推奨で進めて Notion に後回し (2026-11-15、sub-05 の実装中にユーザーが就寝のため切り替え。それまでは「その場で聞く」)。着手前確認のあるサブ (sub-07 / 08 / 09 / 12 / 13 / 17) も planner の推奨で止めずに進め、質問表 (ID / 聞きたいこと / 推奨 / 逆を選ぶと / 回答) を Notion 活動記録に書く。ユーザーの手作業が要る確認 (本物の Claude Code 終了、本物のフック入力) は未確認として残す。削除と push はしない。
 - 2026-11-14: 計画の未決事項 6 (進め方) は `/harness` に載せる。
 - 2026-11-14: 計画の未決事項 1〜5 は今は確定させない。それぞれが止めるサブ (M104c / f / j / m / n) の着手時にユーザーへ確認する。
 - 2026-11-14 (spec.md §7.1 の 5 件への回答):
@@ -51,7 +51,10 @@
 - 2026-11-14 (sub-03 round 1 の VERDICT の 2 件、どちらも planner の裁定どおり):
   - ベースラインで追跡対象の全ファイルの内容を `.mye\ai_changes\blobs\` に複製する (このリポジトリで約 391 MiB)。
   - sub-21 (M104d2) を Phase 1 に足す。順序は sub-03 → sub-21 → sub-04。
-- 未確認 (sub-05 の着手前に聞く): 開発機に Rust 1.89 のツールチェーンを入れて最低版でのビルドを確かめるか (planner の裁定は「確かめない」)。
+- 2026-11-15 (sub-05 の着手前の 3 件、すべて planner の裁定どおり):
+  - `tools\track` の検査 (cargo test と track_verify.bat) を CI (ci.yml) に入れる。計画の未決事項 2 は決着。
+  - `mye_track.exe` は `tools\build_track.bat` が `bin\x64\Debug` と `bin\x64\Release` の両方へ置き、Editor は自分の exe の隣を探す。
+  - 開発機に Rust 1.89 のツールチェーンは足さない。1.89 での実ビルドは未確認として文書に残す。
 - 2026-11-15: `%TEMP%\mye_track_*` (試験が残した一時ディレクトリ 931 個) は消さずに残す (planner の裁定どおり)。
 - 未確認 (sub-09 の着手前に一緒に伝える): このリポジトリで追跡を有効にすると最初のベースラインで `.mye\ai_changes\blobs\` が約 488 MB になる。
 - 未確認 (sub-07 / sub-08 の着手時に聞く): 本物の Claude Code 終了時のサービス生存の手動確認、本物のフック入力の記録への協力。
@@ -62,4 +65,5 @@
 - planner: 着手前にユーザー確認が要るサブは sub-02 / 05 / 09 / 12 / 13 / 17 (spec.md §6.2。各 sub の冒頭の節)。
 - planner (2026-11-14、PLAN 補足): ユーザーの回答を受けて sub-20 (M104u、配布物への同梱) を sub-19 の後に足した。spec.md は確定。Phase 6 を sub-17 の前で止めた場合も sub-20 は行えるが、依存 (sub-19) の付け替えが要るので planner に戻すこと。
 - planner (2026-11-14、sub-03 の VERDICT round 1): sub-21 (M104d2) を足した。順序は sub-03 → sub-21 → sub-04。`src\` を触らないサブは sub-01〜08 と sub-21。
+- planner (2026-11-15、sub-05 の VERDICT): Phase 2 を見直した。sub-06 は詳細、sub-07 / 08 は骨子 + Phase 1 の結果。planner は sub-06 の VERDICT で sub-07 / 08 をもう一度見直す。未確認のまま残っているもの: CI での実走、Rust 1.89 での実ビルド、別ユーザーの接続拒否、本物のクライアントの Job の中での生存。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

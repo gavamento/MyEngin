@@ -1,0 +1,4 @@
+# editor の shutdown で止まる。応答のあと接続は切れる
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"shutdown"}
+{"id":3,"op":"status"}

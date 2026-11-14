@@ -1,0 +1,27 @@
+# need_hello: 最初の要求が hello でないと、応答のあと切られる
+{"id":1,"op":"status"}
+{"id":2,"op":"status"}
+# reconnect
+# need_hello: 知らない op でも同じ
+{"id":1,"op":"nosuchop"}
+# reconnect
+# proto_mismatch
+{"id":1,"op":"hello","args":{"proto":99,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"status"}
+# reconnect
+# bad_token
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"00000000000000000000000000000000","projectRoot":"{ROOT}"}}
+# reconnect
+# wrong_project: クライアントが言ったパスでは DB を開き直さない
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"C:\\no\\such\\project"}}
+# reconnect
+# bad_args: 役割が無い / 知らない役割 / 知らない引数
+{"id":1,"op":"hello","args":{"proto":1,"token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"admin","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}","extra":1}}
+# reconnect
+# 成功した hello の後は普通に使える
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list"}

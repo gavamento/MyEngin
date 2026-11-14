@@ -3,7 +3,8 @@
 - 依存: sub-06
 - 状態: 未着手
 - 往復: 0
-- 書き込みの深さ: **骨子** (spec §6.1)。
+- 書き込みの深さ: **骨子 + Phase 1 の結果** (2026-11-15、sub-05 の VERDICT で見直し。sub-06 の VERDICT でもう一度見直す)。
+- 質問の運用 (2026-11-15 から): 推奨で進め、Notion に後回し。このサブのユーザーの手作業 (受け入れ条件 9) は「未確認」として残し、それ無しでサブを閉じる。
 
 ## やること
 
@@ -13,6 +14,10 @@
    - sub-01 の結果 (2026-11-14 の見直し): `tools\mcp` は `windows-sys` を足さないので、`ERROR_PIPE_BUSY` は `raw_os_error() == Some(231)` を見て、短く待って開き直す (`WaitNamedPipeW` は使わない。全体の 5 秒の内側)。
    - サービスの起動は `CommandExt::creation_flags` で `CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` (0x01000000 | 0x00000008)。`raw_os_error() == Some(5)` (`ERROR_ACCESS_DENIED`) で失敗したら `CREATE_BREAKAWAY_FROM_JOB` を外して起動し直す (arch §3)。標準入出力は継がせない (`Stdio::null()`。MCP の stdio を子が掴むと、クライアントから見て接続が閉じない)。
    - `mye_track.exe` の探し方は sub-05 で確定したもの。
+   - sub-05 の結果 (2026-11-15): pipe の名前、`hello` の形、トークン (`<project>\.mye\ai_changes\service.json`)、exe の探し方 (環境変数 `MYE_TRACK_EXE` → 自分の exe の隣 → `..\..\..\track\target\release\mye_track.exe`) は `C:\HAL\MyEngin\docs\ai-change-tracking\ipc-contract.md` §9 が正。`tools\track\src\client.rs` の `Client` は別の crate なので使えない (`tools\mcp` は依存を足さない)。同じ手順を標準ライブラリだけで書く。
+   - サービスの起動引数は `serve --project <root>`。二重起動は終了コード 3 で分かる (既に居る = 接続をやり直す)。
+   - sub-06 の決定: MCP の接続は `role = mcp`。`change_session_begin` は `source = mcp`。MCP は要求ごとに接続してよい (サービスはセッションを接続ではなく PID + 開始時刻で見る)。`change_report` はハッシュが無くても受ける (`report_only` になる)。`isolated` は道具の引数に出す (既定は偽)。
+   - シナリオは `tools\track_verify.ps1` のディレクティブ (`# write` / `# wait-recorded` など) を使える形にするか、`mcp_verify.ps1` に同じ仕組みを足すかを coder が選ぶ。
 2. `tools.rs` の `list()` と `call()` に 5 つ足す。`main.rs` に `mod` 宣言。引数の検査は既存の `reject_unknown` の方針、結果は既存の `wrap()` の形。
 3. サービス不在・時間切れ・`proto_mismatch` などは `isError` の結果で返す (MCP サーバ自体は落ちない、他の 5 ツールは動く)。
 4. `change_describe` の本文は合計 64 KiB で切り `truncated` を示す (ipc §4.3)。`change_list` はページング。

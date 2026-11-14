@@ -140,6 +140,14 @@ jobs:
         shell: cmd
         run: cargo test --manifest-path tools\collab\Cargo.toml && tools\build_collab.bat Release && tools\collab_verify.bat
 
+      # ①c AI Change Tracking の追跡サービス (Rust、mye_track.exe、M104f)。collab と同じ立場
+      #    (Editor も D3D も使わない = ここで完結する)。rusqlite の bundled が windows-2022 の
+      #    C コンパイラ (Visual Studio 2022) でビルドできるかの最初の確認もこの段になる。
+      #    最低の Rust は 1.89 (Cargo.toml の rust-version)。stable はそれ以上
+      - name: track service (cargo test + exe build + scenario verify)
+        shell: cmd
+        run: cargo test --manifest-path tools\track\Cargo.toml && tools\build_track.bat Release && tools\track_verify.bat
+
       # ② ローカルで打つのと同じ 1 行。この中で
       #    8 ビルド (4 プロジェクト x Debug/Release) → 7 ペアのリプレイ照合
       #    (既定デモ / 部位ショーケース / ゲームフロー / ローカル 2P / 物理 / 関節 / 音響)

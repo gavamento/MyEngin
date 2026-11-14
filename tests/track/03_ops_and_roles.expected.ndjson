@@ -1,0 +1,24 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"hook","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 hook は list を呼べない"},"id":2,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 hook は describe を呼べない"},"id":3,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 hook は shutdown を呼べない"},"id":4,"ok":false}
+{"error":{"code":"unknown_op","detail":"知らない op: nosuchop"},"id":5,"ok":false}
+{"error":{"code":"unknown_op","detail":"知らない op: session_begin"},"id":6,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 mcp は shutdown を呼べない"},"id":2,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: nosuchfilter"},"id":3,"ok":false}
+{"error":{"code":"bad_args","detail":"limit は 1 以上"},"id":4,"ok":false}
+{"error":{"code":"bad_args","detail":"changeType は added / modified / deleted / renamed のどれか"},"id":5,"ok":false}
+{"error":{"code":"bad_args","detail":"cursor が読めない"},"id":6,"ok":false}
+{"error":{"code":"bad_args","detail":"path は文字列でなければならない"},"id":7,"ok":false}
+{"error":{"code":"bad_args","detail":"revisionId が要る"},"id":8,"ok":false}
+{"error":{"code":"not_found","detail":"revisionId 7 は無い"},"id":9,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: extra"},"id":10,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: x"},"id":11,"ok":false}
+{"error":{"code":"bad_args","detail":"id は正の整数でなければならない"},"id":null,"ok":false}
+{"error":{"code":"bad_args","detail":"id は正の整数でなければならない"},"id":null,"ok":false}
+{"error":{"code":"bad_args","detail":"JSON として読めない (行内の位置 2)"},"id":null,"ok":false}
+{"error":{"code":"bad_args","detail":"要求は JSON のオブジェクトでなければならない"},"id":null,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない項目: extra"},"id":12,"ok":false}
+{"error":{"code":"bad_args","detail":"args はオブジェクトでなければならない"},"id":13,"ok":false}
+{"error":{"code":"bad_args","detail":"op は文字列でなければならない"},"id":14,"ok":false}

@@ -257,6 +257,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 | `baseline_complete` | `files`、`tracked_files`、`bytes`、`changes`、`elapsed_ms`、`first_run`。これがあれば「ベースラインを取り終えた」 |
 | `observed` | `path`、`change_type`、`old_path`、`before` / `after` = `{hash, size, kind[, excluded]}` または null、`completeness`、`source` (`watch` / `startup_gap` / `overflow_gap` / `verify_gap`)、`window`、`observed_at` |
 | `coverage_gap` | `reason`、`from_at`、`to_at`、`scope` |
+| `client_hello` | pipe の `hello` を通った接続の証跡 (M104f): `role`、`pid` (pipe から得た値)、`claimedPid` (申告)、`processStartedAt` (PID のプロセスの開始時刻)。派生の表には反映しない |
 
 - 除外パターンのファイルは `hash` を null にする (ハッシュも残さない)。`excluded: true`。
 - `window` は、近い時刻 (デバウンスの幅以内) に届いたイベントのパスを結ぶ印。別ディレクトリへの移動は削除と作成のイベントで、同じ `window` に入る。`window` が同じで内容ハッシュも同じ削除と作成は、記録する前に 1 件の `change_type = renamed` (`old_path` 付き) にまとめる (M104e。規則は [architecture.md](architecture.md) §5)。まとめた後の 1 件だけが `observed` に入る。
@@ -276,7 +277,9 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 6. `operations.finished_at` が NULL のまま残っている行を `abandoned` にする (`result = abandoned`。実際の終了時刻は分からないので `finished_at` は NULL のまま)。
 7. 前回の `service_stop` (無ければ最後のイベント) から今までを `coverage_gaps` に `service_down` で足し、ベースラインを取り直す。
 
-どの段で失敗しても、サービスは「記録できない状態」で pipe には答え続ける。Editor の起動は待たせない。
+どの段で失敗しても、サービスは「記録できない状態」で pipe には答え続ける。Editor の起動は待たせない。3〜6 で失敗した段と理由は `status` の `db.failedSteps` に出る ([ipc-contract.md](ipc-contract.md) §9.4)。
+
+**制限** (M104f): Hunk の書き込みに失敗した観測は `events` に残る。その後に DB を作り直す (1) と、`events` から Revision を作り直す一方、検証の走査が足した `gap` の Revision も残るので、同じ変更が 2 件の Revision になりうる。重複は消さない (履歴の欠落よりは重複を選ぶ)。
 
 ## 7. 容量と保存期間
 
@@ -303,4 +306,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 **決定**: 依存は `rusqlite = { version = "0.42", features = ["bundled"] }` と `sha2 = "0.11"` (出力は `{:x}` で整形できないので 16 進化は自前)。この 2 つが要求する Rust の最低版は 1.89 なので、`tools\track\Cargo.toml` に `rust-version = "1.89"` を明示する (collab の「古い stable でも通る」方針は track では成り立たない)。
 
-**未検証**: CI のランナー (`windows-2022`、Visual Studio 2022) で `bundled` がビルドできること。push しないと確かめられないので (spec D3)、sub-05 (M104f) で `tools\track` を CI に入れるときに確かめる。通らなければ `CC` 環境変数で C コンパイラを指定する。
+**未検証**: CI のランナー (`windows-2022`、Visual Studio 2022) で `bundled` がビルドできること。push しないと確かめられないので (spec D3)、sub-05 (M104f) で `.github\workflows\ci.yml` に `tools\track` の段 (cargo test → `build_track.bat` → `track_verify.bat`) を足した。**CI での実走は未確認**で、最初に push した後の実行が確認になる。通らなければ `CC` 環境変数で C コンパイラを指定する。
+**未検証**: 最低の Rust (1.89) での実ビルド。開発機の rustc は 1.98 だけで、1.89 のツールチェーンは足していない (ユーザーの判断、2026-11-15)。`rust-version = "1.89"` は依存 (rusqlite 0.42、sha2 0.11) の要求から読んだ値。
+
+**スキーマの凍結** (M104f 以降): `tools\track\src\schema\v1.sql` はこのサブのコミット以降、書き換えない。表や列を変えるときは `schema\mod.rs` の `MIGRATIONS` へ移行 (v2 以降) を足す (上の方針どおり、旧版の DB は移行の前に `.bak-v<旧版>` へコピーされる)。

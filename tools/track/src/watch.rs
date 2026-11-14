@@ -60,6 +60,30 @@ pub struct TrackerStatus {
     /// 記録に失敗した観測の区間の始まりと理由 (書けるようになって `coverage_gaps` に残したら None に戻る)。
     pub unrecorded_since_ms: Option<i64>,
     pub unrecorded_reason: Option<&'static str>,
+    /// いま追跡しているファイルの数 (ベースラインの管理下にあるもの)。
+    pub tracked_files: usize,
+    /// 直近に記録した観測 1 件あたりの Writer への往復 (マイクロ秒)。0 = まだ記録していない。
+    pub last_record_us: u64,
+    /// 直近の検証の走査の前半だけの所要時間 (ミリ秒)。0 = まだ走らせていない。
+    pub verify_scan_ms: u64,
+}
+
+/// `status` を読むだけの取っ手。Tracker の所有権を持たずに複製できる (接続のスレッドが持つ)。
+#[derive(Clone)]
+pub struct StatusReader {
+    shared: Arc<Shared>,
+    progress: Arc<ScanProgress>,
+}
+
+impl StatusReader {
+    pub fn status(&self) -> TrackerStatus {
+        let mut status = self.shared.status.lock().unwrap().clone();
+        status.scan_done = self.progress.done.load(Ordering::Relaxed);
+        status.scan_total = self.progress.total.load(Ordering::Relaxed);
+        status.last_record_us = self.progress.last_record_us.load(Ordering::Relaxed);
+        status.verify_scan_ms = self.progress.last_verify_scan_ms.load(Ordering::Relaxed);
+        status
+    }
 }
 
 struct Shared {
@@ -105,6 +129,9 @@ impl Tracker {
                 verify_gaps: 0,
                 unrecorded_since_ms: None,
                 unrecorded_reason: None,
+                tracked_files: 0,
+                last_record_us: 0,
+                verify_scan_ms: 0,
             }),
             changed: Condvar::new(),
         });
@@ -138,6 +165,7 @@ impl Tracker {
                 events_since_verify: 0,
                 verify_wanted: false,
                 published_unrecorded: None,
+                published_tracked: 0,
             };
             let tx_watcher = tx.clone();
             std::thread::Builder::new()
@@ -149,10 +177,12 @@ impl Tracker {
     }
 
     pub fn status(&self) -> TrackerStatus {
-        let mut status = self.shared.status.lock().unwrap().clone();
-        status.scan_done = self.progress.done.load(Ordering::Relaxed);
-        status.scan_total = self.progress.total.load(Ordering::Relaxed);
-        status
+        self.status_reader().status()
+    }
+
+    /// Tracker を持たずに `status` を読める取っ手 (pipe の接続が使う)。
+    pub fn status_reader(&self) -> StatusReader {
+        StatusReader { shared: Arc::clone(&self.shared), progress: Arc::clone(&self.progress) }
     }
 
     /// ベースライン (または停止中の突き合わせ) が終わり、監視に入る (または失敗する) まで待つ。
@@ -290,6 +320,7 @@ struct WatchLoop {
     /// 記録に失敗した区間を書けた直後など、間隔を待たずに検証の走査を行う。
     verify_wanted: bool,
     published_unrecorded: Option<(i64, &'static str)>,
+    published_tracked: usize,
 }
 
 /// `root` からの相対パス ('/' 区切り、元の大文字小文字のまま)。外にある、またはルート自身なら None。
@@ -362,6 +393,11 @@ impl WatchLoop {
     /// 走査はデバウンス中のパスが無く、イベントが静かなときだけ行う (処理待ちの変更を `gap` にしないため)。
     fn maintenance(&mut self, rx: &Receiver<Stamped>) {
         let now = Instant::now();
+        let tracked = self.collector.baseline.files.len();
+        if tracked != self.published_tracked {
+            self.published_tracked = tracked;
+            self.shared.update(|s| s.tracked_files = tracked);
+        }
         let unrecorded = self.collector.unrecorded().map(|u| (u.since_ms, u.reason));
         if unrecorded != self.published_unrecorded {
             self.published_unrecorded = unrecorded;
@@ -529,8 +565,10 @@ impl WatchLoop {
             s.baseline_bytes = bytes;
             s.baseline_timings = timings;
             s.first_run = first_run;
+            s.tracked_files = files_now;
             s.phase = Phase::Watching;
         });
+        self.published_tracked = files_now;
         self.last_verify = Instant::now();
         self.last_verify_ms = now_ms();
         Ok(true)

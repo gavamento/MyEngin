@@ -1,0 +1,5 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"id":2,"ok":true,"result":{"items":[],"limit":50,"nextCursor":null}}
+{"id":3,"ok":true,"result":{"items":[],"limit":5,"nextCursor":null}}
+{"error":{"code":"bad_args","detail":"cursor が読めない"},"id":4,"ok":false}
+{"error":{"code":"bad_args","detail":"limit は 1 以上"},"id":5,"ok":false}

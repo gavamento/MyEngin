@@ -1,6 +1,6 @@
 # AI Change Tracking: IPC 契約
 
-- 状態: 設計のみ (2026-11-13)。プロトコル版 1 の案
+- 状態: プロトコル版 1。サービス側は M104f で実装済み (§9)。Editor・MCP・フックのクライアントは後続のサブ
 - 全体像は [architecture.md](architecture.md)。この文書は追跡サービス (`mye_track.exe serve`) とクライアント (MCP、Editor、フック CLI) の間の取り決めだけを書く
 
 ## 1. 伝送路
@@ -23,7 +23,7 @@
 
 **決定** (Win32 の呼び方): `windows-sys` 0.61 を依存に足す。`extern "system"` の自前宣言は採らない。
 使う関数が 14 個と構造体・定数が多く、`windows-sys` ならコンパイラが定数名と型を検査する。`notify` が同じ版を引き込むので、依存の実質的な増加は無い。
-feature は `Win32_Foundation`、`Win32_Security`、`Win32_Security_Authorization`、`Win32_System_Pipes`、`Win32_Storage_FileSystem`、`Win32_System_IO`、`Win32_System_Threading`。
+feature は `Win32_Foundation`、`Win32_Security`、`Win32_Security_Authorization`、`Win32_Security_Cryptography` (トークンの乱数)、`Win32_System_Pipes`、`Win32_Storage_FileSystem`、`Win32_System_IO`、`Win32_System_Threading`、`Win32_System_Console`。
 
 サーバが pipe を張る呼び方:
 
@@ -83,6 +83,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 |---|---|---|---|
 | セッション・操作の登録、報告 | ○ | — | ○ |
 | 一覧・詳細の取得 | ○ | ○ | — |
+| サービスの終了 (`shutdown`) | — | ○ | — |
 | Editor の状態の通知 (保存、スナップショット) | — | ○ | — |
 | レビューの記録 | — | ○ | — |
 | 復元の記録 | — | ○ | — |
@@ -99,7 +100,8 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | op | 役割 | 引数 | 結果 |
 |---|---|---|---|
 | `hello` | 全部 | §3 | §3 |
-| `status` | 全部 | なし | 稼働時間、追跡中のファイル数、Blob の総量、欠落区間、DB の健全性、直近の処理時間 |
+| `status` | 全部 | なし | 稼働時間、追跡中のファイル数、Blob の総量、欠落区間、DB の健全性、直近の処理時間 (§9.4) |
+| `shutdown` | editor | なし | 応答のあと接続を切り、サービスが終わる (`service_stop` を残す。M104f で追加) |
 | `subscribe` | editor | `events`: 受け取りたい通知の名前 | なし |
 
 ### 4.2 セッションと操作
@@ -197,3 +199,56 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `change_describe` | `describe` |
 
 MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wrap()` の形で返すだけにする。判定はすべてサービス側で行う。
+
+## 9. 実装 (M104f)
+
+正本は `tools\track\src\protocol.rs` (版・上限・op と役割の表・エラーコード)、`server.rs` (常駐)、`ops.rs` (取得の op)、`client.rs` (クライアント)。この節は実装で決めたことの要約。
+
+### 9.1 起動と単一インスタンス
+
+`mye_track.exe serve --project <root> [--idle-timeout-ms <n>]`。終了コード: 0 = 正常、1 = 失敗 (または DB へ書けない状態で終了)、2 = 引数の誤り、**3 = 同じ DB を持つサービスが既に居る**。
+
+二重起動は 3 段で守る。どれかに当たったら、DB を開く前に終了コード 3 で終わる (起動を頼んだ側は、居るサービスへ繋ぐか、繋げなければ追跡なしで続行する)。
+
+| 段 | 守るもの | 破れる場合 |
+|---|---|---|
+| 名前付き mutex `Local\mye-track-<projectId>` | 同じ projectId | 別名のパス (`subst` のドライブ、ジャンクション、8.3 名、UNC) は projectId が変わる |
+| `.mye\ai_changes\service.lock` を共有なし (share mode 0) で開き続ける | **同じディレクトリを指すなら名前によらず** (spec D25)。標準エラーに、動いているサービスの `projectRoot` (`service.json` から) を出す | 別のボリュームへの複製など、別の DB |
+| pipe の最初の 1 本 (`FILE_FLAG_FIRST_PIPE_INSTANCE`) | 同名の pipe | — |
+
+起動の順序: mutex → `service.lock` → トークン → pipe の最初の 1 本 → `service.json` → DB を開く → Tracker (ベースラインは別スレッド)。pipe は DB を開く前から繋がるので、クライアントは先に繋げて、応答は受付が始まってから返る。
+
+**終了の合図** (標準入力の EOF では終わらない): pipe の `shutdown`、接続が 0 のまま `--idle-timeout-ms` (既定 10 分。起動からも数える)、Ctrl+C / Ctrl+Break / コンソールを閉じる。どれも `service_stop` (理由は `shutdown_op` / `idle_timeout` / `signal`) を残し、`service.json` を消す。
+
+### 9.2 `service.json`
+
+`<project>\.mye\ai_changes\service.json`: `protoVersion`、`pid`、`startedAt` (UTC ミリ秒)、`pipe`、`token` (起動ごとに OS の乱数源から 16 バイトを 16 進で)、`projectId`、`projectRoot`。一時ファイルへ書いてから置き換える。
+
+### 9.3 接続
+
+- 1 行は 1 MiB まで (改行を除く)。超えたら `too_large` を返し、その行を LF まで捨てて、次の行から読み続ける (接続は切らない)。ちょうど 1 MiB は通る。
+- 空行は無視する。行末の CR は取る。JSON として読めない・`id` が正の整数でない・知らない項目がある行は `bad_args` (`id` が読めればそれを返し、読めなければ `null`)。`hello` の前でも同じ (形が読めないので `need_hello` にはならない)。
+- `hello` の検査の順: 形 (`proto` / `role` / `token` / `projectRoot` が要り、`pid` は任意、他は `bad_args`) → 版 (`proto_mismatch`。detail にサービスの版) → 役割 (知らない値は `bad_args`) → トークン (`bad_token`) → プロジェクト (`wrong_project`。`projectId` が合うかだけを見て、DB は開き直さない)。失敗したら応答のあと切る。`hello` より前の要求 (知らない op を含む) は `need_hello` で切る。2 回目の `hello` は `bad_args` (接続は残る)。
+- 成功した `hello` は証跡を `events` に残す (`client_hello`。db-schema.md §5.1)。申告した `pid` と違えば、パイプから得た値を採る。Writer のキューが上限 (1024 件) を超えていたら `busy` で `hello` を断る。
+- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`shutdown`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
+- 取得の op は読み取り専用の SQLite 接続で引く (WAL なので書き手を止めない。接続ごとに 1 本、最初に必要になったとき開く)。ベースラインの最中も答える。DB へ書けない状態 (`db_degraded`) では `list` / `describe` / `sessions` が `db_degraded` を返し、`status` は答える。
+
+### 9.4 op の引数と結果 (JSON は camelCase、時刻は UTC ミリ秒)
+
+- `status`: `proto`、`projectId`、`pid`、`startedAt`、`uptimeMs`、`phase` (`starting` / `baselining` / `watching` / `failed` / `stopped`)、`failure`、`trackedFiles`、`baseline` (`firstRun`、`files`、`bytes`、`elapsedMs`、`scanDone`、`scanTotal`、`walkMs` / `readMs` / `hashMs` / `commitMs`)、`verify` (`runs`、`gaps`、`lastScanMs` = 直近の検証の走査の前半だけの所要時間)、`recent.recordUs` (直近に記録した観測 1 件あたりの Writer への往復、マイクロ秒)、`overflows`、`unrecorded` (記録に失敗している区間 `sinceMs` / `reason`、無ければ `null`)、`db` (`state` = `recording` / `db_degraded`、`reason`、`failedSteps` = 起動時の検査 3〜6 で失敗した段と理由、`brokenDb`、`replayedEvents`、`blobsMarkedMissing`、`blobsCorrupted`、`orphanBlobs` ほか)、`blobs` (`count`、`bytes` = 重複を除いた存在する Blob)、`gaps` (`count`、`recent` = 新しい順に 20 件)。
+- `list`: 引数は `path` (完全一致。末尾が `/` なら前方一致。リネーム前のパスにも当たる)、`from` / `to` (`observedAt` の範囲、両端を含む)、`changeType` (`added` / `modified` / `deleted` / `renamed`)、`sessionId`、`review`、`attribution`、`cursor`、`limit` (既定 50、最大 200。超えたら 200 に切る。1 未満は `bad_args`)。新しい Revision から順に返し、`cursor` は直前のページの最後の `revisionId` (それより古いものを返す)。結果は `items`、`nextCursor` (最後なら `null`)、`limit`、`coverage` (`phase`、`baselining`、`baselineScanned` / `baselineTotal`、`unrecorded`。**`baselining` が真の間は、一覧が不完全でありうる**)。1 件は `revisionId`、`changeId`、`seq`、`path`、`oldPath`、`changeType`、`contentKind`、`changeState` (`superseded` の Change も出す)、`observedAt`、`completeness`、`actor`、`attribution`、`diffMode`、`operationId`、`beforeSize`、`afterSize`、`hunkCount`、`review`。Blob と Hunk の本文は入れない。`sessionId` / `review` / `attribution` にデータが入るのは sub-06 以降 (今は帰属が全部 `unknown`、レビューが全部 `pending`)。
+- `describe` (`revisionId`): 一覧の項目に加えて `before` / `after` (`hash`、`size`、`blobState`。無ければ `null`)、`hunks` (`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`eolOnly`、`state`。本文は返さない)、`restorable` (Before の Blob が有る、または新規 = 削除で戻せる。Before を見ていない・Blob が無いものは `false`)。無ければ `not_found`。`diffMode` が `lines` 以外のときは Hunk が無い理由が分かる (db-schema.md §3.2)。
+- `sessions`: 引数は `cursor` (直前のページの最後の `<startedAt>:<sessionId>`)、`limit`。結果は `items` (セッションの一覧。登録は sub-06 から)、`nextCursor`、`limit`。
+- `shutdown`: 結果は `{}`。応答を返したあと、サービスが止まる。
+
+### 9.5 クライアント
+
+`mye_track.exe client (--project <root> | --pipe <name>) [--wait-ms <n>]`: 標準入力の 1 行を要求として pipe へ送り、応答の 1 行を標準出力へ出す (hello は自動で行わない = hello の失敗も流せる)。pipe が無ければ `--wait-ms` (既定 5000) の間待ち、それでも無ければ終了コード 4。サービスが接続を切っていたら `{"client":"closed"}` を出して終わる。`ERROR_PIPE_BUSY` は `WaitNamedPipeW` で最大 2 秒待って開き直す (§1)。この接続の実装 (`client.rs`) は、フックの CLI (sub-08) と共有する。
+
+`mye_track.exe` を探す順 (Editor・MCP・フックが起動するとき。実装は sub-08 / sub-09): (1) 環境変数 `MYE_TRACK_EXE` (2) 自分の exe の隣 (3) MCP だけ `..\..\..\track\target\release\mye_track.exe`。`tools\build_track.bat` が `bin\x64\Debug` と `bin\x64\Release` の両方へ置くので、どちらの構成の Editor からも (2) で見つかる。
+
+### 9.6 検証
+
+`tools\track_verify.bat` が `tests\track\*.ndjson` を `mye_track client` 経由でサービスへ流し、`*.expected.ndjson` と比べる (書式と置換、`# write` などのディレクティブは `tools\track_verify.ps1` の冒頭)。`cargo test` の `tests\pipe.rs` は、二重起動 (同じ projectId、ジャンクション経由の別名)、再起動をまたぐ履歴と `gap`、接続 0 の時間切れと `service_stop`、pipe の DACL の読み戻しとリモート形式の拒否、複数接続を、実際に `mye_track.exe serve` を起動して確かめる。
+
+**未確認**: 別のユーザーの接続の拒否 (DACL の読み戻しだけ)、本物のリモートからの接続、Editor・MCP・フックのクライアントとの接続 (後続のサブ)。

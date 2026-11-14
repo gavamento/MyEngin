@@ -1,0 +1,27 @@
+# 役割 hook: list / describe / shutdown は forbidden、知らない op と未実装の op は unknown_op
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list"}
+{"id":3,"op":"describe","args":{"revisionId":1}}
+{"id":4,"op":"shutdown"}
+{"id":5,"op":"nosuchop"}
+{"id":6,"op":"session_begin","args":{}}
+# reconnect
+# 役割 mcp: shutdown は forbidden。形の悪い要求は bad_args
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"shutdown"}
+{"id":3,"op":"list","args":{"nosuchfilter":1}}
+{"id":4,"op":"list","args":{"limit":0}}
+{"id":5,"op":"list","args":{"changeType":"exploded"}}
+{"id":6,"op":"list","args":{"cursor":"abc"}}
+{"id":7,"op":"list","args":{"path":5}}
+{"id":8,"op":"describe","args":{}}
+{"id":9,"op":"describe","args":{"revisionId":7}}
+{"id":10,"op":"describe","args":{"revisionId":1,"extra":true}}
+{"id":11,"op":"status","args":{"x":1}}
+{"id":0,"op":"status"}
+{"op":"status"}
+this is not json
+[1,2,3]
+{"id":12,"op":"status","extra":1}
+{"id":13,"op":"status","args":[]}
+{"id":14,"op":5}

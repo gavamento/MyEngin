@@ -1,0 +1,4 @@
+# hello の成功 (役割 editor)。2 回目の hello は bad_args
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":3,"op":"sessions"}

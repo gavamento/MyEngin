@@ -1,14 +1,15 @@
 //! mye_track.exe — 追跡サービスの入口。
 //!
 //!   mye_track.exe --version
-//!   mye_track.exe serve --project <root>
+//!   mye_track.exe serve --project <root> [--idle-timeout-ms <n>]
+//!   mye_track.exe client --project <root> | --pipe <name> [--wait-ms <n>]
 //!   mye_track.exe bench ...   (計測用。docs/ai-change-tracking/performance.md)
 //!
-//! `serve` は DB を開いて起動時の検査を行い、ファイル監視を続ける常駐になる。
-//! 終了の合図は標準入力の EOF か Ctrl+C / Ctrl+Break / コンソールを閉じること。
-//! (pipe 経由の終了と、無接続の時間切れは M104f。)
+//! `serve` は pipe を張って常駐する (mye_track::server)。終了の合図は pipe の `shutdown`、
+//! 接続 0 のままの時間切れ、Ctrl+C / Ctrl+Break / コンソールを閉じること。標準入力の EOF では終わらない。
+//! 終了コード: 0 = 正常、1 = 失敗 (または degraded で終了)、2 = 引数の誤り、3 = 同じプロジェクトのサービスが既に居る。
+//! `client` は標準入力の 1 行を要求として pipe へ送り、応答を標準出力へ出す (検証用。終了コード 4 = サービスが居ない)。
 
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::mpsc::{channel, Sender};
@@ -17,11 +18,8 @@ use std::time::Duration;
 
 use windows_sys::Win32::System::Console::{SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 
-use mye_track::db::now_ms;
-use mye_track::project::project_id;
 use mye_track::collector::TrackerConfig;
-use mye_track::startup::{open_project, ServiceState};
-use mye_track::watch::{Phase, Tracker};
+use mye_track::server::{ServeOptions, DEFAULT_IDLE_TIMEOUT};
 
 /// 終了の合図の送り先。Ctrl ハンドラは別スレッドから呼ばれるので静的に持つ。
 static STOP_SIGNAL: OnceLock<Sender<&'static str>> = OnceLock::new();
@@ -44,9 +42,12 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("serve") => serve(&args[1..]),
+        Some("client") => ExitCode::from(mye_track::client::run_cli(&args[1..])),
         Some("bench") => ExitCode::from(mye_track::bench::run(&args[1..])),
         _ => {
-            eprintln!("usage: mye_track --version | mye_track serve --project <root> | mye_track bench ...");
+            eprintln!(
+                "usage: mye_track --version | mye_track serve --project <root> | mye_track client --project <root> | mye_track bench ..."
+            );
             ExitCode::from(2)
         }
     }
@@ -54,10 +55,18 @@ fn main() -> ExitCode {
 
 fn serve(args: &[String]) -> ExitCode {
     let mut project: Option<PathBuf> = None;
+    let mut idle_timeout = DEFAULT_IDLE_TIMEOUT;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--project" => project = iter.next().map(PathBuf::from),
+            "--idle-timeout-ms" => match iter.next().and_then(|v| v.parse::<u64>().ok()) {
+                Some(ms) => idle_timeout = Duration::from_millis(ms),
+                None => {
+                    eprintln!("serve: --idle-timeout-ms は整数");
+                    return ExitCode::from(2);
+                }
+            },
             other => {
                 eprintln!("serve: 不明な引数 {other}");
                 return ExitCode::from(2);
@@ -69,44 +78,12 @@ fn serve(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let (store, report) = open_project(&root, now_ms());
-    eprintln!("projectId: {}", project_id(&root));
-    eprintln!("{report:#?}");
-    // 記録の置き場所が無ければ追跡できない。db_degraded はジャーナルだけで動き続ける
-    let Some(store) = store else { return ExitCode::from(1) };
-    let degraded = !matches!(report.state, Some(ServiceState::Recording));
-
     let (stop_tx, stop_rx) = channel::<&'static str>();
     let _ = STOP_SIGNAL.set(stop_tx.clone());
     // SAFETY: on_ctrl は引数を読むだけで、静的な Sender へ送る
     unsafe {
         SetConsoleCtrlHandler(Some(on_ctrl), 1);
     }
-    // 標準入力の EOF = 起動した側が終わった。読めないとき (閉じたハンドル) は合図にしない
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 256];
-        let mut stdin = std::io::stdin();
-        loop {
-            match stdin.read(&mut buf) {
-                Ok(0) => {
-                    let _ = stop_tx.send("stdin_eof");
-                    return;
-                }
-                Ok(_) => {}
-                Err(_) => return,
-            }
-        }
-    });
-
-    let tracker = Tracker::start(&root, store, TrackerConfig::default());
-    let status = tracker.wait_ready(Duration::from_secs(3600));
-    eprintln!("{status:#?}");
-    let failed = matches!(status.phase, Phase::Failed(_));
-    let reason = stop_rx.recv().unwrap_or("channel_closed");
-    tracker.stop(reason);
-    if failed || degraded {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    }
+    let options = ServeOptions { idle_timeout, tracker: TrackerConfig::default() };
+    ExitCode::from(mye_track::server::run(&root, options, stop_tx, stop_rx))
 }

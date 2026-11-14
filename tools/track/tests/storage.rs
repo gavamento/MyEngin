@@ -455,6 +455,50 @@ fn stale_sessions_become_interrupted_and_open_operations_abandoned() {
 }
 
 #[test]
+fn failed_maintenance_steps_are_reported_and_do_not_stop_recording() {
+    let root = temp_project("failed_steps");
+    drop(open_project(&root, NOW).0);
+    // 表が欠けた DB (手で壊された) を模す。段の SQL が失敗する
+    let conn = db_conn(&root);
+    conn.execute_batch("DROP TABLE sessions; DROP TABLE snapshots;").unwrap();
+    drop(conn);
+
+    let (store, report) = open_project(&root, NOW);
+    assert_eq!(report.state, Some(ServiceState::Recording), "保守の段の失敗で記録を止めた");
+    let steps: Vec<&str> = report.failed_steps.iter().map(|f| f.step).collect();
+    assert_eq!(steps, ["Blob の有無の確認", "孤児 Blob の計数", "残った session の整理"], "{:?}", report.failed_steps);
+    assert!(report.failed_steps.iter().all(|f| f.reason.contains("no such table")), "{:?}", report.failed_steps);
+    // 記録 (events への追記) は続けられる
+    let mut store = store.unwrap();
+    store.record_event(NOW, "observed_probe", json!({})).unwrap();
+}
+
+#[test]
+fn writer_refuses_bounded_submits_when_the_queue_is_full() {
+    let root = temp_project("writer_busy");
+    let writer = Writer::spawn(open_project(&root, NOW).0.unwrap());
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    // 先頭のジョブが終わらない間、後ろのジョブが積み上がる
+    let blocker = writer.submit(move |_| release_rx.recv().unwrap()).unwrap();
+    let queued = writer.submit_bounded(2, |_| 7).unwrap();
+    assert_eq!(writer.pending(), 2);
+    assert!(matches!(writer.submit_bounded(2, |_| 8), Err(WriterError::Busy)), "上限を超えても積んだ");
+    // 上限のない submit は積める (Busy は pipe の入口だけの取り決め)
+    let unbounded = writer.submit(|_| 9).unwrap();
+    release_tx.send(()).unwrap();
+    blocker.recv().unwrap();
+    assert_eq!(queued.recv().unwrap(), 7);
+    assert_eq!(unbounded.recv().unwrap(), 9);
+    assert_eq!(writer.call(|_| 1).unwrap(), 1);
+    // 件数を減らすのは結果を送った直後なので、少し遅れて 0 になる
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while writer.pending() != 0 {
+        assert!(std::time::Instant::now() < deadline, "pending が 0 に戻らない: {}", writer.pending());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[test]
 fn unusable_location_returns_unavailable_without_panicking() {
     let root = temp_project("unavailable");
     // `.mye` がファイルなので、その下に記録領域を作れない

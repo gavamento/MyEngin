@@ -100,3 +100,21 @@ tools\track\target\release\mye_track.exe bench changes --project %TEMP%\mye_benc
 
 - 書き込み 78.8 秒。**検証の走査が 2693 件の取りこぼしを見つけた** (`notify` が届けなかった作成。`Err` も再走査フラグも出ていない)。`gap` の Revision 2693 件、`watcher_overflow` の区間 1 件。記録は 64000 / 64000 で、記録の無いファイルは 0 本。全ファイルの最後の Revision の After が実際の内容と一致した。経過 315.0 秒 (試験全体 365.8 秒)。
 - 取りこぼし率は、sub-03 の使い捨ての試験 (約 6900 / 64000) と同じ桁。取りこぼしが起きなかった回は区間が残らず、全件が通常の Revision になる (試験は両方を許す)。
+
+## 7. 検証の走査だけの所要時間 (M104f)
+
+`status` が直近の検証の走査の前半 (`detect_changed` = 歩いて、サイズと更新時刻を突き合わせる) だけの所要時間を `verify.lastScanMs` に出す (内容は読まない。後半の読み取りと、イベントの遅れを待つ時間は含まない)。
+
+手順 (リポジトリの `.mye` を汚さないため、作業ツリーのコピーで測った):
+
+```
+robocopy C:\HAL\MyEngin %TEMP%\mye_vscan /E /XD .git bin obj .mye cache target .vs
+mye_track.exe serve --project %TEMP%\mye_vscan          # phase = watching まで待つ
+# 小さいファイルを 1100 本作る (検証の走査の起動条件 = 前回の走査の後に 1000 件のイベントが溜まる + 3 秒の静けさ)
+mye_track.exe client --project %TEMP%\mye_vscan          # hello + status を流す (tools\track_verify.ps1 の Invoke-Raw が見本)
+```
+
+- 2026-11-15、§2 の環境、release ビルド、この版のコピー (追跡対象 3005 ファイル、551 MB)。ベースラインは 33.3 秒 (走査 0.2 秒、読み取り 22.6 秒、ハッシュ 2.4 秒、Writer への引き渡し 7.5 秒)。
+- 1100 本を足して追跡対象が 4105 ファイルになった後の検証の走査 (前半だけ): **615 ms** (1 回)。ファイルの数に比例する歩く + stat の時間で、内容を読まない。5 分おきの走査として許容範囲。32000 ファイルでの値は未測定 (ファイル数の比で数秒と見込むが、推測)。
+- 1 件の記録 (`status` の `recent.recordUs`): 観測 1 件あたり Writer への往復 1.6 ms (1100 件を 1 回で渡した平均)。
+- 計測の後始末: コピーとサービスのプロセスは消した。リポジトリの `.mye` は作られていない。

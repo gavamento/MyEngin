@@ -1,0 +1,12 @@
+{"error":{"code":"need_hello","detail":"最初の要求は hello"},"id":1,"ok":false}
+{"client":"closed"}
+{"error":{"code":"need_hello","detail":"最初の要求は hello"},"id":1,"ok":false}
+{"error":{"code":"proto_mismatch","detail":"サービスの版は 1、クライアントは 99"},"id":1,"ok":false}
+{"client":"closed"}
+{"error":{"code":"bad_token","detail":"トークンが違う (service.json を読み直す)"},"id":1,"ok":false}
+{"error":{"code":"wrong_project","detail":"別のプロジェクトのサービスに繋がっている"},"id":1,"ok":false}
+{"error":{"code":"bad_args","detail":"role が要る"},"id":1,"ok":false}
+{"error":{"code":"bad_args","detail":"role は mcp / editor / hook のどれか"},"id":1,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: extra"},"id":1,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"hook","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 hook は list を呼べない"},"id":2,"ok":false}

@@ -1,0 +1,13 @@
+# ファイルを作る → 変える → 消す。list は新しい順、describe は Hunk の要約と completeness を返す
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.txt hello\nworld\n
+# wait-recorded 1
+{"id":2,"op":"list"}
+{"id":3,"op":"describe","args":{"revisionId":1}}
+# write a.txt hello\nthere\nworld\n
+# wait-recorded 2
+{"id":4,"op":"describe","args":{"revisionId":2}}
+# delete a.txt
+# wait-recorded 3
+{"id":5,"op":"list","args":{"path":"a.txt"}}
+{"id":6,"op":"describe","args":{"revisionId":3}}

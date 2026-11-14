@@ -1,0 +1,4 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"error":{"code":"unknown_op","detail":"知らない op: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},"id":2,"ok":false}
+{"error":{"code":"too_large","detail":"1 行は 1048576 バイトまで"},"id":null,"ok":false}
+{"id":4,"ok":true,"result":{"items":[],"limit":50,"nextCursor":null}}

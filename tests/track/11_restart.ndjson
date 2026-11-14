@@ -1,0 +1,16 @@
+# サービスを止めて起動し直しても、止める前の履歴が取れる。止まっていた間の変更は gap
+# write keep.txt keep\n
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.txt one\n
+# wait-recorded 1
+{"id":2,"op":"list"}
+# stop
+# write b.txt new while down\n
+# write a.txt one\ntwo\n
+# start
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# wait-recorded 3
+{"id":2,"op":"list"}
+{"id":3,"op":"describe","args":{"revisionId":1}}
+{"id":4,"op":"describe","args":{"revisionId":3}}

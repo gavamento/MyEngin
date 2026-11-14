@@ -22,7 +22,7 @@ CI のランナー (`windows-2022`) では何も走らせていない。開発�
 | # | 確かめたこと | 結果 | 設計への反映 |
 |---|---|---|---|
 | 1 | Rust の pipe サーバ + C++ の overlapped クライアント | 確認済み。`windows-sys` 0.61 を採る | [ipc-contract.md](ipc-contract.md) §1 |
-| 2 | rusqlite (bundled) のビルドと WAL | 開発機で確認済み。CI は未確認 (sub-05 で確かめる) | [db-schema.md](db-schema.md) §8 |
+| 2 | rusqlite (bundled) のビルドと WAL | 開発機で確認済み。CI には sub-05 (M104f) で段を足した (実走は push の後で、未確認)。Rust 1.89 での実ビルドも未確認 | [db-schema.md](db-schema.md) §8 |
 | 3 | notify 8 のイベント列 | 確認済み。デバウンスとリネームの扱いを具体化した | [architecture.md](architecture.md) §4、§5 |
 | 4 | C# コンポーネントを `FieldFromJson` で書けるか | 書けない (コードで確定)。別の経路で Entity / Component / Field とも戻せる見込み | [restore-safety.md](restore-safety.md) §4.2 |
 | 5 | フックの入力と設定 | Claude Code は文書で確認済み。入力の形から After のハッシュを計算できた。Codex / Gemini は未確認 | [attribution-rules.md](attribution-rules.md) §6.1 |
@@ -153,7 +153,7 @@ track.db exists=true len=1892352   /   track.db-wal, track.db-shm: 最後の接�
 
 ### 未確認の残り
 
-- **CI のランナーでのビルド。** `windows-2022` の Visual Studio 2022 で `bundled` が通るかは、push しないと確かめられない (spec D3)。sub-05 (M104f) で `tools\track` を CI に入れるときに確かめる。通らなければ、`cc` が見るコンパイラの指定 (`CC` 環境変数) を CI 側に足す。
+- **CI のランナーでのビルド。** `windows-2022` の Visual Studio 2022 で `bundled` が通るかは、push しないと確かめられない (spec D3)。sub-05 (M104f) で `.github\workflows\ci.yml` に `tools\track` の段を足したので、最初に push した後の実行が確認になる (**CI での実走は未確認**)。通らなければ、`cc` が見るコンパイラの指定 (`CC` 環境変数) を CI 側に足す。
 - 並行書き込みの競合 (複数のプロセスが同じ DB を書く場合) は試していない。設計は「Writer 1 本」(architecture §3.1) で、書き手は 1 つ。
 
 ---

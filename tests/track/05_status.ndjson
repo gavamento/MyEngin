@@ -1,0 +1,3 @@
+# 空のプロジェクトの status (時刻・PID・所要時間は正規化される)
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"status"}

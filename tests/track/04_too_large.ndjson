@@ -1,0 +1,5 @@
+# 1 MiB (1048576 バイト) ちょうどの行は受け付け、1 バイト超えたら too_large。次の行からは普通に読む
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"@@REP:x:1048560@@"}
+{"id":3,"op":"@@REP:x:1048561@@"}
+{"id":4,"op":"sessions"}

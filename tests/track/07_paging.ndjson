@@ -1,0 +1,7 @@
+# 60 件のファイルを作り、既定の 1 ページ (50 件) を超える履歴を cursor でたどる
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# bulk f 60
+# wait-recorded 60
+# page-through 50
+# page-through 7
+{"id":2,"op":"list","args":{"limit":1}}

@@ -31,9 +31,10 @@ rusqlite = { version = "0.42", features = ["bundled"] }
 sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# feature は使うものだけ。pipe (sub-05) で ipc-contract.md §1 の残りを足す
-# Win32_Storage_FileSystem = 共有モードの定数、Win32_System_Console = Ctrl+C / 閉じる合図
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_System_Console"] }
+# feature は使うものだけ (ipc-contract.md §1)。
+# Storage_FileSystem = 共有モードの定数、System_Console = Ctrl+C / 閉じる合図、System_Pipes = 名前付きパイプ、
+# Security (+ Authorization) = DACL と SID、Security_Cryptography = トークンの乱数、System_IO = パイプの読み戻し
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Pipes", "Win32_System_IO", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography"] }
 # default-features = false: macOS の FSEvents バインディングを持ち込まない (tools/collab と同じ)。9.x は rust-version が上がるので 8 系
 notify = { version = "8", default-features = false }
 

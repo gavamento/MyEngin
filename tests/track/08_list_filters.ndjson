@@ -1,0 +1,18 @@
+# list のフィルタ。ファイルは 1 つずつ書き、Revision の番号が決まるようにする
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.txt aaa\n
+# wait-recorded 1
+# write dir/b.txt bbb\n
+# wait-recorded 2
+# write dir/c.txt ccc\n
+# wait-recorded 3
+{"id":2,"op":"list","args":{"path":"dir/b.txt"}}
+{"id":3,"op":"list","args":{"path":"dir/"}}
+{"id":4,"op":"list","args":{"changeType":"added","limit":2}}
+{"id":5,"op":"list","args":{"changeType":"deleted"}}
+{"id":6,"op":"list","args":{"attribution":"claimed"}}
+{"id":7,"op":"list","args":{"review":"approved"}}
+{"id":8,"op":"list","args":{"sessionId":"no-such-session"}}
+{"id":9,"op":"list","args":{"from":4102444800000}}
+{"id":10,"op":"list","args":{"to":1}}
+{"id":11,"op":"list","args":{"limit":1,"cursor":"3"}}

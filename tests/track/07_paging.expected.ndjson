@@ -1,0 +1,4 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"paging":{"pages":2,"sizes":[50,10],"total":60,"unique":true}}
+{"paging":{"pages":9,"sizes":[7,7,7,7,7,7,7,7,4],"total":60,"unique":true}}
+{"id":2,"ok":true,"result":{"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"items":[{"actor":"unknown","afterSize":8,"attribution":"unknown","beforeSize":null,"changeId":60,"changeState":"active","changeType":"added","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":null,"path":"f059.txt","review":"pending","revisionId":60,"seq":1}],"limit":1,"nextCursor":"60"}}

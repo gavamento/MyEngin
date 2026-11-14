@@ -3,7 +3,9 @@
 - 依存: sub-07
 - 状態: 未着手
 - 往復: 0
-- 書き込みの深さ: **骨子** (spec §6.1)。Phase 2 の最後のサブ。
+- 書き込みの深さ: **骨子 + Phase 1 の結果** (2026-11-15、sub-05 の VERDICT で見直し)。Phase 2 の最後のサブ。
+- 質問の運用 (2026-11-15 から): 推奨で進め、Notion に後回し。本物の Claude Code の入力の記録 (やること 8) はユーザーの手作業なので「未確認」として残し、それ無しでサブを閉じる。**ユーザーの `.claude\settings.json` は変えない。**
+- sub-06 の決定 (spec §2 D31、D32): フックは pre と post が別のプロセス。pre は `session_begin` (`clientSessionId` = `session_id`。既にあればそれが返る) → `op_begin` (`clientOpId` = `tool_use_id`、`declaredEdit`)。post は `op_end` を `clientSessionId` + `clientOpId` で送る。サービスは `op_begin` と `op_end` で対象を自分で読むので、フックは内容のハッシュを計算しない。1 行の上限 (1 MiB) を超える宣言 (大きい `content`) は送らず、`declaredEdit` なしで `op_begin` する (Claimed 止まり)。pipe のクライアントは `tools\track\src\client.rs` の `Client` を使う。
 
 ## やること
 

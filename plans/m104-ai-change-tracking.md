@@ -21,7 +21,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104d | 1 | 完了 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
 | M104d2 | 1 | 完了 | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
 | M104e | 1 | 完了 | 行 diff (Myers)、Hunk、Change / Revision の確定 (`write_revision`)、リネームのまとめ (窓をまたぐ預かり込み)、DB の作り直しの再構成、Diff ワーカー。保存形式は db-schema.md §3.2、規則と上限の実測は architecture.md §5 |
-| M104f | 1 | 未着手 | pipe サーバ、`hello`、単一インスタンス、`status` / `list` / `describe`、`tools\track_verify.bat` |
+| M104f | 1 | 実装済み (判定待ち) | pipe サーバ (`mye_track serve`)、`hello`、単一インスタンス (mutex + `service.lock` + pipe 名)、`status` / `list` / `describe` / `sessions` / `shutdown`、`mye_track client`、`tools\build_track.bat`、`tools\track_verify.bat` (シナリオ 11 本)、CI への段の追加 (CI での実走は未確認)。プロトコルは ipc-contract.md §9 |
 | M104g | 2 | 未着手 | セッションと操作の登録、帰属の判定、セッションの基準、複数セッション |
 | M104h | 2 | 未着手 | MCP の 5 ツール、`track_client.rs`、規則 15 の許可表、ADR-032 と `docs\mcp-server.md` の更新 |
 | M104i | 2 | 未着手 | フック CLI (`mye_track.exe hook`)、Claude Code のフック設定の手順 |
@@ -72,7 +72,7 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
 | # | 決めること | 推奨 | 止まるサブ |
 |---|---|---|---|
 | 1 | Play 中に、開いているシーンへ外部の変更が来たときの扱い。今は Play 中の World へそのまま適用され、Stop で消える | Play 中は保留し、Stop の後で未保存かどうかに従って適用か確認 | M104n |
-| 2 | `tools\track` を CI に入れるか (collab は入れている、mcp は入れていない) | `cargo test` と `track_verify.bat` を CI に入れる。試作 2 の結果で確定 | M104f |
+| 2 | `tools\track` を CI に入れるか (collab は入れている、mcp は入れていない) | **決着 (2026-11-15)**: `cargo test` と `track_verify.bat` を CI に入れる (collab の段の隣)。CI での実走は push の後まで未確認 | M104f |
 | 3 | 追跡を既定で有効にするか | Phase 3 が終わるまでは既定で無効 (設定で有効にする)。見る手段が無いうちに記録だけ溜めない | M104j |
 | 4 | Blob の除外パターンの既定値と、上限・保存期間の既定値 (2 GiB、90 日) | 設計どおり (2026-11-14 にユーザーが確定)。設定で変えられる | M104c |
 | 5 | ハイライトの色を利用者が変えられるようにする範囲 (色の設定を保存する前例が無い) | `EditorSettings` に 4 色だけ持つ。設定の画面は AI Changes 窓の歯車 | M104m |

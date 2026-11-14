@@ -883,36 +883,60 @@ fn writers_never_fail_while_the_service_reads() {
     tracker.stop("test");
 }
 
-/// 実行ファイルとして起動し、標準入力の EOF で止まる。
+/// 実行ファイルとして起動する。標準入力の EOF では止まらず (`DETACHED_PROCESS` で起動されると標準入力が無効で、
+/// すぐ EOF になる)、pipe の `shutdown` で止まって `service_stop` を残す。
 #[test]
-fn serve_runs_until_stdin_eof_and_records_start_and_stop() {
+fn serve_ignores_stdin_eof_and_stops_on_pipe_shutdown() {
     use std::process::{Command, Stdio};
+
+    /// 失敗しても子プロセスを残さない。
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            if self.0.try_wait().ok().flatten().is_none() {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
+
     let mut fx = Fixture::new("serve");
     fx.write("a.txt", b"a");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mye_track"))
-        .args(["serve", "--project"])
-        .arg(&fx.root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut child = Child(
+        Command::new(env!("CARGO_BIN_EXE_mye_track"))
+            .args(["serve", "--project"])
+            .arg(&fx.root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     wait_until("baseline_complete", WAIT_LIMIT, || {
         Connection::open(Paths::for_project(&fx.root).db)
             .and_then(|c| c.query_row("SELECT COUNT(*) FROM events WHERE kind = 'baseline_complete'", [], |r| r.get::<_, i64>(0)))
             .is_ok_and(|n| n == 1)
     });
-    assert!(child.try_wait().unwrap().is_none(), "EOF が来るまで常駐する");
+    // 標準入力を閉じても常駐し続ける
+    drop(child.0.stdin.take());
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(child.0.try_wait().unwrap().is_none(), "標準入力の EOF で終わった");
     // 監視も動いている
     fx.write("b.txt", b"b");
     wait_until("b added", WAIT_LIMIT, || fx.revision_count("b.txt") == 1);
 
-    drop(child.stdin.take());
-    wait_until("exit", WAIT_LIMIT, || child.try_wait().unwrap().is_some());
-    assert!(child.wait().unwrap().success());
+    let token = mye_track::client::read_service_json(&fx.root).unwrap()["token"].as_str().unwrap().to_string();
+    let mut client = mye_track::client::Client::connect(&mye_track::pipe::pipe_name(&mye_track::project::project_id(&fx.root)), WAIT_LIMIT).unwrap();
+    let hello = client
+        .request(1, "hello", serde_json::json!({ "proto": 1, "role": "editor", "token": token, "projectRoot": fx.root.to_string_lossy() }))
+        .unwrap();
+    assert_eq!(hello["ok"], true, "{hello}");
+    assert_eq!(client.request(2, "shutdown", serde_json::json!({})).unwrap()["ok"], true);
+    wait_until("exit", WAIT_LIMIT, || child.0.try_wait().unwrap().is_some());
+    assert!(child.0.wait().unwrap().success());
     let stops = fx.events("service_stop");
     assert_eq!(stops.len(), 1);
-    assert_eq!(stops[0]["reason"], "stdin_eof");
+    assert_eq!(stops[0]["reason"], "shutdown_op");
 }
 
 /// 受け入れ条件 15: CPU を使い切る負荷の下でも、1 回の保存は complete。しきい値より十分長い間隔の 3 回書きは coalesced。

@@ -1,7 +1,7 @@
 # sub-05: pipe サーバ、`hello`、取得の op、`track_verify.bat` (M104f)
 
 - 依存: sub-04
-- 状態: 未着手
+- 状態: OK (M104f のコミット)
 - 往復: 0
 
 Phase 1 の最後のサブ。要求 Phase 1 の完了条件「再起動後も記録したファイル変更を取得でき、データ欠落時には不完全であることを判定できる」をここで満たす。
@@ -90,4 +90,72 @@ sub-01 の試作 1 / 6 で決まったこと (2026-11-14 の見直し。ipc §1 
 
 ## 実装メモ (coder が追記)
 
+### SELF_EVAL: sub-05 (round 1)
+
+実装:
+- `tools\track\src\protocol.rs` (新規) — `PROTO_VERSION = 1`、上限 (1 MiB、list 50/200)、役割と op の表 (`role_allows`)、エラーコード、要求の解析、`Args` (残りの引数を `bad_args`)。
+- `tools\track\src\pipe.rs` (新規) — Win32: 自分の SID → SDDL `D:P(A;;GA;;;<SID>)`、`PipeListener` (最初の 1 本だけ `FILE_FLAG_FIRST_PIPE_INSTANCE`、`PIPE_REJECT_REMOTE_CLIENTS`)、`PipeInstance::connect` / `client_pid`、クライアントの `open_client` (`ERROR_PIPE_BUSY` を `WaitNamedPipeW` で最大 2 秒)、DACL の読み戻し。
+- `tools\track\src\server.rs` (新規) — mutex → `service.lock` (share mode 0) → pipe の 1 本目 → `service.json` → DB → Tracker の起動順、受付ループ (接続ごとに 1 スレッド、次のインスタンスを先に作る)、`hello` の 5 段の検査と証跡 (`client_hello`)、役割の判定、`status` / `list` / `describe` / `sessions` / `shutdown`、1 MiB 行の読み捨て、接続 0 の時間切れ、終了コード 3 = 既に居る。
+- `tools\track\src\ops.rs` (新規) — 読み取り専用接続での `list` (フィルタ・cursor・limit)、`describe`、`sessions`、`status` の DB 部分。
+- `tools\track\src\client.rs` (新規) — `Client` と `mye_track client` (標準入力の行 → pipe → 標準出力)。
+- `tools\track\src\main.rs` — `serve` を `server::run` に差し替え (標準入力の EOF による終了をやめた)、`--idle-timeout-ms`、`client` サブコマンド。
+- `tools\track\src\writer.rs` — 積んで終わっていない数 (`pending`)、`submit_bounded` と `WriterError::Busy`。
+- `tools\track\src\watch.rs`、`collector.rs` — `StatusReader` (Tracker を持たずに status を読む取っ手)、`TrackerStatus` に `tracked_files` / `last_record_us` / `verify_scan_ms`、検証の走査の前半だけの所要時間の計測。
+- `tools\track\Cargo.toml` — windows-sys の feature (Pipes / IO / Security / Authorization / Cryptography)。`schema\v1.sql` は触っていない (凍結)。
+- `tools\build_track.bat`、`tools\track_verify.bat`、`tools\track_verify.ps1`、`tests\track\*.ndjson` と `*.expected.ndjson` (11 シナリオ) — 新規。
+- `.github\workflows\ci.yml` — collab の段の隣に「track service」の段 (cargo test → build_track → track_verify)。
+- `tools\track\tests\pipe.rs` (新規 7 本)、`tests\storage.rs` (+2: `failed_steps`、Writer の `Busy`)、`tests\watch.rs` (stdin EOF の試験を、EOF で終わらず pipe の `shutdown` で終わる試験に差し替え)。
+- docs: `ipc-contract.md` §9 (実装の要約)、`db-schema.md` (§6 に Hunk 書き込み失敗の制限、§8 に CI・Rust 1.89 の未検証とスキーマ凍結、§5.1 に `client_hello`)、`performance.md` §7 (検証の走査の実測)、`prototype-results.md` (試作 2 の CI の状況)、`plans\m104-ai-change-tracking.md` (進捗表の M104f、未決事項 2 の決着)。
+
+仕様との差分:
+- [追加] `shutdown` op (役割は editor だけ、ipc §4.1 / §3.1 に追記)。sub-05 の「pipe 経由の終了を使う」を実現する op が仕様の op 表に無かった。最も狭い (editor のみ) にしてあり、広げるのは 1 行。
+- [追加] `hello` の成功ごとに `events` へ `client_hello` (role、pipe から得た PID、申告 PID、プロセス開始時刻) を残す (「接続元を証跡に残す」の解釈)。1 接続 1 行なので、ポーリングするクライアントが多いとイベントが増える (下の不安)。
+- [追加] `hello` / 要求の形が読めない行 (JSON でない、id が無い等) は、`hello` の前でも `need_hello` ではなく `bad_args` (id が読めなければ `null`)。`too_large` は接続を切らず、行を LF まで捨てて続ける。
+- [追加] list の細部 (仕様に無かった): 新しい順、`cursor` = 直前のページの最後の `revisionId`、`limit` の最大超えは 200 に切る、`path` は完全一致 (末尾 `/` は前方一致、リネーム前のパスにも当たる)、`from` / `to` は両端を含む。`sessionId` / `review` / `attribution` は実際の列に対して絞る (データが無いので `sessionId` と `review=approved` 等は常に空)。`describe` の `restorable` = Before の Blob が present、または新規 (added)。`sessions` の cursor = `<startedAt>:<sessionId>`。
+- [追加] `status` の `verify.lastScanMs` と `recent.recordUs` のために `ScanProgress` / `TrackerStatus` に項目を足した (sub-21 の nit への対応。sub-05 の「検証の走査だけの所要時間を取れるようにする」)。`status` の `trackedFiles` は Tracker が公開する値 (ベースラインの管理下のファイル数)。
+- [追加] `mye_track serve --idle-timeout-ms` (既定 10 分。試験で短くするための口)。起動からも数える (接続が 0 のまま起動した場合も 10 分で終わる)。
+- [追加] 既存の `tests\watch.rs::serve_runs_until_stdin_eof_...` を差し替えた。標準入力の EOF による終了を消す仕様変更で、この試験は 60 秒待って落ち、子プロセスを残した (最初の全体実行で実測)。新しい試験は「EOF では終わらない」ことを確かめ、子プロセスを Drop で必ず止める。
+- [逸脱] 「ハンドルは `CloseHandle` を呼ぶ小さい RAII 型」のうち、pipe と DACL 取得のトークンは自作の型ではなく `File::from_raw_handle` で持つ (Drop が `CloseHandle`)。mutex のハンドルだけ小さい型 (`HandleGuard`)。unsafe を増やさないため。
+- [未実装] 仕様どおり: `subscribe`、セッション・操作・報告の op、`hunks` / `scene_diff` / `blob_get`。`status` の「CI での実走」は未確認 (下)。
+
+検証:
+- `cargo test --manifest-path tools\track\Cargo.toml` → 全部 PASS (lib 18、diff 21、pipe 7、project_id 3、reconcile 9 + 1 ignored (既存)、revision 13、storage 18、watch 19)。pipe と storage は繰り返し (pipe 5 回、storage 6 回) で安定。storage の `pending` の試験は 1 回落ち (結果送信と件数減算の隙間)、待ちを足して直した。
+- `tools\build_track.bat Release` → 成功。`bin\x64\Debug` と `bin\x64\Release` の両方へ `mye_track.exe` をコピー (`bin\` は .gitignore 済みを `git check-ignore` で確認)。
+- `tools\track_verify.bat` → 3 回続けて全 11 シナリオ PASS、終了後 `Get-Process mye_track` は 0 件 (最後の修正の後の 3 回)。途中でフレーク 2 件を見つけて直した: (1) トークンを全要求行で読んでいて、サービスが止まった後の行で 60 秒待った、(2) その失敗で `svcStopping` の状態が次のシナリオに漏れた。
+- `pwsh -NoProfile -File tools\check_rules.ps1` → 0 error (61 warning は既存)。
+- `git diff --stat ca6a3991 -- src` → 空。
+- 検証の走査の実測 (作業ツリーのコピー、`.mye` は汚していない): 追跡対象 4105 ファイルで 615 ms、1 件の記録 1.6 ms (`performance.md` §7)。
+- selftest / replay_verify は未実行 (`src\` に差分が無いので不要)。
+- **CI での実走は未確認** (`ci.yml` を書いただけ。push していない)。rusqlite bundled の windows-2022 でのビルドも同じく未確認。**Rust 1.89 での実ビルドは未確認** (開発機は 1.98 のみ。ツールチェーンは足していない)。
+- 後始末: 起動した `mye_track.exe` / cargo は残っていない (全体実行で残った 1 件は手で止めた)。一時ディレクトリ (`mye_track_pipe_*`、`mye_trackvf_*`、計測のコピー) は消した。既存の `%TEMP%\mye_track_*` と `%TEMP%\mye_m104b\` は触っていない。
+
+自己採点 (1-5):
+- 仕様適合: 4 — 受け入れ条件 1〜9 を試験・シナリオで確かめた。細部の解釈は上の [追加] に出した。CI と 1.89 は未確認。
+- 正しさ: 4 — 二重起動 3 段、再起動をまたぐ履歴と gap、時間切れ、DACL の読み戻しを実プロセスで確認。別ユーザーの拒否とリモートの実接続は未確認、リモート拒否の試験は「開けない」ことだけ (フラグの有無の比較は試作 1)。
+- コード品質: 4 — 既存の層に沿って追加。`server.rs` が大きい (約 680 行) ので sub-06 で op が増えるとき分割が要る。
+- テスト: 4 — 実プロセスの結合試験 7 本 + シナリオ 11 本 + 単体。`busy` は Writer 単体で確認し、pipe 経由で 1024 件詰める試験は無い。
+
+不安・質問:
+- `client_hello` を 1 接続 1 イベントで残すため、ポーリングするクライアント (検証の `wait-recorded` は 200 ms 間隔) やフック (ツール呼び出しごと) でイベントが増える。DB を作り直すときの入れ直しも増える。「証跡を残す」の最小解釈だが、sub-06 以降で頻度が問題なら、同じ PID の重複を間引く案がある (planner の判断)。
+- `shutdown` を editor だけにした。MCP が起動したサービスを MCP が止められない (止めたい場面は無い想定)。広げるなら `role_allows` の 1 行。
+- idle の時間切れを「起動からも数える」にした。起動を頼んだ側が接続前に死ぬと 10 分で自分で終わる (孤児の防止)。ベースラインが 10 分を超える巨大なプロジェクトでは、接続が無いままベースラインの途中で終わりうる (実測は 32000 ファイルで 2 分弱)。
+
+触ったファイル:
+- `C:\HAL\MyEngin\tools\track\Cargo.toml`、`src\collector.rs`、`src\lib.rs`、`src\main.rs`、`src\watch.rs`、`src\writer.rs`、`src\client.rs`、`src\ops.rs`、`src\pipe.rs`、`src\protocol.rs`、`src\server.rs`、`tests\pipe.rs`、`tests\storage.rs`、`tests\watch.rs`
+- `C:\HAL\MyEngin\tools\build_track.bat`、`tools\track_verify.bat`、`tools\track_verify.ps1`、`tests\track\` (22 ファイル)
+- `C:\HAL\MyEngin\.github\workflows\ci.yml`
+- `C:\HAL\MyEngin\docs\ai-change-tracking\ipc-contract.md`、`db-schema.md`、`performance.md`、`prototype-results.md`
+- `C:\HAL\MyEngin\plans\m104-ai-change-tracking.md`
+
+申し送り:
+- sub-06: `server.rs` の `handle_request` に op を足す。記録を伴う op は `ctx.writer.submit_bounded(WRITER_QUEUE_LIMIT, ...)` を通し、`Busy` を `busy` で返す (`hello` の証跡が見本)。`list` の `sessionId` / `review` / `attribution` は引数と SQL が既に配線済みで、データが入れば効く。
+- sub-08 / sub-09: `client.rs` の `Client` を共有できる。exe の探し方は ipc §9.5 (環境変数 → 自分の隣 → MCP だけ target\release)。`mye_track.exe` は `build_track.bat` が `bin\x64\Debug` と `Release` の両方へ置く。
+- ベースラインの最中の `list` は `coverage.baselining = true` を返す (シナリオには入れていない。ベースラインを長く保つ口が試験用の `baseline_chunk_pause` しかなく、製品の `serve` に出していないため)。
+- スキーマ `v1.sql` はこのサブのコミットで凍結。
+- 検証用の `track_verify.ps1` は、`# write` などのディレクティブ付きの NDJSON で、MCP / フック CLI のシナリオにもそのまま使える (`client` が hello を自動でしないので、役割ごとの hello を書く)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `cargo` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、`git diff --stat ca6a3991 -- src` は空。planner が全体の `cargo test` を 1 回 (lib 18 / diff 21 / pipe 7 / project_id 3 / reconcile 9 (+1 ignored) / revision 13 / storage 18 / watch 19、33 秒) と `tools\track_verify.bat` を 1 回 (11 シナリオ PASS、10 秒、後にプロセスなし) 実走。`ci.yml` の差分は collab の段の隣の 1 段だけ。
+  - 追加・逸脱の判定: `shutdown` (editor だけ)、`client_hello` のイベント、形が読めない行は `bad_args`、`too_large` で切らない、`list` の細部、`--idle-timeout-ms`、stdin EOF の試験の差し替え、ハンドルを `File::from_raw_handle` で持つ、は全部採る。
+  - 質問への回答: (1) `client_hello` は 1 接続 1 イベントのままでよい (間引かない。フックは操作ごとに `op_begin` / `op_end` のイベントも残すので、桁は変わらない)。(2) `shutdown` は editor だけでよい。(3) 無接続の時間切れがベースラインの途中で発火しうる件は、sub-06 で「ベースライン・再走査の最中と、running のセッションがある間は発火させない」にする。
+  - 未確認のまま残るもの: CI での実走 (push していない。`rusqlite` bundled の `windows-2022` でのビルドを含む)、Rust 1.89 での実ビルド、別のユーザーからの接続の拒否。CI は時間に依存する試験 (監視、負荷の下の保存) を含むので、最初の push で落ちたら、その試験と所要時間を見て直す。

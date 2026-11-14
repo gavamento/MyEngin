@@ -1,8 +1,8 @@
 # sub-04: 行 diff、Hunk、Revision、リネーム (M104e)
 
 - 依存: sub-21 (sub-03 の VERDICT round 1 で、sub-03 と sub-04 の間に sub-21 = M104d2 を足した)
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (commit 8a07401a)
+- 往復: 1
 
 ## やること
 
