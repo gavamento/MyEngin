@@ -16,12 +16,29 @@ use mye_track::startup::{
 use mye_track::store::{Mode, Paths, StoreError};
 use mye_track::writer::{Writer, WriterError};
 
-/// テストごとの空のプロジェクトルート。collab の temp_repo() と同じ作り方。
-fn temp_project(name: &str) -> PathBuf {
+/// テストごとの空のプロジェクトルート。成功したテストは終わりに消す (失敗したときは調べられるよう残す)。
+struct TempProject(PathBuf);
+
+impl std::ops::Deref for TempProject {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempProject {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+fn temp_project(name: &str) -> TempProject {
     let dir = std::env::temp_dir().join(format!("mye_track_{}_{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    TempProject(dir)
 }
 
 fn db_conn(root: &Path) -> Connection {

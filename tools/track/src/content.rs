@@ -161,11 +161,29 @@ pub fn read_stable(path: &Path, stable_attempts: u32) -> ReadOutcome {
 mod tests {
     use super::*;
 
-    fn temp(name: &str) -> std::path::PathBuf {
+    /// 成功したテストは終わりに消す (失敗したときは調べられるよう残す)。
+    struct TempDir(std::path::PathBuf);
+
+    impl std::ops::Deref for TempDir {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            if !std::thread::panicking() {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+
+    fn temp(name: &str) -> TempDir {
         let dir = std::env::temp_dir().join(format!("mye_track_content_{}_{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        TempDir(dir)
     }
 
     #[test]

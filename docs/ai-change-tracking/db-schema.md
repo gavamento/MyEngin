@@ -100,6 +100,7 @@ CREATE TABLE change_revisions (
   actor           TEXT NOT NULL,                -- ai / editor_user / restore / unknown
   attribution     TEXT NOT NULL,                -- verified / claimed / inferred / unknown
   caused_by       INTEGER REFERENCES change_revisions(revision_id),  -- プレハブ伝播の原因
+  diff_mode       TEXT NOT NULL DEFAULT 'lines',  -- lines / whole / binary / excluded / unavailable (§3.2)
   UNIQUE (change_id, seq)
 );
 
@@ -207,6 +208,24 @@ CREATE TABLE events (
 - **`completeness` を Revision ごとに持つ。** 取り逃した中間状態を、完全な履歴として見せない (仕様書 §5.3、§16.1)。
 - **`documents` を別表にする。** `fileId` はシーンの中でしか一意でないので、`scene_changes` は必ず `document_id` と組で引く (仕様書 §16.3「別 Scene の同じ fileId を混同しない」)。
 
+### 3.2 Revision と Hunk の確定 (M104e)
+
+- **`write_revision` の 1 箇所だけが書く** (`tools\track\src\revision.rs`)。Change の特定、Revision、Hunk を 1 つの SAVEPOINT に入れ、途中で失敗したら全部取り消す。Hunk の無い Revision が外から見える瞬間も、Revision だけが残ることも無い。通常の記録も、DB を作り直したあとの再構成 (§6) も、`observed` の payload から同じ入力を作ってこの関数を通る。
+- **Change の寿命** (`changes.state`): 同じパスの `active` な Change があれば、そこへ Revision を足す (`seq` は連番)。次の 2 つで `superseded` にする。(1) 削除の Revision で終わった Change に、同じパスの再作成が来たとき (新しい Change を始める)。(2) リネームで元のパスが去ったとき (元のパスの `active` な Change)。`partially_restored` / `restored` / `conflicted` は sub-15 以降。
+- **`diff_mode`** (Hunk の作り方):
+
+  | 値 | 意味 | Hunk |
+  |---|---|---|
+  | `lines` | 行 diff の結果 (内容が同じリネームでは 0 件) | 0 件以上 |
+  | `whole` | 計算量の上限を超えたので、ファイル全体を 1 Hunk にした ([architecture.md](architecture.md) §5) | 1 件 |
+  | `binary` | UTF-8 でない・テキストの上限を超える | 無し |
+  | `excluded` | 除外パターンのファイル (内容を持たない) | 無し |
+  | `unavailable` | Before を見ていない (`no_before`)、または必要な Blob が無い・壊れている | 無し |
+
+- **Hunk の座標**: `old_start` / `new_start` は 1 始まりの行番号で、変更範囲の最初の行。行が 0 件の側 (純粋な挿入・削除) は、その行が入る位置 (次の行の番号)。`before_text` / `after_text` / `context_*` は改行 (LF / CRLF / 末尾なし) をそのまま持つ。文脈は前後 3 行 (ファイルの端では短い)。変更の間の同じ行が 6 行以下なら 1 つの Hunk にまとめる (文脈が重なるため)。
+- **`eol_only`**: Hunk の全行が、本文が同じで行末 (LF / CRLF / 末尾の改行の有無) だけ違うとき 1。本文の変更と同じ Hunk に混ざったら 0。
+- **Hunk ID**: `hunk_id` は表の通し番号で、Revision が変われば変わる。`(revision_id, ordinal)` が Revision 内の位置。
+
 ## 4. Blob ストア
 
 - 名前は内容の SHA-256 (hex)。同じ内容は 1 つしか持たない。
@@ -228,7 +247,7 @@ CREATE TABLE events (
 
 ### 5.1 監視が書くイベント (M104d)
 
-DB を作り直したとき、`events` から `snapshots` / `changes` / `change_revisions` を導けるよう、観測はすべて `Store::record_event` を通し、次の payload を持つ (作り直しの関数は M104e)。時刻はすべて UTC ミリ秒。
+DB を作り直したとき、`events` から `snapshots` / `changes` / `change_revisions` / `change_hunks` を導けるよう、観測はすべて `Store::record_event` を通し、次の payload を持つ (作り直しは §6 の 1)。時刻はすべて UTC ミリ秒。
 
 | kind | payload |
 |---|---|
@@ -240,13 +259,14 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 | `coverage_gap` | `reason`、`from_at`、`to_at`、`scope` |
 
 - 除外パターンのファイルは `hash` を null にする (ハッシュも残さない)。`excluded: true`。
-- `window` は、近い時刻 (デバウンスの幅以内) に届いたイベントのパスを結ぶ印。別ディレクトリへの移動は削除と作成の 2 つの `observed` で、同じ `window` に入る (まとめるのは M104e)。
+- `window` は、近い時刻 (デバウンスの幅以内) に届いたイベントのパスを結ぶ印。別ディレクトリへの移動は削除と作成のイベントで、同じ `window` に入る。`window` が同じで内容ハッシュも同じ削除と作成は、記録する前に 1 件の `change_type = renamed` (`old_path` 付き) にまとめる (M104e。規則は [architecture.md](architecture.md) §5)。まとめた後の 1 件だけが `observed` に入る。
 - `before` は「最後に確認できた内容」で、無ければ null (新規、または `no_before`)。
 
 ## 6. 起動時の検査
 
 0. (起動の最初) `blobs\` の下の書きかけの一時ファイル (`.tmp-*`) を消す。自分が書いたもので、どこからも指されない。サービスは 1 つだけ動く前提なので、起動時なら安全。
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
+   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed`) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
    退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。
 3. (前段) 前回の最後のイベントの 10 分前から後に書かれた Blob を読み、ハッシュが名前と違えば消す (§4)。続けて、`snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする (前段で消したものを含む)。

@@ -11,9 +11,11 @@ use rusqlite::{params, Connection};
 
 use crate::blob::BlobStore;
 use crate::db::{open_and_migrate, Opened};
+use crate::diff::DiffLimits;
 use crate::hash::sha256_hex;
 use crate::journal::{self, Journal, JournalPos};
 use crate::process::is_alive;
+use crate::revision::{rebuild_derived, Deriver, RebuildReport};
 use crate::schema::{Migration, MIGRATIONS};
 use crate::store::{Mode, Paths, Store};
 
@@ -41,6 +43,8 @@ pub struct StartupReport {
     pub broken_db: Option<PathBuf>,
     pub replayed_events: usize,
     pub unreadable_journal_lines: usize,
+    /// 壊れた DB を作り直したとき、イベントから派生の表を作り直した結果。
+    pub rebuilt: Option<RebuildReport>,
     pub blobs_marked_missing: usize,
     /// 直近に書かれた Blob のうち、中身がハッシュと違ったので消した数 (消すと `blobs_marked_missing` に数えられる)。
     pub blobs_corrupted: usize,
@@ -131,10 +135,18 @@ pub fn open_project_with(
     };
 
     if store.conn.is_some() {
+        // 退避して作り直した DB は、全イベントを入れてから派生の表を作り直す。通常の起動は、入れ直すイベントごとに派生の表へも反映する
+        let derive_while_replaying = report.broken_db.is_none();
         // 入れ直しに失敗したときは、DB の内容を信用できないので書き込みを止める
-        if let Err(e) = replay_journal(&mut store, now, &mut report) {
+        if let Err(e) = replay_journal(&mut store, now, &mut report, derive_while_replaying) {
             store.conn = None;
             store.mode = Mode::DbDegraded(format!("ジャーナルの入れ直しに失敗: {e}"));
+        }
+    }
+    if store.conn.is_some() && report.broken_db.is_some() {
+        match rebuild_derived(&mut store, &DiffLimits::default()) {
+            Ok(rebuilt) => report.rebuilt = Some(rebuilt),
+            Err(e) => report.failed_steps.push(StepFailure { step: "派生の表の作り直し", reason: e.to_string() }),
         }
     }
     if let Some(conn) = store.conn.as_mut() {
@@ -180,7 +192,8 @@ fn run_step(
 /// §6 の 1 の後半 (および通常起動の埋め直し): DB が持つ最後の位置より後ろのジャーナルを DB へ入れる。
 /// 読めない行は `journal_unreadable` のイベントにして位置を進め (= 二度目の起動で重複させない)、
 /// 前後の観測の時刻で挟んだ区間を `coverage_gaps` に残す。
-fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport) -> Result<(), String> {
+/// `derive` が真なら、入れ直したイベントを派生の表 (Revision など) へも反映する。
+fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport, derive: bool) -> Result<(), String> {
     let conn = store.conn.as_mut().expect("caller checked");
     let last: Option<(String, i64)> = conn
         .query_row("SELECT journal_pos, at FROM events ORDER BY event_id DESC LIMIT 1", [], |r| {
@@ -198,17 +211,29 @@ fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport) -> Re
     let mut open_gap_from: Option<i64> = None;
     let mut gaps: Vec<(i64, i64)> = Vec::new();
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let mut deriver: Option<Deriver> = None;
     for line in &lines {
         match &line.entry {
             Some(entry) => {
                 if let Some(from) = open_gap_from.take() {
                     gaps.push((from, entry.at));
                 }
-                tx.execute(
-                    "INSERT OR IGNORE INTO events (at, kind, journal_pos, payload) VALUES (?1, ?2, ?3, ?4)",
-                    params![entry.at, entry.kind, line.pos.to_string(), entry.payload.to_string()],
-                )
-                .map_err(|e| e.to_string())?;
+                let inserted = tx
+                    .execute(
+                        "INSERT OR IGNORE INTO events (at, kind, journal_pos, payload) VALUES (?1, ?2, ?3, ?4)",
+                        params![entry.at, entry.kind, line.pos.to_string(), entry.payload.to_string()],
+                    )
+                    .map_err(|e| e.to_string())?;
+                if derive && inserted == 1 && matches!(entry.kind.as_str(), "baseline" | "observed") {
+                    if deriver.is_none() {
+                        deriver = Some(Deriver::from_db(&tx).map_err(|e| e.to_string())?);
+                    }
+                    if let Some(deriver) = deriver.as_mut() {
+                        deriver
+                            .apply_event(&tx, &store.blobs, &entry.kind, entry.at, &entry.payload, &DiffLimits::default())
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
                 prev_good_at = Some(entry.at);
                 report.replayed_events += 1;
             }

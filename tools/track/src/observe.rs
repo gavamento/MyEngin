@@ -7,11 +7,12 @@
 
 use std::time::SystemTime;
 
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
 use serde_json::{json, Value};
 
 use crate::baseline::{ContentKind, FileState};
 use crate::blob::BlobError;
+use crate::revision::{write_revision, DiffPlan, RevisionInput};
 use crate::store::{Store, StoreError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +34,18 @@ impl ChangeType {
     }
 }
 
+impl ChangeType {
+    pub fn parse(text: &str) -> Option<ChangeType> {
+        match text {
+            "added" => Some(ChangeType::Added),
+            "modified" => Some(ChangeType::Modified),
+            "deleted" => Some(ChangeType::Deleted),
+            "renamed" => Some(ChangeType::Renamed),
+            _ => None,
+        }
+    }
+}
+
 /// db-schema.md の `change_revisions.completeness`。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Completeness {
@@ -49,6 +62,18 @@ impl Completeness {
             Completeness::Coalesced => "coalesced",
             Completeness::Gap => "gap",
             Completeness::NoBefore => "no_before",
+        }
+    }
+}
+
+impl Completeness {
+    pub fn parse(text: &str) -> Option<Completeness> {
+        match text {
+            "complete" => Some(Completeness::Complete),
+            "coalesced" => Some(Completeness::Coalesced),
+            "gap" => Some(Completeness::Gap),
+            "no_before" => Some(Completeness::NoBefore),
+            _ => None,
         }
     }
 }
@@ -172,22 +197,9 @@ fn after_json(after: &AfterContent, excluded: bool) -> Value {
     })
 }
 
-/// 観測を記録して、各観測のあとの状態 (削除なら None) を返す。Err は記録できなかった (状態を進めない)。
-pub fn apply_observations(
-    store: &mut Store,
-    observations: Vec<Observation>,
-) -> Vec<Result<Option<FileState>, RecordFailure>> {
-    let in_tx = begin(store);
-    let results = observations.into_iter().map(|o| apply_one(store, o)).collect();
-    if in_tx {
-        commit(store);
-    }
-    results
-}
-
-fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, RecordFailure> {
-    let excluded = o.after.is_some() && store.blobs.is_excluded(&o.path);
-    let payload = json!({
+/// `observed` イベントの payload (db-schema.md §5.1)。Diff ワーカーと Writer が同じものから Revision の入力を作る。
+pub fn observation_payload(o: &Observation, excluded: bool) -> Value {
+    json!({
         "path": o.path,
         "change_type": o.change_type.as_str(),
         "old_path": o.old_path,
@@ -197,7 +209,32 @@ fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, Rec
         "source": o.source.as_str(),
         "window": o.window,
         "observed_at": o.observed_at,
-    });
+    })
+}
+
+/// 観測を記録して、各観測のあとの状態 (削除なら None) を返す。Err は記録できなかった (状態を進めない)。
+/// `plans` は Diff ワーカーが観測ごとに作った差分 (`observations` と同じ順・同じ長さ)。
+pub fn apply_observations(
+    store: &mut Store,
+    observations: Vec<Observation>,
+    plans: Vec<Result<DiffPlan, String>>,
+) -> Vec<Result<Option<FileState>, RecordFailure>> {
+    let in_tx = begin(store);
+    let results =
+        observations.into_iter().zip(plans).map(|(o, plan)| apply_one(store, o, plan)).collect();
+    if in_tx {
+        commit(store);
+    }
+    results
+}
+
+fn apply_one(store: &mut Store, o: Observation, plan: Result<DiffPlan, String>) -> Result<Option<FileState>, RecordFailure> {
+    // 差分を計算できなかった観測は、何も書かずに Err で返す (状態を進めず、欠落として扱う)
+    let plan = plan.map_err(|detail| RecordFailure { reason: GAP_WRITE_FAILED, detail })?;
+    let excluded = o.after.is_some() && store.blobs.is_excluded(&o.path);
+    let payload = observation_payload(&o, excluded);
+    let input = RevisionInput::from_payload(&store.blobs, &payload)
+        .ok_or_else(|| RecordFailure { reason: GAP_WRITE_FAILED, detail: "観測の payload を読めない".to_string() })?;
     // 先にジャーナルへ。これが失敗したら観測は無かったことにして呼び出し側へ返す
     store.record_event(o.observed_at, "observed", payload).map_err(|e| RecordFailure::from_store(&e))?;
 
@@ -229,50 +266,14 @@ fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, Rec
         None => None,
     };
 
-    if store.conn.is_some() {
-        insert_revision(store, &o, after_state.as_ref()).map_err(|e| RecordFailure::from_store(&StoreError::Sqlite(e)))?;
+    if let Some(conn) = store.conn.as_ref() {
+        // Revision と Hunk は 1 つの塊で確定する (revision.rs)。失敗したら何も残さず Err
+        let before_snapshot = o.before.as_ref().and_then(|s| s.snapshot_id);
+        let after_snapshot = after_state.as_ref().and_then(|s| s.snapshot_id);
+        write_revision(conn, &input, before_snapshot, after_snapshot, &plan)
+            .map_err(|e| RecordFailure::from_store(&StoreError::Sqlite(e)))?;
     }
     Ok(after_state)
-}
-
-fn insert_revision(store: &Store, o: &Observation, after: Option<&FileState>) -> rusqlite::Result<()> {
-    let conn = store.conn.as_ref().expect("caller checked");
-    let kind = after.and_then(|s| s.kind).or(o.before.as_ref().and_then(|s| s.kind));
-    let existing: Option<(i64, i64)> = conn
-        .query_row(
-            "SELECT c.change_id, COALESCE((SELECT MAX(seq) FROM change_revisions WHERE change_id = c.change_id), 0)
-               FROM changes c WHERE c.path = ?1 AND c.state = 'active' ORDER BY c.change_id DESC LIMIT 1",
-            [&o.path],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    let (change_id, last_seq) = match existing {
-        Some(found) => found,
-        None => {
-            conn.execute(
-                "INSERT INTO changes (path, kind, first_seen, state) VALUES (?1, ?2, ?3, 'active')",
-                params![o.path, kind.map_or("text", ContentKind::as_str), o.observed_at],
-            )?;
-            (conn.last_insert_rowid(), 0)
-        }
-    };
-    conn.execute(
-        "INSERT INTO change_revisions
-           (change_id, seq, change_type, old_path, before_snapshot, after_snapshot, observed_at,
-            completeness, operation_id, actor, attribution, caused_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, 'unknown', 'unknown', NULL)",
-        params![
-            change_id,
-            last_seq + 1,
-            o.change_type.as_str(),
-            o.old_path,
-            o.before.as_ref().and_then(|s| s.snapshot_id),
-            after.and_then(|s| s.snapshot_id),
-            o.observed_at,
-            o.completeness.as_str(),
-        ],
-    )?;
-    Ok(())
 }
 
 /// 最初の起動のベースライン (`snapshots.kind = baseline`)。変更としては記録しない。

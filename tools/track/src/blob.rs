@@ -109,6 +109,20 @@ impl BlobStore {
         Self::new(root, DEFAULT_EXCLUDE_PATTERNS.iter().map(|s| s.to_string()).collect())
     }
 
+    /// 同じ置き場所と除外パターンを持つ読み取り用のハンドル (Diff ワーカーが別スレッドで読むため)。統計は別。
+    pub fn reader(&self) -> BlobStore {
+        BlobStore::new(self.root.clone(), self.exclude_patterns.clone())
+    }
+
+    /// Blob の中身を読む。名前 (ハッシュ) と中身が合わなければ `InvalidData` (壊れた Blob を内容として返さない)。
+    pub fn read(&self, hash: &str) -> io::Result<Vec<u8>> {
+        let bytes = std::fs::read(self.path_for_hash(hash))?;
+        if sha256_hex(&bytes) != hash {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "blob の中身がハッシュと違う"));
+        }
+        Ok(bytes)
+    }
+
     /// ハッシュに対応する最終パス: `<root>\<先頭 2 桁>\<残り>`。
     pub fn path_for_hash(&self, hash: &str) -> PathBuf {
         self.root.join(&hash[..2]).join(&hash[2..])

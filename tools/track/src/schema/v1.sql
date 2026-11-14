@@ -66,6 +66,7 @@ CREATE TABLE change_revisions (
   actor           TEXT NOT NULL,                -- ai / editor_user / restore / unknown
   attribution     TEXT NOT NULL,                -- verified / claimed / inferred / unknown
   caused_by       INTEGER REFERENCES change_revisions(revision_id),  -- プレハブ伝播の原因
+  diff_mode       TEXT NOT NULL DEFAULT 'lines',  -- lines / whole (上限超えで全体 1 Hunk) / binary / excluded / unavailable (後ろ 3 つは Hunk 無し)
   UNIQUE (change_id, seq)
 );
 

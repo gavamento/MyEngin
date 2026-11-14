@@ -545,21 +545,22 @@ fn same_content_save_makes_no_revision() {
 }
 
 #[test]
-fn cross_directory_move_is_delete_plus_add_in_one_window() {
+fn cross_directory_move_becomes_one_rename() {
     let mut fx = Fixture::new("move");
     fx.write("from/m.txt", b"moving");
     fx.write("to/keep.txt", b"keep");
     let tracker = fx.start(fast_config());
 
+    // 監視には削除 + 作成でしか届かない。同じ窓の同じ内容なので 1 件の renamed にまとまる (M104e)
     fx.rename("from/m.txt", "to/m.txt");
-    wait_until("deleted", WAIT_LIMIT, || fx.revision_count("from/m.txt") == 1);
-    wait_until("added", WAIT_LIMIT, || fx.revision_count("to/m.txt") == 1);
-    assert_eq!(fx.revisions("from/m.txt")[0].change_type, "deleted");
-    assert_eq!(fx.revisions("to/m.txt")[0].change_type, "added");
+    wait_until("renamed", WAIT_LIMIT, || fx.revision_count("to/m.txt") == 1);
+    fx.settle("move");
+    let revs = fx.revisions("to/m.txt");
+    assert_eq!(revs[0].change_type, "renamed");
+    assert_eq!(revs[0].old_path.as_deref(), Some("from/m.txt"));
+    assert_eq!(fx.revision_count("from/m.txt"), 0, "元のパスに削除の Revision は残らない");
     let observed = fx.events("observed");
-    let del = observed.iter().find(|e| e["path"] == "from/m.txt").unwrap();
-    let add = observed.iter().find(|e| e["path"] == "to/m.txt").unwrap();
-    assert_eq!(del["window"], add["window"], "同じ窓に入っている (sub-04 がまとめる)");
+    assert_eq!(observed.iter().filter(|e| e["path"] == "from/m.txt").count(), 0);
     tracker.stop("test");
 }
 
@@ -571,15 +572,14 @@ fn directory_operations_are_all_recorded() {
     fx.write("d1/sub/deep.txt", b"deep");
     let tracker = fx.start(fast_config());
 
-    // 名前変更: 中のファイルのイベントは来ない
+    // 名前変更: 中のファイルのイベントは来ない。削除と作成が、内容の同じ renamed 3 件にまとまる (M104e)
     fx.rename_dir("d1", "d2");
-    for rel in ["d1/a.txt", "d1/b.txt", "d1/sub/deep.txt"] {
-        wait_until(rel, WAIT_LIMIT, || fx.revision_count(rel) == 1);
-        assert_eq!(fx.revisions(rel)[0].change_type, "deleted");
-    }
-    for rel in ["d2/a.txt", "d2/b.txt", "d2/sub/deep.txt"] {
-        wait_until(rel, WAIT_LIMIT, || fx.revision_count(rel) == 1);
-        assert_eq!(fx.revisions(rel)[0].change_type, "added");
+    for (old, new) in [("d1/a.txt", "d2/a.txt"), ("d1/b.txt", "d2/b.txt"), ("d1/sub/deep.txt", "d2/sub/deep.txt")] {
+        wait_until(new, WAIT_LIMIT, || fx.revision_count(new) == 1);
+        let revs = fx.revisions(new);
+        assert_eq!(revs[0].change_type, "renamed");
+        assert_eq!(revs[0].old_path.as_deref(), Some(old));
+        assert_eq!(fx.revision_count(old), 0);
     }
 
     // 外で作ったツリーを移し入れる

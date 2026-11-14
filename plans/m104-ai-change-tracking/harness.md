@@ -11,8 +11,8 @@
 | sub-01 (M104b) 試作 6 件と設計文書への反映 | OK | 1 | 723bf633 | should 1 件は sub-03 で対応 (共有モード)、nit は sub-02 で対応 (進捗表) |
 | sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | OK | 2 | 79008917 | round 1 REWORK (projectId が末尾の区切りで変わる。仕様側の誤り) → round 2 OK。nit: failed_steps の発生経路のテストは sub-05 で足す |
 | sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | OK | 2 | 76d0e2df | round 1 REWORK (負荷の下で 1 回の保存が coalesced になる) → round 2 OK。nit: sub-03.md の実装メモに round 2 が無い |
-| sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | 実装中 | 0 | | sub-03 の VERDICT で新設。順序は sub-03 → sub-21 → sub-04 (Phase 1 の中)。追加はユーザー承認済み |
-| sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | 未着手 | | | |
+| sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | OK | 1 | 35da2917 | should: 試験の一時ディレクトリの後始末は sub-04 で対応。nit: 検証の走査の所要時間は sub-05 の status で実測 |
+| sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | 実装中 | 0 | | |
 | sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | 未着手 | | | 着手前にユーザー確認 (未決事項 2、exe の置き場所)。Phase 1 の最後 |
 | sub-06 (M104g) セッション、操作、帰属 | 未着手 | | | 骨子。planner の見直し後に着手 |
 | sub-07 (M104h) MCP の 5 ツール | 未着手 | | | 骨子 |
@@ -52,6 +52,8 @@
   - ベースラインで追跡対象の全ファイルの内容を `.mye\ai_changes\blobs\` に複製する (このリポジトリで約 391 MiB)。
   - sub-21 (M104d2) を Phase 1 に足す。順序は sub-03 → sub-21 → sub-04。
 - 未確認 (sub-05 の着手前に聞く): 開発機に Rust 1.89 のツールチェーンを入れて最低版でのビルドを確かめるか (planner の裁定は「確かめない」)。
+- 2026-11-15: `%TEMP%\mye_track_*` (試験が残した一時ディレクトリ 931 個) は消さずに残す (planner の裁定どおり)。
+- 未確認 (sub-09 の着手前に一緒に伝える): このリポジトリで追跡を有効にすると最初のベースラインで `.mye\ai_changes\blobs\` が約 488 MB になる。
 - 未確認 (sub-07 / sub-08 の着手時に聞く): 本物の Claude Code 終了時のサービス生存の手動確認、本物のフック入力の記録への協力。
 
 ## 申し送り (セッション跨ぎ)

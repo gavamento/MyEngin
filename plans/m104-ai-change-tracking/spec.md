@@ -203,6 +203,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-04 の VERDICT round 1): sub-05 に、`describe` が `diff_mode` を返すこと、sub-05 のコミット以降は `v1.sql` を変えず移行で足すこと (スキーマの凍結)、db §6 の制限の追記を足した。受け入れ条件は変えていない。
 - 2026-11-15 (planner、sub-21 の VERDICT round 1): sub-21 の結果 (`verify_gap`、`status` の項目、ベースラインの実測 = このリポジトリで約 488 MB・12〜35 秒) を sub-04、sub-05、sub-09 に書き足した。sub-04 に試験の一時ディレクトリの後始末を足した。受け入れ条件とサブの数は変えていない。
 - 2026-11-14 (planner、sub-03 の VERDICT round 1): D27〜D29 を追加。sub-03 と sub-04 の間に **sub-21 (M104d2)** を足した (番号は末尾だが順序は sub-03 → sub-21 → sub-04)。sub-03 に受け入れ条件 15、sub-04 の依存を sub-21 に、sub-05 に標準入力の EOF で終わらない旨を足した。A3 の「取りこぼさない」は sub-03 と sub-21 の 2 本で満たす。
 - 2026-11-14 (planner、sub-02 の VERDICT round 1): D25、D26 を追加。sub-02 (projectId の定義と受け入れ条件 8)、sub-03 (イベントのペイロード、`service_start` / `service_stop`、一時 Blob の掃除)、sub-04 (派生の表の作り直し、受け入れ条件 9)、sub-05 (`service.lock`、受け入れ条件 3b)、sub-09 (projectId の定義) を直した。

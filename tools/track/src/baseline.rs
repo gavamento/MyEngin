@@ -24,6 +24,16 @@ impl ContentKind {
     }
 }
 
+impl ContentKind {
+    pub fn parse(text: &str) -> Option<ContentKind> {
+        match text {
+            "text" => Some(ContentKind::Text),
+            "binary" => Some(ContentKind::Binary),
+            _ => None,
+        }
+    }
+}
+
 /// 8 MiB (設定可) 以下の UTF-8 ならテキスト。
 pub fn classify(bytes: &[u8], max_text_bytes: u64) -> ContentKind {
     if bytes.len() as u64 > max_text_bytes || std::str::from_utf8(bytes).is_err() {

@@ -11,14 +11,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::baseline::{classify, Baseline, ContentKind};
+use crate::blob::BlobStore;
 use crate::content::{peek_len, peek_stat, read_stable, LenOutcome, ReadOutcome, StatOutcome};
 use crate::db::now_ms;
+use crate::diff::DiffLimits;
+use crate::diff_worker::DiffWorker;
 use crate::hash::sha256_hex;
 use crate::ignore::IgnoreRules;
 use crate::observe::{
     apply_observations, record_baseline, record_gap, AfterContent, BaselineEntry, ChangeType, Completeness, Observation,
     RecordFailure, Source, GAP_DISK_FULL, GAP_WRITE_FAILED,
 };
+use crate::rename::merge_renames;
 use crate::writer::Writer;
 
 /// 1 回の Writer への依頼に積む内容の上限。大量の変更でメモリを使い切らない。
@@ -59,6 +63,8 @@ pub struct TrackerConfig {
     pub unrecorded_retry: Duration,
     /// 試験用: ベースラインの塊 (500 件) ごとに待つ時間。途中で止める・途中で変更する試験が間に合うようにする。
     pub baseline_chunk_pause: Duration,
+    /// 行 diff の計算量の上限 (超えたら Revision 全体を 1 Hunk にする)。
+    pub diff_limits: DiffLimits,
 }
 
 impl Default for TrackerConfig {
@@ -78,6 +84,7 @@ impl Default for TrackerConfig {
             verify_burst_events: 1000,
             unrecorded_retry: Duration::from_secs(1),
             baseline_chunk_pause: Duration::ZERO,
+            diff_limits: DiffLimits::default(),
         }
     }
 }
@@ -114,6 +121,8 @@ enum Eval {
 pub struct Deferred {
     pub rel: String,
     pub delay: Duration,
+    /// 元の観測の窓。待っている間、同じ窓の削除をリネームのまとめのために預かる。
+    pub window: String,
 }
 
 /// ベースラインの所要時間の内訳 (ミリ秒)。`commit_ms` は Writer へ渡して戻るまで (Blob・ジャーナル・DB を含む)。
@@ -173,25 +182,34 @@ pub struct Collector {
     stop: Arc<AtomicBool>,
     progress: Arc<ScanProgress>,
     unrecorded: Option<Unrecorded>,
+    diff: DiffWorker,
+    /// 同じ窓の作成を待っている削除 (`drain_holding`)。預かり始めた時刻つき。
+    held: Vec<(Observation, Instant)>,
 }
 
 #[derive(Default)]
 struct Batch {
     obs: Vec<Observation>,
     bytes: usize,
+    /// 上限で途中の塊を書き出した。この flush の削除と作成は全体を見られないので、リネームにまとめない。
+    overflowed: bool,
 }
 
 impl Collector {
+    /// `blob_reader` は Diff ワーカーが Before を読むためのハンドル (`BlobStore::reader`)。
     pub fn new(
         root: PathBuf,
         cfg: TrackerConfig,
         writer: Arc<Writer>,
         stop: Arc<AtomicBool>,
         progress: Arc<ScanProgress>,
+        blob_reader: BlobStore,
     ) -> Self {
         Collector {
             ignore: IgnoreRules::new(root.clone()),
             root,
+            diff: DiffWorker::spawn(blob_reader, cfg.diff_limits.clone()),
+            held: Vec::new(),
             cfg,
             writer,
             baseline: Baseline::default(),
@@ -330,7 +348,14 @@ impl Collector {
         let first_at = observations.iter().map(|o| o.observed_at).min().unwrap_or_else(now_ms);
         let meta: Vec<(String, ChangeType, Option<String>, i64)> =
             observations.iter().map(|o| (o.path.clone(), o.change_type, o.old_path.clone(), o.observed_at)).collect();
-        let results = match self.writer.call(move |store| apply_observations(store, observations)) {
+        // 差分は Diff ワーカーで計算してから Writer へ渡す。Writer は計算で塞がらない
+        let (observations, plans) = self.diff.plan(observations);
+        if observations.len() != meta.len() {
+            eprintln!("[track] Diff ワーカーから観測が戻らない");
+            self.note_unrecorded(first_at, &RecordFailure { reason: GAP_WRITE_FAILED, detail: "Diff ワーカーが観測を返さなかった".to_string() });
+            return;
+        }
+        let results = match self.writer.call(move |store| apply_observations(store, observations, plans)) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[track] 観測を Writer へ渡せない: {e}");
@@ -403,19 +428,75 @@ impl Collector {
         batch.bytes += o.after.as_ref().map_or(0, |a| a.bytes.len());
         batch.obs.push(o);
         if batch.bytes >= CHUNK_BYTES || batch.obs.len() >= CHUNK_COUNT {
+            batch.overflowed = true;
             self.drain(batch);
         }
     }
 
+    /// 溜まった観測を書き出す。リネームのまとめ (削除 + 同じ内容の作成) は、塊の境界で切れていない
+    /// (= 上限で途中に書き出していない) ときだけ行う。切れると、候補が 1 つに決まるかを全体で判断できない。
     fn drain(&mut self, batch: &mut Batch) {
-        let obs = std::mem::take(&mut batch.obs);
+        let mut obs = std::mem::take(&mut batch.obs);
         batch.bytes = 0;
+        if !batch.overflowed {
+            obs = merge_renames(obs);
+        }
         self.commit(obs);
+    }
+
+    /// `flush` 用の書き出し。同じ窓にまだ待ちのパス (新しいファイルは書き手を待つので遅れる) があるとき、
+    /// 内容ハッシュを持つ削除は書き出さずに預かり、あとの `flush` で届く同じ内容の作成と `renamed` にまとめる。
+    /// 預かりは窓が閉じる (待ちのパスが無くなる) か `max_hold` で終わる。
+    fn drain_holding(&mut self, batch: &mut Batch, open_windows: &HashSet<String>) {
+        if batch.overflowed {
+            return self.drain(batch);
+        }
+        let incoming = std::mem::take(&mut batch.obs);
+        batch.bytes = 0;
+        let since_by_path: HashMap<String, Instant> =
+            self.held.iter().map(|(o, since)| (o.path.clone(), *since)).collect();
+        let mut all: Vec<Observation> = self.held.drain(..).map(|(o, _)| o).collect();
+        // 預かっている間はベースラインが進まないので、別の flush が同じ削除をもう一度作る。重ねない
+        all.extend(
+            incoming.into_iter().filter(|o| !(o.change_type == ChangeType::Deleted && since_by_path.contains_key(&o.path))),
+        );
+        let now = Instant::now();
+        let mut ready = Vec::new();
+        for o in merge_renames(all) {
+            let holdable = o.change_type == ChangeType::Deleted && o.before.as_ref().is_some_and(|s| s.hash.is_some());
+            if holdable {
+                let since = since_by_path.get(&o.path).copied().unwrap_or(now);
+                if open_windows.contains(&o.window) && now.duration_since(since) < self.cfg.max_hold {
+                    self.held.push((o, since));
+                    continue;
+                }
+                // 預かっている間に同じパスが作り直された: そのパスの観測が先に決めるので、削除は捨てる
+                if since_by_path.contains_key(&o.path) && self.abs(&o.path).symlink_metadata().is_ok() {
+                    continue;
+                }
+            }
+            ready.push(o);
+        }
+        self.commit(ready);
+    }
+
+    /// 預かっている削除を全部書き出す (走査の前・停止の前など、窓を待てないとき)。
+    pub fn release_held(&mut self) {
+        let held = std::mem::take(&mut self.held);
+        let ready: Vec<Observation> =
+            held.into_iter().map(|(o, _)| o).filter(|o| self.abs(&o.path).symlink_metadata().is_err()).collect();
+        self.commit(ready);
     }
 
     /// flush するパスを処理する。返り値は書き手がまだ開いていて読めなかったパス (後でやり直す)。
     /// `still_pending` はまだデバウンス中のパス。ディレクトリの突き合わせではそれを飛ばす (自分の番で処理する)。
-    pub fn flush(&mut self, items: Vec<DueItem>, still_pending: &HashSet<String>) -> Vec<Deferred> {
+    /// `pending_windows` はそのパスの窓 (同じ窓の作成を待つ削除を預かる判断に使う)。
+    pub fn flush(
+        &mut self,
+        items: Vec<DueItem>,
+        still_pending: &HashSet<String>,
+        pending_windows: &HashSet<String>,
+    ) -> Vec<Deferred> {
         let observed_at = now_ms();
         let mut deferred: Vec<Deferred> = Vec::new();
 
@@ -510,7 +591,7 @@ impl Collector {
                 }
                 ReadOutcome::Busy => {
                     self.grew.insert(to.clone());
-                    deferred.push(Deferred { rel: to.clone(), delay: self.cfg.busy_retry });
+                    deferred.push(Deferred { rel: to.clone(), delay: self.cfg.busy_retry, window: cand.window.clone() });
                     cands.remove(&from);
                     cands.remove(&to);
                 }
@@ -529,13 +610,13 @@ impl Collector {
                 match peek_len(&self.abs(&rel)) {
                     LenOutcome::Len(len) => {
                         if !self.settle(&rel, len) {
-                            deferred.push(Deferred { rel, delay: self.cfg.settle_wait });
+                            deferred.push(Deferred { rel, delay: self.cfg.settle_wait, window: cand.window.clone() });
                             continue;
                         }
                     }
                     LenOutcome::Busy => {
                         self.grew.insert(rel.clone());
-                        deferred.push(Deferred { rel, delay: self.cfg.busy_retry });
+                        deferred.push(Deferred { rel, delay: self.cfg.busy_retry, window: cand.window.clone() });
                         continue;
                     }
                     LenOutcome::Missing | LenOutcome::NotFile => {
@@ -557,7 +638,7 @@ impl Collector {
                 }
                 ReadOutcome::Busy => {
                     self.grew.insert(rel.clone());
-                    deferred.push(Deferred { rel, delay: self.cfg.busy_retry });
+                    deferred.push(Deferred { rel, delay: self.cfg.busy_retry, window: cand.window.clone() });
                     continue;
                 }
                 ReadOutcome::Failed(e) => {
@@ -569,7 +650,9 @@ impl Collector {
                 self.push(&mut batch, o);
             }
         }
-        self.drain(&mut batch);
+        let mut open_windows = pending_windows.clone();
+        open_windows.extend(deferred.iter().map(|d| d.window.clone()));
+        self.drain_holding(&mut batch, &open_windows);
         deferred
     }
 
@@ -578,6 +661,7 @@ impl Collector {
     /// 前回の読み取りとサイズ・更新時刻が同じファイルは読まない (内容のハッシュは取らない)。
     /// 監視スレッドの中で動くので、走査が読んだ後に書かれたファイルのイベントは、走査の後で処理される。
     pub fn rescan(&mut self, source: Source) -> ScanStats {
+        self.release_held();
         let observed_at = now_ms();
         let window = self.new_window();
         let mut files = Vec::new();
@@ -691,6 +775,7 @@ impl Collector {
     /// 検証の走査の後半: 指定したパスの今の状態をベースラインと比べ、違うものを `gap` の観測にする。
     /// 返り値は作った観測の数。
     pub fn observe_paths(&mut self, paths: Vec<String>, source: Source) -> usize {
+        self.release_held();
         let observed_at = now_ms();
         let window = self.new_window();
         let mut batch = Batch::default();

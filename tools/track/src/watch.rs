@@ -88,6 +88,7 @@ pub struct Tracker {
 impl Tracker {
     /// Store を Writer へ移し、監視スレッドを起動する。ベースラインはそのスレッドで取る (`wait_ready` で待てる)。
     pub fn start(root: &Path, store: Store, cfg: TrackerConfig) -> Tracker {
+        let blob_reader = store.blobs.reader();
         let writer = Arc::new(Writer::spawn(store));
         let shared = Arc::new(Shared {
             status: Mutex::new(TrackerStatus {
@@ -113,7 +114,7 @@ impl Tracker {
         let progress = Arc::new(ScanProgress::default());
 
         let thread = {
-            let mut collector = Collector::new(root.to_path_buf(), cfg.clone(), Arc::clone(&writer), Arc::clone(&stop), Arc::clone(&progress));
+            let mut collector = Collector::new(root.to_path_buf(), cfg.clone(), Arc::clone(&writer), Arc::clone(&stop), Arc::clone(&progress), blob_reader);
             let window = collector.new_window();
             let mut watch = WatchLoop {
                 root: root.to_path_buf(),
@@ -330,6 +331,7 @@ impl WatchLoop {
             }
         }
         self.flush_due(true);
+        self.collector.release_held();
     }
 
     fn check_every(&self) -> Duration {
@@ -683,10 +685,11 @@ impl WatchLoop {
             })
             .collect();
         let still: HashSet<String> = self.pending.keys().cloned().collect();
-        let deferred = self.collector.flush(items, &still);
+        let still_windows: HashSet<String> = self.pending.values().map(|p| p.window.clone()).collect();
+        let deferred = self.collector.flush(items, &still, &still_windows);
         self.last_good_ms = now_ms();
         let later = Instant::now();
-        for Deferred { rel, delay } in deferred {
+        for Deferred { rel, delay, .. } in deferred {
             let (since, window, multiple) =
                 busy_since.get(&rel).cloned().unwrap_or((None, self.window.clone(), false));
             let since = since.unwrap_or(now);

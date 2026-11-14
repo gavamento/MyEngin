@@ -20,7 +20,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104c | 1 | 完了 | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
 | M104d | 1 | 完了 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
 | M104d2 | 1 | 完了 | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
-| M104e | 1 | 未着手 | 行 diff (Myers)、Hunk、Change / Revision の確定、リネームのまとめ |
+| M104e | 1 | 完了 | 行 diff (Myers)、Hunk、Change / Revision の確定 (`write_revision`)、リネームのまとめ (窓をまたぐ預かり込み)、DB の作り直しの再構成、Diff ワーカー。保存形式は db-schema.md §3.2、規則と上限の実測は architecture.md §5 |
 | M104f | 1 | 未着手 | pipe サーバ、`hello`、単一インスタンス、`status` / `list` / `describe`、`tools\track_verify.bat` |
 | M104g | 2 | 未着手 | セッションと操作の登録、帰属の判定、セッションの基準、複数セッション |
 | M104h | 2 | 未着手 | MCP の 5 ツール、`track_client.rs`、規則 15 の許可表、ADR-032 と `docs\mcp-server.md` の更新 |
