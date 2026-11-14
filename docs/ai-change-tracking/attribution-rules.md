@@ -101,10 +101,32 @@
 
 | クライアント | 編集前後のフック | 状況 |
 |---|---|---|
-| Claude Code | ファイルを書く道具の実行前後に呼ばれるフックがあり、道具の入力 (対象パス、置換前後の文字列や全文) とセッション ID を受け取れる | 設計の前提にする。実装時に、入力の項目名と設定方法を公式の文書で確かめる |
-| Codex CLI | 未調査 | 実装時に調べる。同等の仕組みが無ければ `change_report` (Claimed 止まり) |
-| Gemini CLI | 未調査 | 同上 |
+| Claude Code | ファイルを書く道具の実行前後に呼ばれるフックがあり、道具の入力 (対象パス、置換前後の文字列や全文) とセッション ID を受け取れる | **確認済み** (試作 5。公式文書 <https://code.claude.com/docs/en/hooks>、2026-11-14 に取得)。項目名は下の表 |
+| Codex CLI | 公式ページ <https://developers.openai.com/codex/hooks> の存在だけ確認 (中身は未取得) | **未確認**。実装時に調べる。同等の仕組みが無ければ `change_report` (Claimed 止まり) |
+| Gemini CLI | 公式ページ <https://geminicli.com/docs/hooks/reference/> の存在だけ確認 (中身は未取得) | **未確認**。同上 |
 | その他の MCP クライアント | — | `change_report` (Claimed 止まり) |
+
+#### Claude Code のフックの入力と設定 (試作 5)
+
+| 項目 | 内容 |
+|---|---|
+| 共通の入力 | `session_id` / `transcript_path` / `cwd` / `hook_event_name` |
+| 道具のイベント (`PreToolUse` / `PostToolUse`) | `tool_name` / `tool_input` / `tool_use_id`。`PostToolUse` はさらに `tool_response` |
+| Write の `tool_input` | `file_path` / `content` |
+| Edit の `tool_input` | `file_path` / `old_string` / `new_string` / `replace_all` |
+| 設定 | `.claude\settings.json` などの `hooks.PreToolUse[].matcher` + `hooks[].type = "command"` |
+| 終了コード | **2 は PreToolUse で道具を止める。** 他の 0 以外は止めない |
+| 時間切れ | 既定は 600 秒 |
+| 未確認 | MultiEdit / NotebookEdit の入力の項目名 (公式文書で確認できなかった)。対応しない道具は Claimed 止まりでよい |
+
+フック CLI の制約 3 つ:
+
+1. **終了コード 2 を絶対に返さない。** 入力が読めない・サービスが居ない・時間切れ・内部のエラーのどれでも 0 で返す (2 を返すと AI の編集を止めてしまう)。標準出力へ JSON を出さない (Claude Code が解釈する)。
+2. **設定の例に `timeout` を明示する。** 既定の 600 秒に頼らない (サービスへの時間切れは 5 秒)。
+3. **pre と post の対応は `tool_use_id` で取る。** 時刻や順序で対にしない。同時に複数の道具が走ってもずれない。
+
+宣言された編集の適用 (`declared_edit_match`): Edit は `old_string` を Before の中で数え、0 件なら当てられない、2 件以上で `replace_all` が偽なら当てられない (Claude Code の Edit がこの場合に実際に拒否するかは未確認)、それ以外は置換して After のハッシュを計算する。`replace_all` が真なら全部を置換する。Write は `content` がそのまま After。
+試作では、この計算の結果が、別の実装で実際に行った編集の After と 5 件すべてで一致した。ただし After を作ったのは試作の駆動スクリプトで、本物の Claude Code が渡す入力と Edit の実際の振る舞い (CRLF や引用符の扱い) は未確認 (sub-08 = M104i で確かめる)。当てられない・一致しないときは Verified にならず、Claimed 止まりに落ちる (安全側)。
 
 フックを設定していないクライアントの変更は、申告があれば Claimed、無ければ Inferred か Unknown になる。それで正しい。
 

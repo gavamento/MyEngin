@@ -1,6 +1,6 @@
 # ADR-039: AI による変更の追跡を、独立した追跡サービスと Editor 専用の表示・復元に分けて作る
 
-- 状態: 設計確定・未実装 (2026-11-13、M104)
+- 状態: 設計確定・実装中 (2026-11-13、M104。試作 6 件の結果を 2026-11-14 に反映、M104b)
 - 出所: 要求の正本は [docs\ai-change-tracking\spec-v1.1.md](../ai-change-tracking/spec-v1.1.md)。
   設計は [architecture.md](../ai-change-tracking/architecture.md) / [ipc-contract.md](../ai-change-tracking/ipc-contract.md) /
   [db-schema.md](../ai-change-tracking/db-schema.md) / [attribution-rules.md](../ai-change-tracking/attribution-rules.md) /
@@ -21,9 +21,10 @@ git の差分には AI 以前の未コミットの変更が混ざり、シーン
    1 プロジェクトに 1 つだけ動き、DB・Blob・ファイル監視・差分生成・帰属判定を所有する唯一の書き手になる。
    Editor にも MCP にも従属せず、どちらかが居なくても記録を続ける (ユーザー判断、2026-11-13)。
 2. **通信は Windows の名前付きパイプ、1 行 1 JSON。** 現在のユーザーに限り、リモートを拒否する。
+   Win32 API は `windows-sys` で呼ぶ (試作 1。自前の `extern "system"` 宣言は採らない)。
    メッセージの形は collab と同じ `{id, op, args}` / `{id, ok, result | error}`。プロトコル版は C++ と Rust の定数を規則 9 で突き合わせる。
-3. **保存は SQLite (WAL) と内容アドレスの Blob、置き場所は `<project>\.mye\ai_changes\`。** 依存 (`rusqlite` bundled、`sha2`、`notify`) は
-   `tools\track` だけに入れる。`tools\mcp` の依存は増やさない (ADR-032 決定 1 を保つ)。
+3. **保存は SQLite (WAL) と内容アドレスの Blob、置き場所は `<project>\.mye\ai_changes\`。** 依存 (`rusqlite` bundled、`sha2`、`notify`、`windows-sys`) は
+   `tools\track` だけに入れる。最低の Rust は 1.89 (試作 2)。`tools\mcp` の依存は増やさない (ADR-032 決定 1 を保つ)。
 4. **MCP には道具を 5 つ足すが、中身は pipe への取り次ぎだけ。** `change_session_begin` / `change_session_end` / `change_list` /
    `change_describe` / `change_report`。承認と復元の道具は足さない。規則 15-c / 15-d の許可表に pipe クライアントの 1 ファイルを足す。
 5. **サービスは作業ツリーを書かない。復元は Editor が行う。** ゲート (`ComputeBlockers`)、一括適用 (`ReloadHub::BeginBatch` / `EndBatch`)、
@@ -64,7 +65,7 @@ git の差分には AI 以前の未コミットの変更が混ざり、シーン
 ## 影響
 
 - ABI、SimSnapshot の版、TypeId、sim の挙動は変えない。`Runtime.exe` と `Server.exe` は追跡に関わらない。
-- 新しい crate `tools\track\` と、新しい依存 (`rusqlite` bundled、`sha2`、`notify`)。C コンパイラが要る。
+- 新しい crate `tools\track\` と、新しい依存 (`rusqlite` bundled、`sha2`、`notify`、`windows-sys`)。C コンパイラが要る。
 - 新しい `check_rules` の規則 19 (追跡の封じ込め)。規則 9 に版定数の組を 1 つ、規則 15-c / 15-d の許可表に 1 ファイルを足す。
 - ADR-032 の「道具は 5 つ」が 10 になる。実装時に ADR-032 と [docs\mcp-server.md](../mcp-server.md) を直す。
 - Engine 層の変更は `ReloadHub` の口 1 つ。未設定なら挙動は今と同じ。
@@ -72,5 +73,6 @@ git の差分には AI 以前の未コミットの変更が混ざり、シーン
 
 ## 未決のまま残したもの
 
-実装の前に試作で確かめる項目と、ユーザーの判断が要る項目は [plans\m104-ai-change-tracking.md](../../plans/m104-ai-change-tracking.md) にまとめた。
-この ADR の決定のうち、試作の結果で変わりうるのは 2 と 3 の実現手段 (Win32 API の呼び方、SQLite の組み込み方) で、責務の分け方は変わらない。
+ユーザーの判断が要る項目は [plans\m104-ai-change-tracking.md](../../plans/m104-ai-change-tracking.md) にまとめた。
+試作 6 件 (M104b) の結果は [prototype-results.md](../ai-change-tracking/prototype-results.md)。決定 2 と 3 の実現手段 (Win32 API の呼び方、SQLite の組み込み方) は試作で確定し、責務の分け方は変わらなかった。
+残る未検証は、CI での `bundled` のビルド (sub-05)、本物の Claude Code が渡すフックの入力 (sub-08)、C# コンポーネントの Field 復元の実走 (sub-16)、親の Job の性質 (sub-05 / sub-07 / sub-09)。

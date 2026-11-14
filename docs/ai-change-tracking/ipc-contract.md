@@ -18,8 +18,26 @@
 
 1 行 1 JSON は `mye_mcp.exe` の stdio と collab の CLI と同じ形で、テストの照合 (`*.ndjson` と `*.expected.ndjson`) をそのまま流用できる。
 
-**未検証**: Rust から上の DACL とリモート拒否を張れること。Win32 API を呼ぶ手段は 2 案ある。
-`tools\collab\src\git.rs` のように `extern "system"` を自前で宣言するか、`windows-sys` を依存に足すか。試作で比べて決める。
+**確認済み** (試作 1、2026-11-14。[prototype-results.md](prototype-results.md)): Rust から DACL とリモート拒否を張り、C++ の overlapped I/O (スレッドなし) と 1 行 1 JSON で往復できた。
+100 本の短い行と 1 MiB 近い 1 行が 47 ms で全部一致し、`Poll()` 1 回は最長 0.2 ms。`GetNamedPipeClientProcessId` はクライアントの PID を返す。
+
+**決定** (Win32 の呼び方): `windows-sys` 0.61 を依存に足す。`extern "system"` の自前宣言は採らない。
+使う関数が 14 個と構造体・定数が多く、`windows-sys` ならコンパイラが定数名と型を検査する。`notify` が同じ版を引き込むので、依存の実質的な増加は無い。
+feature は `Win32_Foundation`、`Win32_Security`、`Win32_Security_Authorization`、`Win32_System_Pipes`、`Win32_Storage_FileSystem`、`Win32_System_IO`、`Win32_System_Threading`。
+
+サーバが pipe を張る呼び方:
+
+- DACL は、自分のトークンの SID を取り (`OpenProcessToken` → `GetTokenInformation(TokenUser)` → `ConvertSidToStringSidW`)、SDDL `D:P(A;;GA;;;<SID>)` から作る。読み戻すと許可は自分の SID だけ (継承なし)。
+- `CreateNamedPipeW` は `PIPE_ACCESS_DUPLEX`、`PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS`、`PIPE_UNLIMITED_INSTANCES`、入出力バッファ 64 KiB。
+  最初の 1 本だけ `FILE_FLAG_FIRST_PIPE_INSTANCE` を付ける (同名の 2 本目のサーバは `ERROR_ACCESS_DENIED` で失敗する。名前付き mutex ([architecture.md](architecture.md) §3) と二重の防御になる)。
+- リモート拒否は、`\\localhost\pipe\<名前>` で開く試験で、フラグありは拒否 (`ERROR_ACCESS_DENIED`)、フラグなしは開けたことで確かめた。
+
+クライアントの作法:
+
+- **`ERROR_PIPE_BUSY` (231) を再試行する。** 接続を引き渡した直後は空きインスタンスが無く、2 本目の接続が一度失敗した。`WaitNamedPipeW` で待って (最大 2 秒) 開き直す。サーバは `ConnectNamedPipe` が返ったらすぐ次のインスタンスを作る (試作もそうしたが、隙間は残った)。
+- Editor の `Poll()` は、`ERROR_IO_PENDING` なら保留し、次の `Poll()` で `GetOverlappedResult(bWait = FALSE)` で見る。待たない。
+
+**未確認**: 別のユーザーからの接続の拒否 (開発機に別のアカウントが無く、DACL の読み戻しだけ)、本物のリモートからの接続、Editor 側の実装 (sub-09 = M104j で確かめる)。
 
 ## 2. メッセージの形
 

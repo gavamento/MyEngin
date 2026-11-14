@@ -137,7 +137,14 @@ Hunk は (前の文脈, After 側の本文, 後ろの文脈) の並びとして�
 - シーンの復元はディスクを書かない。シーンは dirty になり、保存は利用者がする。
 - 復元の `restore_operations` には、Undo で戻されたかどうかは記録しない (Undo スタックは Editor の再起動で消える)。対象の状態は、次に追跡が観測した内容で決まる。
 
-**未検証**: C# コンポーネントのフィールドを `FieldFromJson` で書けるか。C# のフィールドは managed 側が持ち、Inspector の描画も別経路で Undo の記録が無い。試作で確かめ、書けなければ C# コンポーネントは Entity 単位の復元だけにする。
+**確認済み** (試作 4、2026-11-14。コードを読んで確定。[prototype-results.md](prototype-results.md)): C# コンポーネントのフィールドは `FieldFromJson` では**書けない**。ECS の中身は managed のハンドル (int32) だけで、`FieldDesc` を持たない。`FieldFromJson` は `FieldDesc` の `offset` へ書くので、呼べばハンドルを壊す。
+Inspector の `DrawManagedComponentFields` も別経路で (`ManagedHost::SetFieldValue`)、Undo を記録しない。
+
+**決定**: C# コンポーネントは次のとおり扱う。Entity / Component の復元は、そのまま `SceneSerializer::ApplyPartial` が `DeserializeComponent` を通る。
+Field の復元は `FieldFromJson` を使わず、C# コンポーネントだけ別の分岐にして `ManagedHost::DeserializeComponent` へ**戻したいフィールドだけの JSON** を渡す (managed の `ApplyJson` は JSON にあるキーだけを書く)。
+C# のフィールドは 10 種類 (float / int / uint / ulong・long / bool / Vec2 / Vec3 / Vec4 / Quat / Color) だけなので、Field 差分の値もこの範囲に収まる。除外は要らない。
+
+**未検証**: 上の Field の復元の実走 (1 キーの JSON で他のフィールドが変わらないこと)、`UndoStack::Record` 経由で C# の値が Undo で戻ること、プレハブ上書き (override) の記録が C# コンポーネントでどう働くか。sub-16 (M104q) でテストを足して確かめる。戻らなければ、C# コンポーネントは Entity 単位の復元だけにする。
 
 ## 5. 復元ジャーナル
 

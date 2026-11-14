@@ -253,4 +253,10 @@ CREATE TABLE events (
 - 移行は 1 トランザクション。失敗したら元のまま `db_degraded` で動く。
 - スキーマ版はプロトコル版 ([ipc-contract.md](ipc-contract.md) §7) とは別に数える。
 
-**未検証**: `rusqlite` の bundled が開発機と CI のランナーでビルドできること (C コンパイラが要る)。試作で確かめる。
+**確認済み** (試作 2、2026-11-14。[prototype-results.md](prototype-results.md)): 開発機 (rustc 1.98、MSVC 19.51) で `rusqlite` 0.42 の `bundled` が edition 2021 のままビルドでき、`journal_mode=WAL` / `synchronous=NORMAL` / `foreign_keys=ON` で読み書きできた。
+書き込みトランザクションを開いたまま別接続から読め、未コミットの行は見えない。外部キー違反は拒否され、`integrity_check` は ok。まっさらなデバッグビルドは 8.8 秒、`target` は 97 MiB。
+最後の接続を閉じると `-wal` / `-shm` は消える。
+
+**決定**: 依存は `rusqlite = { version = "0.42", features = ["bundled"] }` と `sha2 = "0.11"` (出力は `{:x}` で整形できないので 16 進化は自前)。この 2 つが要求する Rust の最低版は 1.89 なので、`tools\track\Cargo.toml` に `rust-version = "1.89"` を明示する (collab の「古い stable でも通る」方針は track では成り立たない)。
+
+**未検証**: CI のランナー (`windows-2022`、Visual Studio 2022) で `bundled` がビルドできること。push しないと確かめられないので (spec D3)、sub-05 (M104f) で `tools\track` を CI に入れるときに確かめる。通らなければ `CC` 環境変数で C コンパイラを指定する。

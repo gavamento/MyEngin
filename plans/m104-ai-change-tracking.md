@@ -16,7 +16,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | サブ | Phase | 状態 | 内容 |
 |---|---|---|---|
 | M104a | 0 | 完了 | 設計文書 6 本、ADR-039、この計画 |
-| M104b | 0 | 未着手 | 試作 3 件 (下の「試作で確かめること」)。結果を設計文書へ反映する |
+| M104b | 0 | 実装済み・判定待ち | 試作 6 件 (下の「試作で確かめること」)。結果は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)。設計文書へ反映済み |
 | M104c | 1 | 未着手 | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
 | M104d | 1 | 未着手 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
 | M104e | 1 | 未着手 | 行 diff (Myers)、Hunk、Change / Revision の確定、リネームのまとめ |
@@ -47,20 +47,24 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | ABI / SimSnapshot / TypeId | 使わない | 変えたら設計違反 ([architecture.md](../docs/ai-change-tracking/architecture.md) §9) |
 | プロトコル版 | 1 | `kTrackProtoVersion` / `PROTO_VERSION` (規則 9 に組を足す) |
 | DB スキーマ版 | 1 | |
+| 依存の版 (`tools\track`) | `rusqlite` 0.42 (bundled)、`sha2` 0.11、`notify` 8、`windows-sys` 0.61、`rust-version = "1.89"` | M104b の試作で確かめた組。`sha2` の出力は `{:x}` で整形できない |
+| pipe の名前 / mutex の名前 | `\\.\pipe\mye-track-<projectId>` / `Local\mye-track-<projectId>` | [ipc-contract.md](../docs/ai-change-tracking/ipc-contract.md) §1、[architecture.md](../docs/ai-change-tracking/architecture.md) §3 |
 
 番号は着手時に現在の末尾を確かめ直す (他のマイルストーンが先に使っていたら次へずらす)。
 
 ## 試作で確かめること (M104b)
 
 設計が前提にしているが、まだ確かめていないこと。外れたら後続が無駄になるので最初にやる。
+M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミットせず、手順・コマンド・観測だけを [prototype-results.md](../docs/ai-change-tracking/prototype-results.md) に残した。
 
-| # | 確かめること | 外れた場合 |
-|---|---|---|
-| 1 | Rust から、現在のユーザーに限りリモートを拒否する名前付きパイプを張り、C++ (overlapped I/O) と往復できる。Win32 API は自前の `extern "system"` 宣言と `windows-sys` のどちらが保ちやすいか | 手段を変える。責務の分け方は変えない |
-| 2 | `rusqlite` の bundled が開発機と CI のランナーでビルドできる (C コンパイラが要る) | C++ 側に SQLite の単一ソースを `external\` へ置く形は取れない (サービスは Rust)。ビルド済みの SQLite を置くか、別の保存形式を検討する |
-| 3 | `notify` が、短い間隔の連続書き込み・削除・リネーム・「一時ファイルへ書いて rename」をどう返すか | デバウンスの幅と、リネームのまとめ方 ([architecture.md](../docs/ai-change-tracking/architecture.md) §5) を直す |
-| 4 | C# コンポーネントのフィールドを `FieldFromJson` で書けるか | C# コンポーネントは Entity 単位の復元だけにする ([restore-safety.md](../docs/ai-change-tracking/restore-safety.md) §4.2) |
-| 5 | Claude Code のフックが渡す入力の項目名と設定方法 (公式の文書で確かめる)。Codex CLI と Gemini CLI に同等の仕組みがあるか | 無いクライアントは Claimed 止まり ([attribution-rules.md](../docs/ai-change-tracking/attribution-rules.md) §6.1) |
+| # | 確かめること | 外れた場合 | 結果 (2026-11-14) |
+|---|---|---|---|
+| 1 | Rust から、現在のユーザーに限りリモートを拒否する名前付きパイプを張り、C++ (overlapped I/O) と往復できる。Win32 API は自前の `extern "system"` 宣言と `windows-sys` のどちらが保ちやすいか | 手段を変える。責務の分け方は変えない | 往復できた。**`windows-sys` 0.61 を採る**。クライアントは `ERROR_PIPE_BUSY` を再試行する。別ユーザーの拒否は未確認 |
+| 2 | `rusqlite` の bundled が開発機と CI のランナーでビルドできる (C コンパイラが要る) | C++ 側に SQLite の単一ソースを `external\` へ置く形は取れない (サービスは Rust)。ビルド済みの SQLite を置くか、別の保存形式を検討する | 開発機でビルド・WAL の読み書きを確認 (`rusqlite` 0.42、最低 Rust 1.89)。**CI は未確認で、sub-05 (M104f) で確かめる** |
+| 3 | `notify` が、短い間隔の連続書き込み・削除・リネーム・「一時ファイルへ書いて rename」をどう返すか | デバウンスの幅と、リネームのまとめ方 ([architecture.md](../docs/ai-change-tracking/architecture.md) §5) を直す | 直した。パスごとに 300 ms / 最大 2 秒、書き込み中は共有違反で見分ける、別ディレクトリへの移動は `Remove` + `Create`、ディレクトリ単位の操作はイベントに頼れない |
+| 4 | C# コンポーネントのフィールドを `FieldFromJson` で書けるか | C# コンポーネントは Entity 単位の復元だけにする ([restore-safety.md](../docs/ai-change-tracking/restore-safety.md) §4.2) | **書けない** (コードで確定)。ただし `DeserializeComponent` に 1 キーの JSON を渡す別の分岐で Field も戻せる見込み。実走は sub-16 |
+| 5 | Claude Code のフックが渡す入力の項目名と設定方法 (公式の文書で確かめる)。Codex CLI と Gemini CLI に同等の仕組みがあるか | 無いクライアントは Claimed 止まり ([attribution-rules.md](../docs/ai-change-tracking/attribution-rules.md) §6.1) | Claude Code は確認済み (終了コード 2 を返さない、`timeout` を明示、`tool_use_id` で対にする)。入力から After のハッシュを計算できた。Codex / Gemini は**未確認**。本物の入力の実測は sub-08 |
+| 6 | サービスが親と運命を共にしないか (親の Job Object)。MCP 経由と Editor 経由の起動 | 縮退を書く: 親と一緒に終わったら次の起動で `service_down` の欠落を記録する ([architecture.md](../docs/ai-change-tracking/architecture.md) §3) | Job 次第と実測した。**`CREATE_BREAKAWAY_FROM_JOB` で起動し、`ERROR_ACCESS_DENIED` なら外して起動し直す**。本物の `mye_mcp.exe` は Job の中にいた (性質は読めず)。本物のクライアントを終わらせる実験は未実施 |
 
 ## 未決事項 (ユーザーの判断が要る)
 
@@ -108,6 +112,13 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 
 ## 申し送り
 
+- M104b (2026-11-14、試作 6 件。結果の詳細は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)):
+  - 後続のサブが使う決定: pipe は `windows-sys` 0.61 (feature 7 つは ipc-contract §1)。クライアントは `ERROR_PIPE_BUSY` を `WaitNamedPipeW` で再試行する。サーバの最初の 1 本は `FILE_FLAG_FIRST_PIPE_INSTANCE`。
+  - M104d (ファイル監視) が使う決定: デバウンスはパスごと 300 ms / 最大 2 秒。flush は `FILE_SHARE_READ` だけで開き、共有違反なら 250 ms 後にやり直す (30 秒で打ち切り `coalesced`)。別ディレクトリへの移動は `Remove` + `Create` なので、削除 + 同じハッシュの作成のまとめが主たる手段。ディレクトリ単位の操作 (名前変更・移し入れ・移し出し) は中のファイルのイベントが来ないので、ベースラインと突き合わせる。バッファあふれは再現しなかったので、sub-03 で人工的に起こして確かめる。
+  - M104f (CI): `rusqlite` の bundled が CI の `windows-2022` でビルドできるかを確かめる (未確認)。最低の Rust が 1.89 に上がる (collab の「古い stable でも通る」方針は track では成り立たない)。
+  - M104i (フック): 終了コード 2 を返さない、`timeout` を明示、`tool_use_id` で対にする。本物の Claude Code の入力の実測 (キー名・パスの形・CRLF や引用符の扱い) は未確認。Codex / Gemini は未確認のまま (v1 は Claude Code だけを約束する)。
+  - M104j (Editor): サービスの起動に `StartChildProcess` をそのまま使うと、ログファイルのハンドルをサービスが持ち続ける (`bInheritHandles = TRUE`)。サービス用の起動口を足すかを決める。Editor が Job に入って起動される場合の挙動も確かめる。
+  - M104q (ライブのシーンの復元): C# コンポーネントの Field は `FieldFromJson` では書けない。`DeserializeComponent` へ 1 キーの JSON を渡す分岐を作り、実走で確かめる。
 - M104a (2026-11-13): 既存コードの監査で、仕様書の「既存機能の再利用」の前提の多くが成り立たないと分かった。差は [architecture.md](../docs/ai-change-tracking/architecture.md) §1。
   ユーザー判断は 4 つ: 今回は設計文書だけ、設計の範囲は Phase 0〜6 の全部、サービスは独立した exe、未保存のシーンへの外部変更は確認を出す。
 - 監査のついでに見つけた、この機能とは別の事実 (直していない):

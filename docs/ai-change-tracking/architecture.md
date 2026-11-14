@@ -4,8 +4,8 @@
 - 要求の正本: [spec-v1.1.md](spec-v1.1.md)。決定と却下案: [ADR-039](../adr/ADR-039-ai-change-tracking.md)
 - 関連: [ipc-contract.md](ipc-contract.md) / [db-schema.md](db-schema.md) / [attribution-rules.md](attribution-rules.md) / [restore-safety.md](restore-safety.md)
 
-この文書の記述は 3 種類に分けてある。**確認済み** = 2026-11-13 にコードを読んで確かめた事実。
-**決定** = この設計で決めたこと。**未検証** = 実装前に試作で確かめる前提。
+この文書の記述は 3 種類に分けてある。**確認済み** = コードを読む (2026-11-13) か試作を走らせる (2026-11-14、[prototype-results.md](prototype-results.md)) かして確かめた事実。
+**決定** = この設計で決めたこと。**未検証** = 確かめていない前提 (確かめるサブを併記する)。
 
 ## 1. 仕様書の前提と既存実装の差 (確認済み)
 
@@ -76,14 +76,20 @@
 | `src\Editor\Windows\Project\AiChangesWindow.*` | AI Changes 窓 | `SourceControlWindow` の隣 |
 | `src\Editor\Widgets\DiffView.*` | 行 diff の表示部品 | 既存 Diff 窓からは使わない (既存の描画を変えない) |
 
-依存の追加は `tools\track` だけに閉じる: `rusqlite` (bundled)、`sha2`、`notify`、`serde`、`serde_json`。
+依存の追加は `tools\track` だけに閉じる: `rusqlite` (bundled)、`sha2`、`notify`、`windows-sys` (pipe と起動の Win32 API。試作 1 で採用)、`serde`、`serde_json`。
+版は試作で確かめた組 (`rusqlite` 0.42、`sha2` 0.11、`notify` 8、`windows-sys` 0.61) で、最低の Rust は 1.89 ([prototype-results.md](prototype-results.md))。
 `tools\mcp` の依存は増やさない (ADR-032 決定 1 を保つ)。C++ 側のハッシュは既存の `src\Engine\Platform\Sha256.h` を使う。
 
 ## 3. プロセスと寿命 (決定)
 
 - **1 プロジェクトに 1 サービス。** サービスは起動時に名前付き mutex (`Local\mye-track-<projectId>`) を取る。取れなければ既に居るので即終了し、起動を頼んだ側は既存の pipe へ接続する。
 - **起動するのは MCP か Editor。** どちらも「pipe へ接続 → 無ければ `mye_track.exe serve --project <root>` を起動 → 接続をやり直す」の順。Editor は既存の `StartChildProcess` (`src\Editor\App\ChildProcess.h`) を使う。MCP は `track_client.rs` から起動するので、規則 15-c の許可表にこのファイルを足す。
-- **親と運命を共にしない。** Job Object に入れない。Editor を閉じても MCP セッションの記録が続き、MCP が終わっても Editor の表示が続く (仕様書 §16.2「Editor 停止中の MCP 操作を記録できる」)。
+- **親と運命を共にしない。** 自分では Job Object を作らず、起動する側も入れない。Editor を閉じても MCP セッションの記録が続き、MCP が終わっても Editor の表示が続く (仕様書 §16.2「Editor 停止中の MCP 操作を記録できる」)。
+  - **確認済み** (試作 6): 起動した側が Job に入っていなければ、親が終わっても子は生き残る。親が kill-on-close の Job に入っていると、既定では子も同じ Job に入って一緒に終わる。`DETACHED_PROCESS` / `CREATE_NO_WINDOW` は Job の所属を変えない。Job から離れるのは `CREATE_BREAKAWAY_FROM_JOB` だけで、Job が `JOB_OBJECT_LIMIT_BREAKAWAY_OK` を持っていないと `CreateProcess` が `ERROR_ACCESS_DENIED` で失敗する。
+    本物の Claude Code が起動した `mye_mcp.exe` は Job に入っていた (性質は読めなかった)。
+  - **決定** (MCP からの起動): `CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` で起動し、`ERROR_ACCESS_DENIED` で失敗したら `CREATE_BREAKAWAY_FROM_JOB` を外して起動し直す。後者の場合は親の Job に入り、親と一緒に終わることがある。
+  - **縮退**: 親と一緒に終わったら、次の起動時に `service_down` の欠落として記録する (仕様書 §3.4 の範囲内)。責務の分け方は変えない。
+  - **未検証**: 本物のクライアントを終了させて子が生き残るか (実行するとこの作業ごと終わるため試していない。MCP から起動する実装ができた後、sub-05 / sub-07 で確かめる)。Editor が Job に入って起動される場合 (Visual Studio のデバッグなど) は sub-09 で確かめる。
 - **自分で終わる。** 接続中のクライアントが 0 になってから一定時間 (既定 10 分、設定可) で終了する。終了時刻は `events` に残し、次回起動時の欠落区間の計算に使う。
 - **サービスが居ないときの扱い。** Editor も MCP も通常動作を続け、追跡だけが止まる。Editor は窓に「追跡停止中」と出す。MCP の 5 ツールは `isError` の結果を返す。
 - **projectId。** 正規化したプロジェクトルートのパス (`NormalizePathKey` と同じ規則) の SHA-256 の先頭 16 桁。pipe 名・mutex 名・DB 内の値で同じものを使う。
@@ -119,14 +125,33 @@
 - **追跡する種類。** テキスト (C / C++ / C# / HLSL / JSON / YAML / Markdown / その他 UTF-8) は行 diff まで。UTF-8 として読めないものと既定サイズ (8 MiB、設定可) を超えるものはバイナリ扱いで、ファイル単位の記録だけ。
 - **秘密情報。** Blob には原本がそのまま入る。既定の除外パターン (`.env`、`*.pem`、`*.key` など) を持ち、除外したファイルは「変わったこと」だけを内容なしで記録する。
 
-**未検証**: `notify` が短い間隔の連続書き込み・削除・リネームをどこまで区別して返すか。エディタが使う「一時ファイルへ書いて rename」(`WriteFileReplacing`) がどう見えるか。
+**確認済み** (試作 3、2026-11-14。イベント列の全文は [prototype-results.md](prototype-results.md)): `notify` 8.2.2 (`default-features = false`) の Windows での振る舞い。
+
+- イベントの種別は `Create` / `Modify(Any)` / `Modify(Name(From|To))` / `Remove` だけ。ファイルかディレクトリかも、内容が変わったかどうかも区別しない。
+- 件数は書き込みの回数を表さない。`fs::write` 1 回で `Modify` が 2 件、開いたままのハンドルへの連続書き込みは途中で 1 件も届かず、閉じたときに 1 件届く。
+- 1 回の保存 (書き込み、または「一時ファイルへ書いて rename」の 5 件 `Create` / `Modify` / `Remove` / `Name(From)` / `Name(To)`) は 1 ms 以内に並ぶ。置き換えの rename には `Remove(置き換えられた側)` が混じる。
+- 同じディレクトリ内のリネームは `Name(From)` の直後に `Name(To)` が届く (200 件で対応が崩れなかった。`tracker` は付かない)。別のディレクトリへの移動は `Remove` + `Create` でしか届かない。
+- ディレクトリ単位の操作 (名前変更、移し入れ、移し出し) では、中のファイルのイベントが届かない。
+- 1000 ファイルの一括作成・変更・削除で、全ファイルのイベントが届き、エラー (バッファあふれ) は出なかった。
+
+**決定** (上を受けた具体値。初期値で、sub-03 = M104d で実測を見て調整する):
+
+- デバウンスはパスごと。最後のイベントから 300 ms 静かになったら flush、最初のイベントから 2 秒を超えたら続いていても flush する (collab の `watch.rs` と同じ値)。
+- flush は内容を `FILE_SHARE_READ` だけで開いて読む。書き手がまだ開いていると共有違反 (`os error 32`) になる (試験で確認) ので、読まずに 250 ms 後にやり直す。30 秒たっても開かれたままなら、その時点の内容を読んでその Revision を `coalesced` にする。書き手が閉じたときの最後のイベントでもう一度 flush が走る。
+- イベントの種別や件数で変更を判定しない。flush の時点でファイルの存在と内容のハッシュを見て、スナップショットと違うときだけ変更にする。ディレクトリ自身の `Modify` は捨てる。
+- ディレクトリの `Create` / `Name(To)` / `Remove` を見たら、ベースラインの一覧と実際の中身を 1 ディレクトリ分だけ突き合わせて、中のファイルの作成・削除・移動を作る。名前が変わったディレクトリは、パスの前方一致でファイルの移動と対応づける。
+- `notify` が `Err` を返す、または再走査を求めるフラグ付きのイベントが来たら、その区間を `gap` にしてベースラインを取り直す。
+
+**未検証**: バッファあふれ時の `notify` の報告のされ方 (今回は再現しなかった)、数万ファイルのツリーでの初期化時間とバッファの大きさ。sub-03 (M104d) で、人工的にあふれを起こして確かめる。
 
 ## 5. コード差分 (決定)
 
 - 行 diff は Myers 法をサービス内に実装する。入力は Before / After の Blob、出力は Hunk の列 (前後 3 行の文脈付き)。
 - 比較の基準は保存済みスナップショット。`git diff` は使わない。理由は 3 つ: HEAD との差には AI 以前の未コミット変更が混ざる、Index の状態で結果が変わる、Editor が居ないと collab が動かない。
 - 行の区切りは LF / CRLF をそのまま保持して比べる。改行だけが変わった行は「改行の変更」として別に数え、本文の変更に紛れさせない (`.gitattributes` が改行の正本で、規則 14 がある)。
-- リネームは、監視がリネームとして返したものに加えて、同じデバウンス窓の中の「削除 + 同じ内容ハッシュの作成」を 1 件にまとめる。内容が変わっていたら別々の削除と作成のままにする (推測でつながない)。
+- リネームのまとめ方は 2 つ (試作 3)。同じディレクトリ内のリネームは、監視が `Name(From)` の直後に `Name(To)` を返すので、隣り合いで対にする。
+  **別のディレクトリへの移動は `Remove` + `Create` でしか届かない**ので、同じデバウンス窓の中の「削除 + 同じ内容ハッシュの作成」を 1 件にまとめる規則が、この経路の主たる手段になる。内容が変わっていたら別々の削除と作成のままにする (推測でつながない)。
+  置き換えの rename (一時ファイル → 既存) は、flush 時点でそのファイルが存在するので、削除ではなく内容の変更として扱う。
 - Hunk ID は (Revision ID, Hunk の通し番号)。Revision が変われば Hunk ID も変わる。承認と復元が古い Hunk を指したままにならない。
 
 ## 6. シーン差分 (決定)
