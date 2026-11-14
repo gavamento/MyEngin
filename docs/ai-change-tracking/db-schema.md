@@ -225,8 +225,26 @@ CREATE TABLE events (
 - 書きかけの行が残ったファイルへ続けて追記するときは、先に改行を足してその行を閉じる (行番号は壊れた 1 行として数える)。
 - ジャーナルに Blob の中身は書かない (ハッシュだけ)。
 
+### 5.1 監視が書くイベント (M104d)
+
+DB を作り直したとき、`events` から `snapshots` / `changes` / `change_revisions` を導けるよう、観測はすべて `Store::record_event` を通し、次の payload を持つ (作り直しの関数は M104e)。時刻はすべて UTC ミリ秒。
+
+| kind | payload |
+|---|---|
+| `service_start` | `project`、`pid`、`version`、`first_run` |
+| `service_stop` | `reason` (`stdin_eof` / `signal` / `dropped` ...) |
+| `baseline` | `taken_at`、`files[]` = `{path, hash, size, kind, excluded}` (最初の起動のベースライン。500 件ごとに 1 イベント) |
+| `baseline_complete` | `files`、`tracked_files`、`bytes`、`changes`、`elapsed_ms`、`first_run`。これがあれば「ベースラインを取り終えた」 |
+| `observed` | `path`、`change_type`、`old_path`、`before` / `after` = `{hash, size, kind[, excluded]}` または null、`completeness`、`source` (`watch` / `startup_gap` / `overflow_gap`)、`window`、`observed_at` |
+| `coverage_gap` | `reason`、`from_at`、`to_at`、`scope` |
+
+- 除外パターンのファイルは `hash` を null にする (ハッシュも残さない)。`excluded: true`。
+- `window` は、近い時刻 (デバウンスの幅以内) に届いたイベントのパスを結ぶ印。別ディレクトリへの移動は削除と作成の 2 つの `observed` で、同じ `window` に入る (まとめるのは M104e)。
+- `before` は「最後に確認できた内容」で、無ければ null (新規、または `no_before`)。
+
 ## 6. 起動時の検査
 
+0. (起動の最初) `blobs\` の下の書きかけの一時ファイル (`.tmp-*`) を消す。自分が書いたもので、どこからも指されない。サービスは 1 つだけ動く前提なので、起動時なら安全。
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
    退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。

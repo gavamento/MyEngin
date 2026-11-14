@@ -17,8 +17,8 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 |---|---|---|---|
 | M104a | 0 | 完了 | 設計文書 6 本、ADR-039、この計画 |
 | M104b | 0 | 完了 | 試作 6 件 (下の「試作で確かめること」)。結果は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)。設計文書へ反映済み |
-| M104c | 1 | 未着手 | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
-| M104d | 1 | 未着手 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
+| M104c | 1 | 完了 | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
+| M104d | 1 | 完了 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
 | M104e | 1 | 未着手 | 行 diff (Myers)、Hunk、Change / Revision の確定、リネームのまとめ |
 | M104f | 1 | 未着手 | pipe サーバ、`hello`、単一インスタンス、`status` / `list` / `describe`、`tools\track_verify.bat` |
 | M104g | 2 | 未着手 | セッションと操作の登録、帰属の判定、セッションの基準、複数セッション |
@@ -115,6 +115,7 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
 - M104b (2026-11-14、試作 6 件。結果の詳細は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)):
   - 後続のサブが使う決定: pipe は `windows-sys` 0.61 (feature 7 つは ipc-contract §1)。クライアントは `ERROR_PIPE_BUSY` を `WaitNamedPipeW` で再試行する。サーバの最初の 1 本は `FILE_FLAG_FIRST_PIPE_INSTANCE`。
   - M104d (ファイル監視) が使う決定: デバウンスはパスごと 300 ms / 最大 2 秒。flush は `FILE_SHARE_READ` だけで開き、共有違反なら 250 ms 後にやり直す (30 秒で打ち切り `coalesced`)。別ディレクトリへの移動は `Remove` + `Create` なので、削除 + 同じハッシュの作成のまとめが主たる手段。ディレクトリ単位の操作 (名前変更・移し入れ・移し出し) は中のファイルのイベントが来ないので、ベースラインと突き合わせる。バッファあふれは再現しなかったので、sub-03 で人工的に起こして確かめる。
+  - M104d (実装の結果、2026-11-14): 上の「`FILE_SHARE_READ` だけで開く探り」は採らなかった (書き手の rename が `ERROR_ACCESS_DENIED` で失敗した)。全共有で読み、サイズが続けて同じになるまで待つ方式に変えた ([architecture.md](../docs/ai-change-tracking/architecture.md) §4)。`notify` 8.2.2 は Windows で本物のバッファあふれを報告しない (ソースで確認)。あふれの経路は差し込みで検証した。
   - M104f (CI): `rusqlite` の bundled が CI の `windows-2022` でビルドできるかを確かめる (未確認)。最低の Rust が 1.89 に上がる (collab の「古い stable でも通る」方針は track では成り立たない)。
   - M104i (フック): 終了コード 2 を返さない、`timeout` を明示、`tool_use_id` で対にする。本物の Claude Code の入力の実測 (キー名・パスの形・CRLF や引用符の扱い) は未確認。Codex / Gemini は未確認のまま (v1 は Claude Code だけを約束する)。
   - M104j (Editor): サービスの起動に `StartChildProcess` をそのまま使うと、ログファイルのハンドルをサービスが持ち続ける (`bInheritHandles = TRUE`)。サービス用の起動口を足すかを決める。Editor が Job に入って起動される場合の挙動も確かめる。

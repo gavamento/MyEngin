@@ -9,8 +9,9 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 (M104b) 試作 6 件と設計文書への反映 | OK | 1 | 723bf633 | should 1 件は sub-03 で対応 (共有モード)、nit は sub-02 で対応 (進捗表) |
-| sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | 差し戻し中 | 1 | | round 1 REWORK: must 1 件 (projectId が末尾の区切りで変わる。仕様側の誤り)、should 1、nit 1 |
-| sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | 未着手 | | | |
+| sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | OK | 2 | 79008917 | round 1 REWORK (projectId が末尾の区切りで変わる。仕様側の誤り) → round 2 OK。nit: failed_steps の発生経路のテストは sub-05 で足す |
+| sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | 差し戻し中 | 1 | | round 1 REWORK: must 1 件 (負荷の下で 1 回の保存が coalesced になり試験が 5 回中 1 回落ちる)、should 1 件 |
+| sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | 未着手 | | | sub-03 の VERDICT で新設。順序は sub-03 → sub-21 → sub-04 (Phase 1 の中)。追加はユーザー承認済み |
 | sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | 未着手 | | | |
 | sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | 未着手 | | | 着手前にユーザー確認 (未決事項 2、exe の置き場所)。Phase 1 の最後 |
 | sub-06 (M104g) セッション、操作、帰属 | 未着手 | | | 骨子。planner の見直し後に着手 |
@@ -47,6 +48,10 @@
   - Blob の既定値は設計どおり (除外 `.env`、`.env.*`、`*.pem`、`*.key`、`*.pfx`、`*.p12`、`id_rsa*`、`credentials*.json`、上限 2 GiB、保存期間 90 日)。計画の未決事項 4 は決着。
   - `tools\track` の最低 Rust は 1.89 を明示して採る (planner の裁定どおり)。
   - `%TEMP%\mye_m104b\` の試作コードは消さずに残す。
+- 2026-11-14 (sub-03 round 1 の VERDICT の 2 件、どちらも planner の裁定どおり):
+  - ベースラインで追跡対象の全ファイルの内容を `.mye\ai_changes\blobs\` に複製する (このリポジトリで約 391 MiB)。
+  - sub-21 (M104d2) を Phase 1 に足す。順序は sub-03 → sub-21 → sub-04。
+- 未確認 (sub-05 の着手前に聞く): 開発機に Rust 1.89 のツールチェーンを入れて最低版でのビルドを確かめるか (planner の裁定は「確かめない」)。
 - 未確認 (sub-07 / sub-08 の着手時に聞く): 本物の Claude Code 終了時のサービス生存の手動確認、本物のフック入力の記録への協力。
 
 ## 申し送り (セッション跨ぎ)
@@ -54,4 +59,5 @@
 - planner: sub-01〜05 は詳細、sub-06〜19 は骨子。planner は sub-01 の VERDICT と、各 Phase の最後のサブ (sub-05 / 08 / 14 / 16) の VERDICT で後続のサブを見直す (spec.md §6.1)。骨子のサブは見直しが済んでから着手する。
 - planner: 着手前にユーザー確認が要るサブは sub-02 / 05 / 09 / 12 / 13 / 17 (spec.md §6.2。各 sub の冒頭の節)。
 - planner (2026-11-14、PLAN 補足): ユーザーの回答を受けて sub-20 (M104u、配布物への同梱) を sub-19 の後に足した。spec.md は確定。Phase 6 を sub-17 の前で止めた場合も sub-20 は行えるが、依存 (sub-19) の付け替えが要るので planner に戻すこと。
+- planner (2026-11-14、sub-03 の VERDICT round 1): sub-21 (M104d2) を足した。順序は sub-03 → sub-21 → sub-04。`src\` を触らないサブは sub-01〜08 と sub-21。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

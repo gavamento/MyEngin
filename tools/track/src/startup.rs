@@ -1,4 +1,4 @@
-//! 起動時の検査 (db-schema.md §6 の 1〜6。7 のベースラインは M104d)。
+//! 起動時の検査 (db-schema.md §6 の 1〜6 と一時 Blob の掃除。7 のベースラインは watch.rs)。
 //!
 //! どの段で失敗してもプロセスは落とさない。DB へ書けないときは `Mode::DbDegraded` の Store を、
 //! ディレクトリすら作れないときは Store 無し (`ServiceState::Unavailable`) を返す。
@@ -37,6 +37,8 @@ pub struct StartupReport {
     pub unreadable_journal_lines: usize,
     pub blobs_marked_missing: usize,
     pub orphan_blobs: usize,
+    /// 前回の書きかけの一時 Blob (`.tmp-*`) を消した数。
+    pub temp_blobs_removed: usize,
     pub sessions_interrupted: usize,
     pub operations_abandoned: usize,
     /// 起動時の検査 (3〜6) で失敗した段。記録は続けるが、`status` が DB の健全性として返す。
@@ -87,6 +89,8 @@ pub fn open_project_with(
             return (None, report);
         }
     }
+    // サービスは 1 つだけ動く前提 (mutex) なので、起動時に残っている `.tmp-*` は前回の書きかけ
+    report.temp_blobs_removed = remove_stale_temp_blobs(&paths.blobs);
     let journal = match Journal::open(&paths.journal, options.journal_max_file_bytes) {
         Ok(j) => j,
         Err(e) => {
@@ -129,6 +133,21 @@ pub fn open_project_with(
         Mode::DbDegraded(reason) => ServiceState::DbDegraded(reason.clone()),
     });
     (Some(store), report)
+}
+
+/// `blobs\<2 桁>\.tmp-*` を消す。自分が書いたもので、どこからも指されない。消した数を返す。
+fn remove_stale_temp_blobs(blobs_dir: &Path) -> usize {
+    let Ok(prefixes) = std::fs::read_dir(blobs_dir) else { return 0 };
+    let mut removed = 0;
+    for prefix in prefixes.flatten() {
+        let Ok(files) = std::fs::read_dir(prefix.path()) else { continue };
+        for file in files.flatten() {
+            if file.file_name().to_string_lossy().starts_with(".tmp-") && std::fs::remove_file(file.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 
 fn run_step(

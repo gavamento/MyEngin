@@ -43,6 +43,7 @@ sub-01 の試作 1 / 6 で決まったこと (2026-11-14 の見直し。ipc §1 
 7. `list`: フィルタ (`path`、`from`、`to`、`changeType`。`sessionId` / `review` / `attribution` は引数として受けるが、このサブでは対応するデータが無い)、`cursor`、`limit` (既定 50、最大 200)。Blob と Hunk の本文を入れない。
 8. `describe`: Before / After のハッシュとサイズ、Hunk の要約 (行番号と行数)、`completeness`、帰属 (このサブでは unknown)、復元可否 (Blob の有無)。
 9. プロトコルの正本 `tools\track\src\protocol.rs` に `pub const PROTO_VERSION: u32 = 1;`。**規則 9 にはまだ足さない** (spec §2 D7)。
+   - sub-03 の結果 (2026-11-14): 今の `serve` は標準入力の EOF で終わる。`DETACHED_PROCESS` で起動すると標準入力が無効で、すぐ EOF になって終了しうる。**このサブで、標準入力の EOF による終了をやめる** (終了は pipe の要求、無接続の時間切れ、Ctrl+C / コンソールを閉じる、だけ)。`track_verify` と `cargo test` の後始末は pipe 経由の終了を使う。`Tracker::status()` が phase / baseline_files / baseline_ms / baseline_bytes / first_run / overflows を返すので、`status` はこれを使う。
 10. 寿命: 接続が 0 になってから 10 分 (設定可、テストでは短くできる) で自分で終わる。`service_stop` を残す。Writer のキューが上限を超えたら `busy`。
 11. `tools\build_track.bat` (`C:\HAL\MyEngin\tools\build_collab.bat` と同じ形。cargo の解決、`NEQ 0` の判定) と `tools\track_verify.bat` / `tools\track_verify.ps1` (`C:\HAL\MyEngin\tools\mcp_verify.ps1` と同じ形)。
 12. `track_verify`: シナリオは `tests\track\*.ndjson` と `*.expected.ndjson`。pipe は標準入出力ではないので、シナリオを流す口が要る。**`mye_track.exe` に `client` サブコマンド (標準入力の行を pipe へ送り、応答を標準出力へ出す) を足す**のを推奨する (sub-08 のフック CLI と pipe クライアントの実装を共有できる)。時刻・UUID・トークン・ハッシュ以外の環境依存の値は正規化して比べる。シナリオごとに一時プロジェクトを作り、サービスを起動し、終わったら必ず止める (プロセスを残さない)。

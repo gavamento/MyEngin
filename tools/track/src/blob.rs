@@ -139,7 +139,7 @@ impl BlobStore {
 }
 
 /// `*` (0 文字以上) と `?` (1 文字) だけの glob。ASCII の大文字小文字は区別しない。
-fn glob_match_ci(pattern: &str, name: &str) -> bool {
+pub(crate) fn glob_match_ci(pattern: &str, name: &str) -> bool {
     let p: Vec<char> = pattern.to_ascii_lowercase().chars().collect();
     let n: Vec<char> = name.to_ascii_lowercase().chars().collect();
     let (mut pi, mut ni) = (0, 0);

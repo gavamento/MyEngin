@@ -71,6 +71,8 @@ arch §4 の「ファイル監視」の経路を作る。デバウンスの幅�
 13. 開いたままのハンドルへ 1 秒かけて書くファイルで、書き込みの途中の内容が「完全な Revision」として記録されない (最終の内容の Revision が残る。途中を読んだ場合は `coalesced`) → `cargo test`。
 14. 同じ内容で上書き保存しただけ (ハッシュが同じ) では Revision ができない → `cargo test`。
 
+15. (round 1 の VERDICT で追加) **1 回だけの保存が、負荷の下でも `complete` になる**: CPU を使い切る背景スレッド (論理コア数ぶん) を回しながら、別々のファイルへ `fs::write` を 1 回ずつ 200 件、「一時ファイルへ書いて rename」を 200 件行い、全 Revision が `complete` (`coalesced` が 0 件)。同じ負荷の下で、デバウンスの幅より短く、かつ判定のしきい値より十分長い間隔で 3 回書いたファイルは `coalesced` → `cargo test`。しきい値は定数にして文書に書く。
+
 ## 検証コマンド
 
 - `cargo test --manifest-path tools\track\Cargo.toml` (5 回)
@@ -78,4 +80,60 @@ arch §4 の「ファイル監視」の経路を作る。デバウンスの幅�
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-03 (round 1)
+実装:
+  - tools	rack\src\ignore.rs — 固定の 7 名 (深さを問わず) と `.gitignore` の基本的な書き方。対応しない書き方は architecture.md §4 に記載
+  - tools	rack\src\content.rs — 全共有で読み、前後のサイズ・更新時刻を照合。`peek_len` (ハンドル経由のサイズ)。探りは採らず
+  - tools	rack\srcaseline.rs — ベースラインの型と、DB (snapshots / change_revisions) からの前回状態の復元
+  - tools	rack\src\observe.rs — Writer 側の記録 (observed / baseline / coverage_gap のイベント → snapshots / changes / change_revisions)。1 塊 1 トランザクション
+  - tools	rack\src\collector.rs — flush: ディレクトリの突き合わせ、同一ディレクトリ内リネームの対、ハッシュ比較、書き手の待ち (settle)、全体の再走査 (起動時・あふれ後)
+  - tools	rack\src\watch.rs — `Tracker` (監視スレッド、デバウンス、窓、service_start / service_stop、ベースライン、あふれ処理、試験用の差し込み口)
+  - tools	rack\src\main.rs — `serve` を常駐化 (標準入力の EOF / Ctrl+C / Ctrl+Break / コンソールを閉じる)
+  - tools	rack\src\startup.rs — 起動時に `.tmp-*` の一時 Blob を消す
+  - tools	rack\srclob.rs — `glob_match_ci` を crate 内公開にしただけ
+  - tools	rack\Cargo.toml — notify 8 (default-features = false) と windows-sys の feature 2 つを追加
+  - tools	rack	ests\watch.rs — 18 件 (受け入れ条件 1〜14。後処理で作業ツリーの不変を検査)
+  - docsi-change-trackingrchitecture.md §4 / db-schema.md §5.1・§6 / prototype-results.md (注記) / plans\m104-ai-change-tracking.md (進捗表・申し送り)
+仕様との差分:
+  - [逸脱] 「`FILE_SHARE_READ` だけで開く探り」は採らなかった。受け入れ条件 10 の試験で、探り付きだと書き手の操作 1667 回中 438 件が失敗した (rename の ERROR_ACCESS_DENIED)。sub-03.md の指示どおり探りをやめ、全共有の読み取りだけで同じ試験は 0 件 (3 回続けて、最終版でも)。結果は architecture.md §4 に書いた。
+  - [追加] 探りに代わる書き手の見分け: `peek_len` を 100 ms おきに取り、サイズが続けて 2 回同じになるまで読まない (`settle_samples`)。変わったら coalesced。30 秒で打ち切り。受け入れ条件 13 を満たすために必要だった。1 回の保存が debounce + 100 ms で記録される (遅延が増える)。限界 (書き込み間隔が 100 ms より長い書き手は見分けられない) は architecture.md に書いた。
+  - [追加] coalesced の判定 (仕様は「デバウンス中に複数回書かれたら」だけ): ①イベントが 5 ms 超で 2 つ以上の塊、②内容の `Modify` が 3 件以上、③待っている間にサイズが変わった / 共有なしで開かれていた。イベントの時刻は notify のコールバックの中で付ける。多めに付ける側に倒した。
+  - [追加] 同じディレクトリ内のリネーム (旧パスがベースラインにあり、新パスが新規) は 1 件の `renamed` Revision (old_path 付き)。別ディレクトリへの移動は削除 + 作成で、同じ `window` を持つ (sub-04 がまとめる)。`window` = 近い時刻 (debounce 以内) に届いたイベントのパスを結ぶ印。
+  - [追加] events の kind: `service_start` / `service_stop` / `baseline` / `baseline_complete` / `observed` / `coverage_gap`。payload は db-schema.md §5.1。
+  - [追加] 試験用の公開口 `Tracker::inject_event` と `drop_incoming_events`。あふれの差し込みと取りこぼしの模擬のため。
+  - [追加] 固定の無視名は深さを問わない (collab は最上位だけ)。`tools	rack	arget` のような入れ子の生成物を拾わないため。
+  - [追加] `plans\m104-ai-change-tracking.md` の進捗表で M104c と M104d を「完了」にした (指示どおり)。
+  - [未実装] 本物のバッファあふれの検出。notify 8.2.2 は Windows で報告しない (下の不安・質問 1)。
+  - [未実装] 記録に失敗した観測 (ジャーナルへ書けない等) の再試行。ベースラインを進めないだけで、次のイベントまで再走査しない。
+検証:
+  - cargo test --manifest-path tools	rack\Cargo.toml → 全 51 件 (lib 14 + project_id 3 + storage 16 + watch 18) 通過。最終版を 6 回続けて通過 (受け入れ条件 9)。途中で 1 回、追加前のコードで書き手待ちの試験が負荷で落ち (CPU が詰まり、書き手が 100 ms 止まった)、間隔を 250 ms × 3 回にして直した
+  - 受け入れ条件 10: 書き手 1667 操作 (一時ファイル + rename / fs::write / 削除 + 再作成を 1 ms 間隔)、デバウンス 1 ms で追跡を重ねて、失敗 0 件、Revision 38 件。探り付きだと 438 件失敗 (上記)
+  - 受け入れ条件 11: 差し込み (Err と Rescan フラグ) で検証。本物のあふれ: notify だけを付けた使い捨ての試験で、16 スレッド × 4000 ファイル = 64000 件を書くと、届いた Create は 57064 件、Err 0 件、Rescan 0 件 = 黙って取りこぼした (architecture.md §4 に記載。試験コードはコミットしていない)
+  - cargo clippy --all-targets → 警告 0
+  - pwsh -NoProfile -File tools\check_rules.ps1 → error 0 (warning 60 は既存)。最初は error 1 件 (tools/track/tests/project_id_cases.tsv の作業ツリーが CRLF = sub-02 の残り) で、LF に直した (git の差分は無い)
+  - selftest / replay_verify → 未実行 (src\ を触らないサブのため。指示どおり)
+自己採点 (1-5):
+  仕様適合: 4 — 受け入れ条件 1〜14 は試験で通る。ただし 11 は差し込みでの検証、8 の「黙って取りこぼさない」は 1000 ファイルまでしか保証できない (notify の限界)。探り方式の取りやめは仕様の指示どおり
+  正しさ: 4 — 6 回続けて通過、書き手の失敗 0 件。ただし書き手の見分けは「サイズが変わるか」の経験則で、間隔が長い書き手は途中の内容が complete で残る (最終の内容は必ず続く)
+  コード品質: 4 — clippy 0 件、層を分けた。collector / watch は長め。ベースラインの除外パスは DB から戻すと大きさだけで比べる
+  テスト: 4 — 受け入れ条件ごとの試験と作業ツリーの不変の検査あり。時間依存の試験は上限付きの待ち合わせ。Windows の負荷下では経験則の試験が揺れうる
+不安・質問:
+  1. [planner 判断] notify 8.2.2 は本物のあふれを報告しない (実機で再現)。受け入れ条件 8 の「あふれた区間が watcher_overflow で残る」は、本物のあふれでは満たせない。対策の選択肢: (a) このまま (差し込みで経路だけ検証) とし制限を文書化済みとする、(b) 大量のイベントの後に検証走査を足す (例: 1 回の flush が一定件数を超えたら、ルート全体を突き合わせて取りこぼしを gap で拾う)、(c) ReadDirectoryChangesW を自前で呼ぶ。どれにするか決めてほしい (別サブを推奨)。
+  2. [planner 判断] 記録のスループットが低い見込み: 32000 ファイルの一括作成の試験 (デバッグビルド、他の負荷あり) の記録に十数分かかった (約 40 件/秒)。原因は未計測の推測だが、Blob の書き込みごとの `sync_all` と 1 件ごとのハッシュ + 読み直し。1000 ファイルは数十秒。数万ファイルの初期化とあわせて、計測する別サブが要るか。
+  3. 1 回の保存の記録が debounce + 100 ms 後になる (settle)。通知の遅延が気になるなら settle_wait / settle_samples を調整できる (TrackerConfig)。
+  4. 除外パス (`.env` など) は、DB から前回の状態を戻したとき内容のハッシュが無いので、サイズだけで比べる。サイズが同じ書き換えは、停止中の変更として拾えない。DB に除外ファイルのハッシュを残さない方針 (db-schema §4) との引き換えで、planner の判断が要るなら。
+触ったファイル:
+  tools/track/Cargo.toml、tools/track/Cargo.lock、tools/track/src/{baseline,collector,content,ignore,observe,watch}.rs (新規)、tools/track/src/{lib,main,startup,blob}.rs、tools/track/tests/watch.rs (新規)、tools/track/tests/project_id_cases.tsv (CRLF→LF のみ。git の差分なし)、docs/ai-change-tracking/{architecture,db-schema,prototype-results}.md、plans/m104-ai-change-tracking.md
+申し送り:
+  - sub-04: `observed` の payload と `window` を使って、派生の表の作り直しと「削除 + 同じハッシュの作成」のまとめを作る。同じ窓の判定は payload の `window` が同じ。`renamed` は同一ディレクトリ内だけ。`changes` はパスごとの `active` を再利用し、Revision の seq を足す。Hunk は `change_revisions` の行の後から足せる。
+  - sub-05: `Tracker::status()` が `baseline_files` / `baseline_ms` / `baseline_bytes` / `first_run` / `overflows` / `phase` を返す。`serve` の終了は標準入力の EOF でも起こるので、DETACHED_PROCESS で起動する場合は標準入力が無効ハンドルで即 EOF になりうる (Rust の標準入力は無効ハンドルを EOF として読む)。pipe 経由の終了へ置き換えるときに外すこと。
+  - 試験は debug ビルドで並列に走ると 40 秒前後かかる。CPU が詰まると書き手待ちの試験の間隔が足りなくなりうる (250 ms × 3 回にしてある)。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner、2026-11-14)。planner が `cargo test` を実走。全体を 1 回 + `--test watch` を 4 回のうち、**全体の 1 回で `changes_while_service_was_down_are_gap_unknown` が `tests\watch.rs:412` (`assert_eq!(a[1].completeness, "complete")`) で落ちた** (他の 4 回は 18 件通過)。受け入れ条件 9 (不安定にならない) を満たしていない。
+  - must 1: 1 回だけの `fs::write` が、負荷の下で `coalesced` になる。原因は試験ではなく判定 (「イベントが 5 ms 超で 2 つ以上の塊」) が実時間に依存していることと見る (`fs::write` 1 回は `Modify` 2 件で、負荷があると 5 ms 以上離れる)。`coalesced` は利用者に「中間状態を見ていない」と見せる印なので、ビルド中など負荷のある場面で普通の保存に付き続けると印の意味が無くなる。受け入れ条件 15 を足した。直し方は coder が決めてよい (しきい値を広げる、切り詰め + 書き込みの 2 件を 1 回と数える、など)。直した後、全体の `cargo test` を 10 回続けて通すこと。
+  - 逸脱 (探りの取りやめ): 採る。sub-03.md の指示どおりで、438 件の失敗という実測がある。
+  - 追加 (サイズが落ち着くまで待つ、`coalesced` の 3 条件のうち ②③、同じディレクトリ内の `renamed`、`window`、events の kind、試験用の差し込み口、固定の無視名を深さを問わず適用、tsv の改行): 採る。試験用の `inject_event` / `drop_incoming_events` は公開のまま残すなら `#[doc(hidden)]` を付け、製品のコードから呼ばないこと (should)。
+  - 未実装 2 件 (本物のあふれの検出、記録に失敗した観測の再試行): このサブでは求めない。新しい sub-21 (M104d2) に移した。
+  - 質問への回答: (1) (b) の検証走査を採る。sub-21 で行う (spec §2 D27)。(c) の自前の `ReadDirectoryChangesW` は、(b) で足りないと実測で分かったときの次の手。(2) 計測は sub-21 で行う (spec §2 D28)。(3) 保存の記録が debounce + 100 ms 遅れるのは許容。(4) 除外パスをサイズだけで比べる制限は許容 (文書にあること)。
+- round 2: VERDICT OK (planner、2026-11-14)。planner が全体の `cargo test` を 4 回続けて実走し、毎回 lib 14 / project_id 3 / storage 16 / watch 19 が通過 (coder の 10 回と合わせて失敗なし)。`DEFAULT_BURST_GAP` = 200 ms (`collector.rs` 27 行目)、差し込み口 2 つに `#[doc(hidden)]` を確認。残る限界 (200 ms を超えて詰まると普通の保存にも `coalesced` が付く / 書き込みの間隔が 100 ms より長い書き手の途中の内容が `complete` で残りうる / 本物のあふれは報告されない) は文書にあり、あふれは sub-21 で扱う。nit: 実装メモの round 2 が未追記。
