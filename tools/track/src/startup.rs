@@ -1,0 +1,276 @@
+//! 起動時の検査 (db-schema.md §6 の 1〜6。7 のベースラインは M104d)。
+//!
+//! どの段で失敗してもプロセスは落とさない。DB へ書けないときは `Mode::DbDegraded` の Store を、
+//! ディレクトリすら作れないときは Store 無し (`ServiceState::Unavailable`) を返す。
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+use rusqlite::{params, Connection};
+
+use crate::blob::BlobStore;
+use crate::db::{open_and_migrate, Opened};
+use crate::journal::{self, Journal, JournalPos};
+use crate::process::is_alive;
+use crate::schema::{Migration, MIGRATIONS};
+use crate::store::{Mode, Paths, Store};
+
+/// 入れ直せなかったジャーナルの行を表す `coverage_gaps.reason` と `events.kind`。
+pub const GAP_JOURNAL_UNREADABLE: &str = "journal_unreadable";
+
+/// サービスの記録の状態 (pipe の応答や標準エラーへ出す)。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServiceState {
+    Recording,
+    DbDegraded(String),
+    /// 記録の置き場所を作れない。Store が無い。
+    Unavailable(String),
+}
+
+/// 起動時の検査の結果。数は「その起動で行ったこと」。
+#[derive(Debug, Default)]
+pub struct StartupReport {
+    pub state: Option<ServiceState>,
+    /// 壊れた DB の退避先 (退避したときだけ)。
+    pub broken_db: Option<PathBuf>,
+    pub replayed_events: usize,
+    pub unreadable_journal_lines: usize,
+    pub blobs_marked_missing: usize,
+    pub orphan_blobs: usize,
+    pub sessions_interrupted: usize,
+    pub operations_abandoned: usize,
+    /// 起動時の検査 (3〜6) で失敗した段。記録は続けるが、`status` が DB の健全性として返す。
+    pub failed_steps: Vec<StepFailure>,
+}
+
+/// 失敗した検査の段とその理由。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepFailure {
+    pub step: &'static str,
+    pub reason: String,
+}
+
+/// テストが差し替える設定。
+pub struct StartupOptions<'a> {
+    pub migrations: &'a [Migration],
+    pub journal_max_file_bytes: u64,
+    pub exclude_patterns: Vec<String>,
+}
+
+impl Default for StartupOptions<'_> {
+    fn default() -> Self {
+        StartupOptions {
+            migrations: MIGRATIONS,
+            journal_max_file_bytes: journal::DEFAULT_MAX_FILE_BYTES,
+            exclude_patterns: crate::blob::DEFAULT_EXCLUDE_PATTERNS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+/// プロジェクトの記録領域を開き、起動時の検査を行う。
+pub fn open_project(project_root: &Path, now: i64) -> (Option<Store>, StartupReport) {
+    open_project_with(project_root, now, StartupOptions::default())
+}
+
+pub fn open_project_with(
+    project_root: &Path,
+    now: i64,
+    options: StartupOptions<'_>,
+) -> (Option<Store>, StartupReport) {
+    let mut report = StartupReport::default();
+    let paths = Paths::for_project(project_root);
+
+    // ディレクトリとジャーナルが開けなければ、記録できない状態
+    for dir in [&paths.dir, &paths.blobs, &paths.journal] {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            report.state = Some(ServiceState::Unavailable(format!("{} を作れない: {e}", dir.display())));
+            return (None, report);
+        }
+    }
+    let journal = match Journal::open(&paths.journal, options.journal_max_file_bytes) {
+        Ok(j) => j,
+        Err(e) => {
+            report.state = Some(ServiceState::Unavailable(format!("ジャーナルを開けない: {e}")));
+            return (None, report);
+        }
+    };
+
+    // §6 の 1・2: DB を開く (壊れていれば退避して作り直す) → 移行
+    let opened = open_and_migrate(&paths.db, options.migrations, now);
+    report.broken_db = opened.broken_moved_to;
+    let (conn, mode) = match opened.opened {
+        Opened::Ready(conn) => (Some(conn), Mode::Recording),
+        Opened::Degraded(reason) => (None, Mode::DbDegraded(reason)),
+    };
+    let mut store = Store {
+        blobs: BlobStore::new(paths.blobs.clone(), options.exclude_patterns),
+        paths,
+        mode,
+        conn,
+        journal,
+    };
+
+    if store.conn.is_some() {
+        // 入れ直しに失敗したときは、DB の内容を信用できないので書き込みを止める
+        if let Err(e) = replay_journal(&mut store, now, &mut report) {
+            store.conn = None;
+            store.mode = Mode::DbDegraded(format!("ジャーナルの入れ直しに失敗: {e}"));
+        }
+    }
+    if let Some(conn) = store.conn.as_mut() {
+        // §6 の 3〜6。保守の段なので、失敗しても記録は続ける
+        run_step(&mut report, "Blob の有無の確認", |r| mark_missing_blobs(conn, &store.blobs, r));
+        run_step(&mut report, "孤児 Blob の計数", |r| count_orphan_blobs(conn, &store.paths.blobs, r));
+        run_step(&mut report, "残った session の整理", |r| interrupt_dead_sessions(conn, r));
+        run_step(&mut report, "残った operation の整理", |r| abandon_open_operations(conn, r));
+    }
+    report.state = Some(match &store.mode {
+        Mode::Recording => ServiceState::Recording,
+        Mode::DbDegraded(reason) => ServiceState::DbDegraded(reason.clone()),
+    });
+    (Some(store), report)
+}
+
+fn run_step(
+    report: &mut StartupReport,
+    name: &'static str,
+    step: impl FnOnce(&mut StartupReport) -> rusqlite::Result<()>,
+) {
+    if let Err(e) = step(report) {
+        report.failed_steps.push(StepFailure { step: name, reason: e.to_string() });
+    }
+}
+
+/// §6 の 1 の後半 (および通常起動の埋め直し): DB が持つ最後の位置より後ろのジャーナルを DB へ入れる。
+/// 読めない行は `journal_unreadable` のイベントにして位置を進め (= 二度目の起動で重複させない)、
+/// 前後の観測の時刻で挟んだ区間を `coverage_gaps` に残す。
+fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport) -> Result<(), String> {
+    let conn = store.conn.as_mut().expect("caller checked");
+    let last: Option<(String, i64)> = conn
+        .query_row("SELECT journal_pos, at FROM events ORDER BY event_id DESC LIMIT 1", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .ok();
+    let after = last.as_ref().and_then(|(pos, _)| JournalPos::parse(pos));
+    let lines = journal::read_after(&store.paths.journal, after).map_err(|e| e.to_string())?;
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    // 壊れた行の区間の始まり = 直前の良い観測の時刻
+    let mut prev_good_at = last.map(|(_, at)| at);
+    let mut open_gap_from: Option<i64> = None;
+    let mut gaps: Vec<(i64, i64)> = Vec::new();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for line in &lines {
+        match &line.entry {
+            Some(entry) => {
+                if let Some(from) = open_gap_from.take() {
+                    gaps.push((from, entry.at));
+                }
+                tx.execute(
+                    "INSERT OR IGNORE INTO events (at, kind, journal_pos, payload) VALUES (?1, ?2, ?3, ?4)",
+                    params![entry.at, entry.kind, line.pos.to_string(), entry.payload.to_string()],
+                )
+                .map_err(|e| e.to_string())?;
+                prev_good_at = Some(entry.at);
+                report.replayed_events += 1;
+            }
+            None => {
+                let at = prev_good_at.unwrap_or(now);
+                tx.execute(
+                    "INSERT OR IGNORE INTO events (at, kind, journal_pos, payload) VALUES (?1, ?2, ?3, '{}')",
+                    params![at, GAP_JOURNAL_UNREADABLE, line.pos.to_string()],
+                )
+                .map_err(|e| e.to_string())?;
+                open_gap_from.get_or_insert(at);
+                report.unreadable_journal_lines += 1;
+            }
+        }
+    }
+    // 末尾が壊れた行なら、次の観測が無いので今までを区間にする
+    if let Some(from) = open_gap_from {
+        gaps.push((from, now.max(from)));
+    }
+    for (from, to) in gaps {
+        tx.execute(
+            "INSERT INTO coverage_gaps (from_at, to_at, reason, scope) VALUES (?1, ?2, ?3, NULL)",
+            params![from, to, GAP_JOURNAL_UNREADABLE],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// §6 の 3: `snapshots` が指す Blob が無ければ `blob_state = missing` にする。
+fn mark_missing_blobs(conn: &mut Connection, blobs: &BlobStore, report: &mut StartupReport) -> rusqlite::Result<()> {
+    let candidates: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT snapshot_id, blob_hash FROM snapshots WHERE blob_state = 'present' AND blob_hash IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (id, hash) in candidates {
+        if !blobs.path_for_hash(&hash).is_file() {
+            conn.execute("UPDATE snapshots SET blob_state = 'missing' WHERE snapshot_id = ?1", [id])?;
+            report.blobs_marked_missing += 1;
+        }
+    }
+    Ok(())
+}
+
+/// §6 の 4: どの `snapshots` からも指されていない Blob を数える。消すのは容量の回収のときだけ。
+fn count_orphan_blobs(conn: &mut Connection, blobs_dir: &Path, report: &mut StartupReport) -> rusqlite::Result<()> {
+    let referenced: HashSet<String> = {
+        let mut stmt = conn.prepare("SELECT DISTINCT blob_hash FROM snapshots WHERE blob_hash IS NOT NULL")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let Ok(prefixes) = std::fs::read_dir(blobs_dir) else { return Ok(()) };
+    for prefix in prefixes.flatten() {
+        let prefix_name = prefix.file_name().to_string_lossy().into_owned();
+        if prefix_name.len() != 2 {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(prefix.path()) else { continue };
+        for file in files.flatten() {
+            let rest = file.file_name().to_string_lossy().into_owned();
+            // 書きかけの一時ファイル (".tmp-...") は Blob ではない
+            if rest.len() == 62 && !referenced.contains(&format!("{prefix_name}{rest}")) {
+                report.orphan_blobs += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// §6 の 5: `running` のまま残った session のうち、プロセスが居ないものを `interrupted` にする。
+/// PID が記録されていない session は生死を確かめられないので `interrupted` 側に倒す。
+fn interrupt_dead_sessions(conn: &mut Connection, report: &mut StartupReport) -> rusqlite::Result<()> {
+    let running: Vec<(String, Option<i64>, Option<i64>)> = {
+        let mut stmt =
+            conn.prepare("SELECT session_id, process_id, process_start FROM sessions WHERE status = 'running'")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (id, pid, start) in running {
+        let alive = pid.is_some_and(|p| u32::try_from(p).is_ok_and(|p| is_alive(p, start)));
+        if !alive {
+            conn.execute("UPDATE sessions SET status = 'interrupted' WHERE session_id = ?1", [&id])?;
+            report.sessions_interrupted += 1;
+        }
+    }
+    Ok(())
+}
+
+/// §6 の 6: `finished_at` が NULL のまま残った operation を `abandoned` にする。
+/// 実際の終了時刻は分からないので `finished_at` は NULL のまま残す。
+fn abandon_open_operations(conn: &mut Connection, report: &mut StartupReport) -> rusqlite::Result<()> {
+    let n = conn.execute(
+        "UPDATE operations SET result = 'abandoned' WHERE finished_at IS NULL AND result IS NULL",
+        [],
+    )?;
+    report.operations_abandoned += n;
+    Ok(())
+}

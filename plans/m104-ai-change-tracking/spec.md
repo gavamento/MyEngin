@@ -54,6 +54,9 @@ git の差分では AI 以前の未コミット変更が混ざり、シーンは
 | D23 | 試作 6(b) (本物の MCP クライアントの Job の中での生存) を coder が確かめられない | 実行すると coder を動かしている `claude.exe` ごと終わる。本物の `mye_mcp.exe` は Job の中にいた (性質は読めず) | 未確認 | sub-07 でユーザーの手動確認にする (手順を `docs\test_checklists.md` に書く)。どちらの結果でも設計は成り立つ (生き残らなければ `service_down` の欠落) |
 | D24 | Editor からのサービス起動に `StartChildProcess` を使う (arch §3) と、ハンドルが継承される | `C:\HAL\MyEngin\src\Editor\App\ChildProcess.cpp` 30 行目 `bInheritHandles = TRUE` | — | sub-09 で、ハンドルを継がせないサービス用の起動口を `src\Editor\ChangeTracking\` に置く。`StartChildProcess` は変えない |
 
+| D25 | projectId を「`NormalizePathKey` と同じ結果」のハッシュにすると、末尾の区切りの有無で値が変わる。projectId は mutex と pipe の名前なので、同じ DB に書き手が 2 つできる | sub-02 round 1 の固定表: `C:\Proj\MyGame` → `64489cc1…`、`C:\Proj\MyGame\` → `33ee953a…`。`C:\HAL\MyEngin\src\Engine\Platform\PathUtil.cpp` の `NormalizePathKey` は末尾を落とさない | — (planner の仕様の穴) | projectId は末尾の区切りを落としてからハッシュする (ドライブのルートは除く)。それでも別名 (`subst`、ジャンクション、短い名前) は残るので、sub-05 で `.mye\ai_changes\service.lock` を共有なしで持ち続ける二重の守りを足す。却下: パスを `GetFinalPathNameByHandle` で実体へ解決する案 (C++ の `NormalizePathKey` と結果が離れ、Editor・MCP・フックの 3 か所で同じ解決を実装することになる) |
+| D26 | DB が壊れて作り直したとき、ジャーナルから戻るのは `events` と `coverage_gaps` だけ (sub-02 の実装で判明) | db §6 の 1 は「`journal\` から入れ直す」としか書いていない | — | 観測のイベントに派生の表を導ける情報を全部入れ (sub-03)、作り直しの関数と往復のテストを sub-04 に置く |
+
 ## 3. スコープ
 
 - やる: 計画の進捗表 M104b〜M104t (Phase 0 の試作 〜 Phase 6)。順序は要求 §19 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較)。最後に、エンジン配布物へのサービス同梱 (M104u、D5)。
@@ -195,5 +198,6 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-14 (planner、sub-02 の VERDICT round 1): D25、D26 を追加。sub-02 (projectId の定義と受け入れ条件 8)、sub-03 (イベントのペイロード、`service_start` / `service_stop`、一時 Blob の掃除)、sub-04 (派生の表の作り直し、受け入れ条件 9)、sub-05 (`service.lock`、受け入れ条件 3b)、sub-09 (projectId の定義) を直した。
 - 2026-11-14 (planner、sub-01 の VERDICT round 1 と §6.1 の見直し): 試作の結果を受けて D21〜D24 を足した。変えたサブは sub-02 (依存の版、MSRV、進捗表の直し)、sub-03 (デバウンスの確定値、共有モードの直し、ディレクトリ単位の操作、受け入れ条件 10〜14)、sub-04 (移動のまとめ、受け入れ条件 5b)、sub-05 (pipe の作法、試作 6(b) を sub-07 へ)、sub-07 (標準ライブラリだけでの再試行と起動、受け入れ条件 8・9)、sub-08 (本物の入力の記録の口)、sub-09 (サービス用の起動口)、sub-11 (C# の値の形)、sub-16 (C# の Field の分岐)。A1〜A21 とサブの数・依存は変えていない。sub-06、10、12〜15、17〜20 は読み直して変更なし。
 - 2026-11-14 (ユーザー、確定確認と同時): D5 を「後回し」から「M104 に含める」へ。スコープの「後回し」から配布物の項を外し、A21、sub-20 (M104u)、§6.2 の sub-05 の条件を足した。sub-01〜19 の範囲と A1〜A20 は変えていない (sub-05 と sub-19 の文言だけ整合させた)。

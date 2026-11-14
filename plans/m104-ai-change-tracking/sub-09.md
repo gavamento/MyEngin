@@ -23,6 +23,7 @@ Editor 側の土台。**C++ 側にスレッドを作らない** (arch §3.1)。
    - サービスの起動に `StartChildProcess` をそのまま使わない: `bInheritHandles = TRUE` でログファイルのハンドルを渡すので、サービスが生きている間そのハンドルを持ち続け、Editor の他の継承可能なハンドルも渡る (`C:\HAL\MyEngin\src\Editor\App\ChildProcess.cpp` 30 行目)。**ハンドルを継がせない、サービス用の起動口を `src\Editor\ChangeTracking\` に置く** (`bInheritHandles = FALSE`、`CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`、`ERROR_ACCESS_DENIED` なら BREAKAWAY を外してやり直す。arch §3)。`StartChildProcess` 自体は変えない。arch §3 の「Editor は既存の `StartChildProcess` を使う」をこのサブで直す。
    - Editor が Job の中で起動された場合 (Visual Studio のデバッグ起動) にサービスが生き残るかを 1 回確かめ、結果か「未確認」を arch §3 に書く。
 2. projectId の計算を C++ 側に持ち、sub-02 の固定表と同じ入出力でテストする (`C:\HAL\MyEngin\src\Engine\Platform\Sha256.h`)。
+   - sub-02 の VERDICT (spec §2 D25): projectId は「`NormalizePathKey` の結果から末尾の区切りを落としたもの (ドライブのルートは除く)」のハッシュ。固定表は `C:\HAL\MyEngin\tools\track\tests\project_id_cases.tsv` (4 列)。C++ 側のテストはこのファイルを読むか、同じ行を持つ。`towlower` は "C" ロケールで ASCII だけを変換する前提で Rust を合わせてあるので、Editor が `setlocale` を呼んでいないことを確かめ、表の非 ASCII の行が通ることで検出する。
 3. 設定: `EditorSettings` に追跡の有効 / 無効。プロジェクトなしの起動では追跡しない (db §1)。
 4. **非対話起動 (`--selftest*`、`--screenshot`、リプレイ検証、`--dump-index` など) では、設定にかかわらず接続も起動もしない** (spec §2 D11)。判定に使う既存のフラグを `EditorApp` / `EngineCli` で確かめて使う。
 5. 状態の表示は最小限: サービスの状態 (接続中 / 停止中 / 版が違う / DB が使えない) を持つだけ。窓は sub-10。

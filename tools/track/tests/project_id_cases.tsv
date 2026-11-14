@@ -1,0 +1,22 @@
+# projectId の固定表。列 (タブ区切り): 入力パス / NormalizePathKey の結果 / projectId のもとになる文字列 / projectId
+# 2列目は C++ の mye::NormalizePathKey (src\Engine\Platform\PathUtil.cpp) を実際に呼んで得た値 (末尾の区切りは残る)。
+# 3列目は 2列目から末尾の区切りを全部落としたもの (ドライブのルート c:\ は落とさない)。4列目はその UTF-8 の SHA-256 先頭 16 桁 (PowerShell で独立に計算)。
+# Rust (tests\project_id.rs) と、M104j の C++ 側テストが同じ表を使う。行を足すときは C++ の実測で 2 列目を取ること。
+C:\Proj\MyGame	c:\proj\mygame	c:\proj\mygame	64489cc186743810
+c:/proj/mygame	c:\proj\mygame	c:\proj\mygame	64489cc186743810
+C:\Proj\MyGame\	c:\proj\mygame\	c:\proj\mygame	64489cc186743810
+C:\Proj\\MyGame\.\sub\..	c:\proj\mygame	c:\proj\mygame	64489cc186743810
+C:\プロジェクト\ゲーム	c:\プロジェクト\ゲーム	c:\プロジェクト\ゲーム	18aefa980b605010
+C:\Ｐｒｏ\ÀB\А	c:\Ｐｒｏ\Àb\А	c:\Ｐｒｏ\Àb\А	bba90799bf7b43e1
+\\Server\Share\Proj	\\server\share\proj	\\server\share\proj	289e4848cf3b4716
+C:\a\..\..\b	c:\b	c:\b	c18c3dc926c0dd64
+C:\Proj\MyGame/	c:\proj\mygame\	c:\proj\mygame	64489cc186743810
+C:\	c:\	c:\	3dc8472eaebe1a9d
+C:\Proj\.	c:\proj	c:\proj	907886f67558dd67
+C:\Proj\MyGame\..\	c:\proj\	c:\proj	907886f67558dd67
+C:\Proj\MyGame\\	c:\proj\mygame\	c:\proj\mygame	64489cc186743810
+C:\Proj\MyGame\/	c:\proj\mygame\	c:\proj\mygame	64489cc186743810
+C:/Proj/MyGame/	c:\proj\mygame\	c:\proj\mygame	64489cc186743810
+C:\Proj\MyGame\/\	c:\proj\mygame\	c:\proj\mygame	64489cc186743810
+C:\\	c:\	c:\	3dc8472eaebe1a9d
+\\Server\Share\Proj\	\\server\share\proj\	\\server\share\proj	289e4848cf3b4716

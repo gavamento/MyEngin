@@ -15,6 +15,7 @@ arch §5 を作る。sub-15 の Hunk 復元はここで作る Hunk の形に乗�
 5. Hunk ID は (Revision, 通し番号)。Revision が変われば Hunk ID も変わる。
 6. Change と Revision: 同じパスへの変更は 1 つの Change にまとめ、観測ごとに Revision を足す (db §3.1)。新しい Revision ができたら、前の Revision の状態の扱い (`changes.state` の `superseded`) を db のとおりにする。
 7. リネームのまとめ (sub-01 の試作 3 で確定: 別のディレクトリへの移動は `Remove` + `Create` でしか届かないので、ハッシュによるまとめが**主たる手段**。ディレクトリの名前変更で sub-03 が作った「中のファイルの削除と作成」も同じ規則でまとまる): 監視がリネームとして返したものに加え、同じデバウンス窓の中の「削除 + 同じ内容ハッシュの作成」を 1 件の `renamed` にする。内容が違えば別々の削除と作成のまま (推測でつながない)。同じハッシュの候補が 2 つ以上あるときはつながない。
+7b. 派生の表の作り直し (sub-02 の VERDICT で追加): DB が壊れて作り直した後、`events` (ジャーナルから戻ったもの) と残っている Blob から、`changes` / `change_revisions` / `change_hunks` / `snapshots` を作り直す関数を持つ。Hunk は Blob から計算し直せる。Blob が欠けている Revision は行だけ戻し、`blob_state = missing` にする。起動時の検査 (db §6 の 1) の後に呼ぶ。通常の記録の経路と作り直しの経路が同じ関数を通る形にする (2 通りの実装を持たない)。
 8. 大きい入力の上限: 行数 / サイズが大きいとき、Myers の最悪計算量で Diff ワーカーが止まらないよう上限を置き、超えたら「ファイル全体を 1 Hunk」に落として、その旨を Revision に残す。上限の値は計測して決め、文書に書く。
 
 ## やらないこと (このサブでは)
@@ -40,6 +41,8 @@ arch §5 を作る。sub-15 の Hunk 復元はここで作る Hunk の形に乗�
 6. 同じパスを 2 回変えると Change は 1 つ、Revision は 2 つで `seq` が連番。2 つ目の Hunk ID は 1 つ目と違う → `cargo test`。
 7. 上限を超える入力で Diff ワーカーが時間内に返り、Revision に「全体を 1 Hunk に落とした」ことが残る → `cargo test` (時間の上限付き)。
 8. sub-03 の受け入れ条件 7 (作業ツリーを書かない) がこのサブのシナリオでも成り立つ → `cargo test`。
+
+9. 記録した後に `tracking.db` を壊して起動し直すと、退避 → 作り直しの後で、壊す前と同じ Change / Revision / Hunk (パス、種別、ハッシュ、Hunk の範囲と本文) が得られる。Blob を 1 つ消しておくと、その Revision は行が戻り `missing` になる → `cargo test`。
 
 ## 検証コマンド
 

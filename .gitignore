@@ -27,6 +27,9 @@ tools/collab/target/
 # エンジン MCP サーバ (M87) の cargo ビルド成果物。.mcp.json がここの exe を指すので、
 # 使うには各自 cargo build --release が要る (docs/mcp-server.md)
 tools/mcp/target/
+
+# AI Change Tracking の追跡サービス (M104c) の cargo ビルド成果物
+tools/track/target/
 # verify_job のログ構造化テストの固定ログ (*.log の例外)
 !tests/mcp/logs/*.log
 

@@ -179,7 +179,7 @@ CREATE TABLE coverage_gaps (
   gap_id     INTEGER PRIMARY KEY,
   from_at    INTEGER NOT NULL,
   to_at      INTEGER NOT NULL,
-  reason     TEXT NOT NULL,                     -- service_down / watcher_overflow / disk_full / queue_overflow / excluded
+  reason     TEXT NOT NULL,                     -- service_down / watcher_overflow / disk_full / queue_overflow / excluded / journal_unreadable
   scope      TEXT                               -- 影響したパス (全体なら NULL)
 );
 
@@ -194,6 +194,7 @@ CREATE TABLE events (
 
 索引は `change_revisions(change_id, seq)`、`change_revisions(observed_at)`、`change_revisions(operation_id)`、
 `changes(path)`、`scene_changes(document_id, file_id)`、`attribution_evidence(revision_id)`、`reviews(revision_id)`、`snapshots(blob_hash)` に張る。
+これに加えて `events(journal_pos)` に一意索引を張る (実装で追加。起動時の入れ直しが同じジャーナル行を二重に入れないための最後の砦)。
 
 ### 3.1 形の理由
 
@@ -220,16 +221,20 @@ CREATE TABLE events (
 - 役目は 2 つ。DB のトランザクションが確定する前にサービスが落ちたときの埋め直しと、DB が壊れたときの作り直しの元。
 - 1 ファイルが 16 MiB を超えたら次の番号へ進む。`events.journal_pos` が DB とジャーナルの対応を持つ。
 - 起動時、DB に入っている最後の位置より後ろの行を読み直して DB へ入れる。
+- JSON として読めない行 (書きかけの末尾、壊れた行) は、`kind = journal_unreadable` の `events` 行にして位置を進め (次の起動で数え直さない)、前後の観測の時刻で挟んだ区間を `coverage_gaps` に `journal_unreadable` で残す。末尾が壊れているときは、起動時刻までを区間にする。
+- 書きかけの行が残ったファイルへ続けて追記するときは、先に改行を足してその行を閉じる (行番号は壊れた 1 行として数える)。
 - ジャーナルに Blob の中身は書かない (ハッシュだけ)。
 
 ## 6. 起動時の検査
 
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
+   退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。
 3. `snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする。
 4. どの `snapshots` からも指されていない Blob を数える。消すのは §7 の回収のときだけで、起動時には消さない。
 5. `sessions.status = running` のまま残っている行を、プロセスの生死 (PID と開始時刻) で確かめ、居なければ `interrupted` にする。
-6. `operations.finished_at` が NULL のまま残っている行を `abandoned` にする。
+   PID が記録されていない行も `interrupted` にする (生死を確かめられない)。プロセスの同一性は PID と開始時刻 (誤差 2 秒) の組。
+6. `operations.finished_at` が NULL のまま残っている行を `abandoned` にする (`result = abandoned`。実際の終了時刻は分からないので `finished_at` は NULL のまま)。
 7. 前回の `service_stop` (無ければ最後のイベント) から今までを `coverage_gaps` に `service_down` で足し、ベースラインを取り直す。
 
 どの段で失敗しても、サービスは「記録できない状態」で pipe には答え続ける。Editor の起動は待たせない。

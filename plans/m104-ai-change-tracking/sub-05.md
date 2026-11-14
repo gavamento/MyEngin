@@ -34,6 +34,8 @@ sub-01 の試作 1 / 6 で決まったこと (2026-11-14 の見直し。ipc §1 
 
 1. 名前付きパイプのサーバ: `\\.\pipe\mye-track-<projectId>`、現在のユーザーだけの DACL、`PIPE_REJECT_REMOTE_CLIENTS`、複数接続、接続ごとに 1 スレッド、1 行 1 JSON (LF)、1 行の上限 1 MiB (`too_large`)。
 2. 単一インスタンス: 名前付き mutex `Local\mye-track-<projectId>`。取れなければ即終了 (終了コードで「既に居る」を区別できるようにする)。
+   - **二重の守り (sub-02 の VERDICT で追加。spec §2 D25)**: projectId はパスの文字列から作るので、同じディレクトリを別の名前で指す (`subst` のドライブ、ジャンクション、8.3 の短い名前、UNC とドライブ文字) と別の projectId になり、mutex も pipe の `FIRST_PIPE_INSTANCE` も効かない。**サービスは起動時に `.mye\ai_changes\service.lock` を共有なし (share mode 0) で開き、終了まで持ち続ける。** 開けなければ「同じ DB に別のサービスが居る」として、DB に触る前に終了する。このとき、どの名前で動いているか分からないので、起動を頼んだ側は追跡なしで続行する (pipe 名が違うので接続できない。`service.json` の `projectRoot` を標準エラーへ出す)。
+   - sub-02 の `startup` が持っている「検査の 3〜6 で失敗した段と理由」を `status` の DB の健全性に含める。
 3. `service.json`: PID、開始時刻、pipe 名、起動ごとの乱数トークン。乱数は OS の乱数源から取る (sim の決定性とは無関係のプロセスだが、`rand` crate は足さない)。
 4. `hello`: 版 (`proto_mismatch`)、トークン (`bad_token`)、プロジェクト (`wrong_project`。クライアントが言ったパスで DB を開き直さない)、接続元 (`GetNamedPipeClientProcessId` の PID とプロセス開始時刻を証跡に残す)。`hello` より前の要求は `need_hello` で切る。
 5. 役割 (ipc §3.1): `mcp` / `editor` / `hook`。役割の外の op は `forbidden`。このサブで実装する op は `hello`、`status`、`list`、`describe`、`sessions` (空の配列を返せるところまで)。未実装の op は `unknown_op`。知らない引数は `bad_args`。
@@ -65,6 +67,7 @@ sub-01 の試作 1 / 6 で決まったこと (2026-11-14 の見直し。ipc §1 
 1. `hello` の失敗 4 種 (`need_hello`、`proto_mismatch`、`bad_token`、`wrong_project`) と成功がシナリオで確かめられる → `tools\track_verify.bat`。
 2. 役割の外の op が `forbidden`、知らない op が `unknown_op`、知らない引数が `bad_args`、1 MiB を超える行が `too_large` → `tools\track_verify.bat`。
 3. 同じプロジェクトで 2 つ目を起動すると即終了し、1 つ目が動き続ける。別のプロジェクトのサービスは同時に動ける → `cargo test`。
+3b. 同じディレクトリを別の名前 (ジャンクション、または `subst`) で `--project` に渡した 2 つ目のサービスが、DB を開く前に終了し、1 つ目の記録が続く → `cargo test`。
 4. ファイルを変える → `list` に出る → `describe` で Hunk の要約と `completeness` が返る。50 件を超える履歴が `cursor` でページ送りできる → `tools\track_verify.bat`。
 5. **サービスを止めて起動し直しても、止める前の履歴が `list` / `describe` で取れる。止まっていた間の変更は `gap` として区別できる** (要求 Phase 1 の完了条件) → `tools\track_verify.bat` か `cargo test`。
 6. 接続が 0 のまま時間切れ (テスト用に短くした値) で自分で終わり、`service_stop` が残る → `cargo test`。

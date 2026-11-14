@@ -1,0 +1,41 @@
+# mye_track — AI Change Tracking の追跡サービス (M104c)。
+#
+# 出力は bin mye_track.exe。ロジックは rlib (src/lib.rs) に置き、tests/ から呼べるようにする。
+# 設計: docs/ai-change-tracking/ (architecture.md / db-schema.md / ipc-contract.md)
+#
+# ★edition は 2021 に固定する。2024 は `#[no_mangle]` 等の書き方が変わり、tools/collab と
+#   書き方が割れるだけで、このクレートに得が無い。
+# ★collab と違い、最低の Rust は 1.89 になる。rusqlite 0.42 (bundled) と sha2 0.11 が
+#   1.88〜1.89 を要求するため (docs/ai-change-tracking/prototype-results.md 試作 2)。
+#   rust-version を明示し、古い rustc では依存のエラーではなく版の不足として読めるようにする。
+# ★panic = "unwind" を明示する。Writer スレッドは catch_unwind で 1 件の panic を隔離し、
+#   残りの記録を続ける。abort にするとそれが効かずサービスごと落ちる。
+[package]
+name = "mye_track"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[lib]
+name = "mye_track"
+
+[[bin]]
+name = "mye_track"
+path = "src/main.rs"
+
+[dependencies]
+# bundled = SQLite をソースからビルドして静的に持つ (利用者の環境の sqlite3.dll に依存しない)
+rusqlite = { version = "0.42", features = ["bundled"] }
+# 出力は {:x} で整形できない。16 進化は src/hash.rs が持つ
+sha2 = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# feature は使うものだけ。pipe (sub-05) で ipc-contract.md §1 の残りを足す
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[profile.release]
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"

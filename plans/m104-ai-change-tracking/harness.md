@@ -8,8 +8,8 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 (M104b) 試作 6 件と設計文書への反映 | 実装中 | 0 | | 依存なし |
-| sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | 未着手 | | | 着手前にユーザー確認 (未決事項 4) |
+| sub-01 (M104b) 試作 6 件と設計文書への反映 | OK | 1 | 723bf633 | should 1 件は sub-03 で対応 (共有モード)、nit は sub-02 で対応 (進捗表) |
+| sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | 差し戻し中 | 1 | | round 1 REWORK: must 1 件 (projectId が末尾の区切りで変わる。仕様側の誤り)、should 1、nit 1 |
 | sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | 未着手 | | | |
 | sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | 未着手 | | | |
 | sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | 未着手 | | | 着手前にユーザー確認 (未決事項 2、exe の置き場所)。Phase 1 の最後 |
@@ -43,6 +43,11 @@
   - Phase 6 (sub-17〜19) は含め、sub-17 の着手前に続行を確認する (裁定どおり)。
   - Editor の非対話起動 (`--selftest*` / `--screenshot` / リプレイ検証) ではサービスへ接続も起動もしない (裁定どおり)。
   - **裁定と違う答え**: エンジン配布物 (`tools\make_dist.ps1`) に `mye_track.exe` を入れる作業を M104 に含める。planner へ補足として送り、仕様とサブを直させる。
+- 2026-11-14 (sub-02 の着手前):
+  - Blob の既定値は設計どおり (除外 `.env`、`.env.*`、`*.pem`、`*.key`、`*.pfx`、`*.p12`、`id_rsa*`、`credentials*.json`、上限 2 GiB、保存期間 90 日)。計画の未決事項 4 は決着。
+  - `tools\track` の最低 Rust は 1.89 を明示して採る (planner の裁定どおり)。
+  - `%TEMP%\mye_m104b\` の試作コードは消さずに残す。
+- 未確認 (sub-07 / sub-08 の着手時に聞く): 本物の Claude Code 終了時のサービス生存の手動確認、本物のフック入力の記録への協力。
 
 ## 申し送り (セッション跨ぎ)
 - planner (2026-11-14、PLAN): AskUserQuestion が使えなかったので確定確認は未取得。spec.md §7.1 の 5 件を司会が聞く。
