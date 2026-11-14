@@ -513,6 +513,7 @@ fn status_result(ctx: &Context, conn: &mut ConnState) -> Value {
         },
         "verify": { "runs": s.verify_runs, "gaps": s.verify_gaps, "lastScanMs": s.verify_scan_ms },
         "recent": { "recordUs": s.last_record_us },
+        "watches": { "count": s.watch_count, "fallback": s.watch_fallback },
         "overflows": s.overflows,
         "unrecorded": s.unrecorded_since_ms.map(|since| json!({ "sinceMs": since, "reason": s.unrecorded_reason })),
         "db": ctx.db_summary,

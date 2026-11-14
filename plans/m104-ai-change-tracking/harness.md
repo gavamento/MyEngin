@@ -14,9 +14,9 @@
 | sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | OK | 1 | 35da2917 | should: 試験の一時ディレクトリの後始末は sub-04 で対応。nit: 検証の走査の所要時間は sub-05 の status で実測 |
 | sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | OK | 1 | 8a07401a | nit: Hunk 書き込み失敗 + DB 作り直しで Revision が 2 件になる制限を sub-05 で db-schema.md §6 に書く。sub-05 のコミット以降は v1.sql を凍結 |
 | sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | OK | 1 | 14ddde31 | nit 2 件は sub-06 で対応 (時間切れの発火条件、pipe 越しの busy の試験)。CI での実走は未確認 (未 push)。Phase 1 の最後 |
-| sub-06 (M104g) セッション、操作、帰属 | OK | 3 | (M104g のコミット) | round 1 REWORK (検証の走査が記録途中の変更を gap と取り違える) → round 2 REWORK (原因は notify の 16 KiB バッファの本物の取りこぼし = 試験の前提と条件 19 が誤り。試験の分け直しと verify_gap の帰属 D35 を追加) |
-| sub-22 (M104g2) 監視の取りこぼしを減らす | 実装中 | 0 | | sub-06 の VERDICT round 2 で新設。順序は sub-06 → sub-22 → sub-07。Notion Q-4〜6 (推奨で進行) |
-| sub-07 (M104h) MCP の 5 ツール | 未着手 | | | 骨子 |
+| sub-06 (M104g) セッション、操作、帰属 | OK | 3 | ee65e43e | round 1 REWORK (検証の走査が記録途中の変更を gap と取り違える) → round 2 REWORK (原因は notify の 16 KiB バッファの本物の取りこぼし = 試験の前提と条件 19 が誤り。試験の分け直しと verify_gap の帰属 D35 を追加) |
+| sub-22 (M104g2) 監視の取りこぼしを減らす | OK | 1 | (このコミット) | sub-06 の VERDICT round 2 で新設。順序は sub-06 → sub-22 → sub-07。Notion Q-4〜6 (推奨で進行) |
+| sub-07 (M104h) MCP の 5 ツール | 実装中 | 0 | | 詳細化済み。進捗表のタブ化けを直す |
 | sub-08 (M104i) フック CLI | 未着手 | | | 骨子。Phase 2 の最後 |
 | sub-09 (M104j) Editor の pipe クライアント、モデル、規則 19 | 未着手 | | | 骨子。着手前にユーザー確認 (未決事項 3) |
 | sub-10 (M104k) AI Changes 窓、Diff 表示部品 | 未着手 | | | 骨子。分割の可能性あり |

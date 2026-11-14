@@ -259,6 +259,9 @@ fn history_survives_a_restart_and_the_down_time_is_a_gap() {
     let status = client.request(5, "status", json!({})).unwrap();
     let gaps = status["result"]["gaps"]["recent"].as_array().unwrap();
     assert!(gaps.iter().any(|g| g["reason"] == "service_down"), "{status}");
+    // 監視の本数が見える (このプロジェクトは .mye を持つのでルート 1 本 + 無視しない子 0 本以上)
+    assert!(status["result"]["watches"]["count"].as_u64().unwrap() >= 1, "{status}");
+    assert_eq!(status["result"]["watches"]["fallback"], false, "{status}");
 }
 
 #[test]

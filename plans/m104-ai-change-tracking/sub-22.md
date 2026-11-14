@@ -1,7 +1,7 @@
 # sub-22: 監視の取りこぼしを減らす (M104g2)
 
 - 依存: sub-06
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 順序: sub-06 → **sub-22** → sub-07 (番号は末尾。sub-06 の VERDICT round 2 で足した。spec §2 D34)
 - 質問の運用: 推奨で進め、Notion に後回し。
@@ -64,4 +64,18 @@
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の要約)
+
+- 実測 A / B は先に取った (旧版の exe を保存して比較)。A: 洪水が無視ディレクトリにあるだけで、CPU 負荷のもとでは追跡対象 200 件のうち 8〜21 件が `gap` (負荷なしは 0)。B: 計測の道具では 36 回とも 0 件で、sub-06 の取りこぼしを再現できなかった。値と手順は `docs\ai-change-tracking\performance.md` §8。
+- 第 1 の手を実装: `tools\track\src\watch_plan.rs` (無視するディレクトリを含む所は非再帰、含まない子は再帰。上限 256 本、超えたらルート再帰 1 本)、`watch.rs` (付け替え `apply_watch_plan` / `replan_if_due` / `may_change_watch_plan`、`TrackerStatus.watch_count` / `watch_fallback`)、`server.rs` (`status.watches`)。分けた後の実測 A は 12 回とも `gap` 0 (入れ子 `src\sub\target` を含む)。
+- 第 2 の手 (自前の `ReadDirectoryChangesW`) は入れていない: 実測 A は 0 件、実測 B は再現できず根拠が無く、sub-06 の試作の欠陥の原因も未解明。
+- 試験: `tests\watch.rs` に 5 本 (`watches_are_split_around_ignored_directories`、`root_level_files_are_recorded_by_the_non_recursive_root_watch`、`top_level_directories_created_renamed_and_removed_keep_being_watched`、`gitignore_changes_move_the_watches`、`saves_during_a_flood_into_an_ignored_directory_are_never_gaps`)、`watch_plan` の単体 5 本、`tests\pipe.rs` に `status.watches` の確認、`tests\track\05_status.expected.ndjson` に `watches` を追記。
+- 検証: `cargo test` 全体 10 回・`--test reconcile` 20 回・`--release -- --ignored` 1 回・`tools\track_verify.bat` 3 回・`check_rules.ps1` (0 error) すべて通過。selftest / replay_verify は `src\` を触らないので回していない。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `cargo` / `rustc` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、試験の前後で `git status` が同じ (作業ツリーは動いていない)、`Cargo.toml` / `Cargo.lock` / `schema\` に差分なし。planner が全体の `cargo test` を 2 回 (毎回 168 件、失敗なし)、`tools\build_track.bat Release` → `tools\track_verify.bat` を 1 回 (全シナリオ PASS) 実走。`mye_track bench plan --project .` はこのリポジトリで監視 76 本・fallback なし・計画 42 ms (監視は張らない)。
+  - 実測 A の前後 (負荷ありで `gap` 8〜21 件 → 12 回すべて 0 件) は coder の実測と performance.md §8 による。planner は再実行していない。
+  - 第 2 の手 (自前の `ReadDirectoryChangesW`) を入れなかった判断は採る。sub-22.md が「突き止められなければ第 1 の手だけで閉じてよい」としており、実測 B は 36 回 0 件で、入れる根拠になる取りこぼしを再現できていない。受け入れ条件 7 は対象外。
+  - 追加 (`bench load` / `bench plan`、付け替えの間隔の下限、付け直しの後の検証の走査、`05_status` の期待値) は採る。
+  - 質問への回答: (1) 第 2 の手は今は入れない。1 つのディレクトリへの一括作成で取りこぼしを再現できる条件が見つかった時点で再検討する (検証の走査と D35 が最後の守り)。(2) 200 ms / 8 倍 / 256 本は初期値でよい。数万ディレクトリでの計画づくりの時間は sub-19 の計測の項目に足す。(3) そのとおり。このサブが解いたのは洪水との取り合いで、一括作成の取りこぼしではない。
+  - nit: `C:\HAL\MyEngin\plans\m104-ai-change-tracking.md` 25 行目 (M104g の行) の `tools\track` がタブに化けている (sub-06 の時の書き込み)。sub-07 が進捗表を更新するときに直す。

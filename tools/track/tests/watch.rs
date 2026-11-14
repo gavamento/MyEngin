@@ -990,3 +990,196 @@ fn single_saves_stay_complete_under_cpu_load() {
     assert_eq!(revisions(&db, "triple.txt")[0].completeness, "coalesced");
     tracker.stop("test");
 }
+
+/// 無視するディレクトリを含む所は非再帰、含まない子は再帰で見る (M104g2)。本数は `status` に出る。
+#[test]
+fn watches_are_split_around_ignored_directories() {
+    let mut fx = Fixture::new("split");
+    fx.write("bin/x.exe", b"x");
+    fx.write("assets/a.txt", b"a");
+    fx.write("src/s.txt", b"s");
+    fx.write("tools/p/src/p.txt", b"p");
+    fx.write("tools/p/target/t.bin", b"t");
+    fx.write("tools/q/src/q.txt", b"q");
+    let tracker = fx.start(fast_config());
+    // ルート (.mye と bin を含む) / assets / src / tools (target を含む親は非再帰) / tools/p / tools/p/src / tools/q (再帰)
+    let status = tracker.status();
+    assert_eq!(status.watch_count, 7, "{status:?}");
+    assert!(!status.watch_fallback);
+
+    // 無視する場所は記録されず、追跡する場所は全部記録される
+    fx.write("bin/y.exe", b"y");
+    fx.write("tools/p/target/u.bin", b"u");
+    let tracked = ["assets/a.txt", "src/s.txt", "tools/p/src/p.txt", "tools/q/src/q.txt", "root.txt", "tools/p/tools.txt", "tools/top.txt"];
+    for rel in tracked {
+        fx.write(rel, b"changed");
+    }
+    for rel in tracked {
+        wait_until(rel, WAIT_LIMIT, || fx.revision_count(rel) >= 1);
+    }
+    fx.settle("split");
+    assert_eq!(scalar(&fx.db(), "SELECT COUNT(*) FROM changes WHERE path LIKE 'bin/%' OR path LIKE '%/target/%'"), 0);
+    tracker.stop("test");
+}
+
+/// ルート直下のファイルの作成・変更・リネーム・削除が、ルートの非再帰の監視で記録される。
+#[test]
+fn root_level_files_are_recorded_by_the_non_recursive_root_watch() {
+    let mut fx = Fixture::new("rootfiles");
+    fx.write("bin/x.exe", b"x");
+    fx.write("src/keep.txt", b"keep");
+    let tracker = fx.start(fast_config());
+    assert_eq!(tracker.status().watch_count, 2, "ルート (非再帰) と src");
+
+    fx.write("r.txt", b"1");
+    wait_until("added", WAIT_LIMIT, || fx.revision_count("r.txt") == 1);
+    fx.write("r.txt", b"2 changed");
+    wait_until("modified", WAIT_LIMIT, || fx.revision_count("r.txt") == 2);
+    fx.rename("r.txt", "r2.txt");
+    wait_until("renamed", WAIT_LIMIT, || fx.revision_count("r2.txt") == 1);
+    assert_eq!(fx.revisions("r2.txt")[0].change_type, "renamed");
+    fx.remove("r2.txt");
+    wait_until("deleted", WAIT_LIMIT, || fx.revision_count("r2.txt") == 2);
+    assert_eq!(fx.revisions("r2.txt")[1].change_type, "deleted");
+    tracker.stop("test");
+}
+
+/// 最上位のディレクトリを後から作る・名前を変える・消す、のあとも、中のファイルの変更が全部記録される。
+/// 作った直後に書いたファイル (監視を張る前) も、突き合わせで拾われる。
+#[test]
+fn top_level_directories_created_renamed_and_removed_keep_being_watched() {
+    let mut fx = Fixture::new("toplevel");
+    fx.write("bin/x.exe", b"x");
+    fx.write("src/a.txt", b"a");
+    let tracker = fx.start(fast_config());
+    let base = tracker.status().watch_count;
+
+    // 作る: 作った直後から書く (監視を張る前の書き込みも拾う)
+    for i in 0..30 {
+        fx.write(&format!("fresh/f{i:02}.txt"), format!("v{i}").as_bytes());
+    }
+    for i in 0..30 {
+        let rel = format!("fresh/f{i:02}.txt");
+        wait_until(&rel, WAIT_LIMIT, || fx.revision_count(&rel) == 1);
+    }
+    wait_until("fresh を監視", WAIT_LIMIT, || tracker.status().watch_count == base + 1);
+    fx.write("fresh/late.txt", b"late");
+    wait_until("late", WAIT_LIMIT, || fx.revision_count("fresh/late.txt") == 1);
+
+    // 名前を変える: 新しい名前の下の変更が記録される (古い名前の監視は外れる)
+    fx.rename_dir("fresh", "renamed");
+    wait_until("renamed 配下", WAIT_LIMIT, || fx.revision_count("renamed/f00.txt") == 1);
+    wait_until("監視の付け替え", WAIT_LIMIT, || tracker.status().watch_count == base + 1);
+    fx.write("renamed/after_rename.txt", b"ar");
+    wait_until("after_rename", WAIT_LIMIT, || fx.revision_count("renamed/after_rename.txt") == 1);
+
+    // 消す: 監視が外れ、同じ名前で作り直しても記録される
+    fx.remove_dir("renamed");
+    wait_until("消えた", WAIT_LIMIT, || fx.revision_count("renamed/f00.txt") == 2);
+    wait_until("監視が外れる", WAIT_LIMIT, || tracker.status().watch_count == base);
+    fx.write("renamed/again.txt", b"again");
+    wait_until("again", WAIT_LIMIT, || fx.revision_count("renamed/again.txt") == 1);
+    fx.write("renamed/again2.txt", b"again2");
+    wait_until("again2", WAIT_LIMIT, || fx.revision_count("renamed/again2.txt") == 1);
+    fx.settle("toplevel");
+    tracker.stop("test");
+}
+
+/// `.gitignore` の書き換えで、無視する・しないが入れ替わったディレクトリの監視を付け替える。
+#[test]
+fn gitignore_changes_move_the_watches() {
+    let mut fx = Fixture::new("gitignore_watch");
+    fx.write(".gitignore", b"gen/\n");
+    fx.write("gen/old.txt", b"old");
+    fx.write("src/a.txt", b"a");
+    let tracker = fx.start(fast_config());
+    let ignored_count = tracker.status().watch_count; // ルート (.mye と gen を含む) + src
+    assert_eq!(ignored_count, 2);
+
+    fx.write("gen/ignored.txt", b"x");
+    fx.settle("g1");
+    assert_eq!(fx.revision_count("gen/ignored.txt"), 0);
+
+    // 無視をやめる: 既にあったファイルは突き合わせで、これから書くファイルは新しい監視で記録される
+    fx.write(".gitignore", b"# none\n");
+    wait_until("gen を監視", WAIT_LIMIT, || tracker.status().watch_count == ignored_count + 1);
+    wait_until("gen/old.txt", WAIT_LIMIT, || fx.revision_count("gen/old.txt") == 1);
+    fx.write("gen/new.txt", b"new");
+    wait_until("gen/new.txt", WAIT_LIMIT, || fx.revision_count("gen/new.txt") == 1);
+
+    // 無視へ戻す: 監視が分かれ直し、中の変更は記録されない
+    fx.write(".gitignore", b"gen/\n");
+    wait_until("gen を外す", WAIT_LIMIT, || tracker.status().watch_count == ignored_count);
+    fx.write("gen/again.txt", b"again");
+    fx.write("src/b.txt", b"b");
+    wait_until("src/b", WAIT_LIMIT, || fx.revision_count("src/b.txt") == 1);
+    fx.settle("g2");
+    assert_eq!(fx.revision_count("gen/again.txt"), 0);
+    tracker.stop("test");
+}
+
+/// 無視するディレクトリへの書き込みの洪水の最中でも、追跡対象の保存が全部通常の Revision になる
+/// (洪水のイベントが追跡対象と同じ OS のバッファを取り合わない)。実測 A の縮小版 (`mye_track bench flood`)。
+#[test]
+fn saves_during_a_flood_into_an_ignored_directory_are_never_gaps() {
+    let mut fx = Fixture::new("flood");
+    const SAVES: usize = 100;
+    for i in 0..SAVES {
+        fx.write(&format!("src/s{i:03}.txt"), b"v1");
+    }
+    fx.write("bin/seed.txt", b"x");
+    let tracker = fx.start(TrackerConfig {
+        verify_quiet: Duration::from_millis(200),
+        verify_interval: Duration::from_millis(300),
+        ..fast_config()
+    });
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let burners: Vec<_> = (0..cores)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut x = 1u64;
+                while !stop.load(Ordering::Relaxed) {
+                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    std::hint::black_box(x);
+                }
+            })
+        })
+        .collect();
+    let flooders: Vec<_> = (0..8)
+        .map(|t| {
+            let dir = fx.path(&format!("bin/t{t}"));
+            std::thread::spawn(move || {
+                fs::create_dir_all(&dir).unwrap();
+                for i in 0..1500 {
+                    fs::write(dir.join(format!("long_flood_file_name_{t}_{i:05}_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.bin")), b"x").unwrap();
+                }
+            })
+        })
+        .collect();
+    for i in 0..SAVES {
+        fs::write(fx.path(&format!("src/s{i:03}.txt")), format!("v2 {i}")).unwrap();
+        fx.model.insert(format!("src/s{i:03}.txt"), format!("v2 {i}").into_bytes());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    for f in flooders {
+        f.join().unwrap();
+    }
+    wait_until("all recorded", Duration::from_secs(120), || {
+        scalar(&fx.db(), "SELECT COUNT(DISTINCT change_id) FROM changes WHERE path LIKE 'src/%'") >= SAVES as i64
+    });
+    stop.store(true, Ordering::Relaxed);
+    for b in burners {
+        b.join().unwrap();
+    }
+    let runs = tracker.status().verify_runs;
+    wait_until("scans", WAIT_LIMIT, || tracker.status().verify_runs >= runs + 2);
+    let db = fx.db();
+    assert_eq!(scalar(&db, "SELECT COUNT(*) FROM change_revisions WHERE completeness = 'gap'"), 0, "洪水が追跡対象の取りこぼしになった");
+    assert_eq!(scalar(&db, "SELECT COUNT(*) FROM coverage_gaps WHERE reason = 'watcher_overflow'"), 0);
+    assert_eq!(scalar(&db, "SELECT COUNT(*) FROM changes WHERE path LIKE 'bin/%'"), 0);
+    tracker.stop("test");
+    fs::remove_dir_all(fx.path("bin")).unwrap();
+    fx.model.retain(|k, _| !k.starts_with("bin/"));
+}

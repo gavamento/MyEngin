@@ -67,7 +67,8 @@
 - `C:\HAL\MyEngin\docs\adr\ADR-032-engine-mcp-server.md` と `C:\HAL\MyEngin\docs\mcp-server.md`: 「道具は 5 つ」→ 10、子プロセスの起動とファイルを開く許可表に `track_client.rs`。**それ以外の行は変えない** (spec §2 D19。`verify_job` の「22 ジョブ」の誤記は直さない)。
 - `C:\HAL\MyEngin\docs\ai-change-tracking\ipc-contract.md` §8、§9.5: `MYE_TRACK_EXE` の意味、MCP のクライアントの作法。
 - `C:\HAL\MyEngin\docs\test_checklists.md`: 受け入れ条件 12 の手順 (本物の Claude Code から MCP 経由でサービスを起動させ、Claude Code を終了した後に `mye_track.exe` が生きているかを `Get-Process` と `service.json` で見る)。
-- `C:\HAL\MyEngin\plans\m104-ai-change-tracking.md`: 進捗表、「実装時に直す既存のもの」の結果。
+- `C:\HAL\MyEngin\plans\m104-ai-change-tracking.md`: 進捗表、「実装時に直す既存のもの」の結果。25 行目 (M104g の行) で `tools\track` の `\t` がタブに化けているのを直す (sub-22 の VERDICT の nit)。
+- sub-22 の結果: `status` の結果に `watches` (`count` / `fallback`) が増えた。`status` の期待値を持つシナリオを足すときは含める。
 - `.mcp.json` は変えない (引数なし = リポジトリのルートがプロジェクトになる。A の 1)。
 
 ## やらないこと (このサブでは)

@@ -3,7 +3,7 @@
 //! `notify` のイベントをパスごとにデバウンスし、flush の時点で `Collector` が内容を見て観測にする。
 //! 起動時はベースライン (最初の起動) か、停止していた間の突き合わせ (2 回目以降) を行う。
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -18,9 +18,10 @@ use serde_json::json;
 use crate::baseline::{load_from_db, LoadedState};
 use crate::collector::{Collector, Deferred, DueItem, ManagedFlush, ScanProgress, ScanTimings, TrackerConfig};
 use crate::db::now_ms;
-use crate::ignore::under_always_ignored_dir;
+use crate::ignore::{under_always_ignored_dir, ALWAYS_IGNORED_DIR_NAMES};
 use crate::observe::{record_gap, Source};
 use crate::store::Store;
+use crate::watch_plan::{plan as plan_watches, MAX_WATCHES};
 use crate::writer::Writer;
 
 /// 管理された操作が、監視スレッドへ「このパスを今すぐ読んで」と頼む要求。
@@ -122,6 +123,10 @@ pub struct TrackerStatus {
     pub last_record_us: u64,
     /// 直近の検証の走査の前半だけの所要時間 (ミリ秒)。0 = まだ走らせていない。
     pub verify_scan_ms: u64,
+    /// いま張っている OS の監視の本数。
+    pub watch_count: usize,
+    /// 監視を分けた結果が上限を超え、ルートの再帰 1 本へ戻している。
+    pub watch_fallback: bool,
 }
 
 /// `status` を読むだけの取っ手。Tracker の所有権を持たずに複製できる (接続のスレッドが持つ)。
@@ -191,6 +196,8 @@ impl Tracker {
                 tracked_files: 0,
                 last_record_us: 0,
                 verify_scan_ms: 0,
+                watch_count: 0,
+                watch_fallback: false,
             }),
             changed: Condvar::new(),
         });
@@ -229,6 +236,10 @@ impl Tracker {
                 verify_wanted: false,
                 published_unrecorded: None,
                 published_tracked: 0,
+                watched: BTreeMap::new(),
+                replan_wanted: false,
+                last_plan: Instant::now(),
+                plan_cost: Duration::ZERO,
             };
             let tx_watcher = tx.clone();
             std::thread::Builder::new()
@@ -398,6 +409,32 @@ struct WatchLoop {
     verify_wanted: bool,
     published_unrecorded: Option<(i64, &'static str)>,
     published_tracked: usize,
+    /// 張っている OS の監視 (ルートからの相対 → 再帰か)。`watch_plan` の計画に合わせて付け替える。
+    watched: BTreeMap<String, bool>,
+    /// 監視の付け替えが要るかもしれない (ディレクトリの出入り、`.gitignore` の変更)。
+    replan_wanted: bool,
+    last_plan: Instant,
+    /// 直近の計画づくり (ディレクトリの走査) の所要時間。次の計画までの間隔の下限に使う。
+    plan_cost: Duration,
+}
+
+/// 監視の付け替えの最短の間隔。ディレクトリが大量に作られる間、毎回は走査しない。
+const REPLAN_MIN_INTERVAL: Duration = Duration::from_millis(200);
+/// 計画づくりに掛かった時間のこの倍数は次の計画まで空ける (走査が監視スレッドを占有しすぎないように)。
+const REPLAN_COST_FACTOR: u32 = 8;
+
+/// `rel` が `base` の下 (または同じ)。`base` が "" ならルート (全部の下)。
+fn is_under_rel(rel: &str, base: &str) -> bool {
+    base.is_empty() || rel == base || rel.strip_prefix(base).is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// `root` + 相対パス ('/' 区切り。"" はルート自身)。
+fn join_rel(root: &Path, rel: &str) -> PathBuf {
+    if rel.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel)
+    }
 }
 
 /// `root` からの相対パス ('/' 区切り、元の大文字小文字のまま)。外にある、またはルート自身なら None。
@@ -481,6 +518,7 @@ impl WatchLoop {
     /// 走査はデバウンス中のパスが無く、イベントが静かなときだけ行う (処理待ちの変更を `gap` にしないため)。
     fn maintenance(&mut self, rx: &Receiver<Stamped>) {
         let now = Instant::now();
+        self.replan_if_due();
         let tracked = self.collector.baseline.files.len();
         if tracked != self.published_tracked {
             self.published_tracked = tracked;
@@ -601,13 +639,13 @@ impl WatchLoop {
             })
             .map_err(|e| e.to_string())?;
 
-        let mut watcher: RecommendedWatcher =
+        let watcher: RecommendedWatcher =
             notify::recommended_watcher(move |res| {
                 let _ = tx_watcher.send((Instant::now(), res));
             })
             .map_err(|e| format!("監視を作れない: {e}"))?;
-        watcher.watch(&self.root, RecursiveMode::Recursive).map_err(|e| format!("監視を始められない: {e}"))?;
         self.watcher = Some(watcher);
+        self.apply_watch_plan(false)?;
 
         let stats = if loaded.had_baseline {
             self.collector.baseline.files = loaded.files;
@@ -668,6 +706,9 @@ impl WatchLoop {
         if under_always_ignored_dir(&rel) {
             return None;
         }
+        if self.may_change_watch_plan(&rel, path, structural) {
+            self.replan_wanted = true;
+        }
         let burst_gap = self.cfg.burst_gap;
         if now.saturating_duration_since(self.window_last_event) > self.cfg.debounce {
             self.window = self.collector.new_window();
@@ -683,6 +724,106 @@ impl WatchLoop {
         p.structural |= structural;
         p.retry_at = None;
         Some(rel)
+    }
+
+    /// このイベントで、監視の分け方が変わりうるか。`.gitignore` は書き込みでも対象。そのほかは構造の変更
+    /// (ディレクトリの作成・名前変更・削除、無視する名前) だけ (ファイルの作成の洪水では、安い問い合わせで False になる)。
+    fn may_change_watch_plan(&self, rel: &str, path: &Path, structural: bool) -> bool {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        if name.eq_ignore_ascii_case(".gitignore") {
+            return true;
+        }
+        structural
+            && (ALWAYS_IGNORED_DIR_NAMES.iter().any(|n| name.eq_ignore_ascii_case(n))
+                || self.watched.contains_key(rel)
+                || std::fs::symlink_metadata(path).map(|m| m.is_dir()).unwrap_or(false))
+    }
+
+    /// 監視の分け方を作り直す時刻が来ていれば、付け替える。
+    fn replan_if_due(&mut self) {
+        if !self.replan_wanted {
+            return;
+        }
+        let wait = REPLAN_MIN_INTERVAL.max(self.plan_cost * REPLAN_COST_FACTOR);
+        if self.last_plan.elapsed() < wait {
+            return;
+        }
+        self.replan_wanted = false;
+        // ルートの監視は起動で張れている。付け替えの失敗は、その子の監視が無いだけ (検証の走査が拾う)
+        if let Err(e) = self.apply_watch_plan(true) {
+            eprintln!("[track] 監視の付け替えに失敗: {e}");
+        }
+    }
+
+    /// 計画に合わせて OS の監視を足す・外す。`replan` が真なら、新しく見るようになったディレクトリの中を
+    /// 突き合わせに回す (足す前に起きた変更は監視に見えないため。起動時はベースラインが受け持つ)。
+    /// 見え方が変わる間に変更を落とさないよう、足すのを先にし、外すのを最後にする。
+    /// ルート自身の監視に失敗したら Err (起動なら監視を始められない)。
+    fn apply_watch_plan(&mut self, replan: bool) -> Result<(), String> {
+        let started = Instant::now();
+        let plan = plan_watches(&self.root, MAX_WATCHES);
+        let Some(watcher) = self.watcher.as_mut() else { return Err("監視を作れていない".into()) };
+        let before = self.watched.clone();
+        let mut uncovered: Vec<PathBuf> = Vec::new();
+        let mut remounted = false;
+        let watch_one = |watcher: &mut RecommendedWatcher, rel: &str, recursive: bool, watched: &mut BTreeMap<String, bool>| {
+            let path = join_rel(&self.root, rel);
+            let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+            match watcher.watch(&path, mode) {
+                Ok(()) => {
+                    watched.insert(rel.to_string(), recursive);
+                    Ok(path)
+                }
+                Err(e) if rel.is_empty() => Err(format!("監視を始められない: {e}")),
+                Err(e) => {
+                    eprintln!("[track] 監視を張れない: {rel}: {e}");
+                    Ok(PathBuf::new())
+                }
+            }
+        };
+        // 1. 新しく見るパスを足す
+        for (rel, recursive) in &plan.entries {
+            if before.contains_key(rel) {
+                continue;
+            }
+            let path = watch_one(watcher, rel, *recursive, &mut self.watched)?;
+            // 前から再帰の監視の下にあったパスは、足す前の変更も既に見えていた
+            let covered = before.iter().any(|(k, rec)| *rec && is_under_rel(rel, k));
+            if !path.as_os_str().is_empty() && !covered {
+                uncovered.push(path);
+            }
+        }
+        // 2. 再帰か非再帰かが変わるパスは付け直す (張り直す一瞬の変更は検証の走査が拾う)
+        for (rel, recursive) in &plan.entries {
+            if before.get(rel).is_some_and(|old| old != recursive) {
+                self.watched.remove(rel);
+                let _ = watcher.unwatch(&join_rel(&self.root, rel));
+                watch_one(watcher, rel, *recursive, &mut self.watched)?;
+                remounted = true;
+            }
+        }
+        // 3. 計画に無くなったパスを外す
+        for rel in before.keys().filter(|rel| !plan.entries.contains_key(*rel)) {
+            self.watched.remove(rel);
+            let _ = watcher.unwatch(&join_rel(&self.root, rel));
+        }
+        let (count, fallback) = (self.watched.len(), plan.fallback);
+        self.shared.update(|s| {
+            s.watch_count = count;
+            s.watch_fallback = fallback;
+        });
+        self.plan_cost = started.elapsed();
+        self.last_plan = Instant::now();
+        if replan {
+            let now = Instant::now();
+            for path in uncovered {
+                self.touch(&path, true, false, now);
+            }
+            // 足したディレクトリ自身の touch で、計画のやり直しを呼び直さない
+            self.replan_wanted = false;
+            self.verify_wanted |= remounted;
+        }
+        Ok(())
     }
 
     fn link_rename(&mut self, from: &str, to: &str) {
