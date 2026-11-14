@@ -1,9 +1,11 @@
 //! Blob ストア (db-schema.md §4)。内容アドレス・原本そのまま・検証してから確定。
 
 use std::fmt;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use crate::hash::sha256_hex;
 
@@ -63,16 +65,43 @@ impl From<io::Error> for BlobError {
 /// 一時ファイル名を衝突させない連番。
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// `put` の所要時間の内訳 (ナノ秒の累計)。計測用 (`mye_track bench`) で、記録の判断には使わない。
+#[derive(Default)]
+pub struct BlobStats {
+    pub puts: AtomicU64,
+    /// 同じ内容が既にあって書かなかった数。
+    pub existed: AtomicU64,
+    pub hash_ns: AtomicU64,
+    pub existence_check_ns: AtomicU64,
+    pub ensure_dir_ns: AtomicU64,
+    pub create_write_ns: AtomicU64,
+    pub verify_ns: AtomicU64,
+    pub rename_ns: AtomicU64,
+}
+
+fn add_elapsed(counter: &AtomicU64, since: Instant) {
+    counter.fetch_add(since.elapsed().as_nanos() as u64, Ordering::Relaxed);
+}
+
+/// ハンドルを先頭へ戻して全部読む (既定の読み直し)。
+pub fn read_from_start(file: &mut File) -> io::Result<Vec<u8>> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 pub struct BlobStore {
     root: PathBuf,
     exclude_patterns: Vec<String>,
-    /// 書いた後の読み直しの口。テストが差し替えて検証失敗を作る。
-    pub read_back: fn(&Path) -> io::Result<Vec<u8>>,
+    pub stats: BlobStats,
+    /// 書いた後の読み直しの口 (書いたときのハンドルを渡す)。テストが差し替えて検証失敗を作る。
+    pub read_back: fn(&mut File) -> io::Result<Vec<u8>>,
 }
 
 impl BlobStore {
     pub fn new(root: PathBuf, exclude_patterns: Vec<String>) -> Self {
-        BlobStore { root, exclude_patterns, read_back: |p| std::fs::read(p) }
+        BlobStore { root, exclude_patterns, stats: BlobStats::default(), read_back: read_from_start }
     }
 
     /// 既定の除外パターンで作る。
@@ -94,20 +123,36 @@ impl BlobStore {
     /// 内容を保存する。除外パスなら保存しない。書いた後に読み直して検証し、
     /// 合ったときだけ最終名へ rename する (一時ファイルは失敗時に消す)。
     pub fn put(&self, rel_path: &str, bytes: &[u8]) -> Result<PutOutcome, BlobError> {
+        let started = Instant::now();
+        let hash = sha256_hex(bytes);
+        add_elapsed(&self.stats.hash_ns, started);
+        self.put_hashed(rel_path, bytes, &hash)
+    }
+
+    /// 呼び出し側が内容のハッシュを持っているときの `put` (二度目の計算を省く)。
+    /// `hash` が内容と違えば、読み直しの検証で失敗する (最終名へは確定しない)。
+    pub fn put_hashed(&self, rel_path: &str, bytes: &[u8], hash: &str) -> Result<PutOutcome, BlobError> {
         let size = bytes.len() as u64;
         if self.is_excluded(rel_path) {
             return Ok(PutOutcome::Excluded { size });
         }
-        let hash = sha256_hex(bytes);
+        self.stats.puts.fetch_add(1, Ordering::Relaxed);
+        let hash = hash.to_string();
         let final_path = self.path_for_hash(&hash);
         // 同じ名前のファイルがあっても、大きさが違えば途中で壊れた残りなので書き直す
-        if let Ok(meta) = std::fs::metadata(&final_path) {
+        let checked = Instant::now();
+        let found = std::fs::metadata(&final_path);
+        add_elapsed(&self.stats.existence_check_ns, checked);
+        if let Ok(meta) = found {
             if meta.len() == size {
+                self.stats.existed.fetch_add(1, Ordering::Relaxed);
                 return Ok(PutOutcome::Stored { hash, size, existed: true });
             }
         }
         let dir = final_path.parent().expect("blob path has a parent");
+        let started = Instant::now();
         std::fs::create_dir_all(dir)?;
+        add_elapsed(&self.stats.ensure_dir_ns, started);
         let temp_path = dir.join(format!(
             ".tmp-{}-{}",
             std::process::id(),
@@ -121,19 +166,26 @@ impl BlobStore {
         Ok(PutOutcome::Stored { hash, size, existed: false })
     }
 
+    // `sync_all` はしない (1 件ごとの sync_all が一括記録の所要時間の過半を占める)。
+    // 代わりに起動時、直近に書いた Blob の中身を確かめる (startup.rs の verify_recent_blobs)。
+    // 読み直しは書いたハンドルで行う: 閉じて開き直すと、書いたばかりのファイルを OS のスキャンが
+    // 開き直しの時点で検査し、読み直しが書き込みより遅くなる。
     fn write_verified(&self, temp: &Path, final_path: &Path, bytes: &[u8], hash: &str) -> Result<(), BlobError> {
-        {
-            use std::io::Write;
-            let mut f = std::fs::File::create(temp)?;
-            f.write_all(bytes)?;
-            f.sync_all()?;
-        }
-        let actual = sha256_hex(&(self.read_back)(temp)?);
+        let started = Instant::now();
+        let mut file = File::options().read(true).write(true).create(true).truncate(true).open(temp)?;
+        file.write_all(bytes)?;
+        add_elapsed(&self.stats.create_write_ns, started);
+        let started = Instant::now();
+        let actual = sha256_hex(&(self.read_back)(&mut file)?);
+        add_elapsed(&self.stats.verify_ns, started);
+        drop(file);
         if actual != hash {
             return Err(BlobError::VerifyFailed { expected: hash.to_string(), actual });
         }
         // Windows の rename は既存の最終名を置き換える (同じ内容の競合は無害)
+        let started = Instant::now();
         std::fs::rename(temp, final_path)?;
+        add_elapsed(&self.stats.rename_ns, started);
         Ok(())
     }
 }

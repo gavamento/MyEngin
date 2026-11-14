@@ -179,7 +179,7 @@ CREATE TABLE coverage_gaps (
   gap_id     INTEGER PRIMARY KEY,
   from_at    INTEGER NOT NULL,
   to_at      INTEGER NOT NULL,
-  reason     TEXT NOT NULL,                     -- service_down / watcher_overflow / disk_full / queue_overflow / excluded / journal_unreadable
+  reason     TEXT NOT NULL,                     -- service_down / watcher_overflow / disk_full / queue_overflow / write_failed / excluded / journal_unreadable
   scope      TEXT                               -- 影響したパス (全体なら NULL)
 );
 
@@ -211,7 +211,8 @@ CREATE TABLE events (
 
 - 名前は内容の SHA-256 (hex)。同じ内容は 1 つしか持たない。
 - 中身はファイルのバイト列そのまま。改行も BOM も変えない。圧縮はしない (版 1。容量が問題になったら計測してから決める)。
-- 書き込みは「一時ファイルへ書く → 読み直してハッシュを確かめる → 最終名へ rename」。確かめてから `snapshots` に行を足す (仕様書 §13.3)。
+- 書き込みは「一時ファイルへ書く → 読み直してハッシュを確かめる → 最終名へ rename」。確かめてから `snapshots` に行を足す (仕様書 §13.3)。読み直しは書いたハンドルで行う (閉じて開き直すと、書いたばかりのファイルを OS のスキャンが開き直しの時点で検査して遅い。[performance.md](performance.md))。
+- **1 件ごとの `sync_all` はしない** (M104d2。一括記録の所要時間の過半を占めた。[performance.md](performance.md))。電源断で起こりうること: 最終名のまま、大きさは合っているが中身が欠けた Blob が残る。放っておくと、同じ内容の `put` が「あった」(大きさだけで判断) と見て書き直さず、その内容の Revision が壊れた Blob を指し続ける。見つけ方は §6 の 3 の前段 (起動時に、前回の最後のイベントの 10 分前から後に書かれた Blob を読み直してハッシュを確かめ、違えば消して `blob_state = missing` にする)。**限界**: 10 分より前に書かれた Blob は確かめない (OS が書き戻し済みとみなす)。`snapshots` の行 (SQLite、`synchronous = NORMAL`) とジャーナル (`flush` だけ) も `sync` しないので、電源断で直近の記録そのものが失われうるのは今までと同じ。
 - 構造比較のための解析結果 (シーン JSON を読んだもの) は Blob に入れない。`scene_changes` が結果で、原本はいつでも Blob から読み直せる。
 - 除外パターンに当たるファイルは `blob_hash = NULL`、`blob_state = excluded` で、サイズと時刻だけを残す。
 
@@ -235,7 +236,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 | `service_stop` | `reason` (`stdin_eof` / `signal` / `dropped` ...) |
 | `baseline` | `taken_at`、`files[]` = `{path, hash, size, kind, excluded}` (最初の起動のベースライン。500 件ごとに 1 イベント) |
 | `baseline_complete` | `files`、`tracked_files`、`bytes`、`changes`、`elapsed_ms`、`first_run`。これがあれば「ベースラインを取り終えた」 |
-| `observed` | `path`、`change_type`、`old_path`、`before` / `after` = `{hash, size, kind[, excluded]}` または null、`completeness`、`source` (`watch` / `startup_gap` / `overflow_gap`)、`window`、`observed_at` |
+| `observed` | `path`、`change_type`、`old_path`、`before` / `after` = `{hash, size, kind[, excluded]}` または null、`completeness`、`source` (`watch` / `startup_gap` / `overflow_gap` / `verify_gap`)、`window`、`observed_at` |
 | `coverage_gap` | `reason`、`from_at`、`to_at`、`scope` |
 
 - 除外パターンのファイルは `hash` を null にする (ハッシュも残さない)。`excluded: true`。
@@ -248,7 +249,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
    退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。
-3. `snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする。
+3. (前段) 前回の最後のイベントの 10 分前から後に書かれた Blob を読み、ハッシュが名前と違えば消す (§4)。続けて、`snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする (前段で消したものを含む)。
 4. どの `snapshots` からも指されていない Blob を数える。消すのは §7 の回収のときだけで、起動時には消さない。
 5. `sessions.status = running` のまま残っている行を、プロセスの生死 (PID と開始時刻) で確かめ、居なければ `interrupted` にする。
    PID が記録されていない行も `interrupted` にする (生死を確かめられない)。プロセスの同一性は PID と開始時刻 (誤差 2 秒) の組。

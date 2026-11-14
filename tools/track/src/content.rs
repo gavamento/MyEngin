@@ -13,7 +13,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION};
 use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE};
@@ -32,7 +32,8 @@ pub enum ReadOutcome {
     /// 他のプロセスが共有なしで開いていて、読めない。後でやり直す。
     Busy,
     /// `coalesced` = 読み取りが安定せず、途中の内容の可能性がある。
-    Content { bytes: Vec<u8>, coalesced: bool },
+    /// `modified` = 読み終えた時点の更新時刻 (ベースラインの検証の走査が、読まずに済ませる判断に使う)。
+    Content { bytes: Vec<u8>, coalesced: bool, modified: Option<SystemTime> },
     Failed(io::Error),
 }
 
@@ -42,6 +43,15 @@ pub enum LenOutcome {
     NotFile,
     Busy,
     Len(u64),
+    Failed(io::Error),
+}
+
+#[derive(Debug)]
+pub enum StatOutcome {
+    Missing,
+    NotFile,
+    Busy,
+    Stat { len: u64, modified: Option<SystemTime> },
     Failed(io::Error),
 }
 
@@ -77,23 +87,34 @@ fn open_shared(path: &Path) -> Result<File, ReadOutcome> {
     })
 }
 
-/// 開いているハンドルの現在の大きさ (パスからの問い合わせと違い、書き手が書いた分が見える)。
-pub fn peek_len(path: &Path) -> LenOutcome {
+/// 開いているハンドルの現在の大きさと更新時刻 (パスからの問い合わせと違い、書き手が書いた分が見える)。
+pub fn peek_stat(path: &Path) -> StatOutcome {
     match check_regular(path) {
-        Some(ReadOutcome::NotFile) => return LenOutcome::NotFile,
-        Some(ReadOutcome::Missing) => return LenOutcome::Missing,
-        Some(ReadOutcome::Failed(e)) => return LenOutcome::Failed(e),
+        Some(ReadOutcome::NotFile) => return StatOutcome::NotFile,
+        Some(ReadOutcome::Missing) => return StatOutcome::Missing,
+        Some(ReadOutcome::Failed(e)) => return StatOutcome::Failed(e),
         _ => {}
     }
     match open_shared(path) {
         Ok(file) => match file.metadata() {
-            Ok(m) => LenOutcome::Len(m.len()),
-            Err(e) => LenOutcome::Failed(e),
+            Ok(m) => StatOutcome::Stat { len: m.len(), modified: m.modified().ok() },
+            Err(e) => StatOutcome::Failed(e),
         },
-        Err(ReadOutcome::Missing) => LenOutcome::Missing,
-        Err(ReadOutcome::Busy) => LenOutcome::Busy,
-        Err(ReadOutcome::Failed(e)) => LenOutcome::Failed(e),
+        Err(ReadOutcome::Missing) => StatOutcome::Missing,
+        Err(ReadOutcome::Busy) => StatOutcome::Busy,
+        Err(ReadOutcome::Failed(e)) => StatOutcome::Failed(e),
         Err(_) => unreachable!("open_shared は Missing / Busy / Failed だけ返す"),
+    }
+}
+
+/// 開いているハンドルの現在の大きさ。
+pub fn peek_len(path: &Path) -> LenOutcome {
+    match peek_stat(path) {
+        StatOutcome::Missing => LenOutcome::Missing,
+        StatOutcome::NotFile => LenOutcome::NotFile,
+        StatOutcome::Busy => LenOutcome::Busy,
+        StatOutcome::Stat { len, .. } => LenOutcome::Len(len),
+        StatOutcome::Failed(e) => LenOutcome::Failed(e),
     }
 }
 
@@ -103,6 +124,7 @@ pub fn read_stable(path: &Path, stable_attempts: u32) -> ReadOutcome {
         return outcome;
     }
     let mut last: Vec<u8> = Vec::new();
+    let mut last_modified: Option<SystemTime> = None;
     for attempt in 0..stable_attempts.max(1) {
         if attempt > 0 {
             std::thread::sleep(REREAD_PAUSE);
@@ -127,11 +149,12 @@ pub fn read_stable(path: &Path, stable_attempts: u32) -> ReadOutcome {
             && before.modified().ok() == after.modified().ok()
             && bytes.len() as u64 == after.len();
         if stable {
-            return ReadOutcome::Content { bytes, coalesced: false };
+            return ReadOutcome::Content { bytes, coalesced: false, modified: after.modified().ok() };
         }
         last = bytes;
+        last_modified = after.modified().ok();
     }
-    ReadOutcome::Content { bytes: last, coalesced: true }
+    ReadOutcome::Content { bytes: last, coalesced: true, modified: last_modified }
 }
 
 #[cfg(test)]

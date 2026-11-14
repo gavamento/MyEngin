@@ -5,11 +5,14 @@
 //! パス・種別・Before / After のハッシュとサイズ・completeness・観測時刻を入れる (spec §2 D26)。
 //! イベントに無い情報を派生の表だけに書かない。
 
+use std::time::SystemTime;
+
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 
 use crate::baseline::{ContentKind, FileState};
-use crate::store::Store;
+use crate::blob::BlobError;
+use crate::store::{Store, StoreError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChangeType {
@@ -56,6 +59,8 @@ pub enum Source {
     Watch,
     StartupGap,
     OverflowGap,
+    /// 検証の走査 (取りこぼしの検出、記録に失敗した後の突き合わせ)。
+    VerifyGap,
 }
 
 impl Source {
@@ -64,6 +69,7 @@ impl Source {
             Source::Watch => "watch",
             Source::StartupGap => "startup_gap",
             Source::OverflowGap => "overflow_gap",
+            Source::VerifyGap => "verify_gap",
         }
     }
     pub fn is_gap(self) -> bool {
@@ -75,6 +81,33 @@ pub struct AfterContent {
     pub bytes: Vec<u8>,
     pub hash: String,
     pub kind: ContentKind,
+    pub modified: Option<SystemTime>,
+}
+
+/// 記録できなかった理由。`reason` は `coverage_gaps.reason` に入る値 (`disk_full` / `write_failed`)。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordFailure {
+    pub reason: &'static str,
+    pub detail: String,
+}
+
+pub const GAP_DISK_FULL: &str = "disk_full";
+pub const GAP_WRITE_FAILED: &str = "write_failed";
+
+fn io_disk_full(e: &std::io::Error) -> bool {
+    // 112 = ERROR_DISK_FULL、39 = ERROR_HANDLE_DISK_FULL
+    matches!(e.raw_os_error(), Some(112) | Some(39)) || e.kind() == std::io::ErrorKind::StorageFull
+}
+
+impl RecordFailure {
+    pub fn from_store(e: &StoreError) -> Self {
+        let full = match e {
+            StoreError::Io(io) | StoreError::Blob(BlobError::Io(io)) => io_disk_full(io),
+            StoreError::Sqlite(rusqlite::Error::SqliteFailure(f, _)) => f.code == rusqlite::ErrorCode::DiskFull,
+            _ => false,
+        };
+        RecordFailure { reason: if full { GAP_DISK_FULL } else { GAP_WRITE_FAILED }, detail: e.to_string() }
+    }
 }
 
 /// 1 ファイルの 1 回の変更の観測。
@@ -100,6 +133,7 @@ pub struct BaselineEntry {
     pub bytes: Vec<u8>,
     pub hash: String,
     pub kind: ContentKind,
+    pub modified: Option<SystemTime>,
 }
 
 /// 書き込みの塊を 1 トランザクションにする。panic で開いたまま残っていたら先に戻す。
@@ -114,7 +148,9 @@ fn begin(store: &Store) -> bool {
 fn commit(store: &Store) {
     if let Some(conn) = store.conn.as_ref() {
         if !conn.is_autocommit() {
+            let started = std::time::Instant::now();
             let _ = conn.execute_batch("COMMIT");
+            store.stats.tx_commit_ns.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -137,7 +173,10 @@ fn after_json(after: &AfterContent, excluded: bool) -> Value {
 }
 
 /// 観測を記録して、各観測のあとの状態 (削除なら None) を返す。Err は記録できなかった (状態を進めない)。
-pub fn apply_observations(store: &mut Store, observations: Vec<Observation>) -> Vec<Result<Option<FileState>, String>> {
+pub fn apply_observations(
+    store: &mut Store,
+    observations: Vec<Observation>,
+) -> Vec<Result<Option<FileState>, RecordFailure>> {
     let in_tx = begin(store);
     let results = observations.into_iter().map(|o| apply_one(store, o)).collect();
     if in_tx {
@@ -146,7 +185,7 @@ pub fn apply_observations(store: &mut Store, observations: Vec<Observation>) -> 
     results
 }
 
-fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, String> {
+fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, RecordFailure> {
     let excluded = o.after.is_some() && store.blobs.is_excluded(&o.path);
     let payload = json!({
         "path": o.path,
@@ -160,26 +199,23 @@ fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, Str
         "observed_at": o.observed_at,
     });
     // 先にジャーナルへ。これが失敗したら観測は無かったことにして呼び出し側へ返す
-    store.record_event(o.observed_at, "observed", payload).map_err(|e| e.to_string())?;
+    store.record_event(o.observed_at, "observed", payload).map_err(|e| RecordFailure::from_store(&e))?;
 
     let after_state = match &o.after {
         Some(a) => {
+            // スナップショットを残せなければ Revision だけ残さない: 状態を進めず、呼び出し側が欠落として扱う
             let (snapshot_id, blob_hash) = match store.conn {
-                Some(_) => match store.record_snapshot(&o.path, "disk", o.observed_at, &a.bytes) {
-                    Ok(id) => (Some(id), (!excluded).then(|| a.hash.clone())),
-                    Err(e) => {
-                        eprintln!("[track] スナップショットを残せない: {}: {e}", o.path);
-                        (None, None)
-                    }
-                },
+                Some(_) => {
+                    let id = store
+                        .record_snapshot_hashed(&o.path, "disk", o.observed_at, &a.bytes, &a.hash)
+                        .map_err(|e| RecordFailure::from_store(&e))?;
+                    (Some(id), (!excluded).then(|| a.hash.clone()))
+                }
                 // DB へ書けないときも Blob は残す (次に書ける状態で起動したとき Before になる)
-                None => match store.blobs.put(&o.path, &a.bytes) {
-                    Ok(_) => (None, (!excluded).then(|| a.hash.clone())),
-                    Err(e) => {
-                        eprintln!("[track] Blob を残せない: {}: {e}", o.path);
-                        (None, None)
-                    }
-                },
+                None => {
+                    store.blobs.put_hashed(&o.path, &a.bytes, &a.hash).map_err(|e| RecordFailure::from_store(&StoreError::Blob(e)))?;
+                    (None, (!excluded).then(|| a.hash.clone()))
+                }
             };
             Some(FileState {
                 hash: Some(a.hash.clone()),
@@ -187,15 +223,14 @@ fn apply_one(store: &mut Store, o: Observation) -> Result<Option<FileState>, Str
                 snapshot_id,
                 blob_hash,
                 kind: Some(a.kind),
+                modified: a.modified,
             })
         }
         None => None,
     };
 
     if store.conn.is_some() {
-        if let Err(e) = insert_revision(store, &o, after_state.as_ref()) {
-            eprintln!("[track] Revision を残せない: {}: {e}", o.path);
-        }
+        insert_revision(store, &o, after_state.as_ref()).map_err(|e| RecordFailure::from_store(&StoreError::Sqlite(e)))?;
     }
     Ok(after_state)
 }
@@ -265,14 +300,14 @@ pub fn record_baseline(store: &mut Store, entries: Vec<BaselineEntry>, taken_at:
         .map(|e| {
             let excluded = store.blobs.is_excluded(&e.path);
             let (snapshot_id, blob_hash) = match store.conn {
-                Some(_) => match store.record_snapshot(&e.path, "baseline", taken_at, &e.bytes) {
+                Some(_) => match store.record_snapshot_hashed(&e.path, "baseline", taken_at, &e.bytes, &e.hash) {
                     Ok(id) => (Some(id), (!excluded).then(|| e.hash.clone())),
                     Err(err) => {
                         eprintln!("[track] ベースラインを残せない: {}: {err}", e.path);
                         (None, None)
                     }
                 },
-                None => match store.blobs.put(&e.path, &e.bytes) {
+                None => match store.blobs.put_hashed(&e.path, &e.bytes, &e.hash) {
                     Ok(_) => (None, (!excluded).then(|| e.hash.clone())),
                     Err(err) => {
                         eprintln!("[track] Blob を残せない: {}: {err}", e.path);
@@ -286,6 +321,7 @@ pub fn record_baseline(store: &mut Store, entries: Vec<BaselineEntry>, taken_at:
                 snapshot_id,
                 blob_hash,
                 kind: Some(e.kind),
+                modified: e.modified,
             })
         })
         .collect();

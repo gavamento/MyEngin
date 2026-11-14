@@ -5,15 +5,21 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
 
 use crate::blob::BlobStore;
 use crate::db::{open_and_migrate, Opened};
+use crate::hash::sha256_hex;
 use crate::journal::{self, Journal, JournalPos};
 use crate::process::is_alive;
 use crate::schema::{Migration, MIGRATIONS};
 use crate::store::{Mode, Paths, Store};
+
+/// 前回の最後のイベントからこれだけ遡って書かれた Blob の中身を、起動時に確かめる。
+/// Blob は 1 件ごとに `sync_all` しないので、電源断の直前の書き込みは中身が欠けうる (db-schema.md §4)。
+const RECENT_BLOB_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// 入れ直せなかったジャーナルの行を表す `coverage_gaps.reason` と `events.kind`。
 pub const GAP_JOURNAL_UNREADABLE: &str = "journal_unreadable";
@@ -36,6 +42,8 @@ pub struct StartupReport {
     pub replayed_events: usize,
     pub unreadable_journal_lines: usize,
     pub blobs_marked_missing: usize,
+    /// 直近に書かれた Blob のうち、中身がハッシュと違ったので消した数 (消すと `blobs_marked_missing` に数えられる)。
+    pub blobs_corrupted: usize,
     pub orphan_blobs: usize,
     /// 前回の書きかけの一時 Blob (`.tmp-*`) を消した数。
     pub temp_blobs_removed: usize,
@@ -57,6 +65,8 @@ pub struct StartupOptions<'a> {
     pub migrations: &'a [Migration],
     pub journal_max_file_bytes: u64,
     pub exclude_patterns: Vec<String>,
+    /// 記録の置き場所を `<project>\.myei_changes` 以外へ向ける (計測用。追跡対象のリポジトリを汚さない)。
+    pub data_dir: Option<PathBuf>,
 }
 
 impl Default for StartupOptions<'_> {
@@ -65,6 +75,7 @@ impl Default for StartupOptions<'_> {
             migrations: MIGRATIONS,
             journal_max_file_bytes: journal::DEFAULT_MAX_FILE_BYTES,
             exclude_patterns: crate::blob::DEFAULT_EXCLUDE_PATTERNS.iter().map(|s| s.to_string()).collect(),
+            data_dir: None,
         }
     }
 }
@@ -80,7 +91,10 @@ pub fn open_project_with(
     options: StartupOptions<'_>,
 ) -> (Option<Store>, StartupReport) {
     let mut report = StartupReport::default();
-    let paths = Paths::for_project(project_root);
+    let paths = match &options.data_dir {
+        Some(dir) => Paths::at(dir),
+        None => Paths::for_project(project_root),
+    };
 
     // ディレクトリとジャーナルが開けなければ、記録できない状態
     for dir in [&paths.dir, &paths.blobs, &paths.journal] {
@@ -107,6 +121,8 @@ pub fn open_project_with(
         Opened::Degraded(reason) => (None, Mode::DbDegraded(reason)),
     };
     let mut store = Store {
+        stats: Default::default(),
+        inject_journal_error: None,
         blobs: BlobStore::new(paths.blobs.clone(), options.exclude_patterns),
         paths,
         mode,
@@ -123,6 +139,7 @@ pub fn open_project_with(
     }
     if let Some(conn) = store.conn.as_mut() {
         // §6 の 3〜6。保守の段なので、失敗しても記録は続ける
+        run_step(&mut report, "直近の Blob の内容確認", |r| verify_recent_blobs(conn, &store.paths.blobs, r));
         run_step(&mut report, "Blob の有無の確認", |r| mark_missing_blobs(conn, &store.blobs, r));
         run_step(&mut report, "孤児 Blob の計数", |r| count_orphan_blobs(conn, &store.paths.blobs, r));
         run_step(&mut report, "残った session の整理", |r| interrupt_dead_sessions(conn, r));
@@ -219,6 +236,34 @@ fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport) -> Re
         .map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())
+}
+
+/// §6 の 3 の前段: 前回の最後のイベントの 10 分前から後に書かれた Blob を読み、ハッシュが名前と違えば消す
+/// (最終名のまま残すと、同じ内容の `put` が「あった」と判断して書き直さない)。消した Blob を指す行は、
+/// 続く `mark_missing_blobs` が `missing` にする。
+fn verify_recent_blobs(conn: &mut Connection, blobs_dir: &Path, report: &mut StartupReport) -> rusqlite::Result<()> {
+    let last_at: Option<i64> = conn.query_row("SELECT MAX(at) FROM events", [], |r| r.get(0))?;
+    let Some(last_at) = last_at else { return Ok(()) };
+    let since = UNIX_EPOCH + Duration::from_millis((last_at.max(0) as u64).saturating_sub(RECENT_BLOB_WINDOW.as_millis() as u64));
+    let Ok(prefixes) = std::fs::read_dir(blobs_dir) else { return Ok(()) };
+    for prefix in prefixes.flatten() {
+        let prefix_name = prefix.file_name().to_string_lossy().into_owned();
+        if prefix_name.len() != 2 {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(prefix.path()) else { continue };
+        for file in files.flatten() {
+            let rest = file.file_name().to_string_lossy().into_owned();
+            if rest.len() != 62 || !file.metadata().and_then(|m| m.modified()).is_ok_and(|t| t >= since) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(file.path()) else { continue };
+            if sha256_hex(&bytes) != format!("{prefix_name}{rest}") && std::fs::remove_file(file.path()).is_ok() {
+                report.blobs_corrupted += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// §6 の 3: `snapshots` が指す Blob が無ければ `blob_state = missing` にする。

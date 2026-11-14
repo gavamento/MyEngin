@@ -16,6 +16,8 @@ arch §5 を作る。sub-15 の Hunk 復元はここで作る Hunk の形に乗�
 6. Change と Revision: 同じパスへの変更は 1 つの Change にまとめ、観測ごとに Revision を足す (db §3.1)。新しい Revision ができたら、前の Revision の状態の扱い (`changes.state` の `superseded`) を db のとおりにする。
 7. リネームのまとめ (sub-01 の試作 3 で確定: 別のディレクトリへの移動は `Remove` + `Create` でしか届かないので、ハッシュによるまとめが**主たる手段**。ディレクトリの名前変更で sub-03 が作った「中のファイルの削除と作成」も同じ規則でまとまる): 監視がリネームとして返したものに加え、同じデバウンス窓の中の「削除 + 同じ内容ハッシュの作成」を 1 件の `renamed` にする。内容が違えば別々の削除と作成のまま (推測でつながない)。同じハッシュの候補が 2 つ以上あるときはつながない。
 7a. sub-03 の結果 (2026-11-14): 別のディレクトリへの移動は「削除 + 作成」の 2 件の `observed` で、ペイロードの `window` が同じ。まとめはこの `window` を見る。同じディレクトリ内のリネームは sub-03 が既に 1 件の `renamed` にしている。events の kind とペイロードは db §5.1。`changes` はパスごとの active を再利用して `seq` を足す形になっている。
+7a2. sub-21 の結果 (2026-11-15): `observed` の `source` に `verify_gap` が増えた (検証の走査が拾った取りこぼし。`completeness = gap`)。`FileState` に更新時刻が増えた。`record_snapshot` は `record_snapshot_hashed` のラッパー。記録に失敗した観測は Err になり状態が進まない — Hunk の計算と Revision の確定を足すときも同じ扱い (途中で失敗したら Revision を確定させず、欠落として残す) にする。
+7a3. 試験の後始末 (sub-21 の VERDICT の should): `tests\` の Fixture が作る一時ディレクトリ (`%TEMP%\mye_track_*`) を、試験が成功したら後処理で消す (失敗したときは調べられるよう残してよい)。sub-02 / sub-03 / sub-21 の試験の Fixture も同じにする。既に溜まっている分は消さない (ユーザーの判断)。
 7b. 派生の表の作り直し (sub-02 の VERDICT で追加): DB が壊れて作り直した後、`events` (ジャーナルから戻ったもの) と残っている Blob から、`changes` / `change_revisions` / `change_hunks` / `snapshots` を作り直す関数を持つ。Hunk は Blob から計算し直せる。Blob が欠けている Revision は行だけ戻し、`blob_state = missing` にする。起動時の検査 (db §6 の 1) の後に呼ぶ。通常の記録の経路と作り直しの経路が同じ関数を通る形にする (2 通りの実装を持たない)。
 8. 大きい入力の上限: 行数 / サイズが大きいとき、Myers の最悪計算量で Diff ワーカーが止まらないよう上限を置き、超えたら「ファイル全体を 1 Hunk」に落として、その旨を Revision に残す。上限の値は計測して決め、文書に書く。
 

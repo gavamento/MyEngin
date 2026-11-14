@@ -3,6 +3,7 @@
 //! 監視スレッドがメモリに持つ。起動時は、DB の `snapshots` / `change_revisions` から前回の終わりの状態を戻す。
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::SystemTime;
 
 use rusqlite::Connection;
 
@@ -44,6 +45,8 @@ pub struct FileState {
     pub blob_hash: Option<String>,
     /// DB から戻したものは分からない。
     pub kind: Option<ContentKind>,
+    /// 読んだときの更新時刻。検証の走査が、サイズと並べて「変わっていない」と判断するのに使う。DB から戻したものは None (必ず内容を読む)。
+    pub modified: Option<SystemTime>,
 }
 
 impl FileState {
@@ -127,7 +130,7 @@ pub fn load_from_db(conn: &Connection) -> rusqlite::Result<LoadedState> {
         }
         files.insert(
             path,
-            FileState { hash: blob_hash.clone(), size: size as u64, snapshot_id: Some(snapshot_id), blob_hash, kind: None },
+            FileState { hash: blob_hash.clone(), size: size as u64, snapshot_id: Some(snapshot_id), blob_hash, kind: None, modified: None },
         );
     }
     Ok(LoadedState { files, had_baseline, last_event_at })

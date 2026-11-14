@@ -1,7 +1,7 @@
 # sub-03: ファイル監視、ベースライン、欠落区間 (M104d)
 
 - 依存: sub-02
-- 状態: 未着手
+- 状態: OK (commit 76d0e2df)
 - 往復: 0
 
 ## やること
@@ -128,6 +128,15 @@ SELF_EVAL: sub-03 (round 1)
   - sub-04: `observed` の payload と `window` を使って、派生の表の作り直しと「削除 + 同じハッシュの作成」のまとめを作る。同じ窓の判定は payload の `window` が同じ。`renamed` は同一ディレクトリ内だけ。`changes` はパスごとの `active` を再利用し、Revision の seq を足す。Hunk は `change_revisions` の行の後から足せる。
   - sub-05: `Tracker::status()` が `baseline_files` / `baseline_ms` / `baseline_bytes` / `first_run` / `overflows` / `phase` を返す。`serve` の終了は標準入力の EOF でも起こるので、DETACHED_PROCESS で起動する場合は標準入力が無効ハンドルで即 EOF になりうる (Rust の標準入力は無効ハンドルを EOF として読む)。pipe 経由の終了へ置き換えるときに外すこと。
   - 試験は debug ビルドで並列に走ると 40 秒前後かかる。CPU が詰まると書き手待ちの試験の間隔が足りなくなりうる (250 ms × 3 回にしてある)。
+
+SELF_EVAL: sub-03 (round 2)
+実装:
+  - coalesced 判定のしきい値を `DEFAULT_BURST_GAP` = 200 ms に広げた (collector.rs)。1 回の保存のイベントは負荷で数十 ms 離れうるため
+  - 受け入れ条件 15 の試験 `single_saves_stay_complete_under_cpu_load` を追加 (tests/watch.rs)
+  - `Tracker::inject_event` と `drop_incoming_events` に `#[doc(hidden)]`
+検証:
+  - cargo test --manifest-path tools/track/Cargo.toml → 52 件 (lib 14 + project_id 3 + storage 16 + watch 19) を 10 回続けて通過
+(round 2 の SELF_EVAL が未追記だったので、sub-21 (M104d2) のついでに司会の申し送りの内容を写した)
 
 ## フィードバック履歴
 - round 1: VERDICT REWORK (planner、2026-11-14)。planner が `cargo test` を実走。全体を 1 回 + `--test watch` を 4 回のうち、**全体の 1 回で `changes_while_service_was_down_are_gap_unknown` が `tests\watch.rs:412` (`assert_eq!(a[1].completeness, "complete")`) で落ちた** (他の 4 回は 18 件通過)。受け入れ条件 9 (不安定にならない) を満たしていない。

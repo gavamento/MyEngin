@@ -24,6 +24,7 @@ Editor 側の土台。**C++ 側にスレッドを作らない** (arch §3.1)。
    - Editor が Job の中で起動された場合 (Visual Studio のデバッグ起動) にサービスが生き残るかを 1 回確かめ、結果か「未確認」を arch §3 に書く。
 2. projectId の計算を C++ 側に持ち、sub-02 の固定表と同じ入出力でテストする (`C:\HAL\MyEngin\src\Engine\Platform\Sha256.h`)。
    - sub-02 の VERDICT (spec §2 D25): projectId は「`NormalizePathKey` の結果から末尾の区切りを落としたもの (ドライブのルートは除く)」のハッシュ。固定表は `C:\HAL\MyEngin\tools\track\tests\project_id_cases.tsv` (4 列)。C++ 側のテストはこのファイルを読むか、同じ行を持つ。`towlower` は "C" ロケールで ASCII だけを変換する前提で Rust を合わせてあるので、Editor が `setlocale` を呼んでいないことを確かめ、表の非 ASCII の行が通ることで検出する。
+   - sub-21 の計測 (2026-11-15、`C:\HAL\MyEngin\docs\ai-change-tracking\performance.md`): このリポジトリのベースラインは Blob が約 2950 本・約 488 MB で、所要 12〜35 秒。既定の上限 2 GiB の約 4 分の 1 を最初のベースラインだけで使い、最新のベースラインは回収されない (db §7)。Editor は、ベースラインの進捗 (`status` の `scan_done` / `scan_total`) と Blob の総量を、追跡の状態として持つ (表示は sub-10)。
 3. 設定: `EditorSettings` に追跡の有効 / 無効。プロジェクトなしの起動では追跡しない (db §1)。
 4. **非対話起動 (`--selftest*`、`--screenshot`、リプレイ検証、`--dump-index` など) では、設定にかかわらず接続も起動もしない** (spec §2 D11)。判定に使う既存のフラグを `EditorApp` / `EngineCli` で確かめて使う。
 5. 状態の表示は最小限: サービスの状態 (接続中 / 停止中 / 版が違う / DB が使えない) を持つだけ。窓は sub-10。

@@ -2,10 +2,13 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use rusqlite::{params, Connection};
 
 use crate::blob::{BlobError, BlobStore, PutOutcome};
+use crate::hash::sha256_hex;
 use crate::journal::{Journal, JournalEntry, JournalPos};
 
 /// `<project>\.mye\ai_changes\` の中の置き場所 (db-schema.md §1)。
@@ -19,7 +22,12 @@ pub struct Paths {
 
 impl Paths {
     pub fn for_project(project_root: &Path) -> Paths {
-        let dir = project_root.join(".mye").join("ai_changes");
+        Self::at(&project_root.join(".mye").join("ai_changes"))
+    }
+
+    /// 置き場所のディレクトリを直接指す。
+    pub fn at(dir: &Path) -> Paths {
+        let dir = dir.to_path_buf();
         Paths {
             db: dir.join("tracking.db"),
             blobs: dir.join("blobs"),
@@ -77,7 +85,20 @@ impl From<BlobError> for StoreError {
     }
 }
 
+/// 書き込みの所要時間の内訳 (ナノ秒の累計)。計測用 (`mye_track bench`) で、記録の判断には使わない。
+#[derive(Default)]
+pub struct StoreStats {
+    pub journal_append_ns: AtomicU64,
+    pub event_insert_ns: AtomicU64,
+    pub snapshot_insert_ns: AtomicU64,
+    pub tx_commit_ns: AtomicU64,
+}
+
 pub struct Store {
+    pub stats: StoreStats,
+    /// 試験用: Some(OS のエラー番号) の間、`record_event` がそのエラーで失敗する (ジャーナルへ書けない状態を模す)。
+    #[doc(hidden)]
+    pub inject_journal_error: Option<i32>,
     pub paths: Paths,
     pub mode: Mode,
     pub conn: Option<Connection>,
@@ -102,14 +123,21 @@ impl Store {
         payload: serde_json::Value,
     ) -> Result<RecordedEvent, StoreError> {
         let entry = JournalEntry { at, kind: kind.to_string(), payload };
+        if let Some(code) = self.inject_journal_error {
+            return Err(StoreError::Io(std::io::Error::from_raw_os_error(code)));
+        }
+        let started = Instant::now();
         let pos = self.journal.append(&entry)?;
+        self.stats.journal_append_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         let Some(conn) = self.conn.as_ref() else {
             return Ok(RecordedEvent { pos, in_db: false });
         };
+        let started = Instant::now();
         conn.execute(
             "INSERT OR IGNORE INTO events (at, kind, journal_pos, payload) VALUES (?1, ?2, ?3, ?4)",
             params![at, kind, pos.to_string(), entry.payload.to_string()],
         )?;
+        self.stats.event_insert_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         Ok(RecordedEvent { pos, in_db: true })
     }
 
@@ -123,6 +151,18 @@ impl Store {
         taken_at: i64,
         bytes: &[u8],
     ) -> Result<i64, StoreError> {
+        self.record_snapshot_hashed(rel_path, kind, taken_at, bytes, &sha256_hex(bytes))
+    }
+
+    /// 呼び出し側が内容のハッシュを持っているときの `record_snapshot`。
+    pub fn record_snapshot_hashed(
+        &mut self,
+        rel_path: &str,
+        kind: &str,
+        taken_at: i64,
+        bytes: &[u8],
+        hash: &str,
+    ) -> Result<i64, StoreError> {
         let Some(conn) = self.conn.as_ref() else {
             let reason = match &self.mode {
                 Mode::DbDegraded(r) => r.clone(),
@@ -130,15 +170,17 @@ impl Store {
             };
             return Err(StoreError::Degraded(reason));
         };
-        let (hash, size, state) = match self.blobs.put(rel_path, bytes)? {
+        let (hash, size, state) = match self.blobs.put_hashed(rel_path, bytes, hash)? {
             PutOutcome::Stored { hash, size, .. } => (Some(hash), size, "present"),
             PutOutcome::Excluded { size } => (None, size, "excluded"),
         };
+        let started = Instant::now();
         conn.execute(
             "INSERT INTO snapshots (blob_hash, size, path, kind, taken_at, blob_state)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![hash, size as i64, rel_path, kind, taken_at, state],
         )?;
+        self.stats.snapshot_insert_ns.fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
         Ok(conn.last_insert_rowid())
     }
 }

@@ -6,16 +6,18 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::baseline::{classify, Baseline, ContentKind};
-use crate::content::{peek_len, read_stable, LenOutcome, ReadOutcome};
+use crate::content::{peek_len, peek_stat, read_stable, LenOutcome, ReadOutcome, StatOutcome};
 use crate::db::now_ms;
 use crate::hash::sha256_hex;
 use crate::ignore::IgnoreRules;
 use crate::observe::{
-    apply_observations, record_baseline, AfterContent, BaselineEntry, ChangeType, Completeness, Observation, Source,
+    apply_observations, record_baseline, record_gap, AfterContent, BaselineEntry, ChangeType, Completeness, Observation,
+    RecordFailure, Source, GAP_DISK_FULL, GAP_WRITE_FAILED,
 };
 use crate::writer::Writer;
 
@@ -47,6 +49,16 @@ pub struct TrackerConfig {
     pub stable_attempts: u32,
     /// これを超える、または UTF-8 でないものは `binary`。
     pub max_text_bytes: u64,
+    /// 検証の走査: 最後のイベントからこれだけ静かで、デバウンス中のパスが無いときに走らせる。
+    pub verify_quiet: Duration,
+    /// 検証の走査: 静かな時間が続いたとき、前回の走査からこれだけ空いたら走らせる。
+    pub verify_interval: Duration,
+    /// 検証の走査: 前回の走査の後に届いたイベントがこの件数に達したら、静かになった時点で走らせる。
+    pub verify_burst_events: usize,
+    /// 記録に失敗した観測がある間、書けるようになったかを確かめる間隔。
+    pub unrecorded_retry: Duration,
+    /// 試験用: ベースラインの塊 (500 件) ごとに待つ時間。途中で止める・途中で変更する試験が間に合うようにする。
+    pub baseline_chunk_pause: Duration,
 }
 
 impl Default for TrackerConfig {
@@ -61,6 +73,11 @@ impl Default for TrackerConfig {
             settle_give_up: Duration::from_secs(30),
             stable_attempts: 5,
             max_text_bytes: 8 * 1024 * 1024,
+            verify_quiet: Duration::from_secs(3),
+            verify_interval: Duration::from_secs(5 * 60),
+            verify_burst_events: 1000,
+            unrecorded_retry: Duration::from_secs(1),
+            baseline_chunk_pause: Duration::ZERO,
         }
     }
 }
@@ -90,7 +107,7 @@ struct Cand {
 
 enum Eval {
     Gone,
-    Present { bytes: Vec<u8>, coalesced: bool },
+    Present { bytes: Vec<u8>, coalesced: bool, modified: Option<SystemTime> },
 }
 
 /// 後でやり直すパスと、その待ち時間。
@@ -99,10 +116,46 @@ pub struct Deferred {
     pub delay: Duration,
 }
 
+/// ベースラインの所要時間の内訳 (ミリ秒)。`commit_ms` は Writer へ渡して戻るまで (Blob・ジャーナル・DB を含む)。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScanTimings {
+    pub walk_ms: u64,
+    pub read_ms: u64,
+    pub hash_ms: u64,
+    pub commit_ms: u64,
+}
+
 pub struct ScanStats {
     pub files: usize,
+    /// 読まずに済ませた数 (サイズと更新時刻が前回と同じ)。
+    pub skipped: usize,
     pub bytes: u64,
     pub changes: usize,
+    pub timings: ScanTimings,
+    /// 止める合図で途中で打ち切ったら false。
+    pub completed: bool,
+}
+
+impl ScanStats {
+    fn new(files: usize) -> Self {
+        ScanStats { files, skipped: 0, bytes: 0, changes: 0, timings: ScanTimings::default(), completed: true }
+    }
+}
+
+/// 走査の進み具合。監視スレッドが書き、`Tracker::status` が読む。
+#[derive(Default)]
+pub struct ScanProgress {
+    pub total: AtomicUsize,
+    pub done: AtomicUsize,
+}
+
+/// 記録に失敗した観測の区間 (書けるようになったら `coverage_gaps` に残す)。
+#[derive(Clone, Debug)]
+pub struct Unrecorded {
+    pub since_ms: i64,
+    pub reason: &'static str,
+    pub failures: u64,
+    pub last_detail: String,
 }
 
 pub struct Collector {
@@ -117,6 +170,9 @@ pub struct Collector {
     size_seen: HashMap<String, (u64, u32)>,
     /// 待っている間に大きさが変わった、または開かれていて読めなかったパス。途中の状態を見ていない。
     grew: HashSet<String>,
+    stop: Arc<AtomicBool>,
+    progress: Arc<ScanProgress>,
+    unrecorded: Option<Unrecorded>,
 }
 
 #[derive(Default)]
@@ -126,7 +182,13 @@ struct Batch {
 }
 
 impl Collector {
-    pub fn new(root: PathBuf, cfg: TrackerConfig, writer: Arc<Writer>) -> Self {
+    pub fn new(
+        root: PathBuf,
+        cfg: TrackerConfig,
+        writer: Arc<Writer>,
+        stop: Arc<AtomicBool>,
+        progress: Arc<ScanProgress>,
+    ) -> Self {
         Collector {
             ignore: IgnoreRules::new(root.clone()),
             root,
@@ -137,6 +199,9 @@ impl Collector {
             window_seq: 0,
             size_seen: HashMap::new(),
             grew: HashSet::new(),
+            stop,
+            progress,
+            unrecorded: None,
         }
     }
 
@@ -222,7 +287,7 @@ impl Collector {
         };
         let known = self.baseline.files.get(rel);
         match eval {
-            Eval::Present { bytes, coalesced } => {
+            Eval::Present { bytes, coalesced, modified } => {
                 let hash = sha256_hex(&bytes);
                 if known.is_some_and(|st| st.same_content(&hash, bytes.len() as u64)) {
                     return None;
@@ -235,7 +300,7 @@ impl Collector {
                     change_type,
                     old_path: None,
                     before: known.cloned(),
-                    after: Some(AfterContent { bytes, hash, kind }),
+                    after: Some(AfterContent { bytes, hash, kind, modified }),
                     completeness: completeness(no_before, coalesced),
                     source,
                     window: window.to_string(),
@@ -257,22 +322,28 @@ impl Collector {
     }
 
     /// 溜まった観測を Writer へ渡し、記録できたものだけベースラインを進める。
+    /// 記録できなかったものは `unrecorded` に区間として持つ (ベースラインは進めないので、次の検証の走査が拾う)。
     fn commit(&mut self, observations: Vec<Observation>) {
         if observations.is_empty() {
             return;
         }
-        let meta: Vec<(String, ChangeType, Option<String>)> =
-            observations.iter().map(|o| (o.path.clone(), o.change_type, o.old_path.clone())).collect();
+        let first_at = observations.iter().map(|o| o.observed_at).min().unwrap_or_else(now_ms);
+        let meta: Vec<(String, ChangeType, Option<String>, i64)> =
+            observations.iter().map(|o| (o.path.clone(), o.change_type, o.old_path.clone(), o.observed_at)).collect();
         let results = match self.writer.call(move |store| apply_observations(store, observations)) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[track] 観測を Writer へ渡せない: {e}");
+                self.note_unrecorded(first_at, &RecordFailure { reason: GAP_WRITE_FAILED, detail: e.to_string() });
                 return;
             }
         };
-        for ((path, change_type, old_path), result) in meta.into_iter().zip(results) {
+        for ((path, change_type, old_path, observed_at), result) in meta.into_iter().zip(results) {
             match result {
-                Err(e) => eprintln!("[track] 観測を記録できない: {path}: {e}"),
+                Err(failure) => {
+                    eprintln!("[track] 観測を記録できない: {path}: {}", failure.detail);
+                    self.note_unrecorded(observed_at, &failure);
+                }
                 Ok(state) => {
                     self.baseline.unknown.remove(&path);
                     match change_type {
@@ -291,6 +362,41 @@ impl Collector {
                 }
             }
         }
+    }
+
+    fn note_unrecorded(&mut self, at: i64, failure: &RecordFailure) {
+        let entry = self.unrecorded.get_or_insert_with(|| Unrecorded {
+            since_ms: at,
+            reason: failure.reason,
+            failures: 0,
+            last_detail: String::new(),
+        });
+        entry.since_ms = entry.since_ms.min(at);
+        entry.failures += 1;
+        entry.last_detail = failure.detail.clone();
+        // 理由が混ざったら、直す手段が違う disk_full を残す
+        if failure.reason == GAP_DISK_FULL {
+            entry.reason = GAP_DISK_FULL;
+        }
+    }
+
+    /// 記録に失敗した観測の区間 (まだ `coverage_gaps` に残せていない)。
+    pub fn unrecorded(&self) -> Option<&Unrecorded> {
+        self.unrecorded.as_ref()
+    }
+
+    /// 記録に失敗した区間があれば、`coverage_gaps` へ書けるか試す。書けたら true (呼び出し側が検証の走査を行う)。
+    pub fn retry_unrecorded(&mut self) -> bool {
+        let Some(open) = self.unrecorded.clone() else { return false };
+        let to = now_ms().max(open.since_ms);
+        let wrote = self
+            .writer
+            .call(move |store| record_gap(store, open.reason, open.since_ms, to, None).is_ok())
+            .unwrap_or(false);
+        if wrote {
+            self.unrecorded = None;
+        }
+        wrote
     }
 
     fn push(&mut self, batch: &mut Batch, o: Observation) {
@@ -382,7 +488,7 @@ impl Collector {
             }
             let cand = cands.get(&to).cloned().unwrap_or_default();
             match self.read_item(&to) {
-                ReadOutcome::Content { bytes, coalesced } => {
+                ReadOutcome::Content { bytes, coalesced, modified } => {
                     let before = self.baseline.files.get(&from).cloned();
                     let hash = sha256_hex(&bytes);
                     let kind = classify(&bytes, self.cfg.max_text_bytes);
@@ -392,7 +498,7 @@ impl Collector {
                         change_type: ChangeType::Renamed,
                         old_path: Some(from.clone()),
                         before,
-                        after: Some(AfterContent { bytes, hash, kind }),
+                        after: Some(AfterContent { bytes, hash, kind, modified }),
                         completeness,
                         source: Source::Watch,
                         window: cand.window.clone(),
@@ -445,9 +551,9 @@ impl Collector {
             }
             let eval = match self.read_item(&rel) {
                 ReadOutcome::Missing | ReadOutcome::NotFile => Eval::Gone,
-                ReadOutcome::Content { bytes, coalesced } => {
+                ReadOutcome::Content { bytes, coalesced, modified } => {
                     let was_growing = self.grew.remove(&rel);
-                    Eval::Present { bytes, coalesced: coalesced || was_growing || cand.give_up }
+                    Eval::Present { bytes, coalesced: coalesced || was_growing || cand.give_up, modified }
                 }
                 ReadOutcome::Busy => {
                     self.grew.insert(rel.clone());
@@ -468,21 +574,43 @@ impl Collector {
     }
 
     /// ルート全体を走査してベースラインと比べ、違うファイルごとに `gap` の観測を作る。
-    /// 起動時 (停止していた間) と、監視のあふれの後に使う。
+    /// 起動時 (停止していた間)、監視のあふれの後、検証の走査で使う。
+    /// 前回の読み取りとサイズ・更新時刻が同じファイルは読まない (内容のハッシュは取らない)。
+    /// 監視スレッドの中で動くので、走査が読んだ後に書かれたファイルのイベントは、走査の後で処理される。
     pub fn rescan(&mut self, source: Source) -> ScanStats {
         let observed_at = now_ms();
         let window = self.new_window();
         let mut files = Vec::new();
         self.walk("", &mut files);
         let present: HashSet<String> = files.iter().cloned().collect();
-        let mut stats = ScanStats { files: files.len(), bytes: 0, changes: 0 };
+        let mut stats = ScanStats::new(files.len());
         let mut batch = Batch::default();
+        self.progress.total.store(files.len(), Ordering::Relaxed);
+        self.progress.done.store(0, Ordering::Relaxed);
 
-        for rel in &files {
-            let eval = match self.read_item(rel) {
-                ReadOutcome::Content { bytes, coalesced } => {
+        for (index, rel) in files.iter().enumerate() {
+            if self.stop.load(Ordering::SeqCst) {
+                // 途中までの走査では「消えたファイル」を決められない
+                stats.completed = false;
+                self.drain(&mut batch);
+                return stats;
+            }
+            self.progress.done.store(index, Ordering::Relaxed);
+            if let Some(st) = self.baseline.files.get(rel) {
+                if let Some(known) = st.modified {
+                    if let StatOutcome::Stat { len, modified } = peek_stat(&self.abs(rel)) {
+                        if len == st.size && modified == Some(known) {
+                            stats.skipped += 1;
+                            stats.bytes += len;
+                            continue;
+                        }
+                    }
+                }
+            }
+            let (eval, modified) = match self.read_item(rel) {
+                ReadOutcome::Content { bytes, coalesced, modified } => {
                     stats.bytes += bytes.len() as u64;
-                    Eval::Present { bytes, coalesced }
+                    (Eval::Present { bytes, coalesced, modified }, modified)
                 }
                 ReadOutcome::Missing | ReadOutcome::NotFile => continue,
                 ReadOutcome::Busy | ReadOutcome::Failed(_) => {
@@ -492,9 +620,17 @@ impl Collector {
                     continue;
                 }
             };
-            if let Some(o) = self.decide(rel, eval, false, source, &window, observed_at) {
-                stats.changes += 1;
-                self.push(&mut batch, o);
+            match self.decide(rel, eval, false, source, &window, observed_at) {
+                Some(o) => {
+                    stats.changes += 1;
+                    self.push(&mut batch, o);
+                }
+                // 内容は同じ: 次回から読まずに済むよう、更新時刻だけ覚える
+                None => {
+                    if let Some(st) = self.baseline.files.get_mut(rel) {
+                        st.modified = modified;
+                    }
+                }
             }
         }
         let vanished: Vec<String> = self.baseline.files.keys().filter(|k| !present.contains(*k)).cloned().collect();
@@ -510,25 +646,112 @@ impl Collector {
             }
         }
         self.drain(&mut batch);
+        self.progress.done.store(files.len(), Ordering::Relaxed);
         stats
     }
 
-    /// 最初の起動: 追跡対象の全ファイルの内容ハッシュを取り、`baseline` のスナップショットに残す。
-    pub fn scan_baseline(&mut self) -> ScanStats {
-        let taken_at = now_ms();
+    /// 検証の走査の前半: 実際のディレクトリの中身とベースラインを、安い順 (存在 → サイズと更新時刻) に突き合わせ、
+    /// 違うパスを返す。内容は読まず、観測も作らない (後半の `observe_paths` が、イベントが遅れて届く時間を
+    /// 待ってから読む)。戻り値の bool は、走査を取り終えたか。
+    pub fn detect_changed(&mut self) -> (Vec<String>, bool) {
         let mut files = Vec::new();
         self.walk("", &mut files);
-        let mut stats = ScanStats { files: files.len(), bytes: 0, changes: 0 };
+        let present: HashSet<&String> = files.iter().collect();
+        self.progress.total.store(files.len(), Ordering::Relaxed);
+        self.progress.done.store(0, Ordering::Relaxed);
+        let mut changed: Vec<String> = Vec::new();
+        for (index, rel) in files.iter().enumerate() {
+            if self.stop.load(Ordering::SeqCst) {
+                return (changed, false);
+            }
+            self.progress.done.store(index, Ordering::Relaxed);
+            let Some(st) = self.baseline.files.get(rel) else {
+                changed.push(rel.clone());
+                continue;
+            };
+            let Some(known) = st.modified else {
+                changed.push(rel.clone());
+                continue;
+            };
+            match peek_stat(&self.abs(rel)) {
+                StatOutcome::Stat { len, modified } if len == st.size && modified == Some(known) => {}
+                StatOutcome::Busy | StatOutcome::Failed(_) => {}
+                _ => changed.push(rel.clone()),
+            }
+        }
+        for rel in self.baseline.files.keys() {
+            if !present.contains(rel) && !self.ignore.is_ignored(rel, false) {
+                changed.push(rel.clone());
+            }
+        }
+        self.progress.done.store(files.len(), Ordering::Relaxed);
+        (changed, true)
+    }
+
+    /// 検証の走査の後半: 指定したパスの今の状態をベースラインと比べ、違うものを `gap` の観測にする。
+    /// 返り値は作った観測の数。
+    pub fn observe_paths(&mut self, paths: Vec<String>, source: Source) -> usize {
+        let observed_at = now_ms();
+        let window = self.new_window();
+        let mut batch = Batch::default();
+        let mut changes = 0;
+        for rel in paths {
+            if self.ignore.is_ignored(&rel, false) {
+                continue;
+            }
+            let (eval, modified) = match self.read_item(&rel) {
+                ReadOutcome::Content { bytes, coalesced, modified } => (Eval::Present { bytes, coalesced, modified }, modified),
+                ReadOutcome::Missing | ReadOutcome::NotFile => (Eval::Gone, None),
+                ReadOutcome::Busy | ReadOutcome::Failed(_) => continue,
+            };
+            match self.decide(&rel, eval, false, source, &window, observed_at) {
+                Some(o) => {
+                    changes += 1;
+                    self.push(&mut batch, o);
+                }
+                None => {
+                    if let Some(st) = self.baseline.files.get_mut(&rel) {
+                        st.modified = modified.or(st.modified);
+                    }
+                }
+            }
+        }
+        self.drain(&mut batch);
+        changes
+    }
+
+    /// 最初の起動: 追跡対象の全ファイルの内容ハッシュを取り、`baseline` のスナップショットに残す。
+    /// 止める合図で途中で打ち切ったら `completed = false` (取り終えていないので、次の起動でやり直す)。
+    pub fn scan_baseline(&mut self) -> ScanStats {
+        let taken_at = now_ms();
+        let started = Instant::now();
+        let mut files = Vec::new();
+        self.walk("", &mut files);
+        let mut stats = ScanStats::new(files.len());
+        stats.timings.walk_ms = Self::elapsed_since(started);
+        self.progress.total.store(files.len(), Ordering::Relaxed);
+        self.progress.done.store(0, Ordering::Relaxed);
         let mut entries: Vec<BaselineEntry> = Vec::new();
         let mut entry_bytes = 0usize;
-        for rel in &files {
-            match self.read_item(rel) {
-                ReadOutcome::Content { bytes, .. } => {
+        // 小さい区間の積み上げはマイクロ秒で足し、最後にミリ秒へ直す
+        let (mut read_us, mut hash_us, mut commit_us) = (0u64, 0u64, 0u64);
+        for (index, rel) in files.iter().enumerate() {
+            if self.stop.load(Ordering::SeqCst) {
+                stats.completed = false;
+                break;
+            }
+            let read_started = Instant::now();
+            let outcome = self.read_item(rel);
+            read_us += Self::elapsed_since_micros(read_started);
+            match outcome {
+                ReadOutcome::Content { bytes, modified, .. } => {
                     stats.bytes += bytes.len() as u64;
                     entry_bytes += bytes.len();
+                    let hash_started = Instant::now();
                     let hash = sha256_hex(&bytes);
                     let kind: ContentKind = classify(&bytes, self.cfg.max_text_bytes);
-                    entries.push(BaselineEntry { path: rel.clone(), bytes, hash, kind });
+                    hash_us += Self::elapsed_since_micros(hash_started);
+                    entries.push(BaselineEntry { path: rel.clone(), bytes, hash, kind, modified });
                 }
                 ReadOutcome::Missing | ReadOutcome::NotFile => {}
                 ReadOutcome::Busy | ReadOutcome::Failed(_) => {
@@ -536,11 +759,25 @@ impl Collector {
                 }
             }
             if entry_bytes >= CHUNK_BYTES || entries.len() >= CHUNK_COUNT {
+                let commit_started = Instant::now();
                 self.commit_baseline(std::mem::take(&mut entries), taken_at);
+                commit_us += Self::elapsed_since_micros(commit_started);
                 entry_bytes = 0;
+                self.progress.done.store(index + 1, Ordering::Relaxed);
+                if !self.cfg.baseline_chunk_pause.is_zero() {
+                    std::thread::sleep(self.cfg.baseline_chunk_pause);
+                }
             }
         }
-        self.commit_baseline(entries, taken_at);
+        if stats.completed {
+            let commit_started = Instant::now();
+            self.commit_baseline(entries, taken_at);
+            commit_us += Self::elapsed_since_micros(commit_started);
+            self.progress.done.store(files.len(), Ordering::Relaxed);
+        }
+        stats.timings.read_ms = read_us / 1000;
+        stats.timings.hash_ms = hash_us / 1000;
+        stats.timings.commit_ms = commit_us / 1000;
         stats
     }
 
@@ -575,5 +812,9 @@ impl Collector {
 
     pub fn elapsed_since(start: Instant) -> u64 {
         start.elapsed().as_millis() as u64
+    }
+
+    fn elapsed_since_micros(start: Instant) -> u64 {
+        start.elapsed().as_micros() as u64
     }
 }

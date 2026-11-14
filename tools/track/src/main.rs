@@ -2,6 +2,7 @@
 //!
 //!   mye_track.exe --version
 //!   mye_track.exe serve --project <root>
+//!   mye_track.exe bench ...   (計測用。docs/ai-change-tracking/performance.md)
 //!
 //! `serve` は DB を開いて起動時の検査を行い、ファイル監視を続ける常駐になる。
 //! 終了の合図は標準入力の EOF か Ctrl+C / Ctrl+Break / コンソールを閉じること。
@@ -43,8 +44,9 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("serve") => serve(&args[1..]),
+        Some("bench") => ExitCode::from(mye_track::bench::run(&args[1..])),
         _ => {
-            eprintln!("usage: mye_track --version | mye_track serve --project <root>");
+            eprintln!("usage: mye_track --version | mye_track serve --project <root> | mye_track bench ...");
             ExitCode::from(2)
         }
     }

@@ -4,6 +4,7 @@
 //! 設計: docs/ai-change-tracking/ (db-schema.md が保存形式の正本)。
 
 pub mod baseline;
+pub mod bench;
 pub mod blob;
 pub mod collector;
 pub mod content;

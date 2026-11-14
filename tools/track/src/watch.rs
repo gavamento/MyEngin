@@ -6,7 +6,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -16,7 +16,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::json;
 
 use crate::baseline::{load_from_db, LoadedState};
-use crate::collector::{Collector, Deferred, DueItem, TrackerConfig};
+use crate::collector::{Collector, Deferred, DueItem, ScanProgress, ScanTimings, TrackerConfig};
 use crate::db::now_ms;
 use crate::ignore::under_always_ignored_dir;
 use crate::observe::{record_gap, Source};
@@ -47,8 +47,19 @@ pub struct TrackerStatus {
     pub baseline_files: usize,
     pub baseline_ms: u64,
     pub baseline_bytes: u64,
+    /// ベースラインの所要時間の内訳。2 回目以降の突き合わせでは 0 のまま。
+    pub baseline_timings: ScanTimings,
     pub first_run: bool,
     pub overflows: u32,
+    /// 走査 (ベースライン・突き合わせ) の進み具合。走査中でなければ最後の値のまま。
+    pub scan_done: usize,
+    pub scan_total: usize,
+    /// 検証の走査を行った回数と、取りこぼしを見つけた回数。
+    pub verify_runs: u32,
+    pub verify_gaps: u32,
+    /// 記録に失敗した観測の区間の始まりと理由 (書けるようになって `coverage_gaps` に残したら None に戻る)。
+    pub unrecorded_since_ms: Option<i64>,
+    pub unrecorded_reason: Option<&'static str>,
 }
 
 struct Shared {
@@ -69,6 +80,7 @@ pub struct Tracker {
     stop: Arc<AtomicBool>,
     drop_events: Arc<AtomicBool>,
     inject: Sender<Stamped>,
+    progress: Arc<ScanProgress>,
     thread: Option<JoinHandle<()>>,
     stopped: bool,
 }
@@ -83,17 +95,25 @@ impl Tracker {
                 baseline_files: 0,
                 baseline_ms: 0,
                 baseline_bytes: 0,
+                baseline_timings: ScanTimings::default(),
                 first_run: false,
                 overflows: 0,
+                scan_done: 0,
+                scan_total: 0,
+                verify_runs: 0,
+                verify_gaps: 0,
+                unrecorded_since_ms: None,
+                unrecorded_reason: None,
             }),
             changed: Condvar::new(),
         });
         let stop = Arc::new(AtomicBool::new(false));
         let drop_events = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel::<Stamped>();
+        let progress = Arc::new(ScanProgress::default());
 
         let thread = {
-            let mut collector = Collector::new(root.to_path_buf(), cfg.clone(), Arc::clone(&writer));
+            let mut collector = Collector::new(root.to_path_buf(), cfg.clone(), Arc::clone(&writer), Arc::clone(&stop), Arc::clone(&progress));
             let window = collector.new_window();
             let mut watch = WatchLoop {
                 root: root.to_path_buf(),
@@ -109,6 +129,14 @@ impl Tracker {
                 last_from: None,
                 last_good_ms: now_ms(),
                 watcher: None,
+                last_check: Instant::now(),
+                last_event: Instant::now(),
+                last_verify: Instant::now(),
+                last_verify_ms: now_ms(),
+                last_retry: Instant::now(),
+                events_since_verify: 0,
+                verify_wanted: false,
+                published_unrecorded: None,
             };
             let tx_watcher = tx.clone();
             std::thread::Builder::new()
@@ -116,11 +144,14 @@ impl Tracker {
                 .spawn(move || watch.run(tx_watcher, rx))
                 .expect("watch thread")
         };
-        Tracker { writer, shared, stop, drop_events, inject: tx, thread: Some(thread), stopped: false }
+        Tracker { writer, shared, stop, drop_events, inject: tx, progress, thread: Some(thread), stopped: false }
     }
 
     pub fn status(&self) -> TrackerStatus {
-        self.shared.status.lock().unwrap().clone()
+        let mut status = self.shared.status.lock().unwrap().clone();
+        status.scan_done = self.progress.done.load(Ordering::Relaxed);
+        status.scan_total = self.progress.total.load(Ordering::Relaxed);
+        status
     }
 
     /// ベースライン (または停止中の突き合わせ) が終わり、監視に入る (または失敗する) まで待つ。
@@ -247,6 +278,17 @@ struct WatchLoop {
     last_good_ms: i64,
     /// 監視スレッドの寿命の間だけ持つ。drop で OS の監視が止まる。
     watcher: Option<RecommendedWatcher>,
+    last_check: Instant,
+    /// 最後にイベントを処理した時刻 (検証の走査の「静かな時間」)。
+    last_event: Instant,
+    last_verify: Instant,
+    /// 前回の検証の走査 (無ければ起動) の時刻。取りこぼしの区間の始まり。
+    last_verify_ms: i64,
+    last_retry: Instant,
+    events_since_verify: usize,
+    /// 記録に失敗した区間を書けた直後など、間隔を待たずに検証の走査を行う。
+    verify_wanted: bool,
+    published_unrecorded: Option<(i64, &'static str)>,
 }
 
 /// `root` からの相対パス ('/' 区切り、元の大文字小文字のまま)。外にある、またはルート自身なら None。
@@ -263,31 +305,21 @@ fn relative_to(root: &Path, path: &Path) -> Option<String> {
 }
 
 impl WatchLoop {
-    fn run(&mut self, tx_watcher: Sender<Stamped>, rx: std::sync::mpsc::Receiver<Stamped>) {
-        if let Err(reason) = self.startup(tx_watcher) {
-            self.shared.update(|s| s.phase = Phase::Failed(reason.clone()));
-            eprintln!("[track] 監視を始められない: {reason}");
-            return;
+    fn run(&mut self, tx_watcher: Sender<Stamped>, rx: Receiver<Stamped>) {
+        match self.startup(tx_watcher) {
+            Err(reason) => {
+                self.shared.update(|s| s.phase = Phase::Failed(reason.clone()));
+                eprintln!("[track] 監視を始められない: {reason}");
+                return;
+            }
+            // ベースラインを取り終える前に止められた。取り直しは次の起動でやる
+            Ok(false) => return,
+            Ok(true) => {}
         }
         // 取りこぼさないよう、監視を始めた後にベースラインを取る。その間のイベントは rx に溜まっている
-        let check_every = (self.cfg.debounce / 4).clamp(Duration::from_millis(1), Duration::from_millis(10));
-        let mut last_check = Instant::now();
         while !self.stop.load(Ordering::SeqCst) {
-            let timeout = if self.pending.is_empty() { MAX_WAIT } else { check_every.min(MAX_WAIT) };
-            match rx.recv_timeout(timeout) {
-                Ok((at, Ok(event))) => {
-                    if !self.drop_events.load(Ordering::SeqCst) {
-                        self.handle_event(event, at);
-                    }
-                }
-                Ok((_, Err(e))) => self.handle_overflow(&format!("watcher error: {e}")),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
-            }
-            if last_check.elapsed() >= check_every {
-                last_check = Instant::now();
-                self.flush_due(false);
-            }
+            self.step(&rx);
+            self.maintenance(&rx);
         }
         // 止める前に、届いているイベントとデバウンス中の変更を処理する
         while let Ok((at, item)) = rx.try_recv() {
@@ -300,8 +332,118 @@ impl WatchLoop {
         self.flush_due(true);
     }
 
+    fn check_every(&self) -> Duration {
+        (self.cfg.debounce / 4).clamp(Duration::from_millis(1), Duration::from_millis(10))
+    }
+
+    /// イベントを 1 件待って処理し、期限が来たパスを flush する。
+    fn step(&mut self, rx: &Receiver<Stamped>) {
+        let check_every = self.check_every();
+        let timeout = if self.pending.is_empty() { MAX_WAIT } else { check_every.min(MAX_WAIT) };
+        match rx.recv_timeout(timeout) {
+            Ok((at, Ok(event))) => {
+                if !self.drop_events.load(Ordering::SeqCst) {
+                    self.handle_event(event, at);
+                }
+            }
+            Ok((_, Err(e))) => self.handle_overflow(&format!("watcher error: {e}")),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => self.stop.store(true, Ordering::SeqCst),
+        }
+        if self.last_check.elapsed() >= check_every {
+            self.last_check = Instant::now();
+            self.flush_due(false);
+        }
+    }
+
+    /// 記録に失敗した区間の再試行と、取りこぼしを見つける検証の走査 (architecture.md §4)。
+    /// 走査はデバウンス中のパスが無く、イベントが静かなときだけ行う (処理待ちの変更を `gap` にしないため)。
+    fn maintenance(&mut self, rx: &Receiver<Stamped>) {
+        let now = Instant::now();
+        let unrecorded = self.collector.unrecorded().map(|u| (u.since_ms, u.reason));
+        if unrecorded != self.published_unrecorded {
+            self.published_unrecorded = unrecorded;
+            self.shared.update(|s| {
+                s.unrecorded_since_ms = unrecorded.map(|u| u.0);
+                s.unrecorded_reason = unrecorded.map(|u| u.1);
+            });
+        }
+        if unrecorded.is_some() {
+            if now.duration_since(self.last_retry) >= self.cfg.unrecorded_retry {
+                self.last_retry = now;
+                // 書けるようになった: 失敗した間の変更を、実際の状態との突き合わせで拾う
+                self.verify_wanted |= self.collector.retry_unrecorded();
+            }
+            return;
+        }
+        // 処理待ちのイベント (長い flush の間に溜まったもの) を先に取り込む。取り込まないまま走査すると、
+        // 待ちのイベントの変更を取りこぼしと取り違える
+        self.drain_events(rx);
+        if !self.pending.is_empty() || Instant::now().duration_since(self.last_event) < self.cfg.verify_quiet {
+            return;
+        }
+        let due = self.verify_wanted
+            || self.events_since_verify >= self.cfg.verify_burst_events
+            || now.duration_since(self.last_verify) >= self.cfg.verify_interval;
+        if due {
+            self.verify(rx);
+        }
+    }
+
+    /// キューに届いているイベントを全部処理する (待たない)。
+    fn drain_events(&mut self, rx: &Receiver<Stamped>) {
+        while let Ok((at, item)) = rx.try_recv() {
+            match item {
+                Ok(event) => {
+                    if !self.drop_events.load(Ordering::SeqCst) {
+                        self.handle_event(event, at);
+                    }
+                }
+                Err(e) => self.handle_overflow(&format!("watcher error: {e}")),
+            }
+        }
+    }
+
+    /// 検証の走査。ベースラインと実際の中身を突き合わせ、違うものを `gap` の観測にする。
+    /// 違いを見つけてから、そのパスのイベントが遅れて届く時間だけ待ち、届いたものは通常の経路へ任せる。
+    fn verify(&mut self, rx: &Receiver<Stamped>) {
+        let from = self.last_verify_ms;
+        self.verify_wanted = false;
+        self.events_since_verify = 0;
+        let (mut candidates, completed) = self.collector.detect_changed();
+        let settle = self.cfg.debounce + self.cfg.settle_wait * 2;
+        let until = Instant::now() + settle;
+        while Instant::now() < until && !self.stop.load(Ordering::SeqCst) {
+            self.step(rx);
+        }
+        self.drain_events(rx);
+        candidates.retain(|rel| !self.pending.contains_key(rel));
+        let changes = if completed && !self.stop.load(Ordering::SeqCst) {
+            self.collector.observe_paths(candidates, Source::VerifyGap)
+        } else {
+            0
+        };
+        let to = now_ms().max(from);
+        if changes > 0 {
+            eprintln!("[track] 取りこぼしを検証の走査で見つけた: {changes} 件");
+            let _ = self.writer.call(move |store| {
+                if let Err(e) = record_gap(store, "watcher_overflow", from, to, None) {
+                    eprintln!("[track] watcher_overflow を残せない (検証の走査): {e}");
+                }
+            });
+        }
+        self.last_verify = Instant::now();
+        self.last_verify_ms = to;
+        self.last_good_ms = to;
+        self.shared.update(|s| {
+            s.verify_runs += 1;
+            s.verify_gaps += u32::from(changes > 0);
+        });
+    }
+
     /// 起動の手順: 前回の状態を読む → `service_start` → 監視を始める → ベースライン / 突き合わせ。
-    fn startup(&mut self, tx_watcher: Sender<Stamped>) -> Result<(), String> {
+    /// 戻り値の bool は、走査を取り終えたか (止める合図で打ち切られたら false)。
+    fn startup(&mut self, tx_watcher: Sender<Stamped>) -> Result<bool, String> {
         self.shared.update(|s| s.phase = Phase::Baselining);
         let started = Instant::now();
         let loaded: LoadedState = self
@@ -356,9 +498,12 @@ impl WatchLoop {
         } else {
             self.collector.scan_baseline()
         };
+        if !stats.completed {
+            return Ok(false);
+        }
         let elapsed_ms = Collector::elapsed_since(started);
         let files_now = self.collector.baseline.files.len();
-        let (scanned, bytes, changes) = (stats.files, stats.bytes, stats.changes);
+        let (scanned, bytes, changes, timings) = (stats.files, stats.bytes, stats.changes, stats.timings);
         let done_at = now_ms();
         self.writer
             .call(move |store| {
@@ -380,10 +525,13 @@ impl WatchLoop {
             s.baseline_files = scanned;
             s.baseline_ms = elapsed_ms;
             s.baseline_bytes = bytes;
+            s.baseline_timings = timings;
             s.first_run = first_run;
             s.phase = Phase::Watching;
         });
-        Ok(())
+        self.last_verify = Instant::now();
+        self.last_verify_ms = now_ms();
+        Ok(true)
     }
 
     /// 絶対パスをパスごとの待ち行列へ入れる。追跡の外 (ルート自身・固定の無視名の下) は None。
@@ -426,6 +574,8 @@ impl WatchLoop {
             return;
         }
         self.last_good_ms = now_ms();
+        self.last_event = Instant::now();
+        self.events_since_verify += 1;
         let prev_from = self.last_from.take();
         match event.kind {
             EventKind::Create(_) | EventKind::Remove(_) => {
@@ -486,6 +636,9 @@ impl WatchLoop {
         });
         self.collector.rescan(Source::OverflowGap);
         self.last_good_ms = now_ms();
+        self.last_verify = Instant::now();
+        self.last_verify_ms = self.last_good_ms;
+        self.events_since_verify = 0;
         self.shared.update(|s| s.overflows += 1);
     }
 

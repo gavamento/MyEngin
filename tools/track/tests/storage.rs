@@ -329,7 +329,7 @@ fn verification_failure_adds_no_snapshot_row_and_leaves_no_files() {
     assert!(blob_files(&root).is_empty(), "最終名または一時ファイルが残った");
 
     // 口を戻せば同じ内容が通る (失敗が状態を汚していない)
-    store.blobs.read_back = |p| std::fs::read(p);
+    store.blobs.read_back = mye_track::blob::read_from_start;
     store.record_snapshot("a.txt", "disk", NOW, b"payload").unwrap();
     assert_eq!(count(store.conn.as_ref().unwrap(), "SELECT COUNT(*) FROM snapshots"), 1);
 }

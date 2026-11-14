@@ -19,6 +19,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104b | 0 | 完了 | 試作 6 件 (下の「試作で確かめること」)。結果は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)。設計文書へ反映済み |
 | M104c | 1 | 完了 | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
 | M104d | 1 | 完了 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
+| M104d2 | 1 | 完了 | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
 | M104e | 1 | 未着手 | 行 diff (Myers)、Hunk、Change / Revision の確定、リネームのまとめ |
 | M104f | 1 | 未着手 | pipe サーバ、`hello`、単一インスタンス、`status` / `list` / `describe`、`tools\track_verify.bat` |
 | M104g | 2 | 未着手 | セッションと操作の登録、帰属の判定、セッションの基準、複数セッション |

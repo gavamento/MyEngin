@@ -10,8 +10,8 @@
 |---|---|---|---|---|
 | sub-01 (M104b) 試作 6 件と設計文書への反映 | OK | 1 | 723bf633 | should 1 件は sub-03 で対応 (共有モード)、nit は sub-02 で対応 (進捗表) |
 | sub-02 (M104c) tools\track の骨組み、DB、Blob、ジャーナル | OK | 2 | 79008917 | round 1 REWORK (projectId が末尾の区切りで変わる。仕様側の誤り) → round 2 OK。nit: failed_steps の発生経路のテストは sub-05 で足す |
-| sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | 差し戻し中 | 1 | | round 1 REWORK: must 1 件 (負荷の下で 1 回の保存が coalesced になり試験が 5 回中 1 回落ちる)、should 1 件 |
-| sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | 未着手 | | | sub-03 の VERDICT で新設。順序は sub-03 → sub-21 → sub-04 (Phase 1 の中)。追加はユーザー承認済み |
+| sub-03 (M104d) ファイル監視、ベースライン、欠落区間 | OK | 2 | 76d0e2df | round 1 REWORK (負荷の下で 1 回の保存が coalesced になる) → round 2 OK。nit: sub-03.md の実装メモに round 2 が無い |
+| sub-21 (M104d2) 取りこぼしの検出と、ベースライン・記録の計測 | 実装中 | 0 | | sub-03 の VERDICT で新設。順序は sub-03 → sub-21 → sub-04 (Phase 1 の中)。追加はユーザー承認済み |
 | sub-04 (M104e) 行 diff、Hunk、Revision、リネーム | 未着手 | | | |
 | sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | 未着手 | | | 着手前にユーザー確認 (未決事項 2、exe の置き場所)。Phase 1 の最後 |
 | sub-06 (M104g) セッション、操作、帰属 | 未着手 | | | 骨子。planner の見直し後に着手 |
