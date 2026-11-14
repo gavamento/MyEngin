@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include "Editor/Asset/AssetOpsSelfTest.h"
+#include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
@@ -265,6 +266,7 @@ const SelfTestSuite kSuites[] = {
     { "disturbancelong", mye::RunDisturbanceFieldLongSelfTest, SelfTestTier::Full, "M96: かき乱しフィールドの重い項目 (128x128 を 600 tick・1200 tick の復元・10000 tick の波紋・600 tick 並走と焼き込みハッシュ・スナップショット往復・ソルバ・Volume の浮力と風と並走と往復・草・追従・粒子・地形)" },
     { "update", mye::RunUpdateSelfTest, SelfTestTier::Fast, "M98a: 版の比較 / Release JSON / SHA-256 / zip の安全な展開 / ローカル取得元" },
     { "editorupdate", mye::RunUpdateWindowSelfTest, SelfTestTier::Fast, "M98d: 自動確認の間隔 / Launcher の探し方 / 開発ビルドの判定 / 更新文字列" },
+    { "changetracking", mye::RunChangeTrackingSelfTest, SelfTestTier::Fast, "M104j" },
 };
 
 const SelfTestAlias kAliases[] = {

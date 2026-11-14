@@ -1,7 +1,7 @@
 //! mye_track.exe — 追跡サービスの入口。
 //!
 //!   mye_track.exe --version
-//!   mye_track.exe serve --project <root> [--idle-timeout-ms <n>]
+//!   mye_track.exe serve --project <root> [--idle-timeout-ms <n>] [--notify-queue <n>]
 //!   mye_track.exe client --project <root> | --pipe <name> [--wait-ms <n>]
 //!   mye_track.exe hook <pre|post|session-start|session-end> [--project <root>]   (Claude Code のフック。常に終了コード 0)
 //!   mye_track.exe bench ...   (計測用。docs/ai-change-tracking/performance.md)
@@ -62,6 +62,7 @@ fn main() -> ExitCode {
 fn serve(args: &[String]) -> ExitCode {
     let mut project: Option<PathBuf> = None;
     let mut idle_timeout = DEFAULT_IDLE_TIMEOUT;
+    let mut notify_queue_cap = mye_track::notify::DEFAULT_QUEUE_CAP;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -70,6 +71,13 @@ fn serve(args: &[String]) -> ExitCode {
                 Some(ms) => idle_timeout = Duration::from_millis(ms),
                 None => {
                     eprintln!("serve: --idle-timeout-ms は整数");
+                    return ExitCode::from(2);
+                }
+            },
+            "--notify-queue" => match iter.next().and_then(|v| v.parse::<usize>().ok()).filter(|n| *n >= 1) {
+                Some(n) => notify_queue_cap = n,
+                None => {
+                    eprintln!("serve: --notify-queue は 1 以上の整数");
                     return ExitCode::from(2);
                 }
             },
@@ -90,6 +98,6 @@ fn serve(args: &[String]) -> ExitCode {
     unsafe {
         SetConsoleCtrlHandler(Some(on_ctrl), 1);
     }
-    let options = ServeOptions { idle_timeout, tracker: TrackerConfig::default(), ..ServeOptions::default() };
+    let options = ServeOptions { idle_timeout, notify_queue_cap, tracker: TrackerConfig::default(), ..ServeOptions::default() };
     ExitCode::from(mye_track::server::run(&root, options, stop_tx, stop_rx))
 }

@@ -37,6 +37,7 @@ void EditorSettings::Load(const std::wstring& dir)
         particleCompareOffsetX = root.value("particleCompareOffsetX", particleCompareOffsetX);
         particleCpuSimd = root.value("particleCpuSimd", particleCpuSimd);
         feelMuteCamera = root.value("feelMuteCamera", feelMuteCamera);
+        changeTrackingEnabled = root.value("changeTrackingEnabled", changeTrackingEnabled);
         profilerTab = root.value("profilerTab", profilerTab);
         profilerAvgFrames = root.value("profilerAvgFrames", profilerAvgFrames);
         profilerHideZero = root.value("profilerHideZero", profilerHideZero);
@@ -87,6 +88,7 @@ void EditorSettings::Save() const
     root["particleCompareOffsetX"] = particleCompareOffsetX;
     root["particleCpuSimd"] = particleCpuSimd;
     root["feelMuteCamera"] = feelMuteCamera;
+    root["changeTrackingEnabled"] = changeTrackingEnabled;
     root["profilerTab"] = profilerTab;
     root["profilerAvgFrames"] = profilerAvgFrames;
     root["profilerHideZero"] = profilerHideZero;

@@ -7,6 +7,9 @@
     <Filter Include="Asset">
       <UniqueIdentifier>{10E11BED-4EA7-7254-E859-ED343276A914}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ChangeTracking">
+      <UniqueIdentifier>{78E7EA37-61DA-AEE2-06EA-91B8EBDFF338}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Project">
       <UniqueIdentifier>{34B3B430-F3B8-5207-2179-7877CCF35676}</UniqueIdentifier>
     </Filter>
@@ -101,6 +104,27 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\Asset\AssetPreviewCache.cpp">
       <Filter>Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ChangeModel.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\TrackClient.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\TrackIo.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\TrackLaunch.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\TrackProjectId.cpp">
+      <Filter>ChangeTracking</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Project\NavAgentTypes.cpp">
       <Filter>Project</Filter>
@@ -449,6 +473,30 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Asset\AssetPreviewCache.h">
       <Filter>Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ChangeModel.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\TrackClient.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\TrackIo.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\TrackLaunch.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\TrackProjectId.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\TrackProtocol.h">
+      <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Project\NavAgentTypes.h">
       <Filter>Project</Filter>

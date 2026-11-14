@@ -156,7 +156,8 @@ harness の sub-NN と計画の M104x は 1 対 1。コミット件名は `M104x
 | sub-08 | M104i | 2 | フック CLI | sub-07 | A8、A20 | `M104i: 追跡サービスにフック CLI を足す` |
 | sub-09 | M104j | 3 | Editor の pipe クライアント、モデル、規則 19 | sub-08 | A9 | `M104j: エディタに追跡サービスのクライアントと規則 19 を足す` |
 | sub-10 | M104k | 3 | AI Changes 窓、Diff 表示部品 | sub-09 | A10 | `M104k: AI Changes 窓と行 diff の表示を足す` |
-| sub-11 | M104l | 3 | シーン構造 diff | sub-10 | A11 | `M104l: 追跡サービスにシーンの構造 diff を足す` |
+| sub-23 | M104k2 | 3 | Editor の保存をサービスへ知らせる (`editor_saved`) | sub-10 | A10 |
+| sub-11 | M104l | 3 | シーン構造 diff | sub-23 | A11 | `M104l: 追跡サービスにシーンの構造 diff を足す` |
 | sub-12 | M104m | 3 | Hierarchy / Inspector / Scene View の表示 | sub-11 | A12 | `M104m: シーン上に AI の変更を表示する` |
 | sub-13 | M104n | 3 | 未保存シーンへの外部変更の確認 | sub-08 | A13 | `M104n: 未保存のシーンへ外部の変更を自動で適用しない` |
 | sub-14 | M104o | 4 | レビュー | sub-12、sub-13 | A14、A20 | `M104o: AI の変更の承認・却下を足す` |
@@ -216,6 +217,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-09 の VERDICT round 1): sub-10 を詳細に書き直した (`hunks` / `blob_get`、DiffView、AI Changes 窓、受け入れ条件 12 件)。大きいので `editor_saved` を **sub-23 (M104k2)** に分け、sub-11 の依存を sub-23 にした (順序は sub-10 → sub-23 → sub-11)。
 - 2026-11-15 (planner、sub-08 の VERDICT round 1 と Phase 3 の見直し): sub-09 を詳細に書き直した (既定は無効、`allowChangeTracking = !automation`、サービス用の起動口、`subscribe` と通知をこのサブでサービス側に足す、`MYE_TRACK_PROBE` の結合試験、規則 19 と規則 9 の 3 site、受け入れ条件 10 件)。`editor_saved` を sub-10 へ移した。sub-10〜13 に Phase 2 までの結果と、着手前の確認の裁定 (推奨どおり) を書き足した。
 - 2026-11-15 (planner、sub-07 の VERDICT round 1 と見直し): D36 を追加。sub-08 を詳細に書き直した (プロジェクトの決め方、終了コード 0 の徹底、起動のときのハンドルの継承、設定の手順の文書、持ち越しの直し 4 件、受け入れ条件 13 件)。
 - 2026-11-15 (planner、sub-22 の VERDICT round 1): 第 2 の手 (自前の `ReadDirectoryChangesW`) は入れずに sub-22 を閉じた (実測で、入れる根拠になる取りこぼしを再現できなかった)。残りの計測を sub-19 に、進捗表の化けの直しを sub-07 に足した。

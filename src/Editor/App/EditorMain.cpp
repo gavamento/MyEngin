@@ -584,6 +584,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.startupObserver = config.startupObserver;
     app.saveSceneOnStart = saveSceneOnStart;
     app.allowAutoUpdateCheck = !automation; // CI / 検証の起動ではネットワークに出ない
+    app.allowChangeTracking = !automation;  // CI / 検証の起動では追跡サービスを起動も接続もしない
     app.autoPlay = autoPlay;
     app.openTimeline = openTimeline;
     app.openAnimPreview = openAnimPreview;

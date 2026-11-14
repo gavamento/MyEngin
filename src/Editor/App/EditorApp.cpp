@@ -256,6 +256,10 @@ void EditorApp::OnStart(EngineContext& ctx)
     //   ロードに失敗しても例外は飛ばない = エディタの他機能は一切影響を受けない
     scm_.Start(GetExecutableDir(), ctx.projectRoot, settings_.scmAutoFetch,
                settings_.scmFetchIntervalMin);
+    // ---- AI Change Tracking (M104j) ----
+    // 既定は無効。有効なプロジェクトの対話起動でだけ、サービスへ接続 (居なければ起動) する
+    changeTracking_.Start(GetExecutableDir(), ctx.projectRoot,
+                          allowChangeTracking && settings_.changeTrackingEnabled);
     // ---- 初回自動ビルド (M66m) ----
     // DLL が丸ごと無い (まだ一度も build_collab.bat を回していない) ときだけ試す。
     // cargo が無ければ StartCollabBuild が黙って nullptr を返す = rustup 未導入の
@@ -531,6 +535,8 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     // M66b: destroy (worker を join) -> FreeLibrary。デバイス解放とは無関係だが、
     // ★プロセス終了任せにすると、走行中の worker のコードごとアンロードされうる
     scm_.Shutdown();
+    // 接続を閉じるだけ。サービスは止めない (Editor を閉じても記録が続く)
+    changeTracking_.Shutdown();
 }
 
 void EditorApp::OnDeviceLost(EngineContext& ctx)
@@ -749,6 +755,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
     // **どのウィンドウ描画よりも先**に drain する。応答はコールバックでモデルを
     // 差し替えるので、描画の途中で入れ替わると同一フレーム内で一覧の件数が変わる
     scm_.Poll();
+    changeTracking_.Poll();
     if (scm_.TakeHeadMoved()) {
         // 外部 (ターミナル) の checkout / pull。v1 は知らせるだけ (spec §3「後回し」)
         toasts_.Notify(LogLevel::Warn, Tr(StrId::Scm_HeadMoved));

@@ -1,0 +1,14 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 mcp は subscribe を呼べない"},"id":2,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"hook","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 hook は subscribe を呼べない"},"id":2,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"editor","serviceStartedAt":<N>}}
+{"error":{"code":"bad_args","detail":"events が要る"},"id":2,"ok":false}
+{"error":{"code":"bad_args","detail":"events は 1 つ以上"},"id":3,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない通知: nosuchevent"},"id":4,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない通知: resync"},"id":5,"ok":false}
+{"error":{"code":"bad_args","detail":"events は配列でなければならない"},"id":6,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: extra"},"id":7,"ok":false}
+{"id":8,"ok":true,"result":{}}
+{"error":{"code":"bad_args","detail":"subscribe は接続ごとに 1 回だけ"},"id":9,"ok":false}
+{"id":10,"ok":true,"result":{"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"items":[],"limit":1,"nextCursor":null}}

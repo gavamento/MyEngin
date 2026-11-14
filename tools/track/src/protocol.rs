@@ -44,8 +44,13 @@ impl Role {
 
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
-    "hello", "status", "list", "describe", "sessions", "shutdown", "session_begin", "session_end", "op_begin", "op_end", "report",
+    "hello", "status", "list", "describe", "sessions", "shutdown", "subscribe", "session_begin", "session_end", "op_begin", "op_end",
+    "report",
 ];
+
+/// `subscribe` で選べる通知の名前 (ipc-contract.md §4.5)。`resync` は購読に関わらず必ず届くので、ここには入れない。
+pub const EVENT_NAMES: &[&str] =
+    &["change_recorded", "attribution_updated", "coverage_gap", "session_changed", "shutting_down"];
 
 /// 役割が op を呼べるか。`hello` は役割を決める前なので表に含めない。
 pub fn role_allows(role: Role, op: &str) -> bool {
@@ -54,6 +59,8 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         "list" | "describe" | "sessions" => matches!(role, Role::Mcp | Role::Editor),
         // サービスの終了は Editor だけ (MCP・フックが他の利用者のサービスを止めない)
         "shutdown" => role == Role::Editor,
+        // 通知は Editor の窓のためのもの。MCP・フックは要求ごとに繋ぐので購読しない
+        "subscribe" => role == Role::Editor,
         // 記録を伴う op は AI 側 (MCP・フック) だけ。Editor は自分の保存・復元を別の op で知らせる (sub-09 以降)
         "session_begin" | "session_end" | "op_begin" | "op_end" => matches!(role, Role::Mcp | Role::Hook),
         // 申告は MCP の change_report だけ (フックは編集の前後を op_begin / op_end で知らせる)
@@ -269,5 +276,8 @@ mod tests {
         assert!(role_allows(Role::Mcp, "describe"));
         assert!(!role_allows(Role::Mcp, "shutdown"));
         assert!(role_allows(Role::Editor, "shutdown"));
+        assert!(role_allows(Role::Editor, "subscribe"));
+        assert!(!role_allows(Role::Mcp, "subscribe"));
+        assert!(!role_allows(Role::Hook, "subscribe"));
     }
 }

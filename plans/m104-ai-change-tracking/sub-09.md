@@ -1,7 +1,7 @@
 # sub-09: Editor の pipe クライアント、モデル、規則 19 (M104j)
 
 - 依存: sub-08
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-15、sub-08 の VERDICT で planner が書き直した)。Phase 3 の最初のサブで、**このマイルストーンで初めて `src\` を触る**。
 - 質問の運用: 推奨で進め、Notion に後回し。
@@ -109,4 +109,71 @@ ipc §4.1、§4.5。`role = editor` だけ。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-09 (round 1)
+
+実装:
+- `src\Editor\ChangeTracking\` (新設 15 ファイル): `TrackProtocol.h` (版・op・通知・エラーコード)、`TrackProjectId` (`ProjectIdSource` / `ProjectId` / `TrackPipeName`)、`TrackLaunch` (`FindTrackExe` / `QuoteCommandLineArg` / `LaunchTrackService` = `CreateProcessW`、`bInheritHandles = FALSE`、`CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`、`ERROR_ACCESS_DENIED` で BREAKAWAY を外して再試行、ハンドルはすぐ閉じる)、`TrackIo` (I/O の口 + Win32 実装 = overlapped の pipe、service.json、起動、単調時計)、`TrackClient` (状態 9 種、hello、`bad_token` の 1 回再試行、時間切れ 30 s / 5 s、切断 → 保留の全失敗 → 3 s おきの再接続、1 回の Poll の上限 = 256 行・2 ms・読み取り 4 回、1 MiB の行の上限)、`ChangeModel` (status / sessions / list / describe、通知で古い印、最短 500 ms の間引き、`resync` は全部を即取り直し)、`ChangeTrackingSession` (`Start` / `Poll` / `Shutdown` / `State` / `Model`。Shutdown は接続を閉じるだけ)、`ChangeTrackingSelfTest`。
+- `EditorApp.h/.cpp` (メンバ `changeTracking_`、`allowChangeTracking`、OnStart / OnImGui / OnShutdown)、`EditorMain.cpp` (`app.allowChangeTracking = !automation`)、`EditorSettings.h/.cpp` (`changeTrackingEnabled` 既定 false)、`SelfTestSuites.cpp` (`changetracking`、末尾)。
+- サービス側: `tools\track\src\notify.rs` (新設: 購読ごとの上限つきキュー、DB を読み取り専用で引くポーラ、`poll_once`)、`server.rs` (`subscribe`、購読した接続の送り出し、`shutting_down`)、`protocol.rs` (`IMPLEMENTED_OPS`、`role_allows`、`EVENT_NAMES`)、`pipe.rs` (`bytes_available`)、`client.rs` (`wait_line`)、`main.rs` (`--notify-queue`)、`tests\pipe.rs` (3 本)、`tests\track\23_subscribe.ndjson`。
+- `tools\check_rules.ps1` (規則 19、規則 9 に C++ の版定数)、`tools\check_rules_selftest.ps1` (規則 19)、`build\Editor.vcxproj` / `.filters` (`gen_project_files.ps1` の出力 15 ファイル分)、文書 (architecture §3 / §7、ipc-contract §4 / §9.8 / §9.9、計画の進捗・未決事項 3・申し送り)。
+
+仕様との差分:
+- [追加] 通知の作り方: 記録の経路 (Writer / 監視) に hook を足さず、購読者がいる間だけ読み取り専用の DB 接続が 200 ms ごとに新しい行を引く方式にした (`notify.rs`)。理由: Writer・監視・帰属の計算 (複数箇所で `change_revisions` を書く) を 1 行も変えずに、通知が記録を待たせないことを構造で保証できる。代償: 通知は最大 200 ms 遅れる。`attribution_updated` は「知らせ済みの Revision に根拠が足された」ときに出る。
+- [追加] `change_recorded` / `attribution_updated` に `actor` を付けた (仕様の項目は `attribution` だけ)。`coverage_gap` は `gapId`、`fromAt`、`toAt`、`reason`、`scope`。
+- [追加] サービスの `serve --notify-queue <n>` (試験が小さなキューであふれを作るため。既定 256)。
+- [追加] 購読した接続は、同期ハンドルの `ReadFile` 中に別スレッドから `WriteFile` できない (止まる) ので、接続のスレッドが `PeekNamedPipe` で入力を見ながら 10 ms ごとに通知を送り出す (`pipe::bytes_available`)。
+- [追加] `shutting_down` を受けたあとの切断では、サービスを起動し直さない (止めた意図を覆さない。pipe を見に行くだけは 3 秒おきに続く)。仕様には無い。
+- [追加] `db_degraded` は hello の失敗 (`db_degraded`) と、接続中の `status` の `db.state != recording` の両方で `DbDegraded` にする (今のサービスの hello は `db_degraded` を返さず、`status` で分かるため)。
+- [追加] `MYE_TRACK_PROBE=leave`: サービスを止めずに終わる (Editor.exe の終了後もサービスが生きることを手で確かめるため)。`1` が仕様の本体。
+- [逸脱] 条件 3 の「`changeTrackingEnabled` を true にした一時プロジェクトで `--screenshot` (や `--frames`)」は `--project <一時> --frames 40` で実施した。`--screenshot` は回していない。
+- [未実装] 仕様どおり、窓・設定の切り替え UI・`editor_saved`・`hunks` / `blob_get` は無い。
+
+検証:
+- `MSBuild MyEngine.sln` Debug|x64 と Release|x64 (どちらも `/p:MyeWarnAsError=true`) → 成功 (警告 0)。
+- `MYE_SELFTEST_ONLY=changetracking Editor.exe --selftest` (Debug) → PASS 84 項目。サービスなしで動く。
+- `Editor.exe --selftest` Debug → 112 スイート 0 失敗 (76.9 s)。Release → 112 スイート 0 失敗 (24.6 s)。どちらも実行中・実行後に `mye_track.exe` が存在しなかった (200 ms ごとに `Get-Process`)。
+- `MYE_TRACK_PROBE=1 MYE_SELFTEST_ONLY=changetracking Editor.exe --selftest` を Debug と Release の両方で → 全 PASS (起動 → Ready → `subscribe` → ファイルを書く → `change_recorded` → `list` に出る → Editor が接続を閉じてもサービスは生存 → 別セッションが再接続して `shutdown` (role editor) → プロセスが残らない)。`MYE_TRACK_PROBE=leave` (Debug) では Editor.exe の終了後もサービス (pid 39300) が生きていた (後で自分で止めた)。
+- 実 Editor (Release) の対話起動 (一時プロジェクト、`.mye\editor_settings.json` に `changeTrackingEnabled: true`、`LOCALAPPDATA` を一時へ): サービスが `"…\mye_track.exe" serve --project "…\proj"` で起動し、ログに `Connecting -> Ready`。Editor を強制終了してもサービスは生きていた。同じプロジェクトを `--project … --frames 40` で回すとサービスは起動せず、`.mye\ai_changes` も作られなかった (条件 3)。後始末: 自分が起動した Editor と mye_track のプロセスを止め、一時ディレクトリ (`%TEMP%\mye_ct_accept`、`%TEMP%\mye_selftest_44012`) を消した。
+- `cargo test --manifest-path tools\track\Cargo.toml` → 全 PASS (pipe.rs 10 本 = 新規 3 本を含む、lib 32 本 = notify の単体 4 本を含む。新規 3 本は 5 回続けて PASS)。`tools\build_track.bat Release` → 成功。`tools\track_verify.bat` → 23 シナリオ全 PASS (`23_subscribe` を新規)。
+- `pwsh tools\check_rules.ps1` → 0 error (61 warning は既存)。`pwsh tools\check_rules_selftest.ps1` → 規則 18 と 19 の両方 PASS。`TrackProtocol.h` の値を 2 にすると規則 9 が落ちることを確認して 1 に戻した。
+- `git diff --stat ca6a3991 -- src\Engine src\Runtime src\Server src\GameLogic src\Shared src\Scripting` → 空。`ChangeTracking` の include に sim のヘッダは無い (Engine からは `PathUtil.h` / `Sha256.h` / `Log.h` だけ)。`build\Editor.vcxproj` / `.filters` の差分は追加だけ (63 行)。`C:\HAL\MyEngin\.mye` は作っていない。
+- 未実行: `Editor.exe --selftest-full` (sub の検証コマンドに無く、重い Full 層は触れていない)、`tools\replay_verify.bat` (Engine 層を触っていない。sub のとおり)、`tools\mcp_verify.ps1` (`tools\mcp\src` を変えておらず、`tools\mcp\target\release` の exe をユーザーのセッションが使用中)、`--screenshot`、CI での実走、Rust 1.89 での実ビルド。
+
+自己採点 (1-5):
+  仕様適合: 4 — 条件 1〜10 を実行で確かめた。`mcp_verify` と `--selftest-full` は未実行、`--screenshot` は `--frames` で代用。通知の作り方は仕様に無い方式 (ポーリング) を選んだ (差分に書いた)。
+  正しさ: 4 — 偽の I/O の試験 84 項目、実サービスとの結合 (Debug / Release)、実 Editor の対話起動、`cargo test` / `track_verify` で確認。Visual Studio のデバッグ起動など別の Job の性質、別ユーザー、長時間の運用は未確認。
+  コード品質: 4 — 入口 (`TrackIo`) で I/O を分け、スレッドなし・待たない。`ChangeModel` の `Detail` などは窓 (sub-10) が使い始めてから形が固まる。
+  テスト: 4 — 受け入れ条件の各項目に対応する検査がある。モデルの試験は 1 本の長い流れで、失敗すると後続の検査も巻き込む。
+
+不安・質問:
+- 通知がポーリング (最大 200 ms 遅れ) でよいか。即時にするなら `Store` の書き込みに通知の口を足すことになるが、`write_revision` / `attribution` の更新 / `coverage_gaps` / セッションの更新が別々の経路にあり、Writer の経路を触る (sub-06 / 22 の試験を巻き込む)。窓の表示にとって 200 ms は十分と見た。
+- `Start-Process -Wait` (PowerShell の Job) から Editor を起動したら、Editor が終わってもサービスが生きていて `-Wait` が返らなかった。サービスが BREAKAWAY できず Job に残った (= ERROR_ACCESS_DENIED のフォールバック) ためと推定するが、Job の性質は直接読んでいない。architecture §3 に「推定・未確認」と書いた。
+- 追跡の既定は無効のまま (planner の裁定)。逆の答えなら `EditorSettings.h` の既定値 1 つと `ChangeTrackingSelfTest.cpp` の `settings: tracking is off by default` を直す。
+- 1 回の Poll の時間の上限 (2 ms) は実時間で測るので、遅い環境 (Debug) では 1 万行の処理が 150 フレームほどに広がりうる (試験は 500 フレームまで許す)。
+
+触ったファイル:
+- C:\HAL\MyEngin\src\Editor\ChangeTracking\ (新設 15 ファイル: TrackProtocol.h / TrackProjectId.h,.cpp / TrackLaunch.h,.cpp / TrackIo.h,.cpp / TrackClient.h,.cpp / ChangeModel.h,.cpp / ChangeTrackingSession.h,.cpp / ChangeTrackingSelfTest.h,.cpp)
+- C:\HAL\MyEngin\src\Editor\App\EditorApp.h, EditorApp.cpp, EditorMain.cpp, EditorSettings.h, EditorSettings.cpp
+- C:\HAL\MyEngin\src\Editor\SelfTest\SelfTestSuites.cpp
+- C:\HAL\MyEngin\build\Editor.vcxproj, Editor.vcxproj.filters
+- C:\HAL\MyEngin\tools\track\src\notify.rs (新設), server.rs, protocol.rs, pipe.rs, client.rs, lib.rs, main.rs
+- C:\HAL\MyEngin\tools\track\tests\pipe.rs
+- C:\HAL\MyEngin\tests\track\23_subscribe.ndjson, 23_subscribe.expected.ndjson
+- C:\HAL\MyEngin\tools\check_rules.ps1, check_rules_selftest.ps1
+- C:\HAL\MyEngin\docs\ai-change-tracking\architecture.md, ipc-contract.md
+- C:\HAL\MyEngin\plans\m104-ai-change-tracking.md
+- C:\HAL\MyEngin\plans\m104-ai-change-tracking\sub-09.md (実装メモ)
+
+申し送り:
+- sub-10: `ChangeTrackingSession::Model()` に `SetInterest(mask)` (窓が見ている部分)、`SetFilter`、`LoadMore`、`SelectRevision` がある。窓が開いたら `SetInterest` を立てること (立てない部分は取りに行かない)。切り替えの UI は `EditorSettings::changeTrackingEnabled` を変えたあと `ChangeTrackingSession::Start` をやり直す (`NoService` の探し直しも `Start` し直しで行う)。`editor_saved` は `role_allows` と `IMPLEMENTED_OPS` に足してから。
+- sub-10: 通知の `actor` は `change_recorded` と `attribution_updated` に付く。`resync` は購読の対象でなく必ず届く (`ChangeModel` が処理済み)。
+- reviewer: モデルの試験は `RunChangeTrackingSelfTest` の (g)。フレーム時間の試験は実時間で測っている (閾値は 50〜200 ms と緩い)。
+- `tests\track\23_subscribe.ndjson` を足したので、`track_verify.bat` は 23 シナリオになった。
+- この作業が残したプロセス・一時ファイルは無い (止めたもの: 自分が起動した Editor.exe 1 本と mye_track.exe 2 本、消したもの: `%TEMP%\mye_ct_accept`、`%TEMP%\mye_selftest_44012`、`%TEMP%\ct_*.txt` / `st_*.txt`)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `Editor` の残存プロセスなし (MSBuild の待機ノードが 5 本残っているが、ビルドの後に自分で消える常駐で、止めていない)、リポジトリに `.mye\ai_changes\` なし、下位の層 (`src\Engine` ほか 5 つ) の差分は空、`bin\x64\Debug|Release\Editor.exe` は最後のソースの変更より新しい。planner の実走: `MYE_SELFTEST_ONLY=changetracking` の Debug が終了コード 0、Release の `--selftest` 全体が 112 スイート 0 失敗 (23 秒) で、実行中 (300 ms ごとに確認) も実行後も `mye_track.exe` なし、`tools\check_rules.ps1` 0 error、`tools\check_rules_selftest.ps1` が規則 18 と 19 の両方で PASS、`cargo test` (track) 194 件通過、`tools\track_verify.bat` 全シナリオ PASS。コードで確かめたこと: `TrackLaunch.cpp` 70 行目の `CreateProcessW` が `bInheritHandles = FALSE`、`EditorSettings.h` 48 行目の既定が false、`EditorMain.cpp` 587 行目の `allowChangeTracking = !automation`、`ChangeTracking\` が include する Engine のヘッダは `Log.h` / `PathUtil.h` / `Sha256.h` だけ。
+  - 追加の判定: 通知を「購読者がいる間だけ読み取り専用の接続で 200 ms ごとに引く」方式にした、通知に `actor` を足した、`--notify-queue`、`shutting_down` の後は起動し直さない、`DbDegraded` を `status` からも判定、`MYE_TRACK_PROBE=leave`、は全部採る。
+  - 逸脱 (`--screenshot` の代わりに `--frames 40` で確かめた): 可。どちらも `automation` を真にする同じ経路。
+  - 質問への回答: (1) 通知は 200 ms の遅れでよい。記録の経路に手を入れない方を採る。(2) Job の中から起動された Editor のサービスが Job に残る件は「推定・未確認」のままでよい。(3) 既定は無効のまま。(4) `Poll` の 2 ms の上限はそのままでよい。
+  - 申し送りどおり、計画の進捗表の M104i の行が古い。sub-10 で直す。

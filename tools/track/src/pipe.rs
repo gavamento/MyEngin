@@ -21,7 +21,7 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE,
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, PeekNamedPipe, WaitNamedPipeW, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -229,6 +229,20 @@ pub fn open_client(name: &str) -> io::Result<File> {
             Err(e) => return Err(e),
         }
     }
+}
+
+/// pipe の読み取り側にある、いま読めるバイト数 (待たない)。相手が閉じていれば `Err` (`ERROR_BROKEN_PIPE`)。
+/// 同期ハンドルの `ReadFile` は同じハンドルへの `WriteFile` を止めるので、通知を送る接続は読む前にこれで見る。
+pub fn bytes_available(file: &File) -> io::Result<u32> {
+    let mut available = 0u32;
+    // SAFETY: available は出力先として初期化済み。バッファは読まない (長さ 0)
+    let ok = unsafe {
+        PeekNamedPipe(file.as_raw_handle() as HANDLE, null_mut(), 0, null_mut(), &mut available, null_mut())
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(available)
 }
 
 /// 開いた pipe の DACL を SDDL の文字列で読み戻す (試験用の確認と診断)。

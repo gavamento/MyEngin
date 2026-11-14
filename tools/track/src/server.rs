@@ -21,14 +21,15 @@ use windows_sys::Win32::System::Threading::CreateMutexW;
 
 use crate::collector::TrackerConfig;
 use crate::db::now_ms;
+use crate::notify::{self, Cursors, NotifyHub, Subscription};
 use crate::ops;
 use crate::ops_record::{self, Caller, RecordEnv, DEFAULT_FLUSH_BUDGET};
 use crate::pipe::{self, PipeInstance, PipeListener};
 use crate::process::{is_alive, process_start_ms};
 use crate::project::{project_id, project_id_source};
 use crate::protocol::{
-    clip, code, error_response, ok_response, parse_request, role_allows, Args, OpError, Request, Role, IMPLEMENTED_OPS,
-    MAX_LINE_BYTES, PROTO_VERSION,
+    clip, code, error_response, ok_response, parse_request, role_allows, Args, OpError, Request, Role, EVENT_NAMES,
+    IMPLEMENTED_OPS, MAX_LINE_BYTES, PROTO_VERSION,
 };
 use crate::session::{self, LifecycleConfig};
 use crate::startup::{open_project, ServiceState, StartupReport};
@@ -48,7 +49,15 @@ pub const WRITER_QUEUE_LIMIT: usize = 1024;
 /// `ERROR_SHARING_VIOLATION`。`service.lock` を別のプロセスが持っている。
 const SHARING_VIOLATION: i32 = 32;
 
+/// 通知を購読した接続が、読み取りの待ちの間に通知の送り出しを見に戻る間隔。
+const PUMP_INTERVAL: Duration = Duration::from_millis(10);
+
+/// 終了の前に `shutting_down` を購読者へ届けるのを待つ上限。
+const SHUTDOWN_NOTICE_WAIT: Duration = Duration::from_millis(500);
+
 pub struct ServeOptions {
+    /// 購読ごとの通知のキューの長さ (あふれたら古いものを捨てて `resync`)。
+    pub notify_queue_cap: usize,
     pub idle_timeout: Duration,
     pub tracker: TrackerConfig,
     pub lifecycle: LifecycleConfig,
@@ -57,6 +66,7 @@ pub struct ServeOptions {
 impl Default for ServeOptions {
     fn default() -> Self {
         ServeOptions {
+            notify_queue_cap: notify::DEFAULT_QUEUE_CAP,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
             tracker: TrackerConfig::default(),
             lifecycle: LifecycleConfig::default(),
@@ -134,7 +144,9 @@ struct Context {
     stop_tx: Sender<&'static str>,
     connections: AtomicUsize,
     idle_since: Mutex<Instant>,
-    stopping: AtomicBool,
+    stopping: Arc<AtomicBool>,
+    /// 通知の購読の登録簿。
+    hub: Arc<NotifyHub>,
 }
 
 impl Context {
@@ -236,6 +248,8 @@ struct ConnState {
     pid: Option<u32>,
     reader: Option<Connection>,
     _editor: Option<EditorGuard>,
+    /// `subscribe` 済みなら、通知の取り出し口。
+    subscription: Option<Subscription>,
 }
 
 /// 1 行の読み取り結果。
@@ -316,8 +330,15 @@ fn serve_connection(ctx: &Context, instance: PipeInstance) {
     let client_pid = instance.client_pid();
     let file = instance.file();
     let mut reader = BufReader::with_capacity(64 * 1024, file);
-    let mut conn = ConnState { role: None, pid: None, reader: None, _editor: None };
+    let mut conn = ConnState { role: None, pid: None, reader: None, _editor: None, subscription: None };
     loop {
+        // 購読した接続は、読み取りで止まる前に通知を送る。同期ハンドルの ReadFile で止まったまま、別のスレッドから
+        // WriteFile を呼ぶと書き込みも止まるので、書くのも読むのもこのスレッドで行い、読む前に PeekNamedPipe で見る
+        if let Some(subscription) = &conn.subscription {
+            if !pump_notifications(file, &reader, subscription) {
+                return;
+            }
+        }
         let line = match read_line(&mut reader, MAX_LINE_BYTES) {
             Ok(Line::Data(line)) => line,
             Ok(Line::TooLarge) => {
@@ -345,6 +366,62 @@ fn serve_connection(ctx: &Context, instance: PipeInstance) {
             return;
         }
     }
+}
+
+/// 通知を書き出し、読める入力ができるまで待つ。接続が壊れていたら偽。
+fn pump_notifications(file: &File, reader: &BufReader<&File>, subscription: &Subscription) -> bool {
+    loop {
+        let events = subscription.take();
+        let mut broken = false;
+        for event in &events {
+            if send(file, event).is_err() {
+                broken = true;
+                break;
+            }
+        }
+        if !events.is_empty() {
+            subscription.finish_sending();
+        }
+        if broken {
+            return false;
+        }
+        if !reader.buffer().is_empty() {
+            return true;
+        }
+        match pipe::bytes_available(file) {
+            Ok(0) => std::thread::sleep(PUMP_INTERVAL),
+            Ok(_) => return true,
+            Err(_) => return false,
+        }
+    }
+}
+
+/// `subscribe`: 通知の名前を検査して購読を登録する。接続ごとに 1 回だけ。
+fn subscribe(ctx: &Context, conn: &mut ConnState, mut args: Args) -> Result<Value, OpError> {
+    let events = args.string_list("events")?.ok_or_else(|| OpError::bad_args("events が要る"))?;
+    // 引数が全部正しいと分かってから登録する (失敗した要求で購読が残らないように)
+    args.finish()?;
+    if events.is_empty() {
+        return Err(OpError::bad_args("events は 1 つ以上"));
+    }
+    if let Some(unknown) = events.iter().find(|name| !EVENT_NAMES.contains(&name.as_str())) {
+        return Err(OpError::bad_args(format!("知らない通知: {}", clip(unknown))));
+    }
+    if conn.subscription.is_some() {
+        return Err(OpError::bad_args("subscribe は接続ごとに 1 回だけ"));
+    }
+    let names = events.into_iter().collect();
+    let hub = Arc::clone(&ctx.hub);
+    // DB へ書けない状態では位置を決めない (引けない)。shutting_down だけが届く
+    let subscription = hub.register(names, || {
+        if !ctx.db_recording {
+            return None;
+        }
+        let reader = ops::open_reader(&ctx.db_path).ok()?;
+        Cursors::capture(&reader).ok()
+    });
+    conn.subscription = Some(subscription);
+    Ok(json!({}))
 }
 
 fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client_pid: Option<u32>) -> Outcome {
@@ -386,6 +463,7 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         "describe" => with_reader(ctx, conn, |db| ops::describe(db, args)),
         "sessions" => with_reader(ctx, conn, |db| ops::sessions(db, args)),
         "shutdown" => args.finish().map(|()| json!({})),
+        "subscribe" => subscribe(ctx, conn, args),
         "session_begin" | "session_end" | "op_begin" | "op_end" | "report" => record_op(ctx, conn, role, &request.op, args),
         other => Err(OpError::new(code::INTERNAL, format!("op の配線が無い: {other}"))),
     };
@@ -713,7 +791,8 @@ pub fn run(
         stop_tx,
         connections: AtomicUsize::new(0),
         idle_since: Mutex::new(Instant::now()),
-        stopping: AtomicBool::new(false),
+        stopping: Arc::new(AtomicBool::new(false)),
+        hub: Arc::new(NotifyHub::new(options.notify_queue_cap)),
     });
     let service_json = paths.dir.join("service.json");
     if let Err(e) = write_service_json(&service_json, &ctx) {
@@ -730,6 +809,12 @@ pub fn run(
         tracker.stop("startup_failed");
         let _ = std::fs::remove_file(&service_json);
         return 1;
+    }
+
+    if !degraded {
+        if let Err(e) = notify::spawn_poller(Arc::clone(&ctx.hub), paths.db.clone(), Arc::clone(&ctx.stopping)) {
+            eprintln!("[track] 通知のスレッドを作れない: {e}");
+        }
     }
 
     let mut last_tick = Instant::now();
@@ -750,6 +835,9 @@ pub fn run(
     };
     eprintln!("[track] 終了: {reason}");
     ctx.stopping.store(true, Ordering::SeqCst);
+    // 購読者へ終了を知らせてから止める (書き終わるのを少し待つ)
+    ctx.hub.broadcast(&json!({ "event": "shutting_down", "reason": reason }));
+    ctx.hub.wait_drained(SHUTDOWN_NOTICE_WAIT);
     wake_accept_loop(&pipe_name);
     let failed = matches!(ctx.status.status().phase, Phase::Failed(_));
     tracker.stop(reason);

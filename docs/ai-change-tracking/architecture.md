@@ -83,13 +83,15 @@
 ## 3. プロセスと寿命 (決定)
 
 - **1 プロジェクトに 1 サービス。** サービスは起動時に名前付き mutex (`Local\mye-track-<projectId>`) を取る。取れなければ既に居るので即終了し、起動を頼んだ側は既存の pipe へ接続する。
-- **起動するのは MCP か Editor。** どちらも「pipe へ接続 → 無ければ `mye_track.exe serve --project <root>` を起動 → 接続をやり直す」の順。Editor は既存の `StartChildProcess` (`src\Editor\App\ChildProcess.h`) を使う。MCP は `track_client.rs` から起動するので、規則 15-c の許可表にこのファイルを足す。
+- **起動するのは MCP か Editor。** どちらも「pipe へ接続 → 無ければ `mye_track.exe serve --project <root>` を起動 → 接続をやり直す」の順。Editor は `src\Editor\ChangeTracking\TrackLaunch.cpp` の `LaunchTrackService` で起動する (**`StartChildProcess` は使わない**: あれは `bInheritHandles = TRUE` でログのハンドルを子へ渡すので、常駐するサービスがそれを掴んでしまう)。MCP は `track_client.rs` から起動するので、規則 15-c の許可表にこのファイルを足す。
 - **親と運命を共にしない。** 自分では Job Object を作らず、起動する側も入れない。Editor を閉じても MCP セッションの記録が続き、MCP が終わっても Editor の表示が続く (仕様書 §16.2「Editor 停止中の MCP 操作を記録できる」)。
   - **確認済み** (試作 6): 起動した側が Job に入っていなければ、親が終わっても子は生き残る。親が kill-on-close の Job に入っていると、既定では子も同じ Job に入って一緒に終わる。`DETACHED_PROCESS` / `CREATE_NO_WINDOW` は Job の所属を変えない。Job から離れるのは `CREATE_BREAKAWAY_FROM_JOB` だけで、Job が `JOB_OBJECT_LIMIT_BREAKAWAY_OK` を持っていないと `CreateProcess` が `ERROR_ACCESS_DENIED` で失敗する。
     本物の Claude Code が起動した `mye_mcp.exe` は Job に入っていた (性質は読めなかった)。
   - **決定** (MCP からの起動): `CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` で起動し、`ERROR_ACCESS_DENIED` で失敗したら `CREATE_BREAKAWAY_FROM_JOB` を外して起動し直す。後者の場合は親の Job に入り、親と一緒に終わることがある。
   - **縮退**: 親と一緒に終わったら、次の起動時に `service_down` の欠落として記録する (仕様書 §3.4 の範囲内)。責務の分け方は変えない。
-  - **未検証**: 本物のクライアントを終了させて子が生き残るか (実行するとこの作業ごと終わるため試していない。MCP から起動する実装ができた後、sub-05 / sub-07 で確かめる)。Editor が Job に入って起動される場合 (Visual Studio のデバッグなど) は sub-09 で確かめる。
+  - **決定** (Editor からの起動、M104j): `CreateProcessW` を `bInheritHandles = FALSE`、`CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` で呼び、`ERROR_ACCESS_DENIED` なら `CREATE_BREAKAWAY_FROM_JOB` を外してやり直す。プロセスのハンドルはすぐ閉じ、待たず、Job にも入れない。`CREATE_NO_WINDOW` なので、サービスの標準入出力は Editor のものではなく新しい非表示のコンソールになる。
+  - **確認済み** (M104j、`MYE_TRACK_PROBE=1`): Editor.exe (selftest) が起動したサービスは、Editor が接続を閉じても生き (Shutdown は接続を閉じるだけで `shutdown` を送らない)、`MYE_TRACK_PROBE=leave` で Editor.exe が終了したあとも生きていた。PowerShell の `Start-Process -Wait` (Job の中) から Editor を起動すると、Editor が終わっても `-Wait` が返らず、サービスは生きたままだった (観測。`-Wait` が子孫まで待つ性質と合わせて、サービスが BREAKAWAY できず Job に残ったためと推定する。Job の性質を直接は読んでいないので未確認)。
+  - **未検証**: 本物のクライアントを終了させて子が生き残るか (実行するとこの作業ごと終わるため試していない。MCP から起動する実装ができた後、sub-05 / sub-07 で確かめる)。Visual Studio のデバッグ起動の Editor から起動した場合の Job の性質。
 - **自分で終わる。** 接続中のクライアントが 0 になってから一定時間 (既定 10 分、設定可) で終了する。終了時刻は `events` に残し、次回起動時の欠落区間の計算に使う。
 - **サービスが居ないときの扱い。** Editor も MCP も通常動作を続け、追跡だけが止まる。Editor は窓に「追跡停止中」と出す。MCP の 5 ツールは `isError` の結果を返す。
 - **projectId。** `NormalizePathKey` と同じ規則で正規化したプロジェクトルートのパスから、末尾の区切りを全部落としたもの (ドライブのルート `c:\` は落とさない) の SHA-256 の先頭 16 桁。末尾の区切りの有無で値が変わると、mutex と pipe の名前が割れて同じ DB に書き手が 2 つできるため (spec D25)。pipe 名・mutex 名・DB 内の値で同じものを使う。
@@ -268,6 +270,8 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 - 色は仕様書 §8.1 が「ユーザー設定で変更可能」としているが、色の設定を保存する前例は無い (テーマ色はコード内の定数)。`EditorSettings` に項目を足す。
 - C# コンポーネントのフィールドは別経路 (`DrawManagedComponentFields`) で描かれ、フィールド単位のフックが無い。初期はコンポーネント単位のバッジにとどめる。
 - 文字列はすべて `LocalizationTable.inl` と `Tr()`。窓名は `"表示名###固定ID"`。
+- **持ち主と配線** (M104j): `ChangeTrackingSession` (`src\Editor\ChangeTracking\`) が `EditorApp` のメンバ。`OnStart` で `Start`、`OnImGui` の `scm_.Poll()` の隣で `Poll`、`OnShutdown` で `Shutdown` (接続を閉じるだけ)。`TrackClient` はスレッドを作らず、`Poll()` は待たない (overlapped の読み書きを `GetOverlappedResult(bWait = FALSE)` で見る。1 回の `Poll()` が処理する行数と時間に上限がある)。`ChangeModel` は通知で「古い」印を付け、窓が見ている部分だけを最短 500 ms の間隔で取り直す。I/O は `TrackIo` の後ろにあり、試験は偽物に差し替える。
+- **既定は無効** (M104j のユーザー判断待ちの裁定): `EditorSettings` の `changeTrackingEnabled` (既定 false) が true のプロジェクトの対話起動でだけ、サービスへ接続・起動する。`--selftest*` / `--screenshot` / リプレイなどの非対話起動 (`EditorMain.cpp` の `automation`) では `allowChangeTracking = false` で、サービスの起動も接続もしない。
 
 ## 8. 外部シーン変更の挙動変更 (決定)
 
@@ -287,7 +291,7 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 
 - ECS にコンポーネントを足さない。SimSnapshot の版 (現行 82)、TypeId、ABI (v35 = 202 スロット) は変えない。
 - 追跡の状態は World の外に置く。前例は `Selection`、`CameraPilot`、Scene View のギズモ状態、`GhostTrack`。
-- `src\Editor\ChangeTracking\` を Engine / Runtime / GameLogic / Shared / Server から include させない。規則 12 と同じ形の規則を `check_rules.ps1` に足す (規則 19)。
+- `src\Editor\ChangeTracking\` を Engine / Runtime / GameLogic / Shared / Server から include させない。規則 12 と同じ形の規則を `check_rules.ps1` に足す (規則 19、M104j で実装済み。`tools\check_rules_selftest.ps1` に検査がある)。
 - §8 の `ReloadHub` の口は Engine 層の変更だが、未設定時の挙動は今と同じ。口が呼ばれるのはフェーズ 2 のセーフポイントで、sim の Tick の中ではない。
 - 受け入れ条件: 追跡を有効にした場合と無効にした場合で `tools\replay_verify.bat` の結果が一致する。Scene View のハイライトを出した状態と出していない状態で `HashWorld` が一致する。
 - 追跡は Editor 専用。`Runtime.exe` と `Server.exe` はサービスへ接続しない。`.mye\` は配布物に入らない (既に `.gitignore` とプロジェクトのテンプレートが除外している)。

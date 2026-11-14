@@ -42,6 +42,10 @@ struct EditorSettings {
     // エディタで Play 中にカメラの揺れ・キックを切る (編集しながら長く見ると酔うため)。個人の好みなのでここ。
     // ゲームの出力倍率 (SetFeelOutputScale) とは別で、sim にも録画にも影響しない
     bool feelMuteCamera = false;
+    // ---- AI Change Tracking (M104j) ----
+    // 追跡サービスへの接続・起動を許すか。**既定は無効**: 有効にすると最初のベースラインで
+    // .myei_changeslobs\ に追跡対象の内容が複製される (大きいプロジェクトで数百 MB)。個人の判断なのでここ
+    bool changeTrackingEnabled = false;
     // ---- プロファイラの表示 (M102) ----
     int profilerTab = 0;            // 最後に開いていたタブ (ProfilerWindow のタブ順)
     int profilerAvgFrames = 60;     // 平均・最大を取るフレーム数 (1 = 瞬間値)

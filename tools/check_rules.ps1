@@ -827,12 +827,13 @@ $constGroups = @(
             'tools\deepmodal\layout.py'            = 'CHANNELS\s*=\s*(\d+)'
         }
     }
-    # 食い違うと hello が proto_mismatch になり、MCP の変更追跡の道具が全部使えなくなる (C++ の kTrackProtoVersion は sub-09 で足す)
+    # 食い違うと hello が proto_mismatch になり、MCP の変更追跡の道具と Editor の追跡が全部使えなくなる
     @{
-        label = 'PROTO_VERSION (track) / PROTO_VERSION (mcp)'
+        label = 'PROTO_VERSION (track) / PROTO_VERSION (mcp) / kTrackProtoVersion (Editor)'
         sites = @{
             'tools\track\src\protocol.rs'   = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
             'tools\mcp\src\track_client.rs' = 'pub\s+const\s+PROTO_VERSION\s*:\s*u32\s*=\s*(\d+)'
+            'src\Editor\ChangeTracking\TrackProtocol.h' = 'constexpr\s+int\s+kTrackProtoVersion\s*=\s*(\d+)'
         }
     }
     # M76e2 (sub-09) 持ち越し: export.py の `paramCount <= MAX_PARAM_COUNT` assert と
@@ -1479,6 +1480,20 @@ foreach ($f in Get-Sources) {
             Write-Host "ERROR [rule 18] $($f.FullName):${lineNo}: transcendental math in the disturbance sim (use only + - * / sqrt floor min max; express decay as a keep rate)"
             $errors++
         }
+    }
+}
+
+# 規則 19: AI Change Tracking (M104) は Editor 層に閉じ込める
+# 追跡 (サービスへの接続・モデル) は **sim に 1 バイトも触らない**ことが存在条件。規則 12 (Source control) と同じ理由で、
+# Engine / Runtime / GameLogic / Shared / Server から Editor\ChangeTracking\ を include した瞬間に「ワールドハッシュに関係しない」
+# という主張が崩れ、replay_verify では**捕まらない** (割れるのは「AI が編集した直後に Editor を開いていたとき」だけで、再現条件が残らない)。
+# 静的に見えるのは include だけなので、そこを機械検査する。-SourceRoot でフィクスチャを差し替えて自己検査できる (check_rules_selftest.ps1)
+$trackingRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
+foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    $rel = $f.FullName.Substring($srcRootFull.Length).TrimStart([char]92)
+    $top = ($rel -split '[\\/]')[0]
+    if ($trackingRoots -contains $top) {
+        Test-CodeLines $f '#\s*include\s*[<"][^>"]*ChangeTracking[\\/]' 'rule 19' 'AI Change Tracking is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
     }
 }
 

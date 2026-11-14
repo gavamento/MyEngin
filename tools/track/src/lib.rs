@@ -2,7 +2,7 @@
 //! 層: project / hash / ignore / content (純粋寄り) → schema / db / blob / journal → store → startup / writer
 //!     → baseline / observe / collector → watch_plan (監視の分け方) → watch (監視スレッドと Tracker)
 //!     → declared_edit / gitref / attribution / session / operation (帰属と寿命)
-//!     → protocol / pipe / ops / ops_record → server (pipe のサービス) / client。
+//!     → protocol / pipe / ops / ops_record / notify → server (pipe のサービス) / client。
 //! 設計: docs/ai-change-tracking/ (db-schema.md が保存形式の正本)。
 
 pub mod attribution;
@@ -22,6 +22,7 @@ pub mod hook;
 pub mod ignore;
 pub mod journal;
 pub mod launch;
+pub mod notify;
 pub mod observe;
 pub mod operation;
 pub mod ops;

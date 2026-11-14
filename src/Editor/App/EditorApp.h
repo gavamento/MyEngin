@@ -7,6 +7,7 @@
 
 #include "Editor/Asset/AssetPreviewCache.h"
 #include "Editor/App/EditorSettings.h"
+#include "Editor/ChangeTracking/ChangeTrackingSession.h"
 #include "Editor/Widgets/EditorToolbar.h"
 #include "Editor/App/LayoutManager.h"
 #include "Editor/Scene/PlayModeController.h"
@@ -73,6 +74,9 @@ public:
     bool saveSceneOnStart = false; // --save-scene-on-start (シーンリロード検証用)
     // M98d: 起動時に更新を自動確認してよいか (EditorMain が対話起動のときだけ立てる。CI / 検証の起動では通信しない)
     bool allowAutoUpdateCheck = false;
+    // M104j: AI Change Tracking の追跡サービスへ接続・起動してよいか (EditorMain が対話起動のときだけ立てる。
+    // 自動化の起動ではサービスを起動も接続もしない)。allowAutoUpdateCheck とは意味が違うので使い回さない
+    bool allowChangeTracking = false;
     bool autoPlay = false;         // --autoplay (起動直後に Play。スクリプト検証用)
     bool openTimeline = false;     // --whatif-selftest (M72c: 分岐レーンを撮れるよう Timeline を開く)
     bool serverClient = false;     // M81: --net-connect (専用サーバのクライアント)。Pause / Step を無効にし、sim は常に simulateScripts = true で回す
@@ -188,6 +192,8 @@ private:
     // M66b: git 連携。**セッションは窓と独立**に生きる (窓を閉じていても status は最新)
     SourceControlSession scm_;
     SourceControlWindow sourceControl_;
+    // M104j: AI Change Tracking。窓 (M104k) と独立に生きる。設定が無効なら何も起動しない
+    ChangeTrackingSession changeTracking_;
     // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
     GitTransaction gitTx_;
     // M66e: Asset Browser の [Rebuild Scripts] で起動した子プロセス (void* = HANDLE)。

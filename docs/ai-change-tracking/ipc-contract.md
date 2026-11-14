@@ -1,6 +1,6 @@
 # AI Change Tracking: IPC 契約
 
-- 状態: プロトコル版 1。サービス側は M104f で実装済み (§9)。Editor・MCP・フックのクライアントは後続のサブ
+- 状態: プロトコル版 1。サービス側は M104f で実装済み (§9)。MCP (M104h)・フック (M104i)・Editor (M104j。`src\Editor\ChangeTracking\`) のクライアントも実装済み。`subscribe` と通知は M104j (§9.8)
 - 全体像は [architecture.md](architecture.md)。この文書は追跡サービス (`mye_track.exe serve`) とクライアント (MCP、Editor、フック CLI) の間の取り決めだけを書く
 
 ## 1. 伝送路
@@ -102,7 +102,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `hello` | 全部 | §3 | §3 |
 | `status` | 全部 | なし | 稼働時間、追跡中のファイル数、Blob の総量、欠落区間、DB の健全性、直近の処理時間 (§9.4) |
 | `shutdown` | editor | なし | 応答のあと接続を切り、サービスが終わる (`service_stop` を残す。M104f で追加) |
-| `subscribe` | editor | `events`: 受け取りたい通知の名前 | なし |
+| `subscribe` | editor | `events`: 受け取りたい通知の名前 (§4.5。1 つ以上、知らない名前は `bad_args`)。接続ごとに 1 回 | `{}` |
 
 ### 4.2 セッションと操作
 
@@ -160,6 +160,9 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `coverage_gap` | 取り逃しや停止区間を記録した | 区間、理由 |
 | `session_changed` | セッションの開始・終了・中断 | `sessionId`, `status` |
 | `shutting_down` | サービスが終了する | 理由 |
+| `resync` | 通知のキューがあふれて、古い通知を捨てた | `reason` (`queue_overflow`)。**購読の対象ではなく、捨てたときは必ず届く**。受け取ったら一覧・状態・詳細を取り直す |
+
+通知は `subscribe` を呼んだ `editor` の接続だけに届く。実装の取り決めは §9.8。
 
 ## 5. エラーコード
 
@@ -241,7 +244,7 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 - 空行は無視する。行末の CR は取る。JSON として読めない・`id` が正の整数でない・知らない項目がある行は `bad_args` (`id` が読めればそれを返し、読めなければ `null`)。`hello` の前でも同じ (形が読めないので `need_hello` にはならない)。
 - `hello` の検査の順: 形 (`proto` / `role` / `token` / `projectRoot` が要り、`pid` は任意、他は `bad_args`) → 版 (`proto_mismatch`。detail にサービスの版) → 役割 (知らない値は `bad_args`) → トークン (`bad_token`) → プロジェクト (`wrong_project`。`projectId` が合うかだけを見て、DB は開き直さない)。失敗したら応答のあと切る。`hello` より前の要求 (知らない op を含む) は `need_hello` で切る。2 回目の `hello` は `bad_args` (接続は残る)。
 - 成功した `hello` は証跡を `events` に残す (`client_hello`。db-schema.md §5.1)。申告した `pid` と違えば、パイプから得た値を採る。Writer のキューが上限 (1024 件) を超えていたら `busy` で `hello` を断る。
-- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`shutdown`、`session_begin`、`session_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
+- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`shutdown`、`subscribe`、`session_begin`、`session_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
 - 取得の op は読み取り専用の SQLite 接続で引く (WAL なので書き手を止めない。接続ごとに 1 本、最初に必要になったとき開く)。ベースラインの最中も答える。DB へ書けない状態 (`db_degraded`) では `list` / `describe` / `sessions` が `db_degraded` を返し、`status` は答える。
 
 ### 9.4 op の引数と結果 (JSON は camelCase、時刻は UTC ミリ秒)
@@ -267,7 +270,7 @@ Rust の `Command` は継承可能なハンドルを子へ複製するため、�
 
 `tools\track_verify.bat` が `tests\track\*.ndjson` を `mye_track client` 経由でサービスへ流し、`*.expected.ndjson` と比べる (書式と置換、`# write` などのディレクティブは `tools\track_verify.ps1` の冒頭)。`cargo test` の `tests\pipe.rs` は、二重起動 (同じ projectId、ジャンクション経由の別名)、再起動をまたぐ履歴と `gap`、接続 0 の時間切れと `service_stop`、pipe の DACL の読み戻しとリモート形式の拒否、複数接続を、実際に `mye_track.exe serve` を起動して確かめる。
 
-**未確認**: 別のユーザーの接続の拒否 (DACL の読み戻しだけ)、本物のリモートからの接続、Editor・MCP・フックのクライアントとの接続 (後続のサブ)。
+**未確認**: 別のユーザーの接続の拒否 (DACL の読み戻しだけ)、本物のリモートからの接続。
 
 ### 9.7 セッションと操作の寿命 (M104g)
 
@@ -280,3 +283,29 @@ Rust の `Command` は継承可能なハンドルを子へ複製するため、�
 | サービス | 接続が 0 でも、ベースライン・再走査の最中と、running のセッションがある間は無接続の時間切れで終わらない | — |
 
 どの変化も `events` に残り (`session_interrupted` / `op_abandoned`)、作り直しで同じ状態になる (db-schema.md §5.1)。定数は `tools\track\src\session.rs` の `LifecycleConfig`、窓の猶予と `time_near` の幅は `attribution.rs`。
+
+### 9.8 通知 (M104j)
+
+正本は `tools	rack\src
+otify.rs`。
+
+- `subscribe` (`role = editor` だけ。他は `forbidden`) は、`events` の名前 (`change_recorded` / `attribution_updated` / `coverage_gap` / `session_changed` / `shutting_down`) を検査して購読を登録する。検査が全部通ってから登録するので、失敗した要求で購読は残らない。2 回目は `bad_args` (接続と通知は続く)。結果は `{}`。
+- **通知は記録の経路に触れずに作る。** 購読者がいる間だけ、読み取り専用の DB 接続が 200 ms ごとに新しい行を引き、通知にする (購読者が 0 の間は引かない)。位置は購読したときの DB の末尾で、購読より前の出来事は通知にならない (取り直しは `list` で行う)。Writer も監視も通知を待たない。通知の遅れの上限は 200 ms + 接続の送り出しの間隔 (10 ms)。
+  - `change_recorded`: 新しい `change_revisions` の行ごとに 1 件。`revisionId`、`changeId`、`path`、`changeType`、`actor`、`attribution` (その時点の値。`actor` は仕様の項目に足した)。
+  - `attribution_updated`: **すでに知らせた** Revision に `attribution_evidence` が足されたら 1 件 (回ごとに Revision 1 つにつき 1 件)。`revisionId`、`actor`、`attribution` (その時点の値)。同じ回で初めて知らせる Revision の根拠は `change_recorded` に含まれるので、重ねて出さない。
+  - `coverage_gap`: 新しい `coverage_gaps` の行ごとに 1 件。`gapId`、`fromAt`、`toAt`、`reason`、`scope`。
+  - `session_changed`: セッションの `status` が変わった (新しいセッションを含む) ごとに 1 件。`sessionId`、`status`。
+  - `shutting_down`: サービスが終わるとき、購読者へ `reason` (`shutdown_op` / `idle_timeout` / `signal` ...) を送り、書き終わるのを最大 500 ms 待ってから止める。
+- **購読ごとの上限つきキュー** (既定 256 件。`serve --notify-queue <n>` で変える。試験用)。あふれたら一番古い通知を捨て、次の送り出しの先頭に `resync` を 1 つ付ける (あふれの区間で 1 つ)。読まないクライアントがいても、積むだけなので Writer と監視は止まらない。サービスの接続スレッドは、読み取りで止まる前に通知を送る (同期ハンドルの `ReadFile` で止まっている間は別スレッドから `WriteFile` できないので、購読した接続は `PeekNamedPipe` で入力を見ながら 10 ms ごとに送り出しを見る)。
+- プロトコル版は上げない (op の追加だけ。§7)。
+- 検証: `tools	rack	ests\pipe.rs` (`subscribe_is_editor_only_and_checks_its_arguments`、`subscribed_editor_receives_the_notifications`、`an_unread_subscriber_does_not_stop_recording_and_gets_one_resync`)、`notify.rs` の単体試験 (キューのあふれ、`coverage_gap` を含む引き)、`tests	rack_subscribe.ndjson`。
+
+### 9.9 Editor のクライアント (M104j)
+
+`src\Editor\ChangeTracking\` (`TrackClient` / `TrackIo` / `ChangeModel` / `ChangeTrackingSession`)。**スレッドを作らず、`Poll()` は待たない。**
+
+- 接続: `CreateFileW(FILE_FLAG_OVERLAPPED)`。`ERROR_FILE_NOT_FOUND` は起動を 1 回頼んで 500 ms おきに見に行き (10 秒の猶予)、以後は 3 秒おき。`ERROR_PIPE_BUSY` は待たずに次のフレームで開き直す (5 回続いたら 3 秒おき)。`WaitNamedPipeW` は使わない。起動は 1 接続の切れ目につき 1 回 (hello が通るたびに戻る)。`mye_track.exe` が見つからなければ `NoService` で、探し直しは `Start` し直すまで行わない。
+- `hello` (`role = editor`)、`bad_token` は `service.json` を読み直して 1 回だけやり直す。結果の `projectId` が自分の計算と違えば `WrongProject`。`proto_mismatch` は `ProtoMismatch`。この 2 つは再接続しない。`db_degraded` は `DbDegraded` (3 秒おきに再接続を試す)。
+- 1 行の上限は 1 MiB (超えたら切断)。1 回の `Poll()` が処理する行は 256 行・2 ms まで、読み取りは 4 回まで、`TrackIo` の呼び出しは 8 回まで (時計を除く)。残りは次のフレーム。
+- 時間切れは単調時計で測る: 読み取りの op (`status` / `list` / `describe` / `sessions` / `hunks` / `scene_diff` / `blob_get`) は 30 秒、それ以外 (hello・subscribe・記録) は 5 秒。`hello` の時間切れは切断。時間切れのあとに届いた応答は捨てる。
+- 設定 `changeTrackingEnabled` (既定 false) と、非対話起動 (`allowChangeTracking = !automation`) の両方が真のときだけ接続・起動する。

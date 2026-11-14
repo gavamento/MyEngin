@@ -70,6 +70,15 @@ struct ServiceProc {
 
 impl ServiceProc {
     fn spawn_with(root: &Path, project_arg: &Path, idle_ms: u64) -> ServiceProc {
+        Self::spawn_full(root, project_arg, idle_ms, &[])
+    }
+
+    /// `serve` に追加の引数を渡して起動する。
+    fn spawn_opts(root: &Path, extra: &[&str]) -> ServiceProc {
+        Self::spawn_full(root, root, 120_000, extra)
+    }
+
+    fn spawn_full(root: &Path, project_arg: &Path, idle_ms: u64, extra: &[&str]) -> ServiceProc {
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let stderr_path = std::env::temp_dir().join(format!("mye_track_pipe_err_{}_{n}.txt", std::process::id()));
@@ -77,6 +86,7 @@ impl ServiceProc {
             .args(["serve", "--project"])
             .arg(project_arg)
             .args(["--idle-timeout-ms", &idle_ms.to_string()])
+            .args(extra)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(fs::File::create(&stderr_path).unwrap())
@@ -360,4 +370,153 @@ fn status_reports_failed_maintenance_steps_and_keeps_serving() {
     assert_eq!(db["state"], "recording", "{status}");
     let steps = db["failedSteps"].as_array().unwrap();
     assert!(steps.iter().any(|s| s["step"] == "残った session の整理"), "{status}");
+}
+
+/// 通知を待つ。`matches` に合う最初の行を返し、合わない行 (別の通知) は読み捨てる。
+fn expect_event(client: &mut Client, what: &str, matches: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + WAIT_LIMIT;
+    while Instant::now() < deadline {
+        if let Some(line) = client.wait_line(Duration::from_millis(500)).unwrap() {
+            if matches(&line) {
+                return line;
+            }
+        }
+    }
+    panic!("通知が来ない: {what}");
+}
+
+fn subscribe_all(client: &mut Client) {
+    let reply = client
+        .request(
+            2,
+            "subscribe",
+            json!({ "events": ["change_recorded", "attribution_updated", "coverage_gap", "session_changed", "shutting_down"] }),
+        )
+        .unwrap();
+    assert_eq!(reply["ok"], true, "{reply}");
+}
+
+#[test]
+fn subscribe_is_editor_only_and_checks_its_arguments() {
+    let project = temp_project("subscribe_args");
+    let service = ServiceProc::spawn(&project);
+    service.wait_watching();
+
+    for role in ["mcp", "hook"] {
+        let mut client = service.connect(role);
+        let reply = client.request(2, "subscribe", json!({ "events": ["change_recorded"] })).unwrap();
+        assert_eq!(reply["error"]["code"], "forbidden", "{role}: {reply}");
+    }
+    let mut editor = service.connect("editor");
+    for (args, what) in [
+        (json!({}), "events が無い"),
+        (json!({ "events": [] }), "events が空"),
+        (json!({ "events": ["nosuchevent"] }), "知らない通知"),
+        (json!({ "events": ["resync"] }), "resync は選べない (必ず届く)"),
+        (json!({ "events": "change_recorded" }), "events が配列でない"),
+        (json!({ "events": ["change_recorded"], "extra": 1 }), "知らない引数"),
+    ] {
+        let reply = editor.request(2, "subscribe", args).unwrap();
+        assert_eq!(reply["error"]["code"], "bad_args", "{what}: {reply}");
+    }
+    subscribe_all(&mut editor);
+    // 2 回目は断る (接続は残り、通知も続く)
+    let again = editor.request(3, "subscribe", json!({ "events": ["coverage_gap"] })).unwrap();
+    assert_eq!(again["error"]["code"], "bad_args", "{again}");
+    let status = editor.request(4, "status", json!({})).unwrap();
+    assert_eq!(status["ok"], true, "{status}");
+}
+
+#[test]
+fn subscribed_editor_receives_the_notifications() {
+    let project = temp_project("notify");
+    let mut service = ServiceProc::spawn(&project);
+    service.wait_watching();
+    let mut editor = service.connect("editor");
+    subscribe_all(&mut editor);
+    let mut mcp = service.connect("mcp");
+
+    // session_changed
+    let begun = mcp
+        .request(2, "session_begin", json!({ "provider": "claude", "workspace": project.to_string_lossy(), "source": "mcp" }))
+        .unwrap();
+    assert_eq!(begun["ok"], true, "{begun}");
+    let session_id = begun["result"]["sessionId"].as_str().unwrap().to_string();
+    let event = expect_event(&mut editor, "session_changed running", |e| {
+        e["event"] == "session_changed" && e["sessionId"] == session_id.as_str() && e["status"] == "running"
+    });
+    assert!(event.get("id").is_none(), "通知に id が付いている: {event}");
+
+    // change_recorded
+    fs::write(project.join("n.txt"), "one\n").unwrap();
+    let recorded = expect_event(&mut editor, "change_recorded n.txt", |e| e["event"] == "change_recorded" && e["path"] == "n.txt");
+    assert_eq!(recorded["changeType"], "added", "{recorded}");
+    let revision_id = recorded["revisionId"].as_i64().unwrap();
+    assert!(recorded["changeId"].as_i64().is_some() && recorded["attribution"].is_string(), "{recorded}");
+    // 通知の revisionId は list の Revision と同じ
+    let items = list_items(&mut mcp, json!({ "path": "n.txt" }));
+    assert_eq!(items[0]["revisionId"].as_i64(), Some(revision_id));
+
+    // attribution_updated: 知らせたあとの申告
+    let reported = mcp.request(4, "report", json!({ "sessionId": session_id, "paths": ["n.txt"] })).unwrap();
+    assert_eq!(reported["ok"], true, "{reported}");
+    let updated = expect_event(&mut editor, "attribution_updated", |e| {
+        e["event"] == "attribution_updated" && e["revisionId"].as_i64() == Some(revision_id)
+    });
+    assert!(updated["actor"].is_string() && updated["attribution"].is_string(), "{updated}");
+
+    // session_changed (終了)
+    let ended = mcp.request(5, "session_end", json!({ "sessionId": session_id })).unwrap();
+    assert_eq!(ended["ok"], true, "{ended}");
+    expect_event(&mut editor, "session_changed finished", |e| {
+        e["event"] == "session_changed" && e["sessionId"] == session_id.as_str() && e["status"] == "finished"
+    });
+
+    // shutting_down: 終了の前に届く
+    let mut stopper = service.connect("editor");
+    let reply = stopper.request(9, "shutdown", json!({})).unwrap();
+    assert_eq!(reply["ok"], true, "{reply}");
+    let closing = expect_event(&mut editor, "shutting_down", |e| e["event"] == "shutting_down");
+    assert_eq!(closing["reason"], "shutdown_op", "{closing}");
+    service.wait_exit(WAIT_LIMIT);
+}
+
+#[test]
+fn an_unread_subscriber_does_not_stop_recording_and_gets_one_resync() {
+    let project = temp_project("notify_unread");
+    let service = ServiceProc::spawn_opts(&project, &["--notify-queue", "4"]);
+    service.wait_watching();
+    let mut editor = service.connect("editor");
+    let reply = editor.request(2, "subscribe", json!({ "events": ["change_recorded"] })).unwrap();
+    assert_eq!(reply["ok"], true, "{reply}");
+
+    // 読まないまま、pipe の緩衝 (64 KiB) を超える量の通知を出させる
+    const FILES: usize = 500;
+    let pad = "x".repeat(100);
+    for n in 0..FILES {
+        fs::write(project.join(format!("bulk_{n:04}_{pad}.txt")), "x\n").unwrap();
+    }
+    // 記録は通知の詰まりに関係なく進む
+    let db = Paths::for_project(&project).db;
+    wait_until("500 件の Revision", WAIT_LIMIT, || {
+        Connection::open(&db)
+            .and_then(|c| c.query_row("SELECT COUNT(*) FROM change_revisions", [], |r| r.get::<_, i64>(0)))
+            .map(|n| n >= FILES as i64)
+            .unwrap_or(false)
+    });
+
+    // 読み始めると、取りこぼしを知らせる resync が届く
+    let mut resyncs = 0;
+    let mut changes = 0;
+    let deadline = Instant::now() + WAIT_LIMIT;
+    while Instant::now() < deadline {
+        match editor.wait_line(Duration::from_secs(2)).unwrap() {
+            Some(line) if line["event"] == "resync" => resyncs += 1,
+            Some(line) if line["event"] == "change_recorded" => changes += 1,
+            Some(_) => {}
+            None => break,
+        }
+    }
+    assert!(resyncs >= 1, "resync が届かない (change_recorded は {changes} 件)");
+    assert!(changes < FILES, "全部届いた (あふれていない): {changes}");
 }

@@ -1,0 +1,18 @@
+# subscribe は editor だけ。mcp・hook は forbidden
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"subscribe","args":{"events":["change_recorded"]}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"subscribe","args":{"events":["change_recorded"]}}
+# reconnect
+# editor: 引数の検査 (events が無い・空・知らない名前・resync・配列でない・知らない引数)。失敗した要求では購読が残らない
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"subscribe"}
+{"id":3,"op":"subscribe","args":{"events":[]}}
+{"id":4,"op":"subscribe","args":{"events":["nosuchevent"]}}
+{"id":5,"op":"subscribe","args":{"events":["resync"]}}
+{"id":6,"op":"subscribe","args":{"events":"change_recorded"}}
+{"id":7,"op":"subscribe","args":{"events":["change_recorded"],"extra":1}}
+{"id":8,"op":"subscribe","args":{"events":["change_recorded","attribution_updated","coverage_gap","session_changed","shutting_down"]}}
+{"id":9,"op":"subscribe","args":{"events":["coverage_gap"]}}
+{"id":10,"op":"list","args":{"limit":1}}

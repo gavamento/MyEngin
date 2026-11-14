@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::pipe::{open_client, pipe_name};
+use crate::pipe::{bytes_available, open_client, pipe_name};
 use crate::project::project_id;
 use crate::store::Paths;
 
@@ -62,6 +62,24 @@ impl Client {
             Ok(_) => Ok(Some(response.trim_end_matches(['\n', '\r']).to_string())),
             Err(e) if matches!(e.kind(), io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset) => Ok(None),
             Err(e) => Err(e),
+        }
+    }
+
+    /// 要求なしに届く 1 行 (通知) を `limit` まで待つ。来なければ `None`。相手が閉じていれば `Err`。
+    pub fn wait_line(&mut self, limit: Duration) -> io::Result<Option<Value>> {
+        let deadline = Instant::now() + limit;
+        loop {
+            if !self.reader.buffer().is_empty() || bytes_available(self.reader.get_ref())? > 0 {
+                let mut text = String::new();
+                if self.reader.read_line(&mut text)? == 0 {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "サービスが接続を切った"));
+                }
+                return serde_json::from_str(text.trim_end()).map(Some).map_err(io::Error::other);
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 

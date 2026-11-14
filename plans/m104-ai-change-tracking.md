@@ -26,7 +26,8 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104g2 | 2 | 実装済み (判定待ち) | 監視の取りこぼしを減らす。先に計測 (`mye_track bench flood` / `burst` / `plan`。洪水の最中の追跡対象 200 件が、CPU 負荷のもとで 8〜21 件 `gap` になると確認)、監視を分ける (`tools\track\src\watch_plan.rs`: 無視するディレクトリを含む所は非再帰、含まない子は再帰。付け替え、上限 256 本、`status` の `watches`)。分けた後は 12 回とも `gap` 0。自前の `ReadDirectoryChangesW` は、入れる根拠の実測が無く、試作の欠陥の原因も未解明なので入れていない。値と手順は [performance.md](../docs/ai-change-tracking/performance.md) §8 |
 | M104h | 2 | 実装済み (判定待ち) | MCP の 5 ツール (`change_session_begin` / `change_session_end` / `change_report` / `change_list` / `change_describe`)、`tools\mcp\src\track_client.rs` (pipe クライアント、サービスの切り離し起動、SHA-256 と projectId を自前で持つ。依存は増やさない)、規則 15-c / 15-d の許可表と規則 9 の版定数の組、`tools\mcp_verify.ps1` の `# env`、`tools\track_verify.ps1` の `# mcp` / `# mcp-nostart` / `# wait-watching` とシナリオ 16 / 17 (MCP がサービスを起動して記録が通る)、ADR-032 と `docs\mcp-server.md` の更新。起動のとき自分の標準入出力を継承不可にする (しないとサービスが MCP の stdout を掴む。`# mcp` が実測で検出した)。**未確認**: 本物の Claude Code 終了後のサービスの生存 (手順は `docs\test_checklists.md`) |
 | M104i | 2 | 未着手 | フック CLI (`mye_track.exe hook`)、Claude Code のフック設定の手順 |
-| M104j | 3 | 未着手 | Editor の pipe クライアント、モデル、規則 19、`changetracking` スイート |
+| M104j | 3 | 実装済み (判定待ち) | Editor の pipe クライアント (`src\Editor\ChangeTracking\`。スレッドなし・`Poll()` は待たない・overlapped)、`ChangeModel` (通知で古い印・500 ms の間引き・`resync`)、`ChangeTrackingSession` (`EditorApp` のメンバ。Shutdown は接続を閉じるだけ)、サービスの切り離し起動 (`bInheritHandles = FALSE`)、`EditorSettings` の `changeTrackingEnabled` (既定 false) と `allowChangeTracking = !automation`、サービス側の `subscribe` と通知 5 種 + `resync` (`tools	rack\src
+otify.rs`)、規則 19 と規則 9 の C++ の版定数、`changetracking` スイート (偽の I/O。`MYE_TRACK_PROBE=1` で実サービスとの結合)。窓は M104k |
 | M104k | 3 | 未着手 | AI Changes 窓、セッション履歴、Diff 表示部品 (インライン / 左右) |
 | M104l | 3 | 未着手 | シーン構造 diff (サービス)、プレハブの区別、`scene_diff` |
 | M104m | 3 | 未着手 | Hierarchy のバッジ、Inspector の Field 差分、Scene View のワイヤ箱、選択の同期 |
@@ -45,7 +46,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | もの | 値 | 備考 |
 |---|---|---|
 | ADR | ADR-039 | 作成済み |
-| `check_rules` の規則 | 規則 19 | `src\Editor\ChangeTracking\` の封じ込め (M104j) |
+| `check_rules` の規則 | 規則 19 | `src\Editor\ChangeTracking\` の封じ込め (M104j で実装済み。次の番号は 20) |
 | ABI / SimSnapshot / TypeId | 使わない | 変えたら設計違反 ([architecture.md](../docs/ai-change-tracking/architecture.md) §9) |
 | プロトコル版 | 1 | `kTrackProtoVersion` / `PROTO_VERSION` (規則 9 に組を足す) |
 | DB スキーマ版 | 1 | |
@@ -74,7 +75,7 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
 |---|---|---|---|
 | 1 | Play 中に、開いているシーンへ外部の変更が来たときの扱い。今は Play 中の World へそのまま適用され、Stop で消える | Play 中は保留し、Stop の後で未保存かどうかに従って適用か確認 | M104n |
 | 2 | `tools\track` を CI に入れるか (collab は入れている、mcp は入れていない) | **決着 (2026-11-15)**: `cargo test` と `track_verify.bat` を CI に入れる (collab の段の隣)。CI での実走は push の後まで未確認 | M104f |
-| 3 | 追跡を既定で有効にするか | Phase 3 が終わるまでは既定で無効 (設定で有効にする)。見る手段が無いうちに記録だけ溜めない | M104j |
+| 3 | 追跡を既定で有効にするか | **推奨どおり裁定 (2026-11-15、ユーザーの回答待ち)**: 既定で無効 (`EditorSettings.changeTrackingEnabled`)。Phase 3 が終わった後 (M104m の後) にもう一度決める。逆の答えなら、既定値 1 つと試験の期待値を直す | M104j |
 | 4 | Blob の除外パターンの既定値と、上限・保存期間の既定値 (2 GiB、90 日) | 設計どおり (2026-11-14 にユーザーが確定)。設定で変えられる | M104c |
 | 5 | ハイライトの色を利用者が変えられるようにする範囲 (色の設定を保存する前例が無い) | `EditorSettings` に 4 色だけ持つ。設定の画面は AI Changes 窓の歯車 | M104m |
 | 6 | 実装を `/harness` に載せるか、1 サブ 1 セッションで進めるか | 規模からは `/harness` | M104b 以降の全部 |
@@ -120,7 +121,7 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
   - M104d (実装の結果、2026-11-14): 上の「`FILE_SHARE_READ` だけで開く探り」は採らなかった (書き手の rename が `ERROR_ACCESS_DENIED` で失敗した)。全共有で読み、サイズが続けて同じになるまで待つ方式に変えた ([architecture.md](../docs/ai-change-tracking/architecture.md) §4)。`notify` 8.2.2 は Windows で本物のバッファあふれを報告しない (ソースで確認)。あふれの経路は差し込みで検証した。
   - M104f (CI): `rusqlite` の bundled が CI の `windows-2022` でビルドできるかを確かめる (未確認)。最低の Rust が 1.89 に上がる (collab の「古い stable でも通る」方針は track では成り立たない)。
   - M104i (フック): 終了コード 2 を返さない、`timeout` を明示、`tool_use_id` で対にする。本物の Claude Code の入力の実測 (キー名・パスの形・CRLF や引用符の扱い) は未確認。Codex / Gemini は未確認のまま (v1 は Claude Code だけを約束する)。
-  - M104j (Editor): サービスの起動に `StartChildProcess` をそのまま使うと、ログファイルのハンドルをサービスが持ち続ける (`bInheritHandles = TRUE`)。サービス用の起動口を足すかを決める。Editor が Job に入って起動される場合の挙動も確かめる。
+  - M104j (Editor): **決着 (2026-11-15)**: `StartChildProcess` は使わず、`TrackLaunch.cpp` に専用の起動口を足した (`bInheritHandles = FALSE`、`CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`、`ERROR_ACCESS_DENIED` なら外してやり直す)。Job の中から起動した結果は [architecture.md](../docs/ai-change-tracking/architecture.md) §3。Visual Studio のデバッグ起動の Editor からの起動は未確認。
   - M104q (ライブのシーンの復元): C# コンポーネントの Field は `FieldFromJson` では書けない。`DeserializeComponent` へ 1 キーの JSON を渡す分岐を作り、実走で確かめる。
 - M104a (2026-11-13): 既存コードの監査で、仕様書の「既存機能の再利用」の前提の多くが成り立たないと分かった。差は [architecture.md](../docs/ai-change-tracking/architecture.md) §1。
   ユーザー判断は 4 つ: 今回は設計文書だけ、設計の範囲は Phase 0〜6 の全部、サービスは独立した exe、未保存のシーンへの外部変更は確認を出す。
