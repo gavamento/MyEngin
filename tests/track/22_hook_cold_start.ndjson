@@ -1,0 +1,10 @@
+# フック CLI: --project ありでサービス不在なら起動される (標準出力を掴ませない)。最初の操作は記録されなくてよく、次の操作から記録される
+# write c1.txt c\n
+# write c2.txt c2-0\n
+# hook pre {"session_id":"s5","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-first","tool_input":{"file_path":"{ROOT}\\c1.txt","old_string":"c","new_string":"C","replace_all":false}}
+# wait-watching
+# hook pre {"session_id":"s5","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-second","tool_input":{"file_path":"{ROOT}\\c2.txt","old_string":"c2-0","new_string":"c2-1","replace_all":false}}
+# write c2.txt c2-1\n
+# hook post {"session_id":"s5","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-second","tool_input":{"file_path":"{ROOT}\\c2.txt","old_string":"c2-0","new_string":"c2-1","replace_all":false},"tool_response":{}}
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list","args":{"path":"c2.txt"}}

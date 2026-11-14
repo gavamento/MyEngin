@@ -261,6 +261,8 @@ Rust の `Command` は継承可能なハンドルを子へ複製するため、�
 
 `mye_track.exe` を探す順 (Editor・MCP・フックが起動するとき。MCP は M104h で実装、フックと Editor は sub-08 / sub-09): (1) 環境変数 `MYE_TRACK_EXE` (2) 自分の exe の隣 (3) MCP だけ `..\..\..\track\target\release\mye_track.exe`。**`MYE_TRACK_EXE` が設定されているときは (1) だけを使い、そのファイルが無ければ (2) (3) を探さずに起動に失敗する** (検証でサービスの不在を決定的に作るため。空文字列は未設定と同じ)。`tools\build_track.bat` が `bin\x64\Debug` と `bin\x64\Release` の両方へ置くので、どちらの構成の Editor からも (2) で見つかる。
 
+フック CLI (`hook.rs`、M104i): `mye_track.exe hook <pre|post|session-start|session-end> [--project <root>]`。`client.rs` の `Client` で `role = hook` として繋ぎ、`session_begin` / `op_begin` / `op_end` / `session_end` を送る。入力と設定は [hooks-setup.md](hooks-setup.md)。終了コードは常に 0、標準出力は常に空 (Claude Code が解釈するため)、全体で 5 秒 (§6) を超えない。サービスを起動するのは `--project` があり、サブコマンドが `pre` / `session-start` のときだけ (起動の作法と exe の探し方は上と同じ。ただし (2) は自分自身)。`--project` が無いときは、対象のファイル (無ければ `cwd`) から親へ `.mye\ai_changes\service.json` を探し、見つかったプロジェクトの動いているサービスへ繋ぐ。見つからなければ何もしない。1 MiB を超える要求になる `declaredEdit` は付けずに `op_begin` する (Claimed 止まり)。
+
 ### 9.6 検証
 
 `tools\track_verify.bat` が `tests\track\*.ndjson` を `mye_track client` 経由でサービスへ流し、`*.expected.ndjson` と比べる (書式と置換、`# write` などのディレクティブは `tools\track_verify.ps1` の冒頭)。`cargo test` の `tests\pipe.rs` は、二重起動 (同じ projectId、ジャンクション経由の別名)、再起動をまたぐ履歴と `gap`、接続 0 の時間切れと `service_stop`、pipe の DACL の読み戻しとリモート形式の拒否、複数接続を、実際に `mye_track.exe serve` を起動して確かめる。

@@ -1,0 +1,22 @@
+# フック CLI: 宣言どおりに編集すると ai / verified。Edit (replace_all 偽・真)、Write (新規・上書き) の 4 通り。フックは別プロセス (mye_track.exe hook)
+# write e1.txt a\nb\nc\n
+# write e2.txt x\nx\ny\n
+# write w2.txt old\n
+# start
+# hook pre {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-e1","tool_input":{"file_path":"{ROOT}\\e1.txt","old_string":"b","new_string":"B","replace_all":false}}
+# write e1.txt a\nB\nc\n
+# hook post {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-e1","tool_input":{"file_path":"{ROOT}\\e1.txt","old_string":"b","new_string":"B","replace_all":false},"tool_response":{"filePath":"x","type":"update"}}
+# hook pre {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-e2","tool_input":{"file_path":"{ROOT}\\e2.txt","old_string":"x","new_string":"X","replace_all":true}}
+# write e2.txt X\nX\ny\n
+# hook post {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-e2","tool_input":{"file_path":"{ROOT}\\e2.txt","old_string":"x","new_string":"X","replace_all":true},"tool_response":{"filePath":"x","type":"update"}}
+# hook pre {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Write","tool_use_id":"t-w1","tool_input":{"file_path":"{ROOT}\\w1.txt","content":"brand new\n"}}
+# write w1.txt brand new\n
+# hook post {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Write","tool_use_id":"t-w1","tool_input":{"file_path":"{ROOT}\\w1.txt","content":"brand new\n"},"tool_response":{"filePath":"x","type":"create"}}
+# hook pre {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Write","tool_use_id":"t-w2","tool_input":{"file_path":"{ROOT}\\w2.txt","content":"replaced\n"}}
+# write w2.txt replaced\n
+# hook post {"session_id":"s1","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Write","tool_use_id":"t-w2","tool_input":{"file_path":"{ROOT}\\w2.txt","content":"replaced\n"},"tool_response":{"filePath":"x","type":"update"}}
+# hook session-end {"session_id":"s1"}
+# 結果は mcp から読む。4 件とも ai / verified で、セッションの list に出る
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list","args":{"attribution":"verified"}}
+{"id":3,"op":"sessions"}

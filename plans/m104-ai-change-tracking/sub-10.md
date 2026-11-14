@@ -5,6 +5,15 @@
 - 往復: 0
 - 書き込みの深さ: **骨子** (spec §6.1)。大きければ着手時の見直しで M104k / M104k2 に割る (spec §7.2)。
 
+## Phase 2 までの結果による追記 (2026-11-15、sub-08 の VERDICT。sub-09 の VERDICT で詳細にする)
+
+- 質問の運用: 推奨で進め、Notion に後回し。このサブに着手前の確認は無い。
+- **`editor_saved` をこのサブに入れる** (sub-09 から移した): Editor が自分で保存したファイル (シーン、プレハブ、アセットの `.meta` など) を、内容のハッシュ付きでサービスへ知らせる op (`role = editor`)。サービスは、観測した After が一致したら `editor_user` / `verified` にする (attr §3 の表の 1 行目。結論の関数には sub-06 で入っている)。Editor 側は、保存の経路がいくつあるか (`WriteFileReplacing` の呼び手) を着手時に洗い、**追跡が有効で接続中のときだけ**知らせる。知らせ損ねても害は無い (その保存が `unknown` か `inferred` に落ちるだけ) が、AI の変更の一覧に人の保存が混ざるので、主な経路 (シーンの保存、プレハブの Apply、アセットの移動・リネーム) は押さえる。
+- 設定の切り替え (`EditorSettings::changeTrackingEnabled`、sub-09) の UI をこの窓に置く。有効にするときに、最初のベースラインで内容が複製されること (量の目安を `status` から出す) を 1 回だけ確認する。無効にしても、動いているサービスは止めない (接続を閉じるだけ) ことを文面に書く。
+- サービスの状態 (sub-09 の `State()`)、ベースラインの進捗、Blob の総量、欠落区間、監視が 1 本に戻っているか (`watches.fallback`) を窓に出す。
+- `describe` は `diff_mode` (通常 / `whole` / `binary` / `excluded` / `unavailable`) を返す。Hunk が無い理由を表示する。`changes.state = superseded` の扱い。
+- 帰属の表示: 区分・根拠の一覧・候補のセッション (`describe` の `evidence` / `candidateSessions`)。`verify_gap` の Revision は「取りこぼしを後から拾った」と分かる表示にする。
+
 ## やること
 
 要求 §6.4、arch §7、attr §8。

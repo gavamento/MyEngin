@@ -3,6 +3,7 @@
 //!   mye_track.exe --version
 //!   mye_track.exe serve --project <root> [--idle-timeout-ms <n>]
 //!   mye_track.exe client --project <root> | --pipe <name> [--wait-ms <n>]
+//!   mye_track.exe hook <pre|post|session-start|session-end> [--project <root>]   (Claude Code のフック。常に終了コード 0)
 //!   mye_track.exe bench ...   (計測用。docs/ai-change-tracking/performance.md)
 //!
 //! `serve` は pipe を張って常駐する (mye_track::server)。終了の合図は pipe の `shutdown`、
@@ -43,10 +44,15 @@ fn main() -> ExitCode {
         }
         Some("serve") => serve(&args[1..]),
         Some("client") => ExitCode::from(mye_track::client::run_cli(&args[1..])),
+        Some("hook") => {
+            // フックは Claude Code の道具の実行を左右する。終了コードは常に 0 (hook.rs)
+            mye_track::hook::run(&args[1..]);
+            ExitCode::SUCCESS
+        }
         Some("bench") => ExitCode::from(mye_track::bench::run(&args[1..])),
         _ => {
             eprintln!(
-                "usage: mye_track --version | mye_track serve --project <root> | mye_track client --project <root> | mye_track bench ..."
+                "usage: mye_track --version | mye_track serve --project <root> | mye_track client --project <root> | mye_track hook ... | mye_track bench ..."
             );
             ExitCode::from(2)
         }

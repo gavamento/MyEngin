@@ -5,6 +5,13 @@
 - 往復: 0
 - 書き込みの深さ: **骨子** (spec §6.1)。
 
+## Phase 2 までの結果による追記 (2026-11-15。着手前に planner が詳細にする)
+
+- 質問の運用: 推奨で進め、Notion に後回し。着手前の確認は無い。
+- スキーマは凍結済み (sub-05)。`documents` / `scene_changes` は v1 にあるので使える。列が足りなければ移行 v2。
+- シーンの構造 diff も、派生の表として events と Blob から作り直せること (spec §2 D26。`rebuild_derived` を延ばす)。
+- Diff ワーカー (`diff_worker.rs`) に、種類が scene / prefab のときの分岐を足す。行 diff は今までどおり併せて作る。
+
 ## やること
 
 arch §6 (サービス側)。Editor なしで決まること。

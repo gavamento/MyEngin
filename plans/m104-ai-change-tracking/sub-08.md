@@ -1,7 +1,7 @@
 # sub-08: フック CLI (M104i)
 
 - 依存: sub-07
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-15、sub-07 の VERDICT で planner が書き直した)。Phase 2 の最後のサブ。
 - 質問の運用: 推奨で進め、Notion に後回し。着手前のユーザー確認は無い。**本物の Claude Code の入力の記録 (受け入れ条件 13) はユーザーの手作業なので「未確認」として残し、それ無しでサブを閉じる。ユーザーの `.claude\settings.json` は変えない。リポジトリの `.claude\` の下も変えない。**
@@ -101,4 +101,15 @@
 
 ## 実装メモ (coder が追記)
 
+### round 1 (SELF_EVAL の要約)
+
+- 実装: `tools\track\src\hook.rs` (新規。`run` は値を返さず、作業を別スレッドで回して 5 秒で切り上げる。panic は `catch_unwind` + 1 行の panic フック)、`tools\track\src\launch.rs` (新規。`find_track_exe` / `StdHandlesHidden` / `start_service`。windows-sys 版)、`main.rs` (`hook` の枝は `ExitCode::SUCCESS` のみ)、`lib.rs`。
+- 試験: `tools\track\tests\hook.rs` (14 件。exe を別プロセスで起動)、`tests\track\18〜22_hook_*.ndjson` (`# hook` / `# hook-noproject` / `# exists` を `track_verify.ps1` に足した)。
+- E 節: (1) attribution-rules.md §5 に verify_gap の overlap の記述が無かったので足した (2) `track_verify.ps1` は `cache\track_verify\mcp_target` へ mye_mcp.exe をビルドする (3) `verify_job.expected.ndjson` は `2d, feel, field,` の 6 か所の挿入だけの差だったので撮り直した (4) `.inuse-15352` と `tools\mcp\target\release\` には触っていない (前後でハッシュと更新時刻が同じ)。
+- 文書: `docs\ai-change-tracking\hooks-setup.md` (新規)、ipc-contract.md §9.5 にフック CLI の段落、`docs\test_checklists.md` に M104i (受け入れ条件 13 の手順)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、`tools\mcp\target\release\mye_mcp.exe` のハッシュが検証の前後で同じ (475E7A0D…)、`.inuse-15352` も同じ (07ADCD4C…)、`.claude\` と `tools\mcp\src` に差分なし、`git diff --stat ca6a3991 -- src` は空。`tests\mcp\verify_job.expected.ndjson` の差分はジョブ名の追加だけ。planner の実走: `cargo test --manifest-path tools\track\Cargo.toml` 187 件通過、`tools\track_verify.bat` 全シナリオ PASS、`tools\mcp_verify.bat` 全シナリオ PASS (`verify_job` を含む)。
+  - 追加の判定: サービスの起動を `pre` / `session-start` に限る (`post` / `session-end` では起動しない)、`MYE_TRACK_HOOK_TEST_PANIC`、`--project` つきでもプロジェクトの外の `file_path` では何もしない、入力の上限 64 MiB、設定例の置換記号、は全部採る。
+  - 質問への回答: (1) 起動を `pre` / `session-start` に限るのは了承。終える相手の記録が無いのにベースラインだけ走らせる理由が無い。(2) `tool_response` の失敗の形と (3) 設定例の `/` 区切りのパスは、本物の実走 (受け入れ条件 13) まで未確認として残す。(4) `mcp_verify.ps1` のビルドの場所は変えない。`tools\mcp\src` を変えた後に回すときは、MCP サーバを使っているセッションを閉じてから。
+  - nit (持ち越し): `bad_token` の再試行、`hello` の `db_degraded` / `proto_mismatch` の経路の試験が MCP とフックの両方に無い。`tests\hook.rs` の時間のしきい値 (8 秒) は CI で余裕が小さいかもしれない (最初の push で見る)。

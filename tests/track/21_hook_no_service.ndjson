@@ -1,0 +1,6 @@
+# フック CLI: --project なしで、サービスが動いたことの無い場所では何も起動されず、.mye も作られない (終了コード 0・標準出力は空)
+# write f.txt f\n
+# hook-noproject pre {"session_id":"s4","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Write","tool_use_id":"t-1","tool_input":{"file_path":"{ROOT}\\f.txt","content":"f\n"}}
+# hook-noproject post {"session_id":"s4","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Write","tool_use_id":"t-1","tool_input":{"file_path":"{ROOT}\\f.txt","content":"f\n"},"tool_response":{}}
+# hook-noproject session-start {"session_id":"s4","cwd":"{ROOT}"}
+# exists .mye

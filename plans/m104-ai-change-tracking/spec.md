@@ -216,6 +216,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-08 の VERDICT round 1 と Phase 3 の見直し): sub-09 を詳細に書き直した (既定は無効、`allowChangeTracking = !automation`、サービス用の起動口、`subscribe` と通知をこのサブでサービス側に足す、`MYE_TRACK_PROBE` の結合試験、規則 19 と規則 9 の 3 site、受け入れ条件 10 件)。`editor_saved` を sub-10 へ移した。sub-10〜13 に Phase 2 までの結果と、着手前の確認の裁定 (推奨どおり) を書き足した。
 - 2026-11-15 (planner、sub-07 の VERDICT round 1 と見直し): D36 を追加。sub-08 を詳細に書き直した (プロジェクトの決め方、終了コード 0 の徹底、起動のときのハンドルの継承、設定の手順の文書、持ち越しの直し 4 件、受け入れ条件 13 件)。
 - 2026-11-15 (planner、sub-22 の VERDICT round 1): 第 2 の手 (自前の `ReadDirectoryChangesW`) は入れずに sub-22 を閉じた (実測で、入れる根拠になる取りこぼしを再現できなかった)。残りの計測を sub-19 に、進捗表の化けの直しを sub-07 に足した。
 - 2026-11-15 (planner、sub-06 の VERDICT round 3 と見直し): sub-07 を詳細に書き直した (プロジェクトの決め方、依存を足さずに SHA-256 を自前で持つ、`MYE_TRACK_EXE` が設定されていればそれだけを使う、サービスを伴うシナリオは `track_verify` 側、受け入れ条件 14 件)。sub-22 は変更なしで着手可。

@@ -5,6 +5,8 @@
 #
 # 先に tools\build_track.bat で mye_track.exe を作っておく (tools\track\target\release を使う)。
 # cargo test は別 (CI は cargo test && build_track.bat && track_verify.bat の順に回す)。
+# `# mcp` 用の mye_mcp.exe は、このスクリプトが cache\track_verify\mcp_target へ別にビルドする
+# (tools\mcp\target\release の mye_mcp.exe は、開発機で Claude Code が使っていて置き換えられない)。
 #
 # やること: tests\track\*.ndjson の要求行を、サービスの pipe へ `mye_track client` 経由で流し、
 # 応答を *.expected.ndjson と比較する。シナリオごとに一時プロジェクトを作り、サービスを起動し、終わったら
@@ -30,6 +32,13 @@
 #   # mcp-nostart <行>            # mcp と同じだが、MYE_TRACK_EXE を存在しないファイルにする (既に動いているサービスへ
 #                               繋がることの確認。起動しようとすると isError になる)
 #   # wait-watching               サービスが phase = watching になるまで待つ (MCP が起動したサービスのベースライン待ち)
+#   # hook <pre|post|session-start|session-end> <JSON>
+#                               mye_track.exe hook <sub> --project <一時プロジェクト> を別プロセスで起動し、JSON を標準入力へ渡す。
+#                               JSON の {ROOT} はプロジェクトのパス (\ を重ねたもの)。終了コード・標準出力のバイト数を
+#                               {"hook":{"exit":..,"stdoutBytes":..}} の 1 行で出力に足す。標準出力が閉じない (サービスが掴んでいる)・
+#                               5 秒を超える・標準出力が空でないなら失敗。フックが起動したサービスは、以後このスクリプトが管理する
+#   # hook-noproject <sub> <JSON> # --project を付けずに起動する (cwd / file_path から親をたどる経路の確認)
+#   # exists <相対パス>           パスの有無を {"exists":{"path":..,"value":bool}} の 1 行で出力に足す (.mye が作られていないことの確認)
 # サービスは最初の要求行か wait-recorded / start のときに起動する。
 #
 # 出力は比較の前に正規化する: トークン・projectId・UUID (sessionId / operationId)・時刻・PID・所要時間 -> <TOKEN> / <PROJECT_ID> / <UUID> / <N>、プロジェクトのパス -> <ROOT>、
@@ -46,17 +55,20 @@ $exe = Join-Path $repo 'tools\track\target\release\mye_track.exe'
 $scenarioDir = Join-Path $repo 'tests\track'
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("mye_trackvf_" + [System.Diagnostics.Process]::GetCurrentProcess().Id)
 $mcpManifest = Join-Path $repo 'tools\mcp\Cargo.toml'
-$mcpExe = Join-Path $repo 'tools\mcp\target\release\mye_mcp.exe'
+$mcpTarget = Join-Path $repo 'cache\track_verify\mcp_target'
+$mcpExe = Join-Path $mcpTarget 'release\mye_mcp.exe'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $mcpLimitMs = 30000
 $readyLimitMs = 60000
 $requestLimitMs = 60000
+$hookLimitMs = 15000   # フックの終了を待つ上限 (フック自身の上限は 5 秒)
+$hookBudgetMs = 6000   # 5 秒の上限 + プロセスの起動と終了
 
 Set-Location $repo
 if (-not (Test-Path $exe)) { Write-Host "[track_verify] $exe not found (run tools\build_track.bat first)"; exit 1 }
-# `# mcp` のシナリオが使う mye_mcp.exe (release)。変更が無ければ cargo は何もしない
-& cargo build --release --manifest-path $mcpManifest 2>&1 | ForEach-Object { Write-Host "[track_verify] cargo: $_" }
-if ($LASTEXITCODE -ne 0) { Write-Host "[track_verify] cargo build of tools\mcp failed (is mye_mcp.exe running and locked?)"; exit 1 }
+# `# mcp` のシナリオが使う mye_mcp.exe (release)。専用の出力先なので、使用中の mye_mcp.exe とぶつからない。変更が無ければ cargo は何もしない
+& cargo build --release --manifest-path $mcpManifest --target-dir $mcpTarget 2>&1 | ForEach-Object { Write-Host "[track_verify] cargo: $_" }
+if ($LASTEXITCODE -ne 0) { Write-Host "[track_verify] cargo build of tools\mcp failed"; exit 1 }
 if (-not (Test-Path $mcpExe)) { Write-Host "[track_verify] $mcpExe not found"; exit 1 }
 
 # --- 1 つのシナリオの実行状態 -------------------------------------------------------------
@@ -184,6 +196,37 @@ function Invoke-Mcp([string]$requestLine, [bool]$noStart) {
     if ($requestLine -match '"change_session_begin"' -and $body -match '"sessionId":"([0-9a-f-]{36})"') { $script:session = $Matches[1] }
     Adopt-Service
     return '{"mcp":{"isError":' + $isError + ',"body":' + $body + '}}'
+}
+
+# mye_track.exe hook を別プロセスで 1 回起動する。標準出力は Claude Code が読む想定で、空で、閉じること自体が検査
+function Invoke-Hook([string]$sub, [string]$json, [bool]$withProject) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = if ($withProject) { "hook $sub --project `"$($script:proj)`"" } else { "hook $sub" }
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.StandardInputEncoding = $utf8NoBom
+    $psi.StandardOutputEncoding = $utf8NoBom
+    $psi.Environment['MYE_TRACK_EXE'] = $exe
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync()
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    $p.StandardInput.NewLine = "`n"
+    $p.StandardInput.WriteLine($json.Replace('{ROOT}', $script:proj.Replace('\', '\\')))
+    $p.StandardInput.Close()
+    if (-not $p.WaitForExit($hookLimitMs)) { $p.Kill(); throw "hook $sub did not exit within ${hookLimitMs} ms" }
+    # フックが終わったら、読み側はすぐに EOF を受ける。サービスが標準出力を掴んでいれば、ここで止まる
+    if (-not $outTask.Wait($hookLimitMs)) { throw "hook $sub exited but its stdout did not close (does the service hold it?)" }
+    $out = $outTask.Result
+    if ($out.Length -ne 0) { throw "hook $sub wrote to stdout: $out" }
+    if ($p.ExitCode -ne 0) { throw "hook $sub exited with $($p.ExitCode): $($errTask.Result)" }
+    if ($watch.ElapsedMilliseconds -gt $hookBudgetMs) { throw "hook $sub took $($watch.ElapsedMilliseconds) ms" }
+    Adopt-Service
+    return '{"hook":{"exit":0,"stdoutBytes":0}}'
 }
 
 function Stop-Tracker {
@@ -348,6 +391,11 @@ try {
                         Start-Tracker
                     } elseif ($line -match '^#\swait-watching\s*$') {
                         Wait-Watching
+                    } elseif ($line -cmatch '^#\shook(-noproject)?\s(pre|post|session-start|session-end)\s(.+)$') {
+                        $actual.Add((Normalize (Invoke-Hook $Matches[2] $Matches[3] ($Matches[1] -ne '-noproject'))))
+                    } elseif ($line -cmatch '^#\sexists\s(\S+)$') {
+                        $present = (Test-Path -LiteralPath (Join-Path $script:proj $Matches[1])).ToString().ToLower()
+                        $actual.Add('{"exists":{"path":"' + $Matches[1].Replace('\', '/') + '","value":' + $present + '}}')
                     } elseif ($line -cmatch '^#\smcp(-nostart)?\s(.+)$') {
                         $mcpLine = $Matches[2].Replace('{SESSION}', [string]$script:session)
                         $actual.Add((Normalize (Invoke-Mcp $mcpLine ($Matches[1] -eq '-nostart'))))
@@ -369,6 +417,8 @@ try {
             $errorText = $_.Exception.Message
         } finally {
             Close-Client
+            # フック・MCP が起動したサービスを、掴み損ねたまま残さない
+            try { Adopt-Service } catch { }
             if ($script:svc -and -not $script:svc.HasExited) { $script:svc.Kill(); $script:svc.WaitForExit(10000) | Out-Null }
             $script:svc = $null
             $script:svcAdopted = $false

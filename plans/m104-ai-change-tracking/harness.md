@@ -16,9 +16,9 @@
 | sub-05 (M104f) pipe サーバ、hello、取得の op、track_verify.bat | OK | 1 | 14ddde31 | nit 2 件は sub-06 で対応 (時間切れの発火条件、pipe 越しの busy の試験)。CI での実走は未確認 (未 push)。Phase 1 の最後 |
 | sub-06 (M104g) セッション、操作、帰属 | OK | 3 | ee65e43e | round 1 REWORK (検証の走査が記録途中の変更を gap と取り違える) → round 2 REWORK (原因は notify の 16 KiB バッファの本物の取りこぼし = 試験の前提と条件 19 が誤り。試験の分け直しと verify_gap の帰属 D35 を追加) |
 | sub-22 (M104g2) 監視の取りこぼしを減らす | OK | 1 | a0f6fa85 | sub-06 の VERDICT round 2 で新設。順序は sub-06 → sub-22 → sub-07。Notion Q-4〜6 (推奨で進行) |
-| sub-07 (M104h) MCP の 5 ツール | OK | 1 | (このコミット) | should 2 件は sub-08 で対応 (検証用 mye_mcp.exe の出力先を分ける、verify_job の期待値の撮り直し)。条件 12 (本物の Claude Code 終了後の生存) は未確認。Notion Q-9〜11 |
-| sub-08 (M104i) フック CLI | 実装中 | 0 | | 詳細化済み (条件 13 件)。Phase 2 の最後 |
-| sub-09 (M104j) Editor の pipe クライアント、モデル、規則 19 | 未着手 | | | 骨子。着手前にユーザー確認 (未決事項 3) |
+| sub-07 (M104h) MCP の 5 ツール | OK | 1 | 0a598efb | should 2 件は sub-08 で対応 (検証用 mye_mcp.exe の出力先を分ける、verify_job の期待値の撮り直し)。条件 12 (本物の Claude Code 終了後の生存) は未確認。Notion Q-9〜11 |
+| sub-08 (M104i) フック CLI | OK | 1 | (このコミット) | nit: bad_token 再試行などの試験が MCP / フック側に無い、hook.rs の 8 秒のしきい値は CI で見る。条件 13 (本物のフックの実走) は未確認。Phase 2 の最後。Notion Q-12〜15 |
+| sub-09 (M104j) Editor の pipe クライアント、モデル、規則 19 | 実装中 | 0 | | 詳細化済み (条件 10 件)。追跡は既定で無効 (planner の推奨、Notion Q-12)。初めて src\Editor を触る |
 | sub-10 (M104k) AI Changes 窓、Diff 表示部品 | 未着手 | | | 骨子。分割の可能性あり |
 | sub-11 (M104l) シーン構造 diff | 未着手 | | | 骨子 |
 | sub-12 (M104m) Hierarchy / Inspector / Scene View の表示 | 未着手 | | | 骨子。着手前にユーザー確認 (未決事項 5) |
@@ -69,4 +69,5 @@
 - planner (2026-11-14、sub-03 の VERDICT round 1): sub-21 (M104d2) を足した。順序は sub-03 → sub-21 → sub-04。`src\` を触らないサブは sub-01〜08 と sub-21。
 - planner (2026-11-15、sub-05 の VERDICT): Phase 2 を見直した。sub-06 は詳細、sub-07 / 08 は骨子 + Phase 1 の結果。planner は sub-06 の VERDICT で sub-07 / 08 をもう一度見直す。未確認のまま残っているもの: CI での実走、Rust 1.89 での実ビルド、別ユーザーの接続拒否、本物のクライアントの Job の中での生存。
 - planner (2026-11-15、sub-06 の VERDICT round 2): sub-22 (M104g2) を足した。順序は sub-06 → sub-22 → sub-07。`src\` を触らないサブは sub-01〜08、sub-21、sub-22。
+- planner (2026-11-15、sub-08 の VERDICT): Phase 3 を見直した。sub-09 は詳細、sub-10〜13 は骨子 + 追記。planner は sub-09 の VERDICT で sub-10 を、以後は各サブの VERDICT で次のサブを詳細にする。sub-09 から `src\` を触るので、ビルドと `Editor.exe --selftest` が検証に入る。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

@@ -1,0 +1,9 @@
+# フック CLI: --project なしで、サブディレクトリを cwd にしたフックが、親で動いているサービスへつながる。サブディレクトリに .mye は作られない
+# write sub\f.txt f0\n
+# start
+# hook-noproject pre {"session_id":"s3","cwd":"{ROOT}\\sub","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-sub","tool_input":{"file_path":"{ROOT}\\sub\\f.txt","old_string":"f0","new_string":"f1","replace_all":false}}
+# write sub\f.txt f1\n
+# hook-noproject post {"session_id":"s3","cwd":"{ROOT}\\sub","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-sub","tool_input":{"file_path":"{ROOT}\\sub\\f.txt","old_string":"f0","new_string":"f1","replace_all":false},"tool_response":{}}
+# exists sub\.mye
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list","args":{"path":"sub/f.txt"}}

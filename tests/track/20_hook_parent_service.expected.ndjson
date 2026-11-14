@@ -1,0 +1,5 @@
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"exists":{"path":"sub/.mye","value":false}}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":1,"baselineTotal":1,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"id":2,"ok":true,"result":{"coverage":{"baselineScanned":1,"baselineTotal":1,"baselining":false,"phase":"watching","unrecorded":false},"items":[{"actor":"ai","afterSize":3,"attribution":"verified","beforeSize":3,"changeId":1,"changeState":"active","changeType":"modified","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":"<UUID>","path":"sub/f.txt","review":"pending","revisionId":1,"seq":1}],"limit":50,"nextCursor":null}}

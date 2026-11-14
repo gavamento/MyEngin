@@ -1024,3 +1024,20 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 終了の 5 秒後に `Get-Process mye_track` と `service.json` を見る。**生きていれば**: 設計どおり (`CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS` が効いた)。その後、接続 0 のまま 10 分で `idle_timeout` で終わり `service.json` が消える (running のセッションが無いこと。`change_session_end` を呼んでおく)
 - [ ] **死んでいれば**: Claude Code の Job がサービスを巻き込んでいる。`mye_track.exe` の終了コードとイベントログ、`service.json` が残っているか (残っていれば異常終了) を控え、planner へ「生存しない」と伝える。再び Claude Code を起動して `change_list` を呼ぶと、サービスが起動し直されて `service_stop` が無い区間が `coverage` に出るか確かめる
 - [ ] 後始末: 動いている `mye_track.exe` が残っていたら、Editor ではなく `mye_track.exe client --project <一時プロジェクト>` から `shutdown` を送って止める (`service.json` のトークンで `role = editor` の `hello` の後に `{"id":2,"op":"shutdown"}`)
+
+## M104i: AI Change Tracking のフック CLI (手動確認)
+
+自動の検証 (`cargo test --manifest-path tools\track\Cargo.toml` の `tests\hook.rs`、`tools\track_verify.bat` の `# hook`) は、公式文書の項目名で組んだ合成の入力でしか確かめていない。本物の Claude Code が渡す入力は、ここで確かめる (受け入れ条件 13)。手順の詳細と設定の例は `docs\ai-change-tracking\hooks-setup.md`。
+
+### 本物の Claude Code でフックを 1 回動かす
+
+実行者はユーザー。AI は自分を動かしているクライアントの設定を書き換えないので実行しない。ユーザーの `.claude\settings.json` (リポジトリの `.claude\` の下も) は、この確認のためにユーザーが自分で書く。
+
+- [ ] 準備: `tools\build_track.bat Release` を済ませる。追跡したい一時プロジェクト (リポジトリの外の空のディレクトリ。このリポジトリのルートは避ける) を用意し、そこで `.claude\settings.local.json` に `hooks-setup.md` §2 の `PreToolUse` / `PostToolUse` の設定を書く (`--project` は一時プロジェクト、`mye_track.exe` は `bin\x64\Release\mye_track.exe`)
+- [ ] `MYE_TRACK_HOOK_DUMP` を設定したシェルから Claude Code を一時プロジェクトで起動する (PowerShell: `$env:MYE_TRACK_HOOK_DUMP = "$env:TEMP\mye_hook_dump.jsonl"; claude`)
+- [ ] Claude Code に、一時プロジェクトの中の既存のテキストファイルを `Edit` で 1 か所書き換えさせる。続けて新しいファイルを `Write` で作らせる
+- [ ] 記録 (`mye_hook_dump.jsonl`) に、`PreToolUse` と `PostToolUse` の行が 2 組ずつある。項目名が `hooks-setup.md` §6 の「確認済み」のとおり (`session_id` / `cwd` / `tool_name` / `tool_use_id` / `tool_input` の `file_path`・`old_string`・`new_string`・`replace_all`・`content`、`PostToolUse` の `tool_response`)。違う項目があれば控える
+- [ ] `tool_response` の形を控える (Write の例は `{"filePath":..,"type":"create"}`)。失敗した編集 (存在しない `old_string` の `Edit` を Claude Code に頼む) の `tool_response` の形も控える
+- [ ] `Get-Process mye_track` に 1 行出て (フックが `--project` でサービスを起動した)、Claude Code の画面でフックの出力 (標準出力) が出ていない。Claude Code が終了コード 2 の扱いのメッセージを出していない
+- [ ] `mye_track.exe client --project <一時プロジェクト>` から `role = mcp` で `hello` して `list` を呼ぶ (`service.json` のトークンを使う)。`Edit` と `Write` の変更が `actor = ai`、`attribution = verified` で出る。**Verified にならなければ**、`describe` の `evidence` と `tool_input` の `old_string` / `new_string` を控える (Edit の CRLF・引用符の扱いが原因のことがある)
+- [ ] 後始末: 動いている `mye_track.exe` が残っていたら、`mye_track.exe client --project <一時プロジェクト>` から `shutdown` を送って止める。記録 (`mye_hook_dump.jsonl`) に秘密が含まれていれば消す。取れた記録を `tests\track\fixture\` に固定入力として置くなら、置く前に内容を確かめる

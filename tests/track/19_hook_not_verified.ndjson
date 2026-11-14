@@ -1,0 +1,15 @@
+# フック CLI: pre と post の間に人が同じファイルへ別の変更を足すと verified にならない。pre の old_string が実際の内容に無い場合も同じ
+# write h.txt one\ntwo\n
+# write m.txt alpha\nbeta\n
+# start
+# hook pre {"session_id":"s2","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-h","tool_input":{"file_path":"{ROOT}\\h.txt","old_string":"two","new_string":"TWO","replace_all":false}}
+# write h.txt one\nTWO\n
+# write h.txt one\nTWO\nhuman\n
+# hook post {"session_id":"s2","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-h","tool_input":{"file_path":"{ROOT}\\h.txt","old_string":"two","new_string":"TWO","replace_all":false},"tool_response":{"filePath":"x","type":"update"}}
+# hook pre {"session_id":"s2","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-m","tool_input":{"file_path":"{ROOT}\\m.txt","old_string":"no such text","new_string":"x","replace_all":false}}
+# write m.txt alpha\nBETA\n
+# hook post {"session_id":"s2","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-m","tool_input":{"file_path":"{ROOT}\\m.txt","old_string":"no such text","new_string":"x","replace_all":false},"tool_response":{"filePath":"x","type":"update"}}
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list","args":{"attribution":"verified"}}
+{"id":3,"op":"list","args":{"path":"h.txt"}}
+{"id":4,"op":"list","args":{"path":"m.txt"}}

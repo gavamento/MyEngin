@@ -1,0 +1,12 @@
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"hook":{"exit":0,"stdoutBytes":0}}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":3,"baselineTotal":3,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"id":2,"ok":true,"result":{"coverage":{"baselineScanned":3,"baselineTotal":3,"baselining":false,"phase":"watching","unrecorded":false},"items":[{"actor":"ai","afterSize":9,"attribution":"verified","beforeSize":4,"changeId":4,"changeState":"active","changeType":"modified","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":"<UUID>","path":"w2.txt","review":"pending","revisionId":4,"seq":1},{"actor":"ai","afterSize":10,"attribution":"verified","beforeSize":null,"changeId":3,"changeState":"active","changeType":"added","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":"<UUID>","path":"w1.txt","review":"pending","revisionId":3,"seq":1},{"actor":"ai","afterSize":6,"attribution":"verified","beforeSize":6,"changeId":2,"changeState":"active","changeType":"modified","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":"<UUID>","path":"e2.txt","review":"pending","revisionId":2,"seq":1},{"actor":"ai","afterSize":6,"attribution":"verified","beforeSize":6,"changeId":1,"changeState":"active","changeType":"modified","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":"<UUID>","path":"e1.txt","review":"pending","revisionId":1,"seq":1}],"limit":50,"nextCursor":null}}
+{"id":3,"ok":true,"result":{"items":[{"baseCommit":null,"clientSessionId":"s1","endedAt":<N>,"provider":"claude","sessionId":"<UUID>","source":"terminal","startedAt":<N>,"status":"finished","workspace":"<ROOT>"}],"limit":50,"nextCursor":null}}
