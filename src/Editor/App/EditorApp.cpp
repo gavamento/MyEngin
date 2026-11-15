@@ -1082,6 +1082,31 @@ void EditorApp::OnImGui(EngineContext& ctx)
             const std::wstring args = L"/select,\"" + absPath + L"\"";
             ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
         };
+        // 復元のプレビュー (M104p): 判定のための読み取りだけ。ゲートは Source Control の書き込みと同じ入力を使う
+        host.gateInputs = [this, &ctx]() { return BuildGateInputs(ctx); };
+        host.editedDocuments = [this, &ctx]() {
+            EditedDocuments docs;
+            // 今開いている文書 (ミニシーン編集中はそのアセット)。SceneDirty はこのファイルを書き換えるときだけ止める
+            docs.openScene = RelativeToProject(ctx.projectRoot, actorEdit_ ? actorEdit_->path : scenePath_);
+            docs.actor.known = true;
+            if (actorEdit_) {
+                docs.actor.paths.push_back(RelativeToProject(ctx.projectRoot, actorEdit_->path));
+            }
+            // 他の窓 (Animation / Animator / Audio Mixer / Behavior Tree / Project Settings / Sprite / Tile Palette) は、
+            // 編集中の文書のパスを外へ出していない。known = false のまま = その窓の未保存が立っていれば、対象に関係なく止める (安全側)
+            return docs;
+        };
+        // 復元ジャーナルは M104p2 で入る。それまでは回復待ちが無い
+        host.restoreJournalPending = []() { return false; };
+        host.stagedState = [this](const std::string& rel) {
+            // Source Control の status モデルの読み取りだけ (git を起動しない・Index に触れない)。使えなければ「分からない」
+            if (scm_.State() != Unavailable::None || !scm_.Model().valid) {
+                return StagedState::Unknown;
+            }
+            const PairedEntry* entry = scm_.Model().FindEntry(PrimaryPathFor(rel));
+            const bool staged = entry != nullptr && entry->indexState != ChangeState::None && entry->indexState != ChangeState::Untracked;
+            return staged ? StagedState::Staged : StagedState::NotStaged;
+        };
         aiChanges_.OnImGui(changeTracking_, host);
     }
     if (sourceControl_.TakeAdoptCanonicalRoot()) {

@@ -565,6 +565,13 @@ fn list_filters_by_the_aggregate_and_sessions_carry_their_aggregate() {
     let described = fx.describe(d);
     assert_eq!(described["changeReview"]["state"], "approved");
     assert_eq!(described["operationReview"]["state"], "approved");
+    // 操作の Revision だけを引ける (Editor の「操作全体をまとめてレビュー」の対象集め)。別の操作・操作の無い変更は入らない
+    let operation_id = described["operationId"].as_str().expect("宣言つきの変更は操作に属する").to_string();
+    let of_operation = ops::list(&fx.reader(), args(json!({ "operationId": operation_id }))).unwrap();
+    let operation_revisions: Vec<i64> = of_operation["items"].as_array().unwrap().iter().map(|i| i["revisionId"].as_i64().unwrap()).collect();
+    assert_eq!(operation_revisions, vec![d], "operationId で絞ると、その操作の Revision だけ");
+    let none = ops::list(&fx.reader(), args(json!({ "operationId": "00000000-0000-4000-8000-000000000000" }))).unwrap();
+    assert!(none["items"].as_array().unwrap().is_empty(), "知らない操作は 0 件");
 }
 
 #[test]

@@ -27,6 +27,11 @@ void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>
 // 表示を先に変えないこと / まとめての確認 / 文面 (英日) / 窓 (ヘッドレスの ImGui フレーム) / 自分の保存の印。RunChangeTrackingSelfTest の末尾から呼ぶ
 void RunReviewSelfTests(const std::function<void(bool, const char*)>& check);
 
+// 復元の判定 (M104p。作業ツリーを書かない) の回帰テスト (RestoreSelfTest.cpp)。ファイル全体・Hunk の判定 / Rust と同じ固定表 (tests	rackixture\hunk_apply_cases.json) /
+// ゲート / パスの検査 (一時ディレクトリの本物のジャンクション) / 文面 (英日) / プレビュー (偽のサービスと偽の読み取り口、ヘッドレスの ImGui フレーム) /
+// 一時プロジェクトの全ファイルが変わらないこと / 操作全体のレビュー・集約・大きいファイルの先頭。RunChangeTrackingSelfTest の末尾から呼ぶ
+void RunRestoreSelfTests(const std::function<void(bool, const char*)>& check);
+
 // 描画バックエンドの無い ImGui の文脈を 1 つ作り、フレームを 1 つ回して捨てる (frame の中で窓を描く試験用)。
 // 既にある文脈 (Editor 本体) には触らず、終わったら元へ戻す
 void WithHeadlessImGuiFrame(const std::function<void()>& frame);

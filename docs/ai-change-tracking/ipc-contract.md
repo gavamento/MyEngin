@@ -129,7 +129,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 
 | op | 役割 | 引数 | 結果 |
 |---|---|---|---|
-| `list` | mcp, editor | フィルタ (`sessionId`, `path`, `from`, `to`, `review`, `attribution` (文字列、または文字列の配列 = どれかに合う), `changeType`)、`cursor?`, `limit` | 変更の要約の配列、`nextCursor` |
+| `list` | mcp, editor | フィルタ (`sessionId`, `operationId` (その操作の Revision だけ。Editor の「操作全体をまとめてレビュー」が使う), `path`, `from`, `to`, `review`, `attribution` (文字列、または文字列の配列 = どれかに合う), `changeType`)、`cursor?`, `limit` | 変更の要約の配列、`nextCursor` |
 | `describe` | mcp, editor | `revisionId` | Before / After のハッシュとサイズ、Hunk の要約、シーン変更の要約、帰属と根拠、レビュー状態、復元可否、競合状態 |
 | `hunks` | editor | `revisionId`, `cursor?` | Hunk の配列 (行の本文付き) |
 | `scene_diff` | editor | `revisionId`, `cursor?` | シーン / プレハブ / アクターの構造の変更の配列 (M104l。§9.4) |

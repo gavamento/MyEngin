@@ -6,14 +6,21 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "Editor/ChangeTracking/BlobHeadView.h"
 #include "Editor/ChangeTracking/ChangeFormat.h"
 #include "Editor/ChangeTracking/ChangeModel.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
+#include "Editor/ChangeTracking/RestoreFileIo.h"
+#include "Editor/ChangeTracking/RestoreFormat.h"
+#include "Editor/ChangeTracking/RestoreGate.h"
+#include "Editor/ChangeTracking/RestorePlan.h"
+#include "Editor/ChangeTracking/RestorePreview.h"
 #include "Editor/ChangeTracking/ReviewManager.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/Widgets/DiffView.h"
@@ -21,7 +28,7 @@
 namespace mye {
 
 // 窓が EditorApp に頼むこと / EditorApp が窓に渡すこと。窓に EngineContext は渡さない
-// (承認・復元の操作は置かない。後続のサブが足す)
+// (復元は判定とプレビューまで。作業ツリーを書く口は置かない。書くのは M104p2)
 struct AiChangesHost {
     // 自動実行の起動 (--selftest / --screenshot / リプレイ) でないか。偽なら切り替えを出さない (出しても効かない)
     bool allowTracking = false;
@@ -39,6 +46,16 @@ struct AiChangesHost {
     std::function<bool(uint64_t fileId)> selectEntity;
     // 開いているシーンへの外部の変更が保留中 (ライブのシーンとディスクが食い違っている)。EditorApp が ReloadHub から読んで渡す
     bool externalChangePending = false;
+
+    // ---- 復元のプレビュー (M104p)。どれも読み取りだけ ----
+    // EditorApp::BuildGateInputs の結果。未設定なら全部偽 (止める理由なし)
+    std::function<GateInputs()> gateInputs;
+    // どの窓がどの文書を編集中か。教えられない窓は known = false にする (その窓の未保存が立っていれば安全側で止まる)
+    std::function<EditedDocuments()> editedDocuments;
+    // 進行中・回復待ちの復元があるか (復元ジャーナルは M104p2 で入る。未設定 = 無い)
+    std::function<bool()> restoreJournalPending;
+    // 既存の Source Control の status モデルだけを読んで、stage 済みか答える (git を起動しない・Index に触らない)。未設定 = 分からない
+    std::function<StagedState(const std::string& relPath)> stagedState;
 };
 
 // シーンの変更の行をクリックした結果
@@ -97,6 +114,26 @@ public:
     void SetReviewNote(const std::string& note);
     // 差分の Hunk を選ぶ (詳細の描画のあと。index は model.Hunks() の添字、範囲外で解除)
     void SelectHunkIndex(const ChangeModel& model, int index);
+    // 選んだ Revision の変更を属する操作の全体でまとめてレビューする (操作の Revision を集め、件数つきの確認を 1 回出す)。
+    // 詳細が無い・対象外の行為者・操作に属さないときは false
+    bool RequestBulkOperation(ChangeTrackingSession& session, ReviewAction action);
+
+    // ---- 復元のプレビュー (M104p)。窓のボタンと試験が同じ口を通る。**作業ツリーを書かない** ----
+
+    // 選んだ Revision のファイル全体 / 選んだ Hunk の復元のプレビューを開く (必要な内容を集めて計画を作る)。
+    // 詳細が無い・Hunk 単位で Hunk が選ばれていないときは false
+    bool OpenRestore(ChangeTrackingSession& session, RestoreScope scope, const AiChangesHost& host);
+    void CloseRestore();
+    // いま復元を止めている理由 (全部)。毎フレーム判定し直す (確認を出している間に状態が変わる)。プレビューが開いていなくても使える
+    std::vector<RestoreBlock> RestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host) const;
+    // 注記 (削除の確認・stage 済み・作り直しの見込み)
+    RestoreNotes RestoreNotesFor(const AiChangesHost& host) const;
+    // 試験用: 今のファイルの読み取り口を差し替える (既定は本物の読み取り専用の実装)
+    void SetRestoreFileIo(std::unique_ptr<RestoreFileIo> io) { restoreIo_ = std::move(io); }
+    const RestorePreview& Restore() const { return restore_; }
+    // 直近のフレームで描いた画面の内容 (文字列と印)。試験が画面に出ているものを確かめる
+    const RestoreScreen& LastRestoreScreen() const { return restoreScreen_; }
+    const BlobHeadView& Heads() const { return head_; }
 
     // 試験用
     const std::set<int64_t>& MultiSelection() const { return multi_; }
@@ -129,6 +166,11 @@ private:
     void DrawHunkReview(ChangeTrackingSession& session);
     void DrawSceneReview(ChangeTrackingSession& session);
     void DrawBulkPopup(ChangeTrackingSession& session);
+    void DrawAggregates(ChangeTrackingSession& session);
+    void DrawRestoreButtons(ChangeTrackingSession& session, const AiChangesHost& host, const std::string& actor);
+    void DrawRestorePopup(ChangeTrackingSession& session, const AiChangesHost& host);
+    void DrawBlobHeads(ChangeTrackingSession& session);
+    RestoreFileIo& RestoreIo();
     std::optional<ReviewAction> DrawReviewButtons(const char* id, bool busy);
     bool SubmitReview(ChangeTrackingSession& session, std::vector<ReviewTarget> targets, ReviewAction action);
 
@@ -157,6 +199,15 @@ private:
     bool bulkPending_ = false;    // まとめての確認を出す
     bool bulkOpenRequested_ = false;
     ReviewAction bulkAction_ = ReviewAction::Approve;
+    // 復元のプレビュー
+    RestorePreview restore_;
+    RestoreScreen restoreScreen_;
+    std::unique_ptr<RestoreFileIo> restoreIo_;
+    DiffViewer restoreDiff_;
+    DiffViewer restoreConflictDiff_;
+    uint64_t shownRestoreSerial_ = ~0ull;
+    bool restoreOpenRequested_ = false;
+    BlobHeadView head_;
     std::vector<int> items_; // 一覧の仮想行。-1 = 主の節の見出し、-2 = 不明 / 推定の節の見出し、-3 = Editor / 復元の節の見出し、0 以上 = Changes の添字
 };
 

@@ -451,3 +451,58 @@ fn merged_rename_keeps_the_weaker_completeness_and_gap_source() {
     assert_eq!(merged[0].completeness, Completeness::Gap);
     assert_eq!(merged[0].source, Source::StartupGap);
 }
+
+// ---- Hunk の逆適用の固定表 (Editor の復元の判定と同じ表。M104p) ----
+
+fn json_hunk(value: &serde_json::Value) -> Hunk {
+    let number = |key: &str| value[key].as_u64().unwrap_or_else(|| panic!("{key} が数でない")) as usize;
+    let text = |key: &str| value[key].as_str().unwrap_or_else(|| panic!("{key} が文字列でない")).to_string();
+    Hunk {
+        old_start: number("oldStart"),
+        old_count: number("oldCount"),
+        new_start: number("newStart"),
+        new_count: number("newCount"),
+        before_text: text("beforeText"),
+        after_text: text("afterText"),
+        context_pre: text("contextPre"),
+        context_post: text("contextPost"),
+        eol_only: value["eolOnly"].as_bool().unwrap_or(false),
+    }
+}
+
+/// `tests\track\fixture\hunk_apply_cases.json` (C++ の changetracking スイートも同じファイルを読む)。
+/// `strict` は記録した位置でだけ当てる規則で、サービスの `unapply_hunks` の結果と全行が一致しなければならない。
+/// `fromDiff` の行は、表の Hunk が `diff_lines(before, after)` の実際の出力と同じであることも確かめる (表が手書きの誤りでない証拠)。
+#[test]
+fn the_shared_hunk_table_matches_unapply_hunks() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("tests").join("track").join("fixture").join("hunk_apply_cases.json");
+    let table: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("固定表を読めない")).expect("固定表が JSON でない");
+    let cases = table["cases"].as_array().expect("cases が配列でない");
+    assert!(cases.len() >= 20, "表の行が少なすぎる: {}", cases.len());
+    let mut with_error = 0;
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let hunks: Vec<Hunk> = case["hunks"].as_array().unwrap().iter().map(json_hunk).collect();
+        let before = case["before"].as_str().unwrap();
+        let after = case["after"].as_str().unwrap();
+        if case["fromDiff"].as_bool().unwrap_or(false) {
+            assert_eq!(diff(before, after), hunks, "{name}: 表の Hunk が diff_lines の出力と違う");
+            assert_eq!(apply_hunks(before, &hunks).as_deref(), Ok(after), "{name}: Before に当てた結果が After と違う");
+        }
+        let current = case["current"].as_str().unwrap_or(after);
+        let selected: Vec<Hunk> = match case["select"].as_array() {
+            Some(indices) => indices.iter().map(|i| hunks[i.as_u64().unwrap() as usize].clone()).collect(),
+            None => hunks.clone(),
+        };
+        let actual = unapply_hunks(current, &selected);
+        match case["strict"]["result"].as_str() {
+            Some(expected) => assert_eq!(actual.as_deref(), Ok(expected), "{name}: 逆適用の結果が表と違う"),
+            None => {
+                assert!(case["strict"]["error"].as_bool().unwrap_or(false), "{name}: strict に result も error も無い");
+                assert!(actual.is_err(), "{name}: 表は失敗を期待しているが、成功した: {actual:?}");
+                with_error += 1;
+            }
+        }
+    }
+    assert!(with_error >= 8, "失敗の行 (位置ずれ・競合・復元済み) が表に足りない: {with_error}");
+}

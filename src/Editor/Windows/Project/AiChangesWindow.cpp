@@ -15,6 +15,7 @@
 #include "imgui.h"
 #include "fontawesome/IconsFontAwesome6.h"
 
+#include "Editor/ChangeTracking/RestoreFormat.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
@@ -228,6 +229,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     if (!open) {
         return;
     }
+    restore_.Tick(RestoreIo()); // 今のファイルの読み取りを 1 塊だけ進める (フレームを止めない)
     ImGui::SetNextWindowSize(ImVec2(980.0f, 460.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(Tr(StrId::Win_AiChanges), &open)) {
         ImGui::End();
@@ -235,6 +237,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     }
     // 状態が変わった後の最初のフレームで、見る部分を合わせる (Begin の結果で窓が畳まれていれば見ていない)
     DrawHeader(session, host);
+    DrawRestorePopup(session, host);
 
     const TrackState state = session.State();
     const bool hasData = model.Status().valid && (state == TrackState::Ready || state == TrackState::DbDegraded || state == TrackState::Disconnected);
@@ -585,6 +588,7 @@ void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChanges
     ImGui::TextDisabled("%s", FormatTimeMs(d.value("observedAt", int64_t(0))).c_str());
 
     DrawReviewPanel(session);
+    DrawRestoreButtons(session, host, str("actor"));
 
     // 帰属: 区分だけでなく、根拠の一覧と候補のセッション
     ImGui::Spacing();
@@ -712,6 +716,9 @@ void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChanges
                 diff_.SelectHunk(static_cast<int>(i));
             }
         }
+    }
+    if (diffMode == "whole" && std::any_of(model.Hunks().begin(), model.Hunks().end(), [](const TrackHunk& h) { return h.oversize; })) {
+        DrawBlobHeads(session);
     }
     DrawHunkReview(session);
     const char* empty = Tr(model.HunksFailed() ? StrId::AiChg_HunksFailed
@@ -1173,6 +1180,7 @@ void AiChangesWindow::DrawReviewPanel(ChangeTrackingSession& session)
     if (const std::optional<ReviewAction> picked = DrawReviewButtons("revision", session.Review().Busy())) {
         ReviewRevision(session, *picked);
     }
+    DrawAggregates(session);
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##reviewnote", Tr(StrId::AiChg_RvNoteHint), reviewNote_, sizeof(reviewNote_));
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
@@ -1284,6 +1292,9 @@ void AiChangesWindow::DrawBulkPopup(ChangeTrackingSession& session)
         return;
     }
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
+    if (!review.PreparedOperationId().empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvBulkOperation));
+    }
     bool canRecord = false;
     switch (review.GetCollect()) {
     case ReviewManager::Collect::Collecting:
@@ -1320,6 +1331,299 @@ void AiChangesWindow::DrawBulkPopup(ChangeTrackingSession& session)
     if (ImGui::Button(Tr(StrId::Common_Cancel))) {
         CancelBulk(session);
         ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+// ---- 操作全体・ファイル単位の集約 (M104p。sub-14 の残り) ----
+
+bool AiChangesWindow::RequestBulkOperation(ChangeTrackingSession& session, ReviewAction action)
+{
+    const ChangeModel& model = session.Model();
+    const nlohmann::json& d = model.Detail();
+    if (model.SelectedRevision() == 0 || !IsReviewableDetail(d, model.SelectedRevision()) || session.Review().Busy()) {
+        return false;
+    }
+    const std::string operationId = d.contains("operationId") && d["operationId"].is_string() ? d["operationId"].get<std::string>() : std::string();
+    if (operationId.empty()) {
+        return false;
+    }
+    session.Review().PrepareOperation(operationId);
+    bulkAction_ = action;
+    bulkPending_ = true;
+    bulkOpenRequested_ = true;
+    return true;
+}
+
+// 変更 (ファイル) 単位と操作単位の集約。describe の changeReview / operationReview (サービスが数える)
+void AiChangesWindow::DrawAggregates(ChangeTrackingSession& session)
+{
+    const nlohmann::json& d = session.Model().Detail();
+    auto group = [&](const char* key, StrId label) {
+        if (!d.contains(key) || !d[key].is_object()) {
+            return false;
+        }
+        const nlohmann::json& g = d[key];
+        const std::string state = g.contains("state") && g["state"].is_string() ? g["state"].get<std::string>() : std::string();
+        ImGui::TextDisabled("%s", Tr(label));
+        ImGui::SameLine();
+        ImGui::TextColored(ReviewColor(state), "%s", ReviewGroupText(g).c_str());
+        return true;
+    };
+    group("changeReview", StrId::AiChg_RvFileAggregate);
+    if (group("operationReview", StrId::AiChg_RvOperationAggregate)) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvBulkOperation));
+        if (const std::optional<ReviewAction> picked = DrawReviewButtons("operation", session.Review().Busy())) {
+            RequestBulkOperation(session, *picked);
+        }
+    } else {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvNoOperation));
+    }
+}
+
+// ---- 大きいファイルの先頭 (M104p。sub-10 の残り) ----
+
+void AiChangesWindow::DrawBlobHeads(ChangeTrackingSession& session)
+{
+    head_.Request(session.Client(), ParseRestoreRevision(session.Model().Detail()));
+    ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+    ImGui::TextWrapped("%s", Tr(StrId::AiChg_HeadWhole));
+    ImGui::PopStyleColor();
+    const float height = ImGui::GetTextLineHeightWithSpacing() * 6.0f;
+    for (const bool isBefore : { true, false }) {
+        const BlobHeadView::Side& side = isBefore ? head_.Before() : head_.After();
+        ImGui::TextUnformatted(Tr(isBefore ? StrId::AiChg_HeadBefore : StrId::AiChg_HeadAfter));
+        ImGui::PushID(isBefore ? "headbefore" : "headafter");
+        if (ImGui::BeginChild("##head", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
+            switch (side.state) {
+            case BlobHeadView::State::None: break;
+            case BlobHeadView::State::Loading: ImGui::TextDisabled("%s", Tr(StrId::AiChg_HeadLoading)); break;
+            case BlobHeadView::State::Failed: ImGui::TextDisabled("%s", Tr(StrId::AiChg_HeadFailed)); break;
+            case BlobHeadView::State::Ready:
+                if (side.binary) {
+                    ImGui::TextDisabled("%s", BlobHeadBinaryText(side.total).c_str());
+                } else {
+                    ImGui::TextUnformatted(side.text.c_str());
+                    if (side.total > side.shown) {
+                        ImGui::TextDisabled("%s", BlobHeadTruncatedText(side.shown, side.total).c_str());
+                    }
+                }
+                break;
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopID();
+    }
+}
+
+// ---- 復元のプレビュー (M104p)。作業ツリーを書かない ----
+
+RestoreFileIo& AiChangesWindow::RestoreIo()
+{
+    if (!restoreIo_) {
+        restoreIo_ = MakeSystemRestoreFileIo();
+    }
+    return *restoreIo_;
+}
+
+bool AiChangesWindow::OpenRestore(ChangeTrackingSession& session, RestoreScope scope, const AiChangesHost& host)
+{
+    ChangeModel& model = session.Model();
+    const nlohmann::json& d = model.Detail();
+    if (model.SelectedRevision() == 0 || !d.is_object() || !d.contains("revisionId") || !d["revisionId"].is_number_integer()
+        || d["revisionId"].get<int64_t>() != model.SelectedRevision()) {
+        return false; // 詳細が無い・選び直した直後で古い
+    }
+    std::vector<int64_t> hunkIds;
+    if (scope == RestoreScope::Hunks) {
+        if (selectedHunkId_ == 0) {
+            return false;
+        }
+        hunkIds.push_back(selectedHunkId_);
+    }
+    restore_.Open(scope, d, model.Hunks(), hunkIds, host.projectRoot, session.Client(), RestoreIo());
+    restoreOpenRequested_ = true;
+    return true;
+}
+
+void AiChangesWindow::CloseRestore()
+{
+    restore_.Close();
+    restoreDiff_.Clear();
+    restoreConflictDiff_.Clear();
+    shownRestoreSerial_ = ~0ull;
+    restoreOpenRequested_ = false;
+    restoreScreen_ = RestoreScreen();
+}
+
+std::vector<RestoreBlock> AiChangesWindow::RestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host) const
+{
+    RestoreGateInput in;
+    if (host.gateInputs) {
+        in.gate = host.gateInputs();
+    }
+    if (host.editedDocuments) {
+        in.documents = host.editedDocuments();
+    }
+    in.targetPaths = restore_.TargetPaths();
+    in.trackConnected = session.Client().CanRequest();
+    in.journalPending = host.restoreJournalPending && host.restoreJournalPending();
+    in.blobMissing = restore_.BlobMissing();
+    return EvaluateRestoreGate(in);
+}
+
+RestoreNotes AiChangesWindow::RestoreNotesFor(const AiChangesHost& host) const
+{
+    if (!restore_.HasPlan()) {
+        return RestoreNotes();
+    }
+    const std::string activeScene = host.editedDocuments ? host.editedDocuments().openScene : std::string();
+    return BuildRestoreNotes(restore_.Plan(), activeScene, host.stagedState);
+}
+
+// 「復元...」「選んだ Hunk を復元...」。押すと必要な内容を集めて計画を作り、プレビューを出す (実行はしない)
+void AiChangesWindow::DrawRestoreButtons(ChangeTrackingSession& session, const AiChangesHost& host, const std::string& actor)
+{
+    const bool restorable = IsRestorableActor(actor);
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!restorable);
+    if (ImGui::SmallButton(Tr(StrId::AiChg_RsButtonFile))) {
+        OpenRestore(session, RestoreScope::File, host);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(selectedHunkId_ == 0);
+    if (ImGui::SmallButton(Tr(StrId::AiChg_RsButtonHunk))) {
+        OpenRestore(session, RestoreScope::Hunks, host);
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    if (!restorable) {
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_RsNotRestorableActor));
+    } else if (selectedHunkId_ == 0 && !session.Model().Hunks().empty()) {
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_RsNeedHunk));
+    }
+    ImGui::PopStyleColor();
+}
+
+namespace {
+
+ImVec4 VerdictColor(RestoreVerdict verdict)
+{
+    switch (verdict) {
+    case RestoreVerdict::Ready: return themeColor::Success;
+    case RestoreVerdict::AlreadyRestored: return themeColor::TextDim;
+    case RestoreVerdict::Conflict: return themeColor::Error;
+    case RestoreVerdict::NotRestorable: return themeColor::Warning;
+    }
+    return themeColor::Text;
+}
+
+void BulletLines(const std::vector<std::string>& lines)
+{
+    for (const std::string& line : lines) {
+        ImGui::Bullet();
+        ImGui::TextWrapped("%s", line.c_str());
+    }
+}
+
+} // namespace
+
+// プレビューの画面。止める理由・照合の結果・書くことになる内容・注記。実行のボタンは押せない (M104p2 で押せるようにする)
+void AiChangesWindow::DrawRestorePopup(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    if (!restore_.IsOpen()) {
+        return;
+    }
+    // 閉じるのは利用者が「閉じる」か x を押したときだけ。ポップアップが開いていなければ (開いた最初のフレーム・文脈が作り直された)、開き直す
+    const char* title = Tr(StrId::AiChg_RsTitle);
+    if (restoreOpenRequested_ || !ImGui::IsPopupOpen(title)) {
+        ImGui::OpenPopup(title);
+        restoreOpenRequested_ = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(780.0f, 620.0f), ImGuiCond_Appearing);
+    bool keepOpen = true;
+    if (!ImGui::BeginPopupModal(title, &keepOpen)) {
+        return;
+    }
+    // ゲートは毎フレーム判定し直す (確認の画面を出している間に、保存・再生・ビルドの状態が変わる)
+    restoreScreen_ = BuildRestoreScreen(restore_, RestoreBlocks(session, host), RestoreNotesFor(host));
+    const RestoreScreen& screen = restoreScreen_;
+
+    ImGui::TextUnformatted(Tr(StrId::AiChg_RsTarget));
+    ImGui::SameLine();
+    ImGui::TextUnformatted(screen.target.c_str());
+    ImGui::TextDisabled("%s", screen.scope.c_str());
+
+    if (screen.phase == RestorePreview::Phase::Preparing) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RsPreparing));
+    } else if (screen.phase == RestorePreview::Phase::Failed) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s %s", Tr(StrId::AiChg_RsFailed), screen.failure.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::Separator();
+    if (screen.blocks.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RsNoBlocks));
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextUnformatted(Tr(StrId::AiChg_RsBlocks));
+        ImGui::PopStyleColor();
+        BulletLines(screen.blocks);
+    }
+
+    if (screen.hasPlan) {
+        ImGui::Separator();
+        ImGui::TextUnformatted(Tr(StrId::AiChg_RsResult));
+        ImGui::PushStyleColor(ImGuiCol_Text, VerdictColor(screen.verdict));
+        ImGui::TextWrapped("%s", screen.verdictText.c_str());
+        ImGui::PopStyleColor();
+        BulletLines(screen.issues);
+        if (!screen.superseded.empty()) {
+            ImGui::TextDisabled("%s", screen.superseded.c_str());
+        }
+        BulletLines(screen.hunkLines);
+        if (!screen.hashLine.empty()) {
+            ImGui::TextDisabled("%s", screen.hashLine.c_str());
+        }
+        if (!screen.ops.empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted(Tr(StrId::AiChg_RsWillWrite));
+            BulletLines(screen.ops);
+        }
+        if (!screen.notes.empty()) {
+            ImGui::TextUnformatted(Tr(StrId::AiChg_RsNotes));
+            BulletLines(screen.notes);
+        }
+        // 差分の入力は、準備ができたときに 1 回だけ作り直す
+        if (shownRestoreSerial_ != restore_.ViewSerial()) {
+            restoreDiff_.SetHunks(restore_.ChangeView());
+            restoreConflictDiff_.SetHunks(restore_.ConflictView());
+            shownRestoreSerial_ = restore_.ViewSerial();
+        }
+        if (!restore_.ConflictView().empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted(Tr(StrId::AiChg_RsDiffConflict));
+            restoreConflictDiff_.Draw("##restoreconflict", Tr(StrId::AiChg_NoHunks), 0.0f, ImGui::GetTextLineHeightWithSpacing() * 8.0f);
+        }
+        if (screen.verdict == RestoreVerdict::Ready && !restore_.ChangeView().empty()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted(Tr(StrId::AiChg_RsDiffChange));
+            restoreDiff_.Draw("##restorediff", Tr(StrId::AiChg_NoHunks), 0.0f, ImGui::GetTextLineHeightWithSpacing() * 10.0f);
+        }
+    }
+
+    ImGui::Separator();
+    // 実行は押せない (このサブは判定とプレビューまで)
+    ImGui::BeginDisabled(!screen.canApply);
+    ImGui::Button(Tr(StrId::AiChg_RsApply));
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", screen.applyNote.c_str());
+    if (ImGui::Button(Tr(StrId::Common_Close)) || !keepOpen) {
+        ImGui::CloseCurrentPopup();
+        CloseRestore();
     }
     ImGui::EndPopup();
 }

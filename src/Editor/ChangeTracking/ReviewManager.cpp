@@ -174,6 +174,7 @@ void ReviewManager::Reset()
     prepared_.clear();
     preparedSkipped_ = 0;
     preparedSession_.clear();
+    preparedOperation_.clear();
 }
 
 void ReviewManager::Fail(const std::string& code, const std::string& detail)
@@ -244,6 +245,7 @@ void ReviewManager::PrepareRevisions(std::vector<int64_t> revisionIds, int skipp
     prepared_ = std::move(revisionIds);
     preparedSkipped_ = skipped;
     preparedSession_.clear();
+    preparedOperation_.clear();
     collect_ = Collect::Ready;
 }
 
@@ -253,6 +255,7 @@ void ReviewManager::CancelPrepared()
     prepared_.clear();
     preparedSkipped_ = 0;
     preparedSession_.clear();
+    preparedOperation_.clear();
     collect_ = Collect::None;
 }
 
@@ -262,6 +265,7 @@ void ReviewManager::PrepareSession(const std::string& sessionId)
     prepared_.clear();
     preparedSkipped_ = 0;
     preparedSession_ = sessionId;
+    preparedOperation_.clear();
     errorCode_.clear();
     errorDetail_.clear();
     if (client_ == nullptr || !client_->CanRequest()) {
@@ -270,18 +274,36 @@ void ReviewManager::PrepareSession(const std::string& sessionId)
         return;
     }
     collect_ = Collect::Collecting;
-    CollectPage(sessionId, std::string(), {}, 0, collectGeneration_);
+    CollectPage("sessionId", sessionId, std::string(), {}, 0, collectGeneration_);
 }
 
-void ReviewManager::CollectPage(const std::string& sessionId, const std::string& cursor, std::vector<int64_t> collected, int page,
+void ReviewManager::PrepareOperation(const std::string& operationId)
+{
+    ++collectGeneration_;
+    prepared_.clear();
+    preparedSkipped_ = 0;
+    preparedSession_.clear();
+    preparedOperation_ = operationId;
+    errorCode_.clear();
+    errorDetail_.clear();
+    if (client_ == nullptr || !client_->CanRequest()) {
+        collect_ = Collect::Failed;
+        errorCode_ = trackerror::kNotConnected;
+        return;
+    }
+    collect_ = Collect::Collecting;
+    CollectPage("operationId", operationId, std::string(), {}, 0, collectGeneration_);
+}
+
+void ReviewManager::CollectPage(const char* key, const std::string& value, const std::string& cursor, std::vector<int64_t> collected, int page,
                                 uint64_t generation)
 {
-    nlohmann::json args = { { "sessionId", sessionId }, { "limit", kReviewCollectPageSize } };
+    nlohmann::json args = { { key, value }, { "limit", kReviewCollectPageSize } };
     if (!cursor.empty()) {
         args["cursor"] = cursor;
     }
     client_->Request(trackop::kList, args,
-                     [this, sessionId, page, generation, collected = std::move(collected)](const nlohmann::json& response) mutable {
+                     [this, key, value, page, generation, collected = std::move(collected)](const nlohmann::json& response) mutable {
                          if (generation != collectGeneration_) {
                              return;
                          }
@@ -310,7 +332,7 @@ void ReviewManager::CollectPage(const std::string& sessionId, const std::string&
                                  errorDetail_ = "too many changes to collect";
                                  return;
                              }
-                             CollectPage(sessionId, next, std::move(collected), page + 1, generation);
+                             CollectPage(key, value, next, std::move(collected), page + 1, generation);
                              return;
                          }
                          prepared_ = std::move(collected);

@@ -35,7 +35,8 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104m3 | 3 | 実装中 | 追跡クライアントの試験から実時間への依存を外す。`TrackIo::NowMicros` を足し、`Poll()` の時間の上限を差し替えられる時計で測る (製品の挙動は同じ)。試験は偽の時計で決定的にする |
 | M104n | 3 | 未着手 | 未保存シーンへの外部変更の確認 (`ReloadHub` の口)。他のサブから独立しているので前倒しできる |
 | M104o | 4 | 実装済み (判定待ち) | レビュー: サービスの `review_set` (role = editor だけ・1 回 1000 件まで・追記だけ・`events` から作り直せる)、葉ごとの今の状態 (新しさで決まる) と集約 (Revision / 変更 / 操作 / セッション)、`describe` / `hunks` / `scene_diff` / `list` / `sessions` への反映、通知 `review_changed`、`scene_overlay` は承認済みを強調から外す。Editor: `ReviewManager`、AI Changes 窓の承認・却下・要確認・再開 (Revision / Hunk / シーンの変更の範囲)、まとめて (セッション・複数選択) は件数つきの確認 1 回、履歴、集約の表示と絞り込み。sub-13 から持ち越した自分の保存の確認 (`OwnSaveRecord`)。Phase 3〜4 の横断の検証を含む。スキーマは版 3 のまま |
-| M104p | 5 | 未着手 | ゲートの共有、ファイルと Hunk の復元、復元ジャーナル、起動時の回復 |
+| M104p | 5 | 実装済み (判定待ち) | 復元の判定 (書かない): ゲートの共有 (`EditorApp::BuildGateInputs` を `AiChangesHost` 越しに、窓ごとの編集中の文書)、競合の検証 (ファイル全体・Hunk。Rust と同じ固定表 `tests\track\fixture\hunk_apply_cases.json`)、パスの検査 (`PathGuard`)、プレビュー (AI Changes 窓の「復元...」。実行は押せない)、注記 (削除・stage 済み・作り直しの見込み)。sub-10 / sub-14 から持ち越した大きいファイルの先頭・操作全体のまとめてレビュー・ファイル単位の集約。サービスは `list` の `operationId` 絞り込みを足した (記録は書かない・スキーマは版 3 のまま) |
+| M104p2 | 5 | 未着手 | ファイルと Hunk の適用 (`ReloadHub::BeginBatch` / `EndBatch`・`WriteFileReplacing`)、復元ジャーナル (`recovery\`)、巻き戻し、起動時の回復、`restore_record` / `restore_expect`。M104p の判定とプレビューの上に載せる。復元の試験は必ず一時プロジェクトで行う |
 | M104q | 5 | 未着手 | ライブのシーンの復元 (Entity / Component / Field / Override)、Undo 連携 |
 | M104r | 6 | 未着手 | 削除エンティティのゴースト、Scene Overlay |
 | M104s | 6 | 未着手 | Before / After のプレビュー、左右並べた 3D 比較 |

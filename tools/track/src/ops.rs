@@ -56,6 +56,8 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     let to = args.int("to")?;
     let change_type = args.string("changeType")?;
     let session_id = args.string("sessionId")?;
+    // 1 つの操作 (operation) の Revision だけ。Editor が「この操作の変更をまとめてレビュー」の対象を集めるのに使う
+    let operation_id = args.string("operationId")?;
     let review = args.string("review")?;
     // 帰属は 1 つの文字列か、文字列の配列 (どれか 1 つに合えばよい。「不明 / 推定」を 1 回で取る)
     let attributions: Vec<String> = match args.value("attribution") {
@@ -123,6 +125,10 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     if let Some(s) = session_id {
         let n = bind(&mut values, SqlValue::Text(s));
         conditions.push(session_candidate_sql(n));
+    }
+    if let Some(operation) = operation_id {
+        let n = bind(&mut values, SqlValue::Text(operation));
+        conditions.push(format!("r.operation_id = ?{n}"));
     }
     // レビューの状態は葉からの集約なので SQL では絞れない。絞るときは対象の行為者に限り、行を読みながら集約して選ぶ
     if review.is_some() {

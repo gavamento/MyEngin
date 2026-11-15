@@ -57,6 +57,8 @@ public:
     // 集めるのは行為者が AI / 不明の Revision だけ (サービスが review を返さない行は数えない)
     void PrepareRevisions(std::vector<int64_t> revisionIds, int skipped);
     void PrepareSession(const std::string& sessionId);
+    // 1 つの操作 (operation) の全体 (list の operationId で最後まで引く)。操作に属する変更をまとめてレビューする入口
+    void PrepareOperation(const std::string& operationId);
     void CancelPrepared();
     // 準備した全体を revision の範囲で送る (Ready のときだけ)。Submit と同じ送り方
     bool CommitPrepared(ReviewAction action, const std::string& note);
@@ -67,6 +69,7 @@ public:
     const std::vector<int64_t>& PreparedRevisions() const { return prepared_; }
     int PreparedSkipped() const { return preparedSkipped_; }
     const std::string& PreparedSessionId() const { return preparedSession_; }
+    const std::string& PreparedOperationId() const { return preparedOperation_; }
 
     // 直近の結果。失敗のとき code / detail は応答のまま (切断・時間切れは合成した値)
     const std::string& ErrorCode() const { return errorCode_; }
@@ -97,7 +100,8 @@ public:
 private:
     void SendChunk(std::vector<std::vector<ReviewTarget>> chunks, size_t index, ReviewAction action, std::string note, uint64_t generation);
     void Fail(const std::string& code, const std::string& detail);
-    void CollectPage(const std::string& sessionId, const std::string& cursor, std::vector<int64_t> collected, int page, uint64_t generation);
+    // key = list の絞り込みの名前 (sessionId / operationId)
+    void CollectPage(const char* key, const std::string& value, const std::string& cursor, std::vector<int64_t> collected, int page, uint64_t generation);
 
     TrackClient* client_ = nullptr;
     ChangeModel* model_ = nullptr;
@@ -110,6 +114,7 @@ private:
     std::vector<int64_t> prepared_;
     int preparedSkipped_ = 0;
     std::string preparedSession_;
+    std::string preparedOperation_;
     // 準備を取り消した・やり直したあとに届いた古い応答を捨てる
     uint64_t collectGeneration_ = 0;
     uint64_t sendGeneration_ = 0;

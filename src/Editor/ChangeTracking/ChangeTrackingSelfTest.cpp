@@ -289,6 +289,19 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             check(modifiedBody && modifiedHunks.size() == 1 && modifiedHunks[0].afterText == "two\n" && modifiedHunks[0].beforeText.empty()
                       && modifiedHunks[0].contextPre == "one\n" && modifiedHunks[0].oldCount == 0 && modifiedHunks[0].newCount == 1,
                   "probe: the appended line arrives as a hunk with its context (live service)");
+            // レビューの 1 往復 (実サービス): 承認を送ると、describe の review・履歴・変更 (ファイル) 単位の集約に出る
+            check(session.Review().Submit({ ReviewManager::ForRevision(modified) }, ReviewAction::Approve, "probe note"), "probe: an approval is sent to the live service");
+            auto isApproved = [&] {
+                const json& d = session.Model().Detail();
+                return session.Review().GetStatus() == ReviewManager::Status::Done && d.is_object() && d.contains("revisionId") && d["revisionId"] == modified && d.contains("review")
+                       && d["review"].is_string() && d["review"] == "approved";
+            };
+            const bool approved = pump(session, isApproved, 30000);
+            const json& reviewed = session.Model().Detail();
+            check(approved && reviewed.contains("reviewHistory") && reviewed["reviewHistory"].is_array() && !reviewed["reviewHistory"].empty() && reviewed["reviewHistory"].back().value("note", std::string()) == "probe note",
+                  "probe: the approval and its note come back in describe (the model refetched after the review) (live service)");
+            check(reviewed.contains("changeReview") && reviewed["changeReview"].is_object() && reviewed["changeReview"]["counts"].value("approved", 0) >= 1,
+                  "probe: describe carries the file's aggregate (changeReview) counting the approval (live service)");
             // 窓を実データで描く (ヘッドレス)
             AiChangesWindow window;
             window.open = true;
@@ -298,6 +311,31 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             host.projectRoot = root.wstring();
             WithHeadlessImGuiFrame([&] { window.OnImGui(session, host); });
             check(window.GetDiffViewer().Rows().HunkCount() == 1, "probe: the window drew the live model's hunk");
+
+            // 復元のプレビュー (M104p。実サービス + 本物の読み取り口): 今のファイルは After と同じなので、ファイル全体も Hunk も「戻せる」になる。ファイルは書かない
+            auto readProbeFile = [&] {
+                std::ifstream f(root / L"probe.txt", std::ios::binary);
+                return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            };
+            const std::string probeBefore = readProbeFile();
+            auto previewDone = [&] {
+                for (int i = 0; i < 400 && window.Restore().GetPhase() == RestorePreview::Phase::Preparing; ++i) {
+                    session.Poll();
+                    WithHeadlessImGuiFrame([&] { window.OnImGui(session, host); });
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                return window.Restore().GetPhase() == RestorePreview::Phase::Ready && window.Restore().HasPlan();
+            };
+            check(window.OpenRestore(session, RestoreScope::File, host) && previewDone() && window.Restore().Plan().verdict == RestoreVerdict::Ready
+                      && window.Restore().Plan().ops.size() == 1 && window.Restore().Plan().ops[0].kind == RestoreOp::Kind::Overwrite && !window.Restore().BlobMissing(),
+                  "probe: the restore preview of the whole file is ready (live service: describe + blob_get of the Before; real file read)");
+            window.CloseRestore();
+            window.SelectHunkIndex(session.Model(), 0);
+            check(window.OpenRestore(session, RestoreScope::Hunks, host) && previewDone() && window.Restore().Plan().verdict == RestoreVerdict::Ready && window.Restore().Plan().ops.size() == 1
+                      && window.Restore().Plan().ops[0].bytes == "one\n",
+                  "probe: the restore preview of the live hunk rebuilds the Before (\"one\") from the real file");
+            window.CloseRestore();
+            check(readProbeFile() == probeBefore && !fs::exists(root / L".mye" / L"ai_changes" / L"recovery", ec), "probe: the previews wrote nothing (the file is as it was, no recovery journal)");
 
             // Editor の保存の知らせ (実サービス): 保存した内容のハッシュを送ると、その変更の行為者が Editor の利用者になる。
             // 外から書いたファイルは、そのまま「不明」のまま
@@ -1472,6 +1510,9 @@ bool RunChangeTrackingSelfTest()
 
     // ---- (n) レビュー (M104o) ----
     RunReviewSelfTests(check);
+
+    // ---- (p) 復元の判定 (M104p) ----
+    RunRestoreSelfTests(check);
 
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {

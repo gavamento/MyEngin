@@ -3340,3 +3340,113 @@ MYE_STR(AiChg_RvCollectFailed, "Could not collect every change of this session, 
                               "セッションの変更を集めきれなかったため、何も記録しません。")
 MYE_STR(AiChg_RvNothingToReview, "There is nothing to review here.",   "レビューの対象がありません。")
 MYE_STR(AiChg_RvTruncated,    "(counted partly)",                      "(一部だけ集計)")
+MYE_STR(AiChg_RsButtonFile, "Restore...", "復元...")
+MYE_STR(AiChg_RsButtonHunk, "Restore selected hunk...", "選んだ Hunk を復元...")
+MYE_STR(AiChg_RsNotRestorableActor, "Your own edits (editor saves, restores) are not restored here. Use Undo or git.",
+                              "利用者自身の編集 (エディタの保存・復元) はここでは戻しません。Undo か git を使ってください。")
+MYE_STR(AiChg_RsNeedHunk, "Click a hunk header in the diff to restore that hunk on its own.", "差分の Hunk の見出しをクリックすると、その Hunk だけを復元できます。")
+MYE_STR(AiChg_RsTitle, "Restore preview###AiChgRestore", "復元のプレビュー###AiChgRestore")
+MYE_STR(AiChg_RsTarget, "Target", "対象")
+MYE_STR(AiChg_RsScopeFile, "the whole file (back to the content from before this change)", "ファイル全体 (この変更の前の内容へ)")
+MYE_STR(AiChg_RsScopeHunks, "the selected hunk(s) only", "選んだ Hunk だけ")
+MYE_STR(AiChg_RsPreparing, "Preparing... (reading the current file)", "準備中です (今のファイルを読んでいます)...")
+MYE_STR(AiChg_RsFailed, "Could not prepare the preview:", "プレビューを準備できませんでした:")
+MYE_STR(AiChg_RsBlocks, "Cannot restore right now:", "今は復元できません:")
+MYE_STR(AiChg_RsNoBlocks, "Nothing blocks the restore right now.", "今、復元を止める理由はありません。")
+MYE_STR(AiChg_RsResult, "Check against the current content", "今の内容との照合")
+MYE_STR(AiChg_RsWillWrite, "What the restore would do", "戻すと行う操作")
+MYE_STR(AiChg_RsNotes, "Notes", "注記")
+MYE_STR(AiChg_RsNoWrite, "Applying the restore comes in a later version. Closing this preview changes nothing.", "適用は次の版で入ります。このプレビューを閉じても何も変わりません。")
+MYE_STR(AiChg_RsDiffChange, "How the content changes when restored", "戻すと変わる内容")
+MYE_STR(AiChg_RsDiffConflict, "Where it stopped matching (current content -> the recorded After)", "合わなくなった位置 (今の内容 -> 記録した After)")
+MYE_STR(AiChg_RsHashLine, "Content hashes: current {now} / before the change {before} / after the change {after}",
+                              "内容のハッシュ: 今 {now} / 変更前 {before} / 変更後 {after}")
+MYE_STR(AiChg_RsNone, "none", "なし")
+MYE_STR(AiChg_RsSuperseded, "This change was replaced by a later change of the same path; the current content decides below.",
+                              "この変更は、同じパスの後の変更に置き換わっています。下の照合は今の内容で決まります。")
+MYE_STR(AiChg_RsVerdictReady, "The current content matches what was recorded. This can be restored.", "今の内容が記録と一致しています。復元できます。")
+MYE_STR(AiChg_RsVerdictRestored, "Already restored. Nothing would be written.", "既に戻っています。何も書きません。")
+MYE_STR(AiChg_RsVerdictConflict, "Conflict: the current content differs from what was recorded, so nothing is restored automatically.",
+                              "競合しています。今の内容が記録と違うため、自動では戻しません。")
+MYE_STR(AiChg_RsVerdictNotRestorable, "This cannot be restored.", "これは復元できません。")
+MYE_STR(AiChg_RsIssuePath, "The destination path was rejected:", "書き先のパスを拒否しました:")
+MYE_STR(AiChg_RsIssueActor, "Only changes made by an AI or by an unknown actor can be restored.", "復元できるのは、AI か不明な行為者の変更だけです。")
+MYE_STR(AiChg_RsIssueNoBefore, "The content from before this change was never seen, so there is nothing to restore to.",
+                              "この変更の前の内容を見ていないため、戻す先がありません。")
+MYE_STR(AiChg_RsIssueBeforeGone, "The stored copy of the content from before this change is missing, excluded or expired.",
+                              "この変更の前の内容の保存コピーが、欠けている・除外されている・期限切れです。")
+MYE_STR(AiChg_RsIssueAfterUnknown, "The content after this change is not stored (excluded), so it cannot be compared with the current file.",
+                              "この変更の後の内容を保存していない (除外) ため、今のファイルと比べられません。")
+MYE_STR(AiChg_RsIssueHunkModified, "Only a modified file can be restored hunk by hunk. Restore the whole file instead.",
+                              "Hunk 単位で戻せるのは内容の変更だけです。ファイル全体を復元してください。")
+MYE_STR(AiChg_RsIssueHunkLines, "This file has no line hunks (too large, binary or excluded). Restore the whole file instead.",
+                              "このファイルには行の Hunk がありません (大きすぎる・バイナリ・除外)。ファイル全体を復元してください。")
+MYE_STR(AiChg_RsIssueHunkOversize, "The selected hunk is too large to be kept. Restore the whole file instead.",
+                              "選んだ Hunk は大きすぎて保存していません。ファイル全体を復元してください。")
+MYE_STR(AiChg_RsIssueHunkNone, "No hunk is selected.", "Hunk が選ばれていません。")
+MYE_STR(AiChg_RsIssueUnreadable, "The current file could not be read.", "今のファイルを読めませんでした。")
+MYE_STR(AiChg_RsIssueTooLarge, "The current file is larger than the 8 MiB the check can read, so it is not judged.",
+                              "今のファイルが、照合で読める 8 MiB を超えるため、判定しません。")
+MYE_STR(AiChg_RsIssueNotAFile, "The path is a folder or a link now, not a file.", "今のパスはファイルではなく、フォルダかリンクです。")
+MYE_STR(AiChg_RsIssueChanged, "The file was edited after this change (its content is neither the recorded After nor the Before).",
+                              "この変更のあとにファイルが編集されています (内容が、記録した After とも Before とも違います)。")
+MYE_STR(AiChg_RsIssueOccupied, "This change deleted the file, but something exists at that path now.", "この変更はファイルを削除しましたが、今そのパスに何かがあります。")
+MYE_STR(AiChg_RsIssueOldOccupied, "This change renamed the file, but something exists under the old name now.", "この変更は名前を変更しましたが、今の古い名前に何かがあります。")
+MYE_STR(AiChg_RsIssueHunkAmbiguous, "A hunk matches in more than one place, so it cannot be told which one to restore.",
+                              "Hunk が 2 か所以上に一致するため、どれを戻すか決められません。")
+MYE_STR(AiChg_RsIssueHunkNotFound, "A hunk's text is no longer in the file (it was edited after this change).",
+                              "Hunk の内容がファイルにありません (この変更のあとに編集されています)。")
+MYE_STR(AiChg_RsIssueHunkOverlap, "The selected hunks overlap in the current file.", "選んだ Hunk が、今のファイルで重なっています。")
+MYE_STR(AiChg_RsPathEmpty, "the path is empty", "パスが空です")
+MYE_STR(AiChg_RsPathAbsolute, "an absolute path, drive or network path", "絶対パス・ドライブ名・ネットワークパスです")
+MYE_STR(AiChg_RsPathTraversal, "it contains . or .. (it could leave the project)", "「.」か「..」を含みます (プロジェクトの外へ出られます)")
+MYE_STR(AiChg_RsPathSeparator, "a backslash or an empty path part", "バックスラッシュか空の要素を含みます")
+MYE_STR(AiChg_RsPathInvalidChar, "a character that is not allowed in a file name", "ファイル名に使えない文字を含みます")
+MYE_STR(AiChg_RsPathStream, "a colon (alternate data stream)", "コロンを含みます (代替データストリーム)")
+MYE_STR(AiChg_RsPathReserved, "a reserved Windows device name (CON, NUL, COM1 ...)", "Windows の予約デバイス名です (CON・NUL・COM1 など)")
+MYE_STR(AiChg_RsPathTrailing, "a name ending with a space or a period", "名前の末尾が空白かピリオドです")
+MYE_STR(AiChg_RsPathProtected, "inside .git or .mye (never written)", ".git / .mye の中です (書き込みません)")
+MYE_STR(AiChg_RsPathOutside, "it is not inside the project folder", "プロジェクトのフォルダの外です")
+MYE_STR(AiChg_RsPathLink, "the path or a parent folder is a symbolic link or junction", "パスか親フォルダがシンボリックリンク・ジャンクションです")
+MYE_STR(AiChg_RsPathParentFile, "a parent of the path is a file", "親が、フォルダではなくファイルです")
+MYE_STR(AiChg_RsBlockTrack, "the change tracking service is not connected (the content from before the change cannot be fetched)",
+                              "追跡サービスに接続できていません (変更前の内容を取れません)")
+MYE_STR(AiChg_RsBlockJournal, "another restore is in progress or needs recovery", "別の復元が進行中か、回復待ちです")
+MYE_STR(AiChg_RsBlockBlob, "the stored copy of the content from before the change is missing", "変更前の内容の保存コピーが欠けています")
+MYE_STR(AiChg_RsOpOverwrite, "Overwrite {path} with the content from before this change ({size})", "{path} を、この変更の前の内容 ({size}) で書き換える")
+MYE_STR(AiChg_RsOpOverwriteHunks, "Rewrite {path} with the selected hunk(s) reverted ({size} afterwards)",
+                              "{path} を、選んだ Hunk を戻した内容 (戻した後 {size}) で書き換える")
+MYE_STR(AiChg_RsOpDelete, "DELETE {path} (this change added the file)", "{path} を削除する (この変更が追加したファイル)")
+MYE_STR(AiChg_RsOpCreate, "Create {path} with the content from before this change ({size})", "{path} を、この変更の前の内容 ({size}) で作る")
+MYE_STR(AiChg_RsOpRename, "Rename {from} back to {to}", "{from} の名前を {to} へ戻す")
+MYE_STR(AiChg_RsHunkMatch, "Hunk #{id}: found at the recorded position.", "Hunk #{id}: 記録した位置で見つかりました。")
+MYE_STR(AiChg_RsHunkShiftedDown, "Hunk #{id}: found {lines} line(s) below the recorded position (the file changed above it).",
+                              "Hunk #{id}: 記録した位置より {lines} 行下で見つかりました (上でファイルが変わっています)。")
+MYE_STR(AiChg_RsHunkShiftedUp, "Hunk #{id}: found {lines} line(s) above the recorded position (the file changed above it).",
+                              "Hunk #{id}: 記録した位置より {lines} 行上で見つかりました (上でファイルが変わっています)。")
+MYE_STR(AiChg_RsHunkRestored, "Hunk #{id}: already restored.", "Hunk #{id}: 既に戻っています。")
+MYE_STR(AiChg_RsHunkAmbiguous, "Hunk #{id}: the same text appears in more than one place.", "Hunk #{id}: 同じ内容が 2 か所以上にあります。")
+MYE_STR(AiChg_RsHunkNotFound, "Hunk #{id}: the text is no longer in the file.", "Hunk #{id}: ファイルに内容が見つかりません。")
+MYE_STR(AiChg_RsNoteDelete, "This deletes a file.", "ファイルを削除します。")
+MYE_STR(AiChg_RsNoteReferences, "Whether any code or asset still refers to the file has not been checked.", "このファイルを参照しているコードやアセットがあるかは確かめていません。")
+MYE_STR(AiChg_RsNoteShifted, "Some hunks were found at a different line than recorded.", "記録した行と違う位置で見つかった Hunk があります。")
+MYE_STR(AiChg_RsNoteStaged, "{path} is staged in git. Only the working tree changes; the index stays as it is.",
+                              "{path} は git で stage 済みです。変わるのは作業ツリーだけで、Index の内容は変わりません。")
+MYE_STR(AiChg_RsNoteStagedUnknown, "Whether these files are staged in git is unknown (source control is not available). The index is never touched.",
+                              "これらのファイルが git で stage 済みかは分かりません (ソース管理が使えません)。Index には触りません。")
+MYE_STR(AiChg_RsNoteMeta, "A .meta file is involved: whether its guid changes has not been checked.", ".meta が含まれます。guid が変わるかは確かめていません。")
+MYE_STR(AiChg_RsNoteStageB, "After restoring, open documents will be reloaded or scripts recompiled.", "戻したあと、開いている文書の読み直しかスクリプトの再コンパイルが要ります。")
+MYE_STR(AiChg_RsNoteStageC, "After restoring, the editor will need a restart (a schema or .meta changed).",
+                              "戻したあと、エディタの再起動が要ります (スキーマか .meta が変わります)。")
+MYE_STR(AiChg_RvBulkOperation, "Review all changes of this operation", "この操作の変更をまとめてレビュー")
+MYE_STR(AiChg_RvFileAggregate, "This file (all its changes)", "このファイル (全ての変更)")
+MYE_STR(AiChg_RvOperationAggregate, "This operation", "この操作")
+MYE_STR(AiChg_RvNoOperation, "This change does not belong to an operation.", "この変更は操作に属していません。")
+MYE_STR(AiChg_HeadBefore, "Before (first part)", "変更前 (先頭)")
+MYE_STR(AiChg_HeadAfter, "After (first part)", "変更後 (先頭)")
+MYE_STR(AiChg_HeadLoading, "Loading the first part...", "先頭を読み込んでいます...")
+MYE_STR(AiChg_HeadFailed, "Could not load the content.", "内容を読み込めませんでした。")
+MYE_STR(AiChg_HeadBinary, "(binary content, {bytes})", "(バイナリ、{bytes})")
+MYE_STR(AiChg_HeadTruncated, "... only the first {bytes} of {total} are shown.", "... {total} のうち先頭の {bytes} だけを表示しています。")
+MYE_STR(AiChg_HeadWhole, "This file is too large for a line diff, so only the start of each side is shown.", "このファイルは行の差分には大きすぎるため、両側の先頭だけを表示します。")
+MYE_STR(AiChg_RsApply, "Restore", "復元する")

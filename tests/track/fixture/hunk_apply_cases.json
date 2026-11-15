@@ -1,0 +1,1018 @@
+{
+ "version": 1,
+ "note": "Hunk の逆適用の固定表。Rust (tools/track/tests/diff.rs の unapply_hunks) と C++ (Editor の changetracking スイート) が同じファイルを読む。strict = 記録した位置でだけ当てる (サービスの unapply_hunks と同じ規則)。tolerant = Editor の復元の判定 (位置ずれ・復元済みを扱う)",
+ "cases": [
+  {
+   "name": "replace_one_line",
+   "note": "1 行の置き換え。記録した位置で一致",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "two_hunks_all",
+   "note": "2 つの Hunk を全部戻すと Before になる",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 2,
+     "oldCount": 1,
+     "newStart": 2,
+     "newCount": 1,
+     "beforeText": "a2\n",
+     "afterText": "A2\n",
+     "contextPre": "a1\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 11,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     },
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "two_hunks_first_only",
+   "note": "前の Hunk だけ戻す。後ろの Hunk は After のまま",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 2,
+     "oldCount": 1,
+     "newStart": 2,
+     "newCount": 1,
+     "beforeText": "a2\n",
+     "afterText": "A2\n",
+     "contextPre": "a1\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 11,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "select": [
+    0
+   ],
+   "strict": {
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "two_hunks_second_only",
+   "note": "後ろの Hunk だけ戻す",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 2,
+     "oldCount": 1,
+     "newStart": 2,
+     "newCount": 1,
+     "beforeText": "a2\n",
+     "afterText": "A2\n",
+     "contextPre": "a1\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 11,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "select": [
+    1
+   ],
+   "strict": {
+    "result": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "grow_then_replace_all",
+   "note": "行を増やす Hunk と置き換える Hunk。全部戻すと Before",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\nx1\nx2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 0,
+     "newStart": 3,
+     "newCount": 2,
+     "beforeText": "",
+     "afterText": "x1\nx2\n",
+     "contextPre": "a1\na2\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 13,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     },
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "grow_then_replace_second_only",
+   "note": "増やした行は残し、後ろの置き換えだけ戻す",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\nx1\nx2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 0,
+     "newStart": 3,
+     "newCount": 2,
+     "beforeText": "",
+     "afterText": "x1\nx2\n",
+     "contextPre": "a1\na2\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 13,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "select": [
+    1
+   ],
+   "strict": {
+    "result": "a1\na2\nx1\nx2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\nx1\nx2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "grow_then_replace_first_only",
+   "note": "増やした行だけ戻す",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\nx1\nx2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 0,
+     "newStart": 3,
+     "newCount": 2,
+     "beforeText": "",
+     "afterText": "x1\nx2\n",
+     "contextPre": "a1\na2\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 13,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "select": [
+    0
+   ],
+   "strict": {
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "shifted_unique",
+   "note": "先頭に 2 行足された後も、文脈つきで 1 か所だけ一致する",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "p1\np2\na1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "p1\np2\na1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 2
+     }
+    ]
+   }
+  },
+  {
+   "name": "shifted_up",
+   "note": "先頭の 2 行が消えた後 (shift = -2)",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": -2
+     }
+    ]
+   }
+  },
+  {
+   "name": "ambiguous_two_places",
+   "note": "文脈つきの並びが 2 か所に出る。記録した位置には無い",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a3\na4\na5\nA6\na7\na8\na9\nsep\na3\na4\na5\nA6\na7\na8\na9\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "conflict",
+    "hunks": [
+     {
+      "find": "ambiguous",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "not_found",
+   "note": "A6 が別の内容に変わった (After とも Before とも違う)",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a1\na2\na3\na4\na5\nZ6\na7\na8\na9\na10\na11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "conflict",
+    "hunks": [
+     {
+      "find": "notfound",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "not_found_context_changed",
+   "note": "本文は同じでも前の文脈が変わった",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a1\na2\na3\nCHANGED4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "conflict",
+    "hunks": [
+     {
+      "find": "notfound",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "already_restored",
+   "note": "今のファイルは Before の内容 (Hunk が戻っている)",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\na2\na3\na4\na5\nA6\na7\na8\na9\na10\na11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 6,
+     "oldCount": 1,
+     "newStart": 6,
+     "newCount": 1,
+     "beforeText": "a6\n",
+     "afterText": "A6\n",
+     "contextPre": "a3\na4\na5\n",
+     "contextPost": "a7\na8\na9\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "restored",
+    "hunks": [
+     {
+      "find": "restored",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "partly_restored",
+   "note": "前の Hunk は戻っていて、後ろの Hunk は After のまま -> 後ろだけ戻す",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 2,
+     "oldCount": 1,
+     "newStart": 2,
+     "newCount": 1,
+     "beforeText": "a2\n",
+     "afterText": "A2\n",
+     "contextPre": "a1\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 11,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+    "hunks": [
+     {
+      "find": "restored",
+      "shift": 0
+     },
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "one_conflict_cancels_all",
+   "note": "前の Hunk は一致するが、後ろの Hunk が競合 -> どちらも当てない",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\na11\na12\n",
+   "after": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\nA11\na12\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 2,
+     "oldCount": 1,
+     "newStart": 2,
+     "newCount": 1,
+     "beforeText": "a2\n",
+     "afterText": "A2\n",
+     "contextPre": "a1\n",
+     "contextPost": "a3\na4\na5\n",
+     "eolOnly": false
+    },
+    {
+     "oldStart": 11,
+     "oldCount": 1,
+     "newStart": 11,
+     "newCount": 1,
+     "beforeText": "a11\n",
+     "afterText": "A11\n",
+     "contextPre": "a8\na9\na10\n",
+     "contextPost": "a12\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a1\nA2\na3\na4\na5\na6\na7\na8\na9\na10\nQ11\na12\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "conflict",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     },
+     {
+      "find": "notfound",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "zero_context_exact",
+   "note": "文脈 0 行の Hunk は記録した位置でだけ一致する",
+   "before": "old\n",
+   "after": "new\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 1,
+     "oldCount": 1,
+     "newStart": 1,
+     "newCount": 1,
+     "beforeText": "old\n",
+     "afterText": "new\n",
+     "contextPre": "",
+     "contextPost": "",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "old\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "old\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "zero_context_no_shift",
+   "note": "文脈 0 行の Hunk は、別の位置に唯一の一致があっても認めない",
+   "before": "old\n",
+   "after": "new\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 1,
+     "oldCount": 1,
+     "newStart": 1,
+     "newCount": 1,
+     "beforeText": "old\n",
+     "afterText": "new\n",
+     "contextPre": "",
+     "contextPost": "",
+     "eolOnly": false
+    }
+   ],
+   "current": "x\nnew\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "conflict",
+    "hunks": [
+     {
+      "find": "notfound",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "crlf_lf_mixed",
+   "note": "CRLF と LF が混ざったファイル。戻した行の CRLF が保たれる",
+   "before": "l1\r\nl2\nl3\r\nl4\nl5\r\n",
+   "after": "l1\r\nl2\nL3\nl4\nl5\r\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 1,
+     "newStart": 3,
+     "newCount": 1,
+     "beforeText": "l3\r\n",
+     "afterText": "L3\n",
+     "contextPre": "l1\r\nl2\n",
+     "contextPost": "l4\nl5\r\n",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "l1\r\nl2\nl3\r\nl4\nl5\r\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "l1\r\nl2\nl3\r\nl4\nl5\r\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "crlf_not_ignored",
+   "note": "改行の違いだけでも別の内容 (LF と CRLF を同一視しない)",
+   "before": "l1\r\nl2\nl3\r\nl4\nl5\r\n",
+   "after": "l1\r\nl2\nL3\nl4\nl5\r\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 1,
+     "newStart": 3,
+     "newCount": 1,
+     "beforeText": "l3\r\n",
+     "afterText": "L3\n",
+     "contextPre": "l1\r\nl2\n",
+     "contextPost": "l4\nl5\r\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "l1\r\nl2\nL3\r\nl4\nl5\r\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "conflict",
+    "hunks": [
+     {
+      "find": "notfound",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "eol_only",
+   "note": "改行の種類だけが変わった Hunk を戻す",
+   "before": "a\nb\nc\n",
+   "after": "a\r\nb\nc\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 1,
+     "oldCount": 1,
+     "newStart": 1,
+     "newCount": 1,
+     "beforeText": "a\n",
+     "afterText": "a\r\n",
+     "contextPre": "",
+     "contextPost": "b\nc\n",
+     "eolOnly": true
+    }
+   ],
+   "strict": {
+    "result": "a\nb\nc\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a\nb\nc\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "eol_only_restored",
+   "note": "eolOnly の Hunk が既に戻っている",
+   "before": "a\nb\nc\n",
+   "after": "a\r\nb\nc\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 1,
+     "oldCount": 1,
+     "newStart": 1,
+     "newCount": 1,
+     "beforeText": "a\n",
+     "afterText": "a\r\n",
+     "contextPre": "",
+     "contextPost": "b\nc\n",
+     "eolOnly": true
+    }
+   ],
+   "current": "a\nb\nc\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "restored",
+    "hunks": [
+     {
+      "find": "restored",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "no_trailing_newline",
+   "note": "Before の最後の行に改行が無い。戻した結果にも無い",
+   "before": "a\nb\nc",
+   "after": "a\nb\nc\nd",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 1,
+     "newStart": 3,
+     "newCount": 2,
+     "beforeText": "c",
+     "afterText": "c\nd",
+     "contextPre": "a\nb\n",
+     "contextPost": "",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "a\nb\nc"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a\nb\nc",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "japanese",
+   "note": "日本語 (UTF-8) の行を戻す",
+   "before": "あ\nい\nう\nえ\nお\n",
+   "after": "あ\nい\nウ\nえ\nお\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 1,
+     "newStart": 3,
+     "newCount": 1,
+     "beforeText": "う\n",
+     "afterText": "ウ\n",
+     "contextPre": "あ\nい\n",
+     "contextPost": "え\nお\n",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "あ\nい\nう\nえ\nお\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "あ\nい\nう\nえ\nお\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "japanese_shifted",
+   "note": "日本語の行。先頭に 1 行足された",
+   "before": "あ\nい\nう\nえ\nお\n",
+   "after": "あ\nい\nウ\nえ\nお\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 3,
+     "oldCount": 1,
+     "newStart": 3,
+     "newCount": 1,
+     "beforeText": "う\n",
+     "afterText": "ウ\n",
+     "contextPre": "あ\nい\n",
+     "contextPost": "え\nお\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "は\nあ\nい\nウ\nえ\nお\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "は\nあ\nい\nう\nえ\nお\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 1
+     }
+    ]
+   }
+  },
+  {
+   "name": "deleted_line",
+   "note": "After で消えた行を戻す (挿入になる)",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n",
+   "after": "a1\na2\na3\na4\na6\na7\na8\na9\na10\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 5,
+     "oldCount": 1,
+     "newStart": 5,
+     "newCount": 0,
+     "beforeText": "a5\n",
+     "afterText": "",
+     "contextPre": "a2\na3\na4\n",
+     "contextPost": "a6\na7\na8\n",
+     "eolOnly": false
+    }
+   ],
+   "strict": {
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n"
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 0
+     }
+    ]
+   }
+  },
+  {
+   "name": "deleted_line_shifted",
+   "note": "消えた行の戻し先が 1 行ずれた",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n",
+   "after": "a1\na2\na3\na4\na6\na7\na8\na9\na10\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 5,
+     "oldCount": 1,
+     "newStart": 5,
+     "newCount": 0,
+     "beforeText": "a5\n",
+     "afterText": "",
+     "contextPre": "a2\na3\na4\n",
+     "contextPost": "a6\na7\na8\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "top\na1\na2\na3\na4\na6\na7\na8\na9\na10\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "match",
+    "result": "top\na1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n",
+    "hunks": [
+     {
+      "find": "match",
+      "shift": 1
+     }
+    ]
+   }
+  },
+  {
+   "name": "deleted_line_restored",
+   "note": "消えた行が既に戻っている",
+   "before": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n",
+   "after": "a1\na2\na3\na4\na6\na7\na8\na9\na10\n",
+   "fromDiff": true,
+   "hunks": [
+    {
+     "oldStart": 5,
+     "oldCount": 1,
+     "newStart": 5,
+     "newCount": 0,
+     "beforeText": "a5\n",
+     "afterText": "",
+     "contextPre": "a2\na3\na4\n",
+     "contextPost": "a6\na7\na8\n",
+     "eolOnly": false
+    }
+   ],
+   "current": "a1\na2\na3\na4\na5\na6\na7\na8\na9\na10\n",
+   "strict": {
+    "error": true
+   },
+   "tolerant": {
+    "verdict": "restored",
+    "hunks": [
+     {
+      "find": "restored",
+      "shift": 0
+     }
+    ]
+   }
+  }
+ ]
+}
