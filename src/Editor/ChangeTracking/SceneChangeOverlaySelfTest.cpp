@@ -5,6 +5,7 @@
 //====================================================================================
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <map>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include <Windows.h>
+#include <DirectXMath.h>
 
 #include "imgui.h"
 #include "nlohmann/json.hpp"
@@ -24,10 +26,14 @@
 #include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
+#include "Editor/ChangeTracking/SceneChangeWireBoxes.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/Project/AiChangesWindow.h"
+#include "Editor/Asset/AssetPreviewCache.h"
 #include "Editor/Windows/Scene/HierarchyWindow.h"
+#include "Editor/Windows/Scene/InspectorWindow.h"
+#include "Editor/Windows/Scene/SceneViewWindow.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Ecs/Components.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -714,6 +720,366 @@ void TestSelectionSync(const Check& check)
     check(!selection.HasAsset() && selection.primary == rig.Fid(rig.grand), "selection sync: selecting an entity clears an asset selection");
 }
 
+
+// ---- Inspector の Field 差分 / Scene View のワイヤ箱 / 色の設定 (M104m2) ----
+
+json ComponentJson(const char* name, const char* status, json fields)
+{
+    return { { "name", name }, { "status", status }, { "fields", std::move(fields) } };
+}
+
+json FieldJson(const char* name, const char* before, const char* after, bool overrideField = false)
+{
+    return { { "name", name }, { "before", before }, { "after", after }, { "lastRevisionId", 3 }, { "changeType", overrideField ? "PrefabOverrideChanged" : "FieldModified" },
+             { "override", overrideField }, { "oversize", false } };
+}
+
+void DrawInspector(InspectorWindow& window, SceneRig& rig, Selection& selection, UndoStack& undo)
+{
+    EngineContext ctx;
+    ctx.scene = &rig.scene;
+    AssetPreviewCache preview;
+    WithHeadlessImGuiFrame([&] { window.OnImGui(ctx, selection, undo, preview, false); });
+}
+
+// 文面: 変更前・変更後の値が字句のまま出て、長い値は切る。変わっていないフィールドには印が引けない
+void TestFieldMarkText(const Check& check)
+{
+    OverlayEntity entity;
+    OverlayComponent light;
+    light.name = "Light";
+    light.status = OverlayStatus::Modified;
+    OverlayField intensity;
+    intensity.name = "intensity";
+    intensity.before = "1.0";
+    intensity.after = "2.5";
+    intensity.hasBefore = intensity.hasAfter = true;
+    light.fields.push_back(intensity);
+    OverlayField color;
+    color.name = "color";
+    color.before = std::string("\"") + std::string(400, 'x') + "\"";
+    color.hasBefore = color.hasAfter = true;
+    color.after = "\"y\"";
+    light.fields.push_back(color);
+    OverlayField ov;
+    ov.name = "range";
+    ov.overrideField = true;
+    ov.hasAfter = true;
+    ov.after = "9";
+    light.fields.push_back(ov);
+    entity.components.push_back(light);
+    OverlayComponent fresh;
+    fresh.name = "Camera";
+    fresh.status = OverlayStatus::Added;
+    entity.components.push_back(fresh);
+
+    check(FindOverlayField(&entity, "Light", "intensity") != nullptr && FindOverlayField(&entity, "Light", "range") != nullptr
+              && FindOverlayField(&entity, "Light", "shadows") == nullptr && FindOverlayField(&entity, "Other", "intensity") == nullptr
+              && FindOverlayField(nullptr, "Light", "intensity") == nullptr,
+          "inspector marks: only a changed field of a changed component can be looked up (an unchanged one has no mark)");
+    InBothLanguages([&](Lang lang) {
+        const bool en = lang == Lang::En;
+        const std::string tip = FieldMarkTooltip(*FindOverlayField(&entity, "Light", "intensity"));
+        check(tip.find(en ? "Before: 1.0" : "変更前: 1.0") != std::string::npos && tip.find(en ? "After: 2.5" : "変更後: 2.5") != std::string::npos,
+              en ? "inspector marks: the tooltip shows the before and after values verbatim (English)" : "inspector marks: the tooltip shows the before and after values verbatim (Japanese)");
+        const std::string clipped = FieldMarkTooltip(*FindOverlayField(&entity, "Light", "color"));
+        check(clipped.size() < 400 && clipped.find("...") != std::string::npos, "inspector marks: a long value is clipped");
+        const std::string overridden = FieldMarkTooltip(*FindOverlayField(&entity, "Light", "range"));
+        check(overridden != FieldMarkTooltip(intensity) && overridden.find(en ? "(none)" : "(なし)") != std::string::npos,
+              "inspector marks: a prefab override change is worded as one, and a missing before value reads as none");
+        const std::string managed = ComponentMarkTooltip(light, true);
+        check(managed.find("intensity: 1.0") != std::string::npos && managed.find("range") != std::string::npos,
+              "inspector marks: a C# component tooltip lists the changed fields with their before values");
+        check(ComponentMarkTooltip(fresh, true) != ComponentMarkTooltip(light, false) && !ComponentMarkTooltip(fresh, true).empty(),
+              "inspector marks: an added component reads differently from a modified one");
+    });
+}
+
+// 実際の Inspector を描いて、印の数・World が変わらないこと・強調が切なら出ないことを確かめる
+void TestInspectorMarks(const Check& check)
+{
+    SceneRig rig;
+    Selection selection;
+    UndoStack undo;
+    selection.SelectOnly(rig.Fid(rig.child));
+    OverlayRig r;
+    json entity = EntityJson(static_cast<int64_t>(rig.Fid(rig.child)), "modified", "Child");
+    entity["components"] = json::array({ ComponentJson("LocalTransform", "modified", json::array({ FieldJson("position", "[0,0,0]", "[1,2,3]") })) });
+    r.entities = json::array({ entity });
+    r.overlay.SetDocumentPath(kScenePath);
+    r.Settle();
+
+    const WorldFingerprint before = Fingerprint(rig.world);
+    InspectorWindow window;
+    window.SetChangeOverlay(&r.overlay);
+    DrawInspector(window, rig, selection, undo);
+    check(window.ChangeMarks().FieldMarks() == 1 && window.ChangeMarks().ComponentMarks() == 1,
+          "inspector marks: the changed field and its component header get a mark; the other fields get none");
+    check(Fingerprint(rig.world) == before && rig.world.GetComponent<FileIdComponent>(rig.plain.Id()) == nullptr,
+          "inspector marks: drawing the Inspector with marks leaves HashWorld, the entity count and the archetype count unchanged and adds no fileId");
+
+    // 表に無いエンティティを選ぶと印は出ない
+    selection.SelectOnly(rig.Fid(rig.other));
+    DrawInspector(window, rig, selection, undo);
+    check(window.ChangeMarks().FieldMarks() == 0 && window.ChangeMarks().ComponentMarks() == 0, "inspector marks: an entity that is not in the table gets no marks");
+    selection.SelectOnly(rig.Fid(rig.child));
+
+    // 強調が切なら出ない
+    r.overlay.SetShow(false);
+    DrawInspector(window, rig, selection, undo);
+    check(window.ChangeMarks().FieldMarks() == 0 && window.ChangeMarks().ComponentMarks() == 0, "inspector marks: with the highlight off nothing is drawn");
+    r.overlay.SetShow(true);
+
+    // 空の表と、印を描いた表で World が同じ
+    SceneRig twin;
+    Selection selection2;
+    selection2.SelectOnly(twin.Fid(twin.child));
+    UndoStack undo2;
+    InspectorWindow plain;
+    OverlayRig none;
+    plain.SetChangeOverlay(&none.overlay);
+    DrawInspector(plain, twin, selection2, undo2);
+    check(plain.ChangeMarks().FieldMarks() == 0 && Fingerprint(twin.world) == Fingerprint(rig.world),
+          "inspector marks: a world drawn with an empty overlay equals one drawn with marks");
+
+    // 追加されたコンポーネントは見出しだけ (フィールドの差分が無い)
+    entity["components"] = json::array({ ComponentJson("LocalTransform", "added", json::array()) });
+    r.entities = json::array({ entity });
+    r.documentId = "DOC2";
+    r.overlay.SetDocumentPath(kOtherScenePath);
+    r.Settle();
+    DrawInspector(window, rig, selection, undo);
+    check(window.ChangeMarks().ComponentMarks() == 1 && window.ChangeMarks().FieldMarks() == 0, "inspector marks: an added component gets a header mark and no field marks");
+}
+
+// 候補の選び方 (純粋): 見えているものだけ、近い順、同じ距離は fileId 順、上限で切って省いた数を返す
+void TestChangeBoxSelection(const Check& check)
+{
+    std::vector<ChangeBoxCandidate> all;
+    auto add = [&](uint64_t fid, bool visible, float depth) {
+        ChangeBoxCandidate c;
+        c.fileId = fid;
+        c.visible = visible;
+        c.depth = depth;
+        all.push_back(c);
+    };
+    add(9, true, 5.0f);
+    add(2, true, 5.0f);
+    add(7, false, 0.5f); // 近いが見えていない
+    add(4, true, 1.0f);
+    add(5, true, 9.0f);
+    const ChangeBoxSelection pick = SelectChangeBoxes(all, 3);
+    check(pick.chosen.size() == 3 && pick.omitted == 1 && pick.chosen[0].fileId == 4 && pick.chosen[1].fileId == 2 && pick.chosen[2].fileId == 9,
+          "change boxes: visible ones only, nearest first, ties by fileId; the visible one over the limit is counted as omitted");
+    const ChangeBoxSelection none = SelectChangeBoxes(all, 0);
+    check(none.chosen.empty() && none.omitted == 4, "change boxes: a limit of 0 draws nothing");
+    check(SelectChangeBoxes({}, 5).chosen.empty() && SelectChangeBoxes({}, 5).omitted == 0, "change boxes: no candidates, no boxes");
+}
+
+// 実際に積む本数: 上限以下・見えているものだけ・強調が切なら 0。World は変わらない
+void TestChangeBoxesDrawn(const Check& check)
+{
+    using namespace DirectX;
+    Scene scene;
+    World& world = scene.GetWorld();
+    json list = json::array();
+    constexpr int kVisible = kMaxChangeWireBoxes + 20;
+    constexpr int kBehind = 15;
+    std::vector<GameObject> objects;
+    for (int i = 0; i < kVisible + kBehind; ++i) {
+        GameObject g = scene.CreateGameObjectTracked("E");
+        auto* wm = world.GetComponent<WorldMatrixComponent>(g.Id());
+        const bool behind = i >= kVisible;
+        wm->value._41 = static_cast<float>(i % 20) * 0.1f;
+        wm->value._42 = static_cast<float>((i / 20) % 5) * 0.1f;
+        wm->value._43 = behind ? -300.0f : static_cast<float>(i) * 0.05f; // カメラは z = -200 から原点を見る。-300 はカメラの後ろ
+        list.push_back(EntityJson(static_cast<int64_t>(world.GetComponent<FileIdComponent>(g.Id())->value), i % 2 == 0 ? "added" : "modified"));
+        objects.push_back(g);
+    }
+    world.ApplyStructuralChanges();
+    list.push_back(EntityJson(987654321, "added")); // ライブに居ない fileId は候補にならない
+    list.push_back(EntityJson(987654322, "removed"));
+
+    OverlayRig r;
+    r.entities = list;
+    r.overlay.SetDocumentPath(kScenePath);
+    r.Settle();
+
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    XMStoreFloat4x4(&view, XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -200.0f, 1.0f), XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)));
+    XMStoreFloat4x4(&proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f, 0.1f, 1000.0f));
+
+    SceneViewWindow window;
+    window.SetChangeOverlay(&r.overlay);
+    EngineContext ctx;
+    ctx.scene = &scene;
+    const WorldFingerprint before = Fingerprint(world);
+
+    window.AppendChangeBoxes(ctx, view, proj);
+    check(window.ChangeBoxesDrawn() == kMaxChangeWireBoxes && window.ChangeBoxesOmitted() == kVisible - kMaxChangeWireBoxes,
+          "change boxes: at most the limit are drawn; only visible entities count (not the ones behind the camera or missing from the scene); the rest is reported as omitted");
+    check(r.overlay.BoxStats().drawn == kMaxChangeWireBoxes && r.overlay.BoxStats().omitted == kVisible - kMaxChangeWireBoxes,
+          "change boxes: the omitted count reaches the overlay, where the AI Changes band shows it");
+    check(Fingerprint(world) == before, "change boxes: building the boxes leaves HashWorld, the entity count and the archetype count unchanged");
+
+    // 純粋な側: 先頭は決定的で、表の走査順に依らない
+    std::vector<ChangeBoxCandidate> candidates;
+    CollectChangeBoxCandidates(scene, r.overlay, view, proj, candidates);
+    check(candidates.size() == static_cast<size_t>(kVisible + kBehind), "change boxes: candidates are the changed entities that live in the scene (added and modified)");
+    const ChangeBoxSelection forward = SelectChangeBoxes(candidates, 10);
+    std::reverse(candidates.begin(), candidates.end());
+    const ChangeBoxSelection backward = SelectChangeBoxes(candidates, 10);
+    bool same = forward.chosen.size() == backward.chosen.size();
+    for (size_t i = 0; same && i < forward.chosen.size(); ++i) {
+        same = forward.chosen[i].fileId == backward.chosen[i].fileId;
+    }
+    check(same, "change boxes: the chosen set does not depend on the order the table is walked");
+
+    // 色: 追加 = 緑、更新 = 青、競合は別の赤
+    check(PackOverlayRgba(r.overlay.Palette().Get(OverlayColorId::Added)) == 0x4DC766FFu && PackOverlayRgba(r.overlay.Palette().Get(OverlayColorId::Modified)) == 0x5999F2FFu
+              && PackOverlayRgba(r.overlay.Palette().Get(OverlayColorId::Conflict)) != PackOverlayRgba(r.overlay.Palette().Get(OverlayColorId::Modified)),
+          "change boxes: the default colors are green for added, blue for modified, and conflict has its own color");
+
+    // 強調が切なら 0 本
+    r.overlay.SetShow(false);
+    window.AppendChangeBoxes(ctx, view, proj);
+    check(window.ChangeBoxesDrawn() == 0 && window.ChangeBoxesOmitted() == 0, "change boxes: with the highlight off no box is drawn");
+    r.overlay.SetShow(true);
+
+    // 上限に届かなければ全部
+    const ChangeBoxSelection few = SelectChangeBoxes(std::vector<ChangeBoxCandidate>(candidates.begin(), candidates.begin() + 5), kMaxChangeWireBoxes);
+    check(few.omitted == 0, "change boxes: below the limit nothing is omitted");
+
+    // Play 中に強調を切り替え、箱を作り続けても、強調の無い世界と同じ結果になる
+    Scene plainScene;
+    World& plainWorld = plainScene.GetWorld();
+    std::vector<GameObject> plainObjects;
+    for (size_t i = 0; i < objects.size(); ++i) {
+        plainObjects.push_back(plainScene.CreateGameObjectTracked("E"));
+    }
+    plainWorld.ApplyStructuralChanges();
+    for (int tick = 0; tick < 60; ++tick) {
+        for (size_t i = 0; i < 8; ++i) {
+            const float v = static_cast<float>(tick) * 0.5f + static_cast<float>(i);
+            objects[i].SetLocalPosition(v, 1.0f, 2.0f);
+            plainObjects[i].SetLocalPosition(v, 1.0f, 2.0f);
+        }
+        world.ApplyStructuralChanges();
+        plainWorld.ApplyStructuralChanges();
+        r.overlay.SetShow((tick / 5) % 2 == 0);
+        window.AppendChangeBoxes(ctx, view, proj);
+    }
+    r.overlay.SetShow(true);
+    check(world.AliveCount() == plainWorld.AliveCount() && world.Archetypes().size() == plainWorld.Archetypes().size(),
+          "change boxes: toggling the highlight and building boxes during 60 ticks does not change the world's shape");
+}
+
+// 色と強調の入・切: 設定の保存・読み直し・既定に戻す。表示側は同じ Palette() を読む
+void TestPaletteSettings(const Check& check)
+{
+    OverlayRig r;
+    OverlayPalette sunkPalette;
+    bool sunkShow = true;
+    int sinkCalls = 0;
+    r.overlay.SetPrefsSink([&](const OverlayPalette& palette, bool show) {
+        sunkPalette = palette;
+        sunkShow = show;
+        ++sinkCalls;
+    });
+    check(r.overlay.Show() && r.overlay.Palette() == OverlayPalette(), "palette: the highlight is on and the colors are the defaults at first");
+
+    OverlayPalette custom;
+    custom.Set(OverlayColorId::Added, { 0.1f, 0.2f, 0.3f, 0.4f });
+    custom.Set(OverlayColorId::Conflict, { 1.0f, 0.5f, 0.25f, 1.0f });
+    r.overlay.SetPalette(custom);
+    check(sinkCalls == 1 && sunkPalette == custom && r.overlay.Palette() == custom, "palette: changing a color hands the palette to the settings sink and every window reads the new value");
+    r.overlay.SetPalette(custom);
+    check(sinkCalls == 1, "palette: setting the same palette again saves nothing");
+    r.overlay.SetShow(false);
+    check(sinkCalls == 2 && !sunkShow && sunkPalette == custom, "palette: switching the highlight off is saved together with the colors");
+    r.overlay.SetShow(false);
+    check(sinkCalls == 2, "palette: switching to the same state saves nothing");
+
+    // ドラッグ中は保存しない。離したら 1 回だけ
+    OverlayPalette dragging = custom;
+    dragging.Set(OverlayColorId::Modified, { 0.9f, 0.9f, 0.0f, 1.0f });
+    r.overlay.PreviewPalette(dragging);
+    r.overlay.PreviewPalette(dragging);
+    check(sinkCalls == 2 && r.overlay.PaletteUnsaved() && r.overlay.Palette() == dragging, "palette: a color being dragged shows at once but is not saved yet");
+    r.overlay.CommitPalette();
+    r.overlay.CommitPalette();
+    check(sinkCalls == 3 && !r.overlay.PaletteUnsaved() && sunkPalette == dragging, "palette: releasing the drag saves once");
+
+    // 既定に戻す
+    r.overlay.SetPalette(OverlayPalette());
+    check(r.overlay.Palette() == OverlayPalette() && sinkCalls == 4 && sunkPalette == OverlayPalette(), "palette: reset to default restores the four colors and saves them");
+
+    // 読み込みは受け口へ知らせない
+    r.overlay.LoadPrefs(custom, true);
+    check(sinkCalls == 4 && r.overlay.Palette() == custom && r.overlay.Show(), "palette: loading the saved values does not write them back");
+
+    // editor_settings.json を通した往復。壊れた値は無視して既定のまま
+    const fs::path dir = fs::temp_directory_path() / (L"mye_overlay_palette_" + std::to_wstring(::GetCurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    EditorSettings saved;
+    saved.Load(dir.wstring());
+    check(saved.aiChangeShowOverlay && saved.aiChangePalette == OverlayPalette(), "palette: a fresh settings file starts from the defaults");
+    saved.aiChangePalette = custom;
+    saved.aiChangeShowOverlay = false;
+    saved.Save();
+    EditorSettings loaded;
+    loaded.Load(dir.wstring());
+    check(loaded.aiChangePalette == custom && !loaded.aiChangeShowOverlay, "palette: the four colors and the on/off state round-trip through editor_settings.json");
+    OverlayRig fresh;
+    fresh.overlay.LoadPrefs(loaded.aiChangePalette, loaded.aiChangeShowOverlay);
+    check(fresh.overlay.Palette() == custom && !fresh.overlay.Show(), "palette: a new editor session starts from the saved colors and on/off state");
+
+    {
+        std::ofstream broken(dir / L"editor_settings.json", std::ios::binary);
+        broken << "{\"aiChangeColorAdded\":[1,2],\"aiChangeColorModified\":\"red\",\"aiChangeColorRemoved\":[0.5,0.5,0.5,\"x\"],\"aiChangeColorConflict\":[0.0,1.0,0.0,1.0]}";
+    }
+    EditorSettings damaged;
+    damaged.Load(dir.wstring());
+    check(damaged.aiChangePalette.Get(OverlayColorId::Added) == OverlayPalette().Get(OverlayColorId::Added)
+              && damaged.aiChangePalette.Get(OverlayColorId::Modified) == OverlayPalette().Get(OverlayColorId::Modified)
+              && damaged.aiChangePalette.Get(OverlayColorId::Removed) == OverlayPalette().Get(OverlayColorId::Removed)
+              && damaged.aiChangePalette.Get(OverlayColorId::Conflict) == OverlayColor{ 0.0f, 1.0f, 0.0f, 1.0f },
+          "palette: a malformed color is ignored (the default stays) while a valid one is kept");
+    fs::remove_all(dir, ec);
+
+    // Hierarchy のバッジも同じ設定で描く (色を変えても数は同じ)
+    SceneRig rig;
+    Selection selection;
+    UndoStack undo;
+    OverlayRig badge;
+    badge.entities = json::array({ EntityJson(static_cast<int64_t>(rig.Fid(rig.other)), "added") });
+    badge.overlay.SetDocumentPath(kScenePath);
+    badge.Settle();
+    HierarchyWindow window;
+    window.SetChangeOverlay(&badge.overlay);
+    DrawHierarchy(window, rig, selection, undo);
+    const int plainCount = window.DrawnBadgeCount();
+    badge.overlay.SetPalette(custom);
+    DrawHierarchy(window, rig, selection, undo);
+    check(plainCount == 1 && window.DrawnBadgeCount() == 1, "palette: the Hierarchy badge is drawn with the shared palette");
+
+    // 歯車と帯 (ヘッドレスの AI Changes 窓): 上限超えの注記を含めて英日で崩れず描ける
+    AiChangesWindow band;
+    band.open = true;
+    AiChangesHost host;
+    host.allowTracking = true;
+    host.enabled = true;
+    host.projectRoot = kRoot;
+    badge.overlay.NoteWireBoxes(kMaxChangeWireBoxes, 12);
+    InBothLanguages([&](Lang lang) {
+        WithHeadlessImGuiFrame([&] { band.OnImGui(badge.session, host); });
+        check(badge.overlay.BoxStats().omitted == 12, lang == Lang::En ? "palette: the band with the gear and the omitted notice draws (English)" : "palette: the band with the gear and the omitted notice draws (Japanese)");
+    });
+}
+
 } // namespace
 
 void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>& check)
@@ -729,6 +1095,11 @@ void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>
     TestHierarchyBadges(check);
     TestPlayModeInvariance(check);
     TestSelectionSync(check);
+    TestFieldMarkText(check);
+    TestInspectorMarks(check);
+    TestChangeBoxSelection(check);
+    TestChangeBoxesDrawn(check);
+    TestPaletteSettings(check);
 }
 
 } // namespace mye

@@ -126,6 +126,9 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlaySelfTest.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackClient.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
@@ -408,6 +411,9 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\HierarchyWindow.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorChangeMarks.cpp">
+      <Filter>Windows\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp">
       <Filter>Windows\Scene</Filter>
     </ClCompile>
@@ -507,7 +513,13 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\OverlayPalette.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackClient.h">
@@ -799,6 +811,9 @@
       <Filter>Windows\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\HierarchyWindow.h">
+      <Filter>Windows\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Scene\InspectorChangeMarks.h">
       <Filter>Windows\Scene</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\InspectorWindow.h">

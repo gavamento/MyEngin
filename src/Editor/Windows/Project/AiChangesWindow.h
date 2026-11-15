@@ -84,6 +84,7 @@ private:
     void DrawChanges(ChangeModel& model);
     void DrawDetail(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawSceneBand(ChangeTrackingSession& session);
+    void DrawColorSettings(SceneChangeOverlay& overlay);
     void DrawSceneChanges(ChangeTrackingSession& session, const AiChangesHost& host);
     void ApplyFilter(ChangeModel& model);
 

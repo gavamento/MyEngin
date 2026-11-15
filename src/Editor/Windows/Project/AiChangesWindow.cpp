@@ -12,6 +12,7 @@
 #include <filesystem>
 
 #include "imgui.h"
+#include "fontawesome/IconsFontAwesome6.h"
 
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Platform/PathUtil.h"
@@ -20,6 +21,11 @@
 namespace mye {
 
 namespace {
+
+ImVec4 ToImVec4(const OverlayColor& c)
+{
+    return ImVec4(c.r, c.g, c.b, c.a);
+}
 
 // 一覧の仮想行の印
 constexpr int kItemMainHeader = -1;
@@ -630,17 +636,18 @@ void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session)
         overlay.SetShow(show);
     }
     ImGui::SameLine();
+    DrawColorSettings(overlay);
+    ImGui::SameLine();
     if (!overlay.Loaded()) {
         ImGui::TextDisabled("%s", Tr(StrId::AiChg_OverlayLoading));
     } else {
         const OverlayCounts counts = overlay.Counts();
-        ImGui::TextColored(ImVec4(kOverlayAddedColor.r, kOverlayAddedColor.g, kOverlayAddedColor.b, 1.0f), "%s %d", Tr(StrId::AiChg_OverlayAdded),
-                           counts.added);
+        const OverlayPalette& palette = overlay.Palette();
+        ImGui::TextColored(ToImVec4(palette.Get(OverlayColorId::Added)), "%s %d", Tr(StrId::AiChg_OverlayAdded), counts.added);
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(kOverlayModifiedColor.r, kOverlayModifiedColor.g, kOverlayModifiedColor.b, 1.0f), "%s %d",
-                           Tr(StrId::AiChg_OverlayModified), counts.modified);
+        ImGui::TextColored(ToImVec4(palette.Get(OverlayColorId::Modified)), "%s %d", Tr(StrId::AiChg_OverlayModified), counts.modified);
         ImGui::SameLine();
-        ImGui::TextColored(themeColor::Error, "%s %d", Tr(StrId::AiChg_OverlayRemoved), counts.removed);
+        ImGui::TextColored(ToImVec4(palette.Get(OverlayColorId::Removed)), "%s %d", Tr(StrId::AiChg_OverlayRemoved), counts.removed);
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(overlay.DocumentId().empty() || overlay.LatestRevisionId() <= 0);
@@ -666,6 +673,46 @@ void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session)
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
         ImGui::TextWrapped("%s", Tr(StrId::AiChg_OverlayTruncated));
         ImGui::PopStyleColor();
+    }
+    if (overlay.BoxStats().omitted > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s %d", Tr(StrId::AiChg_BoxesOmitted), overlay.BoxStats().omitted);
+        ImGui::PopStyleColor();
+    }
+}
+
+// 強調の 4 色の設定 (歯車のポップアップ)。ドラッグ中は表示だけ変え、マウスを離したときに保存する
+void AiChangesWindow::DrawColorSettings(SceneChangeOverlay& overlay)
+{
+    constexpr const char* kPopupId = "##aichg_colors";
+    if (ImGui::SmallButton(ICON_FA_GEAR "###aichg_colors_btn")) {
+        ImGui::OpenPopup(kPopupId);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", Tr(StrId::AiChg_ColorSettings));
+    }
+    if (ImGui::BeginPopup(kPopupId)) {
+        ImGui::TextUnformatted(Tr(StrId::AiChg_ColorSettings));
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_ColorNote));
+        const StrId labels[kOverlayColorCount] = { StrId::AiChg_OverlayAdded, StrId::AiChg_OverlayModified, StrId::AiChg_OverlayRemoved,
+                                                   StrId::AiChg_OverlayConflict };
+        OverlayPalette working = overlay.Palette();
+        bool changed = false;
+        for (int i = 0; i < kOverlayColorCount; ++i) {
+            ImGui::PushID(i);
+            changed = ImGui::ColorEdit4(Tr(labels[i]), &working.colors[i].r) || changed;
+            ImGui::PopID();
+        }
+        if (changed) {
+            overlay.PreviewPalette(working);
+        }
+        if (ImGui::Button(Tr(StrId::AiChg_ColorReset))) {
+            overlay.SetPalette(OverlayPalette());
+        }
+        ImGui::EndPopup();
+    }
+    if (overlay.PaletteUnsaved() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        overlay.CommitPalette();
     }
 }
 

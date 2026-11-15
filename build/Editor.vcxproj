@@ -59,6 +59,7 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlaySelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackClient.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackIo.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackLaunch.cpp" />
@@ -153,6 +154,7 @@
     <ClCompile Include="..\src\Editor\Windows\Scene\FeelAssetInspector.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\HierarchyWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Scene\InspectorChangeMarks.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindowAssets.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\InspectorWindowNav.cpp" />
@@ -186,7 +188,9 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingFakeIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\OverlayPalette.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackClient.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackLaunch.h" />
@@ -284,6 +288,7 @@
     <ClInclude Include="..\src\Editor\Windows\Scene\FeelAssetInspector.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\HierarchyWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Scene\InspectorChangeMarks.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\InspectorWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ParticleSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\SceneViewWindow.h" />

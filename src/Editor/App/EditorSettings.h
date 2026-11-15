@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "Editor/ChangeTracking/OverlayPalette.h"
+
 namespace mye {
 
 // externalEditorCmd の特別値: スクリプトを生成ソリューションごと Visual Studio で開く (OpenScriptInIde)
@@ -50,6 +52,9 @@ struct EditorSettings {
     bool changeTrackingEnabled = false;
     // 「ここまで確認済みにする」の印 (documentId → Revision)。**表示だけの印**で、記録にもサービスにも書かない (M104m)
     std::map<std::string, int64_t> aiChangeAcks;
+    // 強調の表示の入・切と 4 色 (追加・更新・削除・競合)。個人の好みなのでここ (M104m2)
+    bool aiChangeShowOverlay = true;
+    OverlayPalette aiChangePalette;
     // ---- プロファイラの表示 (M102) ----
     int profilerTab = 0;            // 最後に開いていたタブ (ProfilerWindow のタブ順)
     int profilerAvgFrames = 60;     // 平均・最大を取るフレーム数 (1 = 瞬間値)

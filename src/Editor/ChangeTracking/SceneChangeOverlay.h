@@ -14,6 +14,8 @@
 
 #include "nlohmann/json.hpp"
 
+#include "Editor/ChangeTracking/OverlayPalette.h"
+
 namespace mye {
 
 class TrackClient;
@@ -65,13 +67,11 @@ struct OverlayBadge {
     bool Any() const { return status != OverlayStatus::None || descendantOnly; }
 };
 
-// 強調の色 (sub-24 で設定に置き換える)。追加 = 緑、変更 = 青。子孫にだけ変更があるノードは変更の色を薄くする
-struct OverlayColor {
-    float r, g, b, a;
+// Scene View が 1 フレームに描いたワイヤ箱の数 (AI Changes 窓の帯が上限超えを知らせる)。表示専用
+struct OverlayBoxStats {
+    int drawn = 0;
+    int omitted = 0;
 };
-inline constexpr OverlayColor kOverlayAddedColor{ 0.30f, 0.78f, 0.40f, 1.0f };
-inline constexpr OverlayColor kOverlayModifiedColor{ 0.35f, 0.60f, 0.95f, 1.0f };
-constexpr float kOverlayFaintAlpha = 0.35f;
 
 // 取り直しの間隔の下限 (通知が続いても、これより短い間隔では取り直さない)
 constexpr int64_t kOverlayMinRefetchMs = 500;
@@ -98,8 +98,50 @@ public:
     static bool IsTrackedDocumentPath(const std::wstring& path);
 
     // 強調の表示の切り替え (偽なら BadgeFor は常に空)。既定は真
-    void SetShow(bool show) { show_ = show; }
+    void SetShow(bool show)
+    {
+        if (show_ != show) {
+            show_ = show;
+            NotifyPrefs();
+        }
+    }
     bool Show() const { return show_; }
+
+    // 強調の色。変えると prefs の受け口へ知らせる (EditorSettings へ保存する)。Hierarchy / Inspector / Scene View が同じ値を読む
+    const OverlayPalette& Palette() const { return palette_; }
+    void SetPalette(const OverlayPalette& palette)
+    {
+        if (!(palette_ == palette)) {
+            palette_ = palette;
+            paletteUnsaved_ = false;
+            NotifyPrefs();
+        }
+    }
+    // ドラッグ中の色: すぐ表示へ反映するが、保存 (受け口) は CommitPalette まで待つ (1 ドラッグで何度も書かない)
+    void PreviewPalette(const OverlayPalette& palette)
+    {
+        palette_ = palette;
+        paletteUnsaved_ = true;
+    }
+    bool PaletteUnsaved() const { return paletteUnsaved_; }
+    void CommitPalette()
+    {
+        if (paletteUnsaved_) {
+            paletteUnsaved_ = false;
+            NotifyPrefs();
+        }
+    }
+    // 保存済みの値を入れる (受け口へは知らせない)
+    void LoadPrefs(const OverlayPalette& palette, bool show)
+    {
+        palette_ = palette;
+        show_ = show;
+    }
+    void SetPrefsSink(std::function<void(const OverlayPalette&, bool)> sink) { prefsSink_ = std::move(sink); }
+
+    // Scene View が描いたワイヤ箱の数 (表示専用)
+    void NoteWireBoxes(int drawn, int omitted) { boxStats_ = { drawn, omitted }; }
+    const OverlayBoxStats& BoxStats() const { return boxStats_; }
     // AI Changes 窓が開いている (表を使う)。強調が切でも、窓が開いていれば取り直す
     void SetWindowOpen(bool open) { windowOpen_ = open; }
 
@@ -124,6 +166,8 @@ public:
     // 毎フレーム引く口。強調が切のときと、fileId が 0 のとき (採番されていないエンティティ) は空
     OverlayBadge BadgeFor(uint64_t fileId) const;
     const OverlayEntity* Find(uint64_t fileId) const;
+    // 表の全件 (Scene View が箱の候補を作る。走査順は不定なので、順序に使うときは fileId で並べ直す)
+    const std::unordered_map<int64_t, OverlayEntity>& Entities() const { return table_; }
     const std::string& DocumentId() const { return documentId_; }
     OverlayCounts Counts() const;
     bool Incomplete() const { return incomplete_; }
@@ -148,6 +192,12 @@ public:
 
 private:
     bool WantsData() const { return show_ || windowOpen_; }
+    void NotifyPrefs()
+    {
+        if (prefsSink_) {
+            prefsSink_(palette_, show_);
+        }
+    }
     void MarkStale(bool force);
     void ClearTable();
     void FetchDocument();
@@ -164,6 +214,10 @@ private:
     int documentFetches_ = 0;
 
     bool show_ = true;
+    OverlayPalette palette_;
+    bool paletteUnsaved_ = false;
+    OverlayBoxStats boxStats_;
+    std::function<void(const OverlayPalette&, bool)> prefsSink_;
     bool windowOpen_ = false;
     bool stale_ = false;
     bool force_ = false;

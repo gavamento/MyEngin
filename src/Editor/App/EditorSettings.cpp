@@ -8,6 +8,14 @@
 #include "Engine/Core/Diagnostics/Log.h"
 
 namespace mye {
+namespace {
+
+// OverlayColorId の並びと同じ (追加・更新・削除・競合)
+constexpr const char* kAiChangeColorKeys[kOverlayColorCount] = {
+    "aiChangeColorAdded", "aiChangeColorModified", "aiChangeColorRemoved", "aiChangeColorConflict",
+};
+
+} // namespace
 
 void EditorSettings::Load(const std::wstring& dir)
 {
@@ -44,6 +52,25 @@ void EditorSettings::Load(const std::wstring& dir)
                 if (item.value().is_number_integer()) {
                     aiChangeAcks[item.key()] = item.value().get<int64_t>();
                 }
+            }
+        }
+        aiChangeShowOverlay = root.value("aiChangeShowOverlay", aiChangeShowOverlay);
+        for (int i = 0; i < kOverlayColorCount; ++i) {
+            const char* key = kAiChangeColorKeys[i];
+            if (!root.contains(key) || !root[key].is_array() || root[key].size() != 4) {
+                continue;
+            }
+            OverlayColor color = aiChangePalette.colors[i];
+            float* components[4] = { &color.r, &color.g, &color.b, &color.a };
+            bool valid = true;
+            for (int c = 0; c < 4; ++c) {
+                valid = valid && root[key][c].is_number();
+                if (valid) {
+                    *components[c] = root[key][c].get<float>();
+                }
+            }
+            if (valid) {
+                aiChangePalette.colors[i] = color;
             }
         }
         profilerTab = root.value("profilerTab", profilerTab);
@@ -103,6 +130,11 @@ void EditorSettings::Save() const
             acks[documentId] = revisionId;
         }
         root["aiChangeAcks"] = acks;
+    }
+    root["aiChangeShowOverlay"] = aiChangeShowOverlay;
+    for (int i = 0; i < kOverlayColorCount; ++i) {
+        const OverlayColor& color = aiChangePalette.colors[i];
+        root[kAiChangeColorKeys[i]] = nlohmann::json::array({ color.r, color.g, color.b, color.a });
     }
     root["profilerTab"] = profilerTab;
     root["profilerAvgFrames"] = profilerAvgFrames;

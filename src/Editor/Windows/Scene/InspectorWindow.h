@@ -8,6 +8,7 @@
 
 #include "Editor/Asset/AssetPreviewCache.h"
 #include "Editor/Windows/Scene/FeelAssetInspector.h"
+#include "Editor/Windows/Scene/InspectorChangeMarks.h" // M104m2: AI の変更の印
 #include "Editor/Tools/FractureBakeService.h" // M80i: 破片焼きの非同期ワーカー
 #include "Editor/Tools/NavBakeService.h"      // M82b: ナビメッシュ・ベイクの非同期ワーカー
 #include "Editor/Scene/Selection.h"
@@ -95,6 +96,10 @@ public:
     // 生成ボタンの無効化に使う (Play 中の生成は Stop でシーンごと巻き戻る)
     void OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo,
                  AssetPreviewCache& preview, bool inPlayMode);
+
+    // AI の変更の強調 (M104m2): フィールド・コンポーネントの印と Before のツールチップ。所有は EditorApp。null なら何も出さない
+    void SetChangeOverlay(const SceneChangeOverlay* overlay) { changeMarks_.SetOverlay(overlay); }
+    const InspectorChangeMarks& ChangeMarks() const { return changeMarks_; }
 
 private:
     // アセット選択時の表示 (M40c): 名前/種別/GUID + テクスチャは Import Settings 編集
@@ -337,6 +342,7 @@ private:
     std::unordered_map<uint64_t, FractureBakeOutcome> fractureOutcomes_;
     // OnImGui が毎フレーム書き、DrawDestructibleNotes が読むだけ (M80j sub-10 round 2)
     bool inPlayMode_ = false;
+    InspectorChangeMarks changeMarks_;
 
     // ナビメッシュのベイク (M82b)。ID は Surface を持つエンティティの fileId
     NavBakeService navBakeService_;

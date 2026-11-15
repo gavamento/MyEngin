@@ -510,4 +510,74 @@ std::string OverlayBadgeTooltip(const OverlayEntity* e, bool descendantOnly)
     return out;
 }
 
+const OverlayComponent* FindOverlayComponent(const OverlayEntity* entity, const char* componentName)
+{
+    if (entity == nullptr || componentName == nullptr) {
+        return nullptr;
+    }
+    for (const OverlayComponent& c : entity->components) {
+        if (c.name == componentName) {
+            return &c;
+        }
+    }
+    return nullptr;
+}
+
+const OverlayField* FindOverlayField(const OverlayEntity* entity, const char* componentName, const char* fieldName)
+{
+    const OverlayComponent* component = FindOverlayComponent(entity, componentName);
+    if (component == nullptr || fieldName == nullptr) {
+        return nullptr;
+    }
+    for (const OverlayField& f : component->fields) {
+        if (f.name == fieldName) {
+            return &f;
+        }
+    }
+    return nullptr;
+}
+
+namespace {
+
+std::string FieldValueText(const OverlayField& field, bool present, const std::string& value)
+{
+    if (field.oversize) {
+        return Tr(StrId::DiffView_Oversize);
+    }
+    return present ? ClipValue(value, kInspectorValueMaxChars) : std::string(Tr(StrId::AiChg_InspNone));
+}
+
+} // namespace
+
+std::string FieldMarkTooltip(const OverlayField& field)
+{
+    std::string out = Tr(field.overrideField ? StrId::AiChg_InspOverride : StrId::AiChg_BadgeModified);
+    out += "\n";
+    out += Tr(StrId::AiChg_InspBefore);
+    out += " " + FieldValueText(field, field.hasBefore, field.before) + "\n";
+    out += Tr(StrId::AiChg_InspAfter);
+    out += " " + FieldValueText(field, field.hasAfter, field.after);
+    return out;
+}
+
+std::string ComponentMarkTooltip(const OverlayComponent& component, bool fieldsListed)
+{
+    std::string out = Tr(component.status == OverlayStatus::Added ? StrId::AiChg_InspComponentAdded : StrId::AiChg_BadgeModified);
+    if (!fieldsListed || component.fields.empty()) {
+        return out;
+    }
+    out += "\n";
+    out += Tr(StrId::AiChg_InspChangedFields);
+    size_t shown = 0;
+    for (const OverlayField& f : component.fields) {
+        if (shown == kInspectorMaxListedFields) {
+            out += std::string("\n  ") + Tr(StrId::AiChg_BadgeMore);
+            break;
+        }
+        out += "\n  " + f.name + ": " + FieldValueText(f, f.hasBefore, f.before);
+        ++shown;
+    }
+    return out;
+}
+
 } // namespace mye

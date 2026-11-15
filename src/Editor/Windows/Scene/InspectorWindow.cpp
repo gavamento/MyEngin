@@ -717,6 +717,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     // M80j (sub-10 round 2): Play 中は「生成」を押しても .mfrac は書かれるが Stop で子ごと
     // 消える (Play はシーンをスナップショットに戻す) ので、DrawDestructibleNotes が読む
     inPlayMode_ = inPlayMode;
+    changeMarks_.BeginFrame();
     // ナビメッシュのベイク結果は選択・ウィンドウの開閉に関係なく確定する (取りこぼすと .mnav も SceneView も古いまま)
     CommitReadyNavBakes(ctx, selection, undo);
     if (!open) {
@@ -748,6 +749,7 @@ void InspectorWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
     }
 
     const InspectorTargets tg = CollectInspectorTargets(ctx, selection, fid, e);
+    changeMarks_.SetEntity(tg.fid);
     DrawNameRow(ctx, selection, undo, tg);
     DrawTagRow(ctx, selection, undo, tg);
     DrawTargetInfoRow(tg);
@@ -1042,6 +1044,9 @@ void InspectorWindow::DrawComponent(EngineContext& ctx, Selection& selection, Un
                    mn.y + ImGui::GetStyle().FramePadding.y),
             ImGui::GetColorU32(themeColor::Prefab), "+");
     }
+    // AI の変更の印 (M104m2)。「+」バッジと重ならないよう、その左に置く。直前のアイテムは見出しのまま
+    changeMarks_.DrawComponentMark(desc.name, row.managed,
+                                   ImGui::GetFontSize() * 2.0f + ImGui::GetStyle().FramePadding.x);
     DrawComponentContextMenu(ctx, selection, undo, tg, row);
     if (openHeader) {
         void* comp = row.comps.empty() ? nullptr : row.comps[0];
@@ -1262,6 +1267,8 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
                 ImGui::TextColored(themeColor::Prefab, "*");
             }
         }
+        // AI の変更の印 (M104m2)。編集・Undo・プレハブの処理のあとに描く (描画専用)
+        changeMarks_.DrawFieldMark(desc.name, f.name);
     }
     // M75a: 解決済み矩形 (基準キャンバス上のキャンバス単位) を読み取り専用で出す。
     // Unity が駆動プロパティを灰色で見せるのと同じ役どころ — アンカーを伸縮に

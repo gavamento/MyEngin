@@ -1,9 +1,9 @@
 # sub-13: 未保存シーンへの外部変更の確認 (M104n)
 
-- 依存: sub-08 (コード上)。順序は sub-24 の後 (sub-12 → sub-24 → sub-13 → sub-14) (Phase 2 の完了。sub-09〜12 とコード上の依存は無いが、Phase 3 の中で行う。spec §2 D13)
+- 依存: sub-25 (順序は sub-24 → sub-25 → sub-13 → sub-14。コード上の依存は sub-08 だけ) (Phase 2 の完了。sub-09〜12 とコード上の依存は無いが、Phase 3 の中で行う。spec §2 D13)
 - 状態: 未着手
 - 往復: 0
-- 書き込みの深さ: **骨子** (spec §6.1)。
+- 書き込みの深さ: **着手可** (2026-11-15、sub-24 の VERDICT で planner が事実を書き足した)
 
 このマイルストーンで唯一の Engine 層の変更で、唯一の既存挙動の変更 (ADR-039 決定 10、ユーザー判断 2026-11-13)。
 
@@ -20,6 +20,13 @@
 - **裁定 (推奨どおり)**: Play 中に来た外部の変更は保留し、Stop の後で、未保存かどうかに従って適用するか確認を出す。逆の答え (今のまま Play 中も適用する) が来たら、差し戻す範囲は Play 中の分岐と、その試験 (受け入れ条件 6) だけ。
 - このサブは追跡サービスと無関係に働く (追跡が無効でも確認は出る)。sub-09〜12 とコード上の依存は無いので、司会は sub-09 の後ならいつ着手してもよい。
 
+## 確認済みの事実 (2026-11-15 に planner が調べた。行番号はずれうる)
+
+- `C:\HAL\MyEngin\src\Engine\Engine\HotReload\ReloadHub.cpp`: 開いているシーンの変更は 345 行目から `ReloadActiveScene(normPath)` (711 行目) へ行き、729 行目で `SceneSerializer::ApplyDiff(*scene_, root)` を確認なしで当てる。呼び手が渡す口の前例は `SetKernelHooks` (183 行目) と `SetActiveScenePath` (189 行目)。`Update()` はフェーズ 2 で毎フレーム呼ばれる (`ReloadHub.h` 109 行目)。一括適用 (`BeginBatch` / `EndBatch`) の間は別の経路 (203〜242 行目)。`EndBatch` の後に同じ内容の `ApplyDiff` がもう一度走ることがある、という既存のコメントがある (211〜217 行目) — 保留の実装がこの二重の適用と食い違わないことを確かめる。
+- Editor 側: `EditorApp.cpp` 144 行目で `ctx.reloadHub->SetActiveScenePath(scenePath_)`。dirty の判定は `undo_.StateSerial() != savedStateSerial_` (343、395 行目で clean にしている)。Play の状態は `playMode_.State()` (`PlayState::Editing` かどうか。471、689 行目)。Play を止めると Play 前のスナップショットへ戻る (599 行目付近の `PrePlaySnapshot`)。
+- 関係するスイート: `reloadhub` (Fast 層)。回帰テストはここへ足す。
+- sub-23 以降、Editor は自分の保存を `NoteFileSaved` で 1 か所から知らせている。自分の保存で起きる監視イベントで確認が出ないこと (保存の直後は dirty でない) は、今までどおりの条件で成り立つ。
+
 ## やること
 
 arch §8。
@@ -31,6 +38,17 @@ arch §8。
 5. Play 中の扱い (未決事項 1 の答えしだい)。
 6. 口が呼ばれるのはセーフポイント (フェーズ 2) で、sim の Tick の中ではないことをコードで確かめ、コメントに理由を書く。
 7. 文書: `engine_spec.md` のホットリロードの章、`docs\test_checklists.md`、文字列は英日。
+
+8. 追加の取り決め (2026-11-15):
+   - 口の形: `ReloadHub` に、`std::function<bool(const std::wstring& path)>` (真 = 今適用してよい、偽 = 保留) を設定する関数を足す。Engine 層は Editor を知らない (include しない)。未設定なら常に適用。
+   - 保留の状態は `ReloadHub` が持つ (保留中のパス。1 つのシーンにつき 1 件)。Editor は「保留があるか」を問い、「適用する」「捨てる」を頼む。口の呼び出し・保留の適用は、今までの `ReloadActiveScene` と同じフェーズ (フェーズ 2 のセーフポイント) で行い、sim の Tick の中では行わない。
+   - 「適用する」は、その時点のディスクの内容を読んで当てる (保留した時点の内容を覚えておかない)。ファイルが消えていたら、保留を捨てて利用者に知らせる。
+   - 一括適用 (`BeginBatch` / `EndBatch`。git の操作や、sub-15 の復元) の経路では、口を呼ばない (その経路は、ゲートで未保存のシーンを先に止めている)。この前提がコードで成り立っているかを確かめ、成り立たない経路があれば「不安・質問」で返す。
+   - 確認の出し方: 既存のモーダルかトーストの前例に合わせる (未保存のシーンを閉じるときの確認の作りを着手時に見る)。確認が出ている間も Editor は操作できる必要は無いが、Play の開始など状態を変える操作と競合しないこと。
+   - シーンを切り替えた・閉じたら、保留は捨てる。
+   - AI Changes 窓 / `SceneChangeOverlay` (sub-12) との関係: 保留中は、ライブのシーンとディスクが食い違っている。オーバーレイは「ディスクの変更」を出すので、保留中であることを AI Changes 窓の帯に 1 行出す (`ChangeTracking\` から `ReloadHub` を直接見ず、`EditorApp` が渡す)。
+   - `Runtime.exe` と `Server.exe` は口を設定しない (挙動が変わらない)。
+   - Engine 層を触るので、`tools\replay_verify.bat` を回す。ADR-039 の影響の節 (Engine 層の変更は `ReloadHub` の口 1 つ) と一致していること。
 
 ## やらないこと (このサブでは)
 

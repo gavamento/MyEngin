@@ -117,4 +117,21 @@ std::string UnparsedReason(const std::string& afterValue);
 // Hierarchy のバッジのツールチップ: 種類 + コンポーネント名・フィールド名を最大 3 つ。entity が null なら子孫の注記だけ
 std::string OverlayBadgeTooltip(const OverlayEntity* entity, bool descendantOnly);
 
+// ---- Inspector の印 (M104m2) ----
+
+// Inspector のツールチップに出す値の長さ (UTF-8 の文字数)
+constexpr size_t kInspectorValueMaxChars = 120;
+// C# コンポーネントのツールチップに並べるフィールド名の最大数
+constexpr size_t kInspectorMaxListedFields = 6;
+
+// コンポーネントの印を引く (無ければ null)。name は ComponentRegistry の名前 (= シーン JSON のコンポーネントのキー)
+const OverlayComponent* FindOverlayComponent(const OverlayEntity* entity, const char* componentName);
+// フィールドの印を引く (無ければ null)。componentName / fieldName は JSON のキー
+const OverlayField* FindOverlayField(const OverlayEntity* entity, const char* componentName, const char* fieldName);
+
+// 変わったフィールドのツールチップ: 見出し (ファイルでの変更 / プレハブの上書きの変更) と、変更前・変更後の値 (字句のまま。長ければ切る)
+std::string FieldMarkTooltip(const OverlayField& field);
+// コンポーネントの印のツールチップ: 追加 / 変更。fieldsListed なら変わったフィールドの名前と変更前の値を並べる (C# コンポーネント用)
+std::string ComponentMarkTooltip(const OverlayComponent& component, bool fieldsListed);
+
 } // namespace mye

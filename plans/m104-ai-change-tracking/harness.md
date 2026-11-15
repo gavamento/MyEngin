@@ -22,8 +22,9 @@
 | sub-10 (M104k) AI Changes 窓、Diff 表示部品 | OK | 1 | c6b93988 | nit: 「セッションなし」の取り方は sub-23、oversize の表示は sub-15 で対応。未確認: 見た目の目視 (cache/m104k_shots の 5 枚)、手での GUI 操作 (条件 10)。Notion Q-16〜20 |
 | sub-23 (M104k2) Editor の保存をサービスへ知らせる | OK | 0 | 3f14e59d | should: 読み直しの穴を狭める確認は sub-12、nit: ipc-contract.md の制御文字は sub-11。DB スキーマ版 2。未確認: 実 Editor での保存 (条件 6)、スクショの目視 (cache/m104k2_shots)。Notion Q-21〜23 |
 | sub-11 (M104l) シーン構造 diff | OK | 0 | d6619bf0 | DB スキーマ版 3。nit: v1.sql のコメントに BEL (凍結なので直さない)、.meta と本体の観測順の組み合わせ試験は sub-19 の候補。計測は 1 回 (2 万エンティティ 162.9 ms)。Notion Q-24〜27 |
-| sub-12 (M104m) シーンの変更の集約、一覧、Hierarchy のバッジ、選択の同期 | OK | 0 | (このコミット) | nit: 強調の入・切の保存は sub-24、pipe.rs の unused_mut は次に tools/track を触るサブ、cache/m104m_shots の古いログは残置。未確認: 見た目の目視 (cache/m104m_shots の 4 枚)、実 Editor の操作。Notion Q-28〜30 |
-| sub-24 (M104m2) Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | 実装中 | 0 | | 着手可 (sub-12 の VERDICT で詳細化)。順序は sub-24 → sub-13 → sub-14 |
+| sub-12 (M104m) シーンの変更の集約、一覧、Hierarchy のバッジ、選択の同期 | OK | 0 | 235887d9 | nit: 強調の入・切の保存は sub-24、pipe.rs の unused_mut は次に tools/track を触るサブ、cache/m104m_shots の古いログは残置。未確認: 見た目の目視 (cache/m104m_shots の 4 枚)、実 Editor の操作。Notion Q-28〜30 |
+| sub-24 (M104m2) Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | OK | 0 | (このコミット) | should: Debug の changetracking が負荷で落ちる (既存の実時間依存。planner も 5/5 で再現) → sub-25 で直す。Debug での新規試験の通過は sub-25 の後に planner が確かめ直す。nit: 箱の可視判定は原点だけ (sub-19 で見直す)、名前・タグの印なし。未確認: 見た目の目視 (cache/m104m2_shots の 3 枚)。Notion Q-31〜33 |
+| sub-25 (M104m3) 追跡クライアントの試験から実時間への依存を外す | 実装中 | 0 | | 着手可。sub-24 の VERDICT で新設。順序は sub-25 → sub-13 → sub-14 |
 | sub-13 (M104n) 未保存シーンへの外部変更の確認 | 未着手 | | | 骨子。依存 sub-08。着手前にユーザー確認 (未決事項 1) |
 | sub-14 (M104o) レビュー | 未着手 | | | 骨子。依存 sub-12, sub-13。Phase 4 の最後 |
 | sub-15 (M104p) ファイルと Hunk の復元、ジャーナル、回復 | 未着手 | | | 骨子。分割の可能性あり |
@@ -74,4 +75,5 @@
 - planner (2026-11-15、sub-08 の VERDICT): Phase 3 を見直した。sub-09 は詳細、sub-10〜13 は骨子 + 追記。planner は sub-09 の VERDICT で sub-10 を、以後は各サブの VERDICT で次のサブを詳細にする。sub-09 から `src\` を触るので、ビルドと `Editor.exe --selftest` が検証に入る。
 - planner (2026-11-15、sub-09 の VERDICT): sub-23 (M104k2) を足した。順序は sub-10 → sub-23 → sub-11。sub-23 は骨子で、sub-10 の VERDICT で詳細にする。
 - planner (2026-11-15、sub-11 の VERDICT): sub-24 (M104m2) を足した。Phase 3 の順序は sub-12 → sub-24 → sub-13、その後 sub-14。sub-24 は骨子で、sub-12 の VERDICT で詳細にする。
+- planner (2026-11-15、sub-24 の VERDICT): sub-25 (M104m3) を足した。順序は sub-24 → sub-25 → sub-13 → sub-14。sub-25 が済むまで、Debug の `Editor.exe --selftest` は機械が重いと `changetracking` で落ちる (sub-24 までの検証で Debug が赤く見えても、まず機械の負荷を見ること)。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

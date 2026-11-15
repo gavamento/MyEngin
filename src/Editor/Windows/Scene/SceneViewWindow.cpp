@@ -7,6 +7,8 @@
 #include "Editor/Scene/CameraPilot.h"
 #include "Editor/Widgets/CreateMenu.h"
 #include "Editor/App/EditorSettings.h"
+#include "Editor/ChangeTracking/SceneChangeOverlay.h"
+#include "Editor/ChangeTracking/SceneChangeWireBoxes.h"
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/Scene/Selection.h"
 #include "Editor/Tools/PatrolRouteEdit.h"
@@ -569,6 +571,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
         }
     }
 
+    AppendChangeBoxes(ctx, lastView_, lastProj_); // M104m2
     DrawSelectionOutline(ctx, world, selection);
     BuildGhostOverlay(ctx); // M72e
 }
@@ -1696,6 +1699,41 @@ void SceneViewWindow::DrawSelectionOutline(EngineContext& ctx, World& world, con
     XMFLOAT4X4 bw;
     XMStoreFloat4x4(&bw, boxWorld);
     lines_.AddWireBox(bw, half, gizmo::kSelection, /*onTop*/ true);
+}
+
+// AI の変更の強調 (M104m2)。メッシュがあれば AABB のワイヤ箱、無ければ位置に小さい球。輪郭を出すポストプロセスは無いので箱で代用する。
+// 深度テストあり (選択アウトラインと違い、手前の物に隠れてよい)。上限を超えた分は省き、数を overlay へ伝える (AI Changes 窓の帯が出す)
+void SceneViewWindow::AppendChangeBoxes(EngineContext& ctx, const XMFLOAT4X4& view, const XMFLOAT4X4& proj)
+{
+    changeBoxesDrawn_ = 0;
+    changeBoxesOmitted_ = 0;
+    if (changeOverlay_ == nullptr || ctx.scene == nullptr) {
+        return;
+    }
+    constexpr float kChangeMarkerRadius = 0.25f;
+    std::vector<ChangeBoxCandidate> candidates;
+    CollectChangeBoxCandidates(*ctx.scene, *changeOverlay_, view, proj, candidates);
+    const ChangeBoxSelection selection = SelectChangeBoxes(std::move(candidates), kMaxChangeWireBoxes);
+    World& world = ctx.scene->GetWorld();
+    const OverlayPalette& palette = changeOverlay_->Palette();
+    for (const ChangeBoxCandidate& c : selection.chosen) {
+        const uint32_t rgba = PackOverlayRgba(palette.Get(c.color));
+        const auto* worldMatrix = world.GetComponent<WorldMatrixComponent>(c.entity);
+        XMFLOAT3 lo = {};
+        XMFLOAT3 hi = {};
+        if (worldMatrix != nullptr && ctx.resources != nullptr && SelectedMeshLocalBounds(ctx, world, c.entity, lo, hi)) {
+            const XMFLOAT3 center = { (lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f };
+            const XMFLOAT3 half = { (hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f };
+            XMFLOAT4X4 boxWorld;
+            XMStoreFloat4x4(&boxWorld, XMMatrixTranslation(center.x, center.y, center.z) * XMLoadFloat4x4(&worldMatrix->value));
+            lines_.AddWireBox(boxWorld, half, rgba);
+        } else {
+            lines_.AddWireSphere(c.position, kChangeMarkerRadius, rgba);
+        }
+        ++changeBoxesDrawn_;
+    }
+    changeBoxesOmitted_ = selection.omitted;
+    changeOverlay_->NoteWireBoxes(changeBoxesDrawn_, changeBoxesOmitted_);
 }
 
 void SceneViewWindow::DrawToolbar(EditorSettings& settings)

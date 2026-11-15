@@ -1506,6 +1506,14 @@ review and restore milestones).
   *Mark as seen up to here* (a display-only mark kept in `editor_settings.json`; it records nothing and is not a review) and *Show everything again*.
   The detail column lists the selected revision's structural changes (`scene_diff`; the three prefab kinds — the prefab file, the instance's source,
   an override — have distinct labels); clicking a row selects that entity in the open scene when the row belongs to the open scene and the entity exists.
+- **Field diff, Scene view boxes and colors (M104m2).** The **Inspector** puts a small dot at the right of a changed field's row (blue; hover shows the
+  before / after values verbatim, clipped when long, and says so when the change is a prefab override) and at the right end of the component header
+  (green = added, blue = modified). A C# component has no per-field hook, so it gets the header dot only, whose tooltip lists the changed field names with
+  their before values. The **Scene view** overlays a wire box (the mesh AABB; a small sphere when there is no mesh) on each changed entity — green = added,
+  blue = modified, red is reserved for conflicts, which nothing produces yet. Only visible entities are drawn, nearest first, at most 256 per frame; when more
+  are visible the band here shows how many were left out. The band's gear opens the four colors (added / modified / removed / conflict) with *Reset to
+  default*; they and the highlight switch are saved in `editor_settings.json`, and the Hierarchy badges, the Inspector dots, the boxes and the band's counts
+  all read the same values. None of this touches the world: drawing never writes a component and never calls `EnsureFileId`.
 - **State banner.** One sentence per connection state (off / no project / connecting / running / service not found / protocol
   version mismatch / another project's service / database unavailable / reconnecting). While running it also shows the
   baseline progress, tracked files, stored content (size and count), gaps in coverage, and whether watching fell back to one

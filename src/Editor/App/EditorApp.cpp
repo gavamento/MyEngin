@@ -267,6 +267,13 @@ void EditorApp::OnStart(EngineContext& ctx)
         settings_.aiChangeAcks = acks;
         settings_.Save();
     });
+    // 強調の入・切と 4 色も個人の設定 (M104m2)。窓や Hierarchy で変えたら保存する
+    changeTracking_.Overlay().LoadPrefs(settings_.aiChangePalette, settings_.aiChangeShowOverlay);
+    changeTracking_.Overlay().SetPrefsSink([this](const OverlayPalette& palette, bool show) {
+        settings_.aiChangePalette = palette;
+        settings_.aiChangeShowOverlay = show;
+        settings_.Save();
+    });
     // ---- 初回自動ビルド (M66m) ----
     // DLL が丸ごと無い (まだ一度も build_collab.bat を回していない) ときだけ試す。
     // cargo が無ければ StartCollabBuild が黙って nullptr を返す = rustup 未導入の
@@ -898,6 +905,8 @@ void EditorApp::OnImGui(EngineContext& ctx)
             overlay.RebuildAncestors(*ctx.scene);
         }
         hierarchy_.SetChangeOverlay(&overlay);
+        inspector_.SetChangeOverlay(&overlay);
+        sceneView_.SetChangeOverlay(&overlay);
     }
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_, preview_, playMode_.InPlayMode());

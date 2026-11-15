@@ -3247,3 +3247,18 @@ MYE_STR(AiChg_BadgeAdded,     "Added in the file",                     "ファ�
 MYE_STR(AiChg_BadgeModified,  "Modified in the file",                  "ファイルで変更された")
 MYE_STR(AiChg_BadgeDescendant, "A descendant has changes",             "子孫に変更があります")
 MYE_STR(AiChg_BadgeMore,      "(and more)",                            "(ほか)")
+
+// ---- Inspector の印・ワイヤ箱・色の設定 (M104m2) ----
+MYE_STR(AiChg_InspBefore,     "Before:",                               "変更前:")
+MYE_STR(AiChg_InspAfter,      "After:",                                "変更後:")
+MYE_STR(AiChg_InspNone,       "(none)",                                "(なし)")
+MYE_STR(AiChg_InspOverride,   "Prefab override changed in the file (applies to this instance only)",
+                              "ファイルでプレハブの上書きが変更された (このインスタンスだけの編集)")
+MYE_STR(AiChg_InspComponentAdded, "Component added in the file",       "コンポーネントがファイルに追加された")
+MYE_STR(AiChg_InspChangedFields, "Changed fields (before):",           "変更されたフィールド (変更前):")
+MYE_STR(AiChg_OverlayConflict, "conflict",                             "競合")
+MYE_STR(AiChg_ColorSettings,  "Highlight colors",                      "強調の色")
+MYE_STR(AiChg_ColorReset,     "Reset to default",                      "既定に戻す")
+MYE_STR(AiChg_ColorNote,      "Used by the Hierarchy badges, the Inspector marks and the Scene view boxes. Saved in your editor settings.",
+                              "Hierarchy のバッジ・Inspector の印・Scene View の枠に使います。エディタの設定に保存されます。")
+MYE_STR(AiChg_BoxesOmitted,   "Scene view box limit reached. Not outlined:", "Scene View の枠の上限に達しました。枠を出していない数:")

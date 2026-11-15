@@ -24,6 +24,7 @@ struct EditorSettings;
 struct CameraComponent;
 struct ColliderComponent;
 class TilePaletteWindow;
+class SceneChangeOverlay;
 
 // エディタカメラでシーンを描画するビュー (engine_spec.md 9 章)。
 // カメラはエンティティではなくエディタ所有 (Play 状態と無関係に操作できる)。
@@ -48,6 +49,14 @@ public:
 
     // M56e: エディタカメラのワールド位置。反射プローブを「今見ている場所」で焼くのに使う
     const DirectX::XMFLOAT3& CameraPosition() const { return camPos_; }
+
+    // AI の変更の強調 (M104m2): 変更済みエンティティにワイヤ箱を重ねる。所有は EditorApp。null なら何も描かない
+    void SetChangeOverlay(SceneChangeOverlay* overlay) { changeOverlay_ = overlay; }
+    // 変更済みエンティティの箱を lines_ へ積む (World は読むだけ)。BuildOverlays が呼ぶ。試験が view / proj を渡して直接呼べる
+    void AppendChangeBoxes(EngineContext& ctx, const DirectX::XMFLOAT4X4& view, const DirectX::XMFLOAT4X4& proj);
+    // 直近の AppendChangeBoxes が積んだ数と、上限で省いた数
+    int ChangeBoxesDrawn() const { return changeBoxesDrawn_; }
+    int ChangeBoxesOmitted() const { return changeBoxesOmitted_; }
 
     // ギズモ状態への参照 (M27c: グローバルツールバーと共有)
     ImGuizmo::OPERATION& GizmoOp() { return gizmoOp_; }
@@ -283,6 +292,9 @@ private:
     bool pilotRecording_ = false;
     uint64_t pilotRecordFid_ = 0;
 
+    SceneChangeOverlay* changeOverlay_ = nullptr; // M104m2: 所有は EditorApp
+    int changeBoxesDrawn_ = 0;
+    int changeBoxesOmitted_ = 0;
     TilePaletteWindow* tilePalette_ = nullptr; // M94l: 所有は EditorApp
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)

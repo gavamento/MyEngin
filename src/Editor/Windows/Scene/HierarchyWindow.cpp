@@ -94,7 +94,7 @@ void HierarchyWindow::DrawChangeBadge(uint64_t fileId, const ImVec2& rowMin, con
         return;
     }
     const bool faint = badge.status == OverlayStatus::None;
-    const OverlayColor color = badge.status == OverlayStatus::Added ? kOverlayAddedColor : kOverlayModifiedColor;
+    const OverlayColor color = overlay_->Palette().Get(badge.status == OverlayStatus::Added ? OverlayColorId::Added : OverlayColorId::Modified);
     constexpr float kRadius = 4.0f;
     const float cx = rowMax.x - kRadius * 3.0f;
     const float cy = (rowMin.y + rowMax.y) * 0.5f;
