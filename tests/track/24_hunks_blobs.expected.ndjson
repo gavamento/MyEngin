@@ -1,0 +1,20 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"editor","serviceStartedAt":<N>}}
+{"id":2,"ok":true,"result":{"items":[{"afterText":"hello\nworld\n","beforeText":"","contextPost":"","contextPre":"","eolOnly":false,"hunkId":1,"newCount":2,"newStart":1,"oldCount":0,"oldStart":1,"ordinal":0,"oversize":false,"state":"active"}],"nextCursor":null}}
+{"id":3,"ok":true,"result":{"items":[{"afterText":"there\n","beforeText":"","contextPost":"world\n","contextPre":"hello\n","eolOnly":false,"hunkId":2,"newCount":1,"newStart":2,"oldCount":0,"oldStart":2,"ordinal":0,"oversize":false,"state":"active"}],"nextCursor":null}}
+{"id":4,"ok":true,"result":{"items":[],"nextCursor":null}}
+{"error":{"code":"not_found","detail":"revisionId 99 は無い"},"id":5,"ok":false}
+{"error":{"code":"bad_args","detail":"cursor が読めない"},"id":6,"ok":false}
+{"id":7,"ok":true,"result":{"data":"aGVsbG8KdGhlcmUKd29ybGQK","length":18,"offset":0,"size":18}}
+{"id":8,"ok":true,"result":{"data":"dGhlcmU=","length":5,"offset":6,"size":18}}
+{"id":9,"ok":true,"result":{"data":"","length":0,"offset":100,"size":18}}
+{"error":{"code":"blob_missing","detail":"Blob が無い (除外された・回収された)"},"id":10,"ok":false}
+{"error":{"code":"bad_args","detail":"hash は 64 桁の 16 進 (小文字)"},"id":11,"ok":false}
+{"error":{"code":"bad_args","detail":"hash は 64 桁の 16 進 (小文字)"},"id":12,"ok":false}
+{"error":{"code":"bad_args","detail":"length は 1 以上"},"id":13,"ok":false}
+{"error":{"code":"bad_args","detail":"hash が要る"},"id":14,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 mcp は hunks を呼べない"},"id":2,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 mcp は blob_get を呼べない"},"id":3,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"hook","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 hook は hunks を呼べない"},"id":2,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 hook は blob_get を呼べない"},"id":3,"ok":false}

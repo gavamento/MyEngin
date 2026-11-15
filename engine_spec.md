@@ -1484,6 +1484,37 @@ The editor ships in **Japanese by default** and can be switched to English at ru
   English so they read alongside D3D debug-layer output and `HRESULT` values
 - Rule 10 in §11.2 is enforced by `tools\check_rules.ps1`
 
+### 9.2 AI Changes window (M104k)
+
+*Window > AI Changes* shows what the AI Change Tracking service (`mye_track.exe`, [ADR-039](docs/adr/ADR-039-ai-change-tracking.md),
+`docs/ai-change-tracking/`) recorded for the open project. It is closed by default, docks in the centre tab group when
+the layout is rebuilt, and never writes to the project: the window has no approve / restore buttons (those come with the
+review and restore milestones).
+
+- **Off by default.** Tracking runs only when `changeTrackingEnabled` is true in the project's editor settings **and** the
+  editor was started interactively (`--selftest`, `--screenshot`, replay and other automated launches never connect to or
+  start the service; the window then shows the switch disabled with one line saying why). The window's check box
+  turns it on or off. Turning it **on** asks once: the first baseline scan copies the contents of the project's files into
+  `.mye\ai_changes\blobs\` (the real total appears in the window once tracking runs); a background service keeps recording even
+  after the editor closes. Turning it **off** only closes the editor's connection — the running service is not stopped.
+- **State banner.** One sentence per connection state (off / no project / connecting / running / service not found / protocol
+  version mismatch / another project's service / database unavailable / reconnecting). While running it also shows the
+  baseline progress, tracked files, stored content (size and count), gaps in coverage, and whether watching fell back to one
+  root.
+- **Three columns.** Sessions (provider, start time, state, number of changes; plus *All changes* and *Without a session*),
+  changes (path, kind, attribution, marks for `coalesced` / `gap` / `no_before` and `superseded`, time; lazily paged, filters
+  for path / kind / attribution), and details (attribution with **every piece of evidence** and the candidate sessions, a
+  one-line meaning for any `completeness` other than `complete`, the diff-mode reason, and the diff).
+- **Unknown / Inferred are separate by default.** They get their own section in the change list; a check box mixes them into
+  one list ([attribution-rules.md](docs/ai-change-tracking/attribution-rules.md) §8).
+- **Diff view** (`src/Editor/Widgets/DiffView.h`, class `DiffViewer`): read-only, inline or side by side, old / new line numbers,
+  hunk headers, `eolOnly` hunks marked as line-ending-only (no add / delete colours), a mark on lines whose ending changed
+  (LF / CRLF / none), hunk selection for later milestones. It draws only the visible rows (`ImGuiListClipper`) and scans the text
+  once when the input arrives. It does not depend on the tracking code. Lines longer than 4096 bytes are cut with an ellipsis.
+- The window asks the model for only the parts it shows (`ChangeModel::SetInterest`); while it is closed nothing is fetched.
+- *Open file* uses the existing external-editor path (`externalEditorCmd`) at the first line of the selected hunk; *Show in Explorer*
+  opens the folder.
+
 ---
 
 ## 10. Asset Pipeline

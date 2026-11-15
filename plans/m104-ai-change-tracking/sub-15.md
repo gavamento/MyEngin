@@ -20,7 +20,7 @@ restore の §1〜§8 のうち、ファイルと Hunk の分。
 7. 整合性の検証と巻き戻し (restore §6): 書いたファイルを読み直す。失敗したら `pre\` へ戻す。戻す前に「自分が書いた内容」と一致するか確かめ、違えば `recovery_required`。
 8. 起動時の回復: `recovery\` に `applying` / `rolling_back` / `recovery_required` があれば回復の画面 (3 つの内容と選択肢)。**勝手には戻さない。** 回復待ちの間は新しい復元を始められない。
 9. サービス側: `restore_record` / `restore_expect` (`role = editor` だけ)、`actor = restore` の判定 (`restore_expected`)、`changes.state` / `change_hunks.state` の更新、`pre_restore` のスナップショット。
-10. プレビュー (戻した後の内容と今との差を DiffView で) と確認。stage 済みのファイルと重なるときの注記 (restore §7。Index は読みも書きもしない。重なりは既存の `SourceControlSession` の status で分かる範囲)。
+10. プレビュー (戻した後の内容と今との差を `src\Editor\Widgets\DiffView.h` の `DiffViewer` で) と確認。Editor が `blob_get` を使い始めるサブなので、sub-10 で残した「`whole` の大きいファイル (Hunk が `oversize`) は、Before / After の先頭 (定数の大きさまで) を `blob_get` で取って見せる」もここで入れる。`lines` の中の巨大な 1 行は注記のままでよい。stage 済みのファイルと重なるときの注記 (restore §7。Index は読みも書きもしない。重なりは既存の `SourceControlSession` の status で分かる範囲)。
 11. git を 1 つも起動しない。`src\Editor\ChangeTracking\` から `SourceControl\` の書き込み系を呼ばない。
 
 ## やらないこと (このサブでは)

@@ -520,3 +520,183 @@ fn an_unread_subscriber_does_not_stop_recording_and_gets_one_resync() {
     assert!(resyncs >= 1, "resync が届かない (change_recorded は {changes} 件)");
     assert!(changes < FILES, "全部届いた (あふれていない): {changes}");
 }
+
+/// base64 (標準、パディングあり) を戻す。`blob_get` の結果をつなぎ直して原本と比べるため。
+fn base64_decode(text: &str) -> Vec<u8> {
+    let value = |c: u8| -> u32 {
+        match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a') + 26,
+            b'0'..=b'9' => u32::from(c - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => panic!("base64 の文字ではない: {c}"),
+        }
+    };
+    let mut out = Vec::new();
+    for chunk in text.as_bytes().chunks(4) {
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        let n = chunk.iter().take(4 - pad).fold(0u32, |acc, &c| (acc << 6) | value(c)) << (6 * pad as u32);
+        out.push((n >> 16) as u8);
+        if pad < 2 {
+            out.push((n >> 8) as u8);
+        }
+        if pad < 1 {
+            out.push(n as u8);
+        }
+    }
+    out
+}
+
+/// 直近の Revision が `size` バイトの内容になるまで待ち、その `revisionId` を返す。
+fn wait_latest_revision(client: &mut Client, path: &str, size: usize) -> i64 {
+    let mut id = 0;
+    wait_until(path, WAIT_LIMIT, || {
+        let items = list_items(client, json!({ "path": path }));
+        match items.first() {
+            Some(item) if item["afterSize"].as_u64() == Some(size as u64) => {
+                id = item["revisionId"].as_i64().unwrap();
+                true
+            }
+            _ => false,
+        }
+    });
+    id
+}
+
+#[test]
+fn hunks_are_paged_oversize_ones_are_flagged_and_blobs_come_in_chunks() {
+    let project = temp_project("hunks_blob");
+    let service = ServiceProc::spawn(&project);
+    service.wait_watching();
+    let mut editor = service.connect("editor");
+
+    // (1) 40 個の離れた Hunk (各 約 60 KB): 1 ページに収まらず、つなぐと全部がそろう
+    let block = |fill: &str, width: usize| -> String {
+        let mut text = String::new();
+        for i in 0..40 {
+            for k in 0..7 {
+                text.push_str(&format!("keep {i} {k}\n"));
+            }
+            text.push_str(&format!("{}{i}\n", fill.repeat(width)));
+        }
+        text.push_str("tail\n");
+        text
+    };
+    // 大きさを変えて、1 つ目の Revision (追加) と 2 つ目 (変更) を取り違えないようにする
+    let before = block("a", 30_000);
+    let after = block("b", 30_001);
+    fs::write(project.join("many.txt"), &before).unwrap();
+    wait_latest_revision(&mut editor, "many.txt", before.len());
+    fs::write(project.join("many.txt"), &after).unwrap();
+    let revision = wait_latest_revision(&mut editor, "many.txt", after.len());
+    let detail = editor.request(10, "describe", json!({ "revisionId": revision })).unwrap();
+    let summary = detail["result"]["hunks"].as_array().unwrap().clone();
+    assert_eq!(summary.len(), 40, "{detail}");
+
+    let mut pages = 0;
+    let mut collected: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let args = match &cursor {
+            Some(c) => json!({ "revisionId": revision, "cursor": c }),
+            None => json!({ "revisionId": revision }),
+        };
+        let reply = editor.request(11, "hunks", args).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert!(reply.to_string().len() < 1024 * 1024, "1 ページが 1 行の上限を超えた");
+        collected.extend(reply["result"]["items"].as_array().unwrap().iter().cloned());
+        pages += 1;
+        match reply["result"]["nextCursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+        assert!(pages < 100, "ページ送りが終わらない");
+    }
+    assert!(pages >= 3, "2.4 MB の本文が {pages} ページに収まった");
+    assert_eq!(collected.len(), 40);
+    for (i, hunk) in collected.iter().enumerate() {
+        assert_eq!(hunk["ordinal"], i as i64);
+        assert_eq!(hunk["oversize"], false);
+        // describe の行番号と一致し、本文は原本の 1 行
+        assert_eq!(hunk["oldStart"], summary[i]["oldStart"]);
+        assert_eq!(hunk["newCount"], summary[i]["newCount"]);
+        assert_eq!(hunk["beforeText"], format!("{}{i}\n", "a".repeat(30_000)));
+        assert_eq!(hunk["afterText"], format!("{}{i}\n", "b".repeat(30_001)));
+        assert_eq!(hunk["eolOnly"], false);
+        assert!(hunk["contextPre"].is_string() && hunk["contextPost"].is_string());
+    }
+
+    // (2) 単独で上限を超える Hunk は本文なしの oversize。Blob は 512 KiB ずつ取れて、つなぐと原本と一致する
+    let huge_before = format!("{}\n", "x".repeat(2_000_000));
+    let huge_after = format!("{}\n", "y".repeat(2_000_001));
+    fs::write(project.join("huge.txt"), &huge_before).unwrap();
+    wait_latest_revision(&mut editor, "huge.txt", huge_before.len());
+    fs::write(project.join("huge.txt"), &huge_after).unwrap();
+    let huge = wait_latest_revision(&mut editor, "huge.txt", huge_after.len());
+    let reply = editor.request(12, "hunks", json!({ "revisionId": huge })).unwrap();
+    let items = reply["result"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{reply}");
+    assert_eq!(items[0]["oversize"], true);
+    assert!(items[0].get("beforeText").is_none() && items[0].get("afterText").is_none());
+    assert_eq!(items[0]["beforeBytes"], huge_before.len());
+    assert_eq!(items[0]["afterBytes"], huge_after.len());
+    assert!(reply["result"]["nextCursor"].is_null());
+
+    let detail = editor.request(13, "describe", json!({ "revisionId": huge })).unwrap();
+    let hash = detail["result"]["before"]["hash"].as_str().unwrap().to_string();
+    let mut rebuilt = Vec::new();
+    let mut chunks = 0;
+    while rebuilt.len() < huge_before.len() {
+        let reply = editor
+            .request(14, "blob_get", json!({ "hash": hash, "offset": rebuilt.len(), "length": 512 * 1024 }))
+            .unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["result"]["size"], huge_before.len());
+        let piece = base64_decode(reply["result"]["data"].as_str().unwrap());
+        assert!(!piece.is_empty() && piece.len() <= 512 * 1024);
+        rebuilt.extend(piece);
+        chunks += 1;
+    }
+    assert_eq!(chunks, 4, "2,000,001 バイトを 512 KiB ずつ");
+    assert_eq!(rebuilt, huge_before.as_bytes(), "つなぐと原本とバイト一致する");
+    // length の上限超えは切られる。末尾を越える offset は空
+    let reply = editor.request(15, "blob_get", json!({ "hash": hash, "length": 10_000_000 })).unwrap();
+    assert_eq!(reply["result"]["length"], 512 * 1024);
+    let reply = editor.request(16, "blob_get", json!({ "hash": hash, "offset": 5_000_000 })).unwrap();
+    assert_eq!(reply["result"]["data"], "");
+
+    // (3) 引数の検査: 64 桁の 16 進だけを受ける。欠けた Blob は blob_missing
+    for bad in [
+        "../../tracking.db".to_string(),
+        "a".repeat(63),
+        "A".repeat(64),
+        format!("{}/", "a".repeat(63)),
+        format!("..\\{}", "a".repeat(62)),
+        String::new(),
+    ] {
+        let reply = editor.request(17, "blob_get", json!({ "hash": bad })).unwrap();
+        assert_eq!(reply["error"]["code"], "bad_args", "{bad}: {reply}");
+    }
+    for args in [json!({ "hash": hash, "offset": -1 }), json!({ "hash": hash, "length": 0 }), json!({})] {
+        let reply = editor.request(18, "blob_get", args.clone()).unwrap();
+        assert_eq!(reply["error"]["code"], "bad_args", "{args}: {reply}");
+    }
+    let reply = editor.request(19, "blob_get", json!({ "hash": "0".repeat(64) })).unwrap();
+    assert_eq!(reply["error"]["code"], "blob_missing", "{reply}");
+    let reply = editor.request(20, "hunks", json!({ "revisionId": 999_999 })).unwrap();
+    assert_eq!(reply["error"]["code"], "not_found");
+    let reply = editor.request(21, "hunks", json!({ "revisionId": huge, "cursor": "x" })).unwrap();
+    assert_eq!(reply["error"]["code"], "bad_args");
+    let reply = editor.request(22, "hunks", json!({ "revisionId": huge, "zzz": 1 })).unwrap();
+    assert_eq!(reply["error"]["code"], "bad_args");
+
+    // (4) mcp / hook の役割は呼べない
+    for role in ["mcp", "hook"] {
+        let mut other = service.connect(role);
+        let reply = other.request(2, "hunks", json!({ "revisionId": huge })).unwrap();
+        assert_eq!(reply["error"]["code"], "forbidden", "{role}: {reply}");
+        let reply = other.request(3, "blob_get", json!({ "hash": hash })).unwrap();
+        assert_eq!(reply["error"]["code"], "forbidden", "{role}: {reply}");
+    }
+}

@@ -29,6 +29,7 @@
 #include "Editor/ChangeTracking/TrackLaunch.h"
 #include "Editor/ChangeTracking/TrackProjectId.h"
 #include "Editor/ChangeTracking/TrackProtocol.h"
+#include "Editor/Windows/Project/AiChangesWindow.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -214,6 +215,80 @@ struct Rig {
     Rig() { client.Start(std::make_unique<FakeIo>(s), kRoot, 4242); }
 };
 
+// モデルの試験の 1 節ぶんの道具立て: 偽の I/O で Ready まで進め、書かれた要求に偽の応答を返す。節ごとに 1 つ作り、使い回さない
+struct ModelRig {
+    std::shared_ptr<FakeState> s = std::make_shared<FakeState>();
+    ChangeTrackingSession session;
+    ChangeModel& model = session.Model();
+    size_t answered = 0;
+    // describe の応答
+    std::string describeMode = "lines";
+    int describeHunks = 0;
+    // hunks の応答 (ページごとの items。最後のページ以外は nextCursor = そのページの最後の ordinal)
+    std::vector<json> hunkPages;
+    bool failHunks = false;
+    size_t hunksServed = 0;
+
+    ModelRig()
+    {
+        session.StartWithIo(std::make_unique<FakeIo>(s), kRoot, true);
+        session.Poll();
+        ReplyHelloOk(*s);
+        session.Poll(); // Ready: 購読を投げる
+        model.SetInterest(kTrackAllParts);
+        model.SelectRevision(7);
+    }
+
+    size_t Count(const char* op) const { return Requests(*s, op).size(); }
+
+    // まだ答えていない要求に、まとめて偽の応答を返す
+    void AnswerAll()
+    {
+        std::string batch;
+        for (; answered < s->written.size(); ++answered) {
+            const json req = json::parse(s->written[answered], nullptr, false);
+            const std::string op = req.value("op", std::string());
+            const uint64_t id = req["id"].get<uint64_t>();
+            if (op == trackop::kHello) {
+                continue; // hello は接続のときに返してある
+            }
+            if (op == trackop::kHunks && failHunks) {
+                batch += ErrReply(id, "internal").dump() + "\n";
+                continue;
+            }
+            json result = json::object();
+            if (op == trackop::kStatus) {
+                result = { { "phase", "baselining" }, { "trackedFiles", 12 }, { "baseline", { { "scanDone", 3 }, { "scanTotal", 9 } } },
+                           { "blobs", { { "count", 5 }, { "bytes", 1000 } } }, { "gaps", { { "count", 2 } } },
+                           { "watches", { { "count", 4 }, { "fallback", true } } }, { "db", { { "state", "recording" } } } };
+            } else if (op == trackop::kSessions) {
+                result = { { "items", json::array({ { { "sessionId", "s1" }, { "provider", "claude" }, { "status", "running" }, { "startedAt", 5 }, { "changeCount", 3 } } }) } };
+            } else if (op == trackop::kList) {
+                result = { { "items", json::array({ { { "revisionId", 9 }, { "path", "a.txt" }, { "changeType", "added" }, { "actor", "ai" }, { "attribution", "claimed" },
+                                                      { "afterSize", 4 }, { "changeState", "superseded" } },
+                                                    { { "revisionId", 8 }, { "path", "b.txt" }, { "changeType", "modified" } } }) },
+                           { "nextCursor", req["args"].contains("cursor") ? json() : json("8") },
+                           { "coverage", { { "baselining", true } } } };
+            } else if (op == trackop::kDescribe) {
+                json hunks = json::array();
+                for (int i = 0; i < describeHunks; ++i) {
+                    hunks.push_back({ { "ordinal", i }, { "oldStart", 1 }, { "oldCount", 1 }, { "newStart", 1 }, { "newCount", 1 } });
+                }
+                result = { { "revisionId", req["args"]["revisionId"] }, { "diffMode", describeMode }, { "hunks", hunks } };
+            } else if (op == trackop::kHunks) {
+                const size_t page = hunksServed++;
+                const json items = page < hunkPages.size() ? hunkPages[page] : json::array();
+                const bool more = page + 1 < hunkPages.size();
+                result = { { "items", items }, { "nextCursor", more ? json(std::to_string(page)) : json() } };
+            }
+            batch += OkReply(id, result).dump() + "\n";
+        }
+        if (!batch.empty()) {
+            s->chunks.push_back(batch);
+        }
+    }
+};
+
 // 1 回の Poll の実時間 (ミリ秒) と TrackIo の呼び出し回数
 struct PollCost {
     double ms = 0.0;
@@ -311,6 +386,42 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             }, 15000);
             check(listed, "probe: list shows the file (the model refetched after the notification)");
             check(session.Model().Status().valid && session.Model().Status().trackedFiles >= 1, "probe: status reached the model");
+
+            // 詳細と Hunk の本文 (実サービスの describe + hunks)。追加の Revision → 追記した変更の Revision
+            auto findRow = [&](const char* type) -> int64_t {
+                for (const TrackChangeRow& r : session.Model().Changes()) {
+                    if (r.path == "probe.txt" && r.changeType == type) {
+                        return r.revisionId;
+                    }
+                }
+                return 0;
+            };
+            auto bodyOf = [&](int64_t revision) {
+                session.Model().SelectRevision(revision);
+                return pump(session, [&] { return session.Model().HunksComplete() && session.Model().Detail().is_object(); }, 15000);
+            };
+            const int64_t added = findRow("added");
+            const bool addedBody = added != 0 && bodyOf(added);
+            const std::vector<TrackHunk>& addedHunks = session.Model().Hunks();
+            check(addedBody && addedHunks.size() == 1 && addedHunks[0].beforeText.empty() && addedHunks[0].afterText == "one\n",
+                  "probe: describe + hunks bring the new file's body into the model");
+            std::ofstream(root / L"probe.txt", std::ios::binary | std::ios::app) << "two\n";
+            const bool modifiedListed = pump(session, [&] { return findRow("modified") != 0; }, 30000);
+            const int64_t modified = findRow("modified");
+            const bool modifiedBody = modifiedListed && bodyOf(modified);
+            const std::vector<TrackHunk>& modifiedHunks = session.Model().Hunks();
+            check(modifiedBody && modifiedHunks.size() == 1 && modifiedHunks[0].afterText == "two\n" && modifiedHunks[0].beforeText.empty()
+                      && modifiedHunks[0].contextPre == "one\n" && modifiedHunks[0].oldCount == 0 && modifiedHunks[0].newCount == 1,
+                  "probe: the appended line arrives as a hunk with its context (live service)");
+            // 窓を実データで描く (ヘッドレス)
+            AiChangesWindow window;
+            window.open = true;
+            AiChangesHost host;
+            host.allowTracking = true;
+            host.enabled = true;
+            host.projectRoot = root.wstring();
+            WithHeadlessImGuiFrame([&] { window.OnImGui(session, host); });
+            check(window.GetDiffViewer().Rows().HunkCount() == 1, "probe: the window drew the live model's hunk");
         }
         session.Shutdown(); // 接続を閉じるだけ
         if (service != nullptr) {
@@ -720,135 +831,287 @@ bool RunChangeTrackingSelfTest()
         check(worst < 100.0, "poll cap: a Poll stays short even with 10000 lines waiting");
     }
 
-    // ---- (g) モデル: 通知で古い印、間引き、resync で全部 ----
+    // ---- (g) モデル: 節ごとに独立 (それぞれが自分の偽の I/O とセッションを持ち、前の節の状態に依存しない) ----
     {
-        auto s = std::make_shared<FakeState>();
-        ChangeTrackingSession session;
-        session.StartWithIo(std::make_unique<FakeIo>(s), kRoot, true);
-        session.Poll();
-        ReplyHelloOk(*s);
-        session.Poll(); // Ready: 購読を投げる
-        check(session.State() == TrackState::Ready, "model: the session reaches Ready");
-        check(Requests(*s, trackop::kSubscribe).size() == 1, "model: Ready subscribes once");
-        ChangeModel& model = session.Model();
-        model.SetInterest(kTrackAllParts);
-        model.SelectRevision(7);
-
-        size_t answered = 0;
-        auto answerAll = [&] {
-            std::string batch;
-            for (; answered < s->written.size(); ++answered) {
-                const json req = json::parse(s->written[answered], nullptr, false);
-                const std::string op = req.value("op", std::string());
-                const uint64_t id = req["id"].get<uint64_t>();
-                if (op == trackop::kHello) {
-                    continue; // hello は接続のときに返してある
-                }
-                json result = json::object();
-                if (op == trackop::kStatus) {
-                    result = { { "phase", "baselining" }, { "trackedFiles", 12 }, { "baseline", { { "scanDone", 3 }, { "scanTotal", 9 } } },
-                               { "blobs", { { "count", 5 }, { "bytes", 1000 } } }, { "gaps", { { "count", 2 } } },
-                               { "watches", { { "count", 4 }, { "fallback", true } } }, { "db", { { "state", "recording" } } } };
-                } else if (op == trackop::kSessions) {
-                    result = { { "items", json::array({ { { "sessionId", "s1" }, { "provider", "claude" }, { "status", "running" }, { "startedAt", 5 } } }) } };
-                } else if (op == trackop::kList) {
-                    result = { { "items", json::array({ { { "revisionId", 9 }, { "path", "a.txt" }, { "changeType", "added" }, { "actor", "ai" }, { "attribution", "claimed" }, { "afterSize", 4 } },
-                                                          { { "revisionId", 8 }, { "path", "b.txt" }, { "changeType", "modified" } } }) },
-                               { "nextCursor", req["args"].contains("cursor") ? json() : json("8") },
-                               { "coverage", { { "baselining", true } } } };
-                } else if (op == trackop::kDescribe) {
-                    result = { { "revisionId", req["args"]["revisionId"] }, { "hunks", json::array() } };
-                }
-                batch += OkReply(id, result).dump() + "\n";
-            }
-            if (!batch.empty()) {
-                s->chunks.push_back(batch);
-            }
-        };
-        auto count = [&](const char* op) { return Requests(*s, op).size(); };
-
-        session.Poll(); // Tick: 見ている部分を取りに行く
-        check(count(trackop::kStatus) == 1 && count(trackop::kSessions) == 1 && count(trackop::kList) == 1 && count(trackop::kDescribe) == 1,
+        // (g1) 最初の Tick で見ている部分を 1 回ずつ取りに行き、応答を解釈して保持する
+        ModelRig r;
+        check(r.session.State() == TrackState::Ready, "model: the session reaches Ready");
+        check(Requests(*r.s, trackop::kSubscribe).size() == 1, "model: Ready subscribes once");
+        r.session.Poll(); // Tick: 見ている部分を取りに行く
+        check(r.Count(trackop::kStatus) == 1 && r.Count(trackop::kSessions) == 1 && r.Count(trackop::kList) == 1 && r.Count(trackop::kDescribe) == 1,
               "model: the first Tick fetches status / sessions / list / describe once");
-        answerAll();
-        session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        const ChangeModel& model = r.model;
         check(model.Status().valid && model.Status().trackedFiles == 12 && model.Status().scanTotal == 9 && model.Status().Baselining()
                   && model.Status().blobBytes == 1000 && model.Status().gapCount == 2 && model.Status().watchFallback,
               "model: status is parsed (tracked files, baseline progress, blobs, gaps, watches)");
-        check(model.Sessions().size() == 1 && model.Sessions()[0].sessionId == "s1", "model: sessions are parsed");
+        check(model.Sessions().size() == 1 && model.Sessions()[0].sessionId == "s1" && model.Sessions()[0].changeCount == 3,
+              "model: sessions are parsed (with the change count)");
         check(model.Changes().size() == 2 && model.Changes()[0].path == "a.txt" && model.Changes()[0].afterSize == 4
-                  && model.Changes()[1].beforeSize == -1 && model.HasMoreChanges() && model.ListIncomplete(),
-              "model: the list page is parsed (with the cursor and the baselining flag)");
+                  && model.Changes()[1].beforeSize == -1 && model.HasMoreChanges() && model.ListIncomplete()
+                  && model.Changes()[0].changeState == "superseded",
+              "model: the list page is parsed (with the cursor, the baselining flag and the change state)");
         check(model.Detail().is_object() && model.Detail().value("revisionId", 0) == 7, "model: describe is stored");
-
-        // 間引きの間隔より短い連続の通知で、取り直しは 1 回
-        const int64_t t0 = s->nowMs;
+    }
+    {
+        // (g2) 間引きの間隔より短い連続の通知で、取り直しは 1 回
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        const int64_t t0 = r.s->nowMs;
         for (int i = 0; i < 10; ++i) {
-            s->nowMs = t0 + 20 * i;
-            FeedJson(*s, json{ { "event", "change_recorded" }, { "revisionId", 100 + i }, { "path", "x" } });
+            r.s->nowMs = t0 + 20 * i;
+            FeedJson(*r.s, json{ { "event", "change_recorded" }, { "revisionId", 100 + i }, { "path", "x" } });
         }
-        session.Poll();
-        check(model.IsStale(TrackPart::List) && count(trackop::kList) == 1, "model: change_recorded marks the list stale; no refetch inside the throttle");
-        s->nowMs = t0 + kTrackModelMinRefetchMs - 1;
-        session.Poll();
-        check(count(trackop::kList) == 1, "model: still throttled just before the interval");
-        s->nowMs = t0 + kTrackModelMinRefetchMs + 10;
-        session.Poll();
-        check(count(trackop::kList) == 2 && count(trackop::kStatus) == 2, "model: ten notifications cause exactly one refetch after the interval");
-        check(count(trackop::kDescribe) == 1, "model: the detail was not refetched for other revisions");
-        answerAll();
-        session.Poll();
-
-        // 選んでいる Revision の attribution_updated だけが詳細を古くする
-        FeedJson(*s, json{ { "event", "attribution_updated" }, { "revisionId", 8 } });
-        session.Poll();
-        check(count(trackop::kDescribe) == 1, "model: attribution_updated for another revision leaves the detail alone");
-        FeedJson(*s, json{ { "event", "attribution_updated" }, { "revisionId", 7 } });
-        session.Poll();
-        check(count(trackop::kDescribe) == 2, "model: attribution_updated for the selected revision refetches the detail");
-        s->nowMs += kTrackModelMinRefetchMs + 10;
-        session.Poll();
-        answerAll();
-        session.Poll();
-
-        // resync: 何が変わったか分からないので、間引きを待たず全部を取り直す
-        const size_t statusBefore = count(trackop::kStatus);
-        const size_t sessionsBefore = count(trackop::kSessions);
-        const size_t listBefore = count(trackop::kList);
-        const size_t describeBefore = count(trackop::kDescribe);
-        FeedJson(*s, json{ { "event", "resync" }, { "reason", "queue_overflow" } });
-        session.Poll();
-        check(count(trackop::kStatus) == statusBefore + 1 && count(trackop::kSessions) == sessionsBefore + 1
-                  && count(trackop::kList) == listBefore + 1 && count(trackop::kDescribe) == describeBefore + 1,
+        r.session.Poll();
+        check(r.model.IsStale(TrackPart::List) && r.Count(trackop::kList) == 1, "model: change_recorded marks the list stale; no refetch inside the throttle");
+        r.s->nowMs = t0 + kTrackModelMinRefetchMs - 1;
+        r.session.Poll();
+        check(r.Count(trackop::kList) == 1, "model: still throttled just before the interval");
+        r.s->nowMs = t0 + kTrackModelMinRefetchMs + 10;
+        r.session.Poll();
+        check(r.Count(trackop::kList) == 2 && r.Count(trackop::kStatus) == 2, "model: ten notifications cause exactly one refetch after the interval");
+        check(r.Count(trackop::kDescribe) == 1, "model: the detail was not refetched for other revisions");
+    }
+    {
+        // (g3) 選んでいる Revision の attribution_updated だけが詳細を古くする
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        FeedJson(*r.s, json{ { "event", "attribution_updated" }, { "revisionId", 8 } });
+        r.session.Poll();
+        check(r.Count(trackop::kDescribe) == 1, "model: attribution_updated for another revision leaves the detail alone");
+        FeedJson(*r.s, json{ { "event", "attribution_updated" }, { "revisionId", 7 } });
+        r.s->nowMs += kTrackModelMinRefetchMs + 10; // 間引きの間隔をあける
+        r.session.Poll();
+        check(r.Count(trackop::kDescribe) == 2, "model: attribution_updated for the selected revision refetches the detail");
+    }
+    {
+        // (g4) resync: 何が変わったか分からないので、間引きを待たず全部を取り直す
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        const size_t statusBefore = r.Count(trackop::kStatus);
+        const size_t sessionsBefore = r.Count(trackop::kSessions);
+        const size_t listBefore = r.Count(trackop::kList);
+        const size_t describeBefore = r.Count(trackop::kDescribe);
+        FeedJson(*r.s, json{ { "event", "resync" }, { "reason", "queue_overflow" } });
+        r.session.Poll();
+        check(r.Count(trackop::kStatus) == statusBefore + 1 && r.Count(trackop::kSessions) == sessionsBefore + 1
+                  && r.Count(trackop::kList) == listBefore + 1 && r.Count(trackop::kDescribe) == describeBefore + 1,
               "model: resync refetches everything at once");
-        answerAll();
-        session.Poll();
-
-        // 見ていない部分は古くなっても取りに行かない
-        model.SetInterest(TrackPartMask(TrackPart::Status));
-        const size_t listNow = count(trackop::kList);
-        FeedJson(*s, json{ { "event", "change_recorded" }, { "revisionId", 200 } });
-        s->nowMs += 5000;
-        session.Poll();
-        check(count(trackop::kList) == listNow && model.IsStale(TrackPart::List), "model: a part nobody looks at is not fetched");
-        model.SetInterest(kTrackAllParts);
-
-        // フィルタ: 変えると一覧を取り直し、追加ページは古い応答を捨てる
+    }
+    {
+        // (g5) 見ていない部分は古くなっても取りに行かない
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        r.model.SetInterest(TrackPartMask(TrackPart::Status));
+        const size_t listNow = r.Count(trackop::kList);
+        FeedJson(*r.s, json{ { "event", "change_recorded" }, { "revisionId", 200 } });
+        r.s->nowMs += 5000;
+        r.session.Poll();
+        check(r.Count(trackop::kList) == listNow && r.model.IsStale(TrackPart::List), "model: a part nobody looks at is not fetched");
+    }
+    {
+        // (g6) フィルタ: 変えると一覧を取り直し、追加ページは古い応答を捨てる
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
         TrackListFilter filter;
         filter.attribution = "ai";
-        model.SetFilter(filter);
+        r.model.SetFilter(filter);
+        r.session.Poll();
+        check(Requests(*r.s, trackop::kList).back()["args"].value("attribution", std::string()) == "ai", "model: the filter is sent with the list request");
+        r.AnswerAll();
+        r.session.Poll();
+        r.model.LoadMore();
+        check(Requests(*r.s, trackop::kList).back()["args"].value("cursor", std::string()) == "8", "model: LoadMore sends the cursor");
+        r.model.SetFilter(TrackListFilter{}); // 追加ページの応答が届く前にフィルタを変える
+        r.AnswerAll();
+        r.session.Poll();
+        check(r.model.Changes().size() == 2, "model: a stale page for the old filter is dropped");
+    }
+    {
+        // (g7) Hunk の本文: describe の後に全ページを取る。行の無い diffMode では取りに行かない。失敗・古い応答
+        ModelRig r;
+        r.describeMode = "lines";
+        r.describeHunks = 1;
+        r.hunkPages = { json::array({ { { "hunkId", 1 }, { "ordinal", 0 }, { "oldStart", 2 }, { "oldCount", 1 }, { "newStart", 2 }, { "newCount", 1 },
+                                        { "beforeText", "a\n" }, { "afterText", "b\n" }, { "contextPre", "x\n" }, { "contextPost", "" }, { "eolOnly", false } } }),
+                        json::array({ { { "hunkId", 2 }, { "ordinal", 1 }, { "oldStart", 9 }, { "oldCount", 2 }, { "newStart", 9 }, { "newCount", 2 }, { "oversize", true },
+                                        { "beforeBytes", 900000 }, { "afterBytes", 800000 }, { "eolOnly", false } } }) };
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll(); // describe の応答 → hunks 1 ページ目を要求
+        check(r.Count(trackop::kHunks) == 1 && !r.model.HunksComplete(), "hunks: describe is followed by a hunks request, and the model is not complete yet");
+        r.AnswerAll();
+        r.session.Poll(); // 1 ページ目の応答 → 2 ページ目を要求
+        const std::vector<json> asks = Requests(*r.s, trackop::kHunks);
+        check(asks.size() == 2 && asks[1]["args"].value("cursor", std::string()) == "0", "hunks: the next page is asked with the cursor");
+        r.AnswerAll();
+        r.session.Poll();
+        const std::vector<TrackHunk>& hunks = r.model.Hunks();
+        check(r.model.HunksComplete() && !r.model.HunksFailed() && hunks.size() == 2 && hunks[0].beforeText == "a\n" && hunks[0].contextPre == "x\n"
+                  && !hunks[0].oversize && hunks[1].oversize && hunks[1].beforeBytes == 900000 && hunks[1].beforeText.empty(),
+              "hunks: every page is joined, and an oversize hunk has sizes but no body");
+        const uint64_t serial = r.model.HunksSerial();
+        const std::vector<DiffHunkInput> inputs = ToDiffHunks(hunks);
+        check(inputs.size() == 2 && inputs[0].before == "a\n" && inputs[1].oversize && inputs[1].afterBytes == 800000, "hunks: the model's hunks convert to DiffView input");
+        r.model.SelectRevision(8);
+        check(r.model.Hunks().empty() && !r.model.HunksComplete() && r.model.HunksSerial() != serial, "hunks: selecting another revision clears the hunks");
+    }
+    {
+        ModelRig r;
+        r.describeMode = "binary";
+        r.describeHunks = 0;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        check(r.Count(trackop::kHunks) == 0 && r.model.HunksComplete() && r.model.Hunks().empty(), "hunks: a binary change asks for no hunks");
+    }
+    {
+        ModelRig r;
+        r.describeMode = "lines";
+        r.describeHunks = 1;
+        r.failHunks = true;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        check(r.model.HunksFailed() && !r.model.HunksComplete() && r.model.Detail().is_object(), "hunks: a failed page marks the hunks failed; describe stays shown");
+    }
+    {
+        // 選び直したあとに届いた古い Hunk のページは捨てる
+        ModelRig r;
+        r.describeMode = "lines";
+        r.describeHunks = 1;
+        r.hunkPages = { json::array({ { { "hunkId", 1 }, { "ordinal", 0 }, { "oldStart", 1 }, { "oldCount", 1 }, { "newStart", 1 }, { "newCount", 1 },
+                                        { "beforeText", "old\n" }, { "afterText", "new\n" }, { "contextPre", "" }, { "contextPost", "" }, { "eolOnly", false } } }) };
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll(); // describe の応答 → hunks を要求 (まだ答えない)
+        r.model.SelectRevision(99);
+        r.AnswerAll();
+        r.session.Poll();
+        check(r.model.Hunks().empty() && !r.model.HunksComplete(), "hunks: a page for a revision that is no longer selected is dropped");
+    }
+
+    // ---- (g8) 窓: 閉じている間は何も取りに行かず、開くと取りに行く。無効の間は窓を開いても I/O の口を呼ばない ----
+    {
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        AiChangesWindow window;
+        window.open = false;
+        window.SyncInterest(r.model, r.session.State());
+        FeedJson(*r.s, json{ { "event", "change_recorded" }, { "revisionId", 300 } });
+        r.s->nowMs += 5000;
+        const size_t statusNow = r.Count(trackop::kStatus);
+        const size_t listNow = r.Count(trackop::kList);
+        const size_t sessionsNow = r.Count(trackop::kSessions);
+        r.session.Poll();
+        check(r.Count(trackop::kList) == listNow && r.Count(trackop::kStatus) == statusNow && r.Count(trackop::kSessions) == sessionsNow
+                  && r.model.IsStale(TrackPart::List),
+              "window: while closed, the model fetches nothing (SetInterest(0)) although notifications mark parts stale");
+        window.open = true;
+        window.SyncInterest(r.model, r.session.State());
+        r.session.Poll();
+        check(r.Count(trackop::kList) == listNow + 1, "window: opening it makes the model fetch what is stale");
+        window.open = false;
+        window.SyncInterest(r.model, r.session.State());
+        check(!window.open, "window: it is closed by default");
+        AiChangesWindow fresh;
+        check(!fresh.open, "window: a new window starts closed");
+    }
+    {
+        // 窓を実際に描く (ヘッドレスの 1 フレーム): データのある状態で落ちず、Hunk が DiffViewer へ渡る。使えない状態の帯も描く
+        ModelRig r;
+        r.describeMode = "lines";
+        r.describeHunks = 1;
+        r.hunkPages = { json::array({ { { "hunkId", 1 }, { "ordinal", 0 }, { "oldStart", 2 }, { "oldCount", 1 }, { "newStart", 2 }, { "newCount", 1 },
+                                        { "beforeText", "a\n" }, { "afterText", "b\n" }, { "contextPre", "x\n" }, { "contextPost", "y\n" }, { "eolOnly", false } } }) };
+        for (int i = 0; i < 4; ++i) {
+            r.session.Poll();
+            r.AnswerAll();
+        }
+        r.session.Poll();
+        AiChangesWindow window;
+        window.open = true;
+        AiChangesHost host;
+        host.allowTracking = true;
+        host.enabled = true;
+        host.projectRoot = L"C:\\mye_track_selftest\\proj";
+        int draws = 0;
+        for (int frame = 0; frame < 3; ++frame) {
+            WithHeadlessImGuiFrame([&] {
+                window.OnImGui(r.session, host);
+                ++draws;
+            });
+        }
+        check(draws == 3 && r.model.HunksComplete() && window.GetDiffViewer().Rows().HunkCount() == 1 && window.GetDiffViewer().Rows().InlineRows().size() == 5,
+              "window: a headless frame draws it with data, and the diff viewer received the model's hunk (header, context, -, +, context)");
+        for (const TrackState state : { TrackState::Disabled, TrackState::NoProject, TrackState::Connecting, TrackState::NoService, TrackState::ProtoMismatch,
+                                        TrackState::WrongProject, TrackState::DbDegraded, TrackState::Disconnected }) {
+            AiChangesWindow other;
+            other.open = true;
+            ChangeTrackingSession idle;
+            idle.Client().SetIdle(state);
+            host.allowTracking = state != TrackState::Disabled;
+            WithHeadlessImGuiFrame([&] { other.OnImGui(idle, host); });
+        }
+        check(true, "window: every connection state (off / no project / connecting / no service / mismatch / wrong project / db / lost) draws without a model");
+    }
+    {
+        // 無効の間は、窓を開いても I/O の口を 1 回も呼ばない (時計も)
+        auto s = std::make_shared<FakeState>();
+        ChangeTrackingSession disabled;
+        disabled.StartWithIo(std::make_unique<FakeIo>(s), kRoot, false);
+        AiChangesWindow window;
+        window.open = true;
+        for (int i = 0; i < 10; ++i) {
+            s->nowMs += 10000;
+            window.SyncInterest(disabled.Model(), disabled.State());
+            disabled.Poll();
+        }
+        check(disabled.State() == TrackState::Disabled && s->c.Total() == 0 && s->c.now == 0,
+              "window: with tracking off, an open window never touches the I/O (pipe / service.json / launch / clock)");
+    }
+
+    // ---- (g9) 設定の切り替え: 有効にすると Start し直されて接続へ進み、無効にすると接続が閉じる (shutdown は送らない) ----
+    {
+        auto s = std::make_shared<FakeState>();
+        ChangeTrackingSession session;
+        session.StartWithIo(std::make_unique<FakeIo>(s), kRoot, false);
+        check(session.State() == TrackState::Disabled && s->c.Total() == 0, "toggle: starts disabled without I/O");
+        session.StartWithIo(std::make_unique<FakeIo>(s), kRoot, true); // 有効にする = Start をやり直す
         session.Poll();
-        const std::vector<json> lists = Requests(*s, trackop::kList);
-        check(lists.back()["args"].value("attribution", std::string()) == "ai", "model: the filter is sent with the list request");
-        answerAll();
+        ReplyHelloOk(*s);
         session.Poll();
-        model.LoadMore();
-        const std::vector<json> more = Requests(*s, trackop::kList);
-        check(more.back()["args"].value("cursor", std::string()) == "8", "model: LoadMore sends the cursor");
-        model.SetFilter(TrackListFilter{}); // 追加ページの応答が届く前にフィルタを変える
-        answerAll();
+        check(session.State() == TrackState::Ready && s->c.openPipe == 1, "toggle: turning it on starts again and reaches Ready");
+        const int closesBefore = s->c.closePipe;
+        session.StartWithIo(std::make_unique<FakeIo>(s), kRoot, false); // 無効にする
+        check(session.State() == TrackState::Disabled && s->c.closePipe > closesBefore && !s->pipeOpen,
+              "toggle: turning it off closes the connection");
+        check(Requests(*s, trackop::kShutdown).empty(), "toggle: turning it off does not send shutdown (the service keeps running)");
+        const int calls = s->c.Total();
+        s->nowMs += 3600 * 1000;
         session.Poll();
-        check(model.Changes().size() == 2, "model: a stale page for the old filter is dropped");
+        check(s->c.Total() == calls, "toggle: after turning it off no I/O happens");
+        session.StartWithIo(std::make_unique<FakeIo>(s), kRoot, true);
+        session.Poll();
+        ReplyHelloOk(*s);
+        session.Poll();
+        check(session.State() == TrackState::Ready && s->c.openPipe == 2 && Requests(*s, trackop::kShutdown).empty(),
+              "toggle: turning it on again reconnects, still without shutdown");
     }
 
     // ---- (h) 無効のときは I/O の口を 1 回も呼ばない ----
@@ -913,6 +1176,9 @@ bool RunChangeTrackingSelfTest()
             SetEnvironmentVariableW(kTrackExeEnvVar, nullptr);
         }
     }
+
+    // ---- (j) AI Changes 窓の文面・節・DiffView (ImGui を回さない部分と、ヘッドレスの 1 フレーム) ----
+    RunChangeViewSelfTests(check);
 
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {

@@ -97,6 +97,7 @@ std::vector<TrackSessionRow> ChangeModel::ParseSessions(const nlohmann::json& re
         row.status = Str(item, "status");
         row.startedAt = Int(item, "startedAt", 0);
         row.endedAt = Int(item, "endedAt", -1);
+        row.changeCount = Int(item, "changeCount", 0);
         rows.push_back(std::move(row));
     }
     return rows;
@@ -124,11 +125,44 @@ std::vector<TrackChangeRow> ChangeModel::ParseChanges(const nlohmann::json& resu
         row.completeness = Str(item, "completeness");
         row.diffMode = Str(item, "diffMode");
         row.review = Str(item, "review");
+        row.changeState = Str(item, "changeState");
         row.observedAt = Int(item, "observedAt", 0);
         row.hunkCount = Int(item, "hunkCount", 0);
         row.beforeSize = Int(item, "beforeSize", -1);
         row.afterSize = Int(item, "afterSize", -1);
         rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+std::vector<TrackHunk> ChangeModel::ParseHunks(const nlohmann::json& result)
+{
+    std::vector<TrackHunk> rows;
+    const nlohmann::json& items = Child(result, "items");
+    if (!items.is_array()) {
+        return rows;
+    }
+    for (const nlohmann::json& item : items) {
+        if (!item.is_object()) {
+            continue;
+        }
+        TrackHunk h;
+        h.hunkId = Int(item, "hunkId", 0);
+        h.ordinal = Int(item, "ordinal", 0);
+        h.oldStart = Int(item, "oldStart", 0);
+        h.oldCount = Int(item, "oldCount", 0);
+        h.newStart = Int(item, "newStart", 0);
+        h.newCount = Int(item, "newCount", 0);
+        h.beforeText = Str(item, "beforeText");
+        h.afterText = Str(item, "afterText");
+        h.contextPre = Str(item, "contextPre");
+        h.contextPost = Str(item, "contextPost");
+        h.eolOnly = Bool(item, "eolOnly");
+        h.oversize = Bool(item, "oversize");
+        h.beforeBytes = Int(item, "beforeBytes", 0);
+        h.afterBytes = Int(item, "afterBytes", 0);
+        h.state = Str(item, "state");
+        rows.push_back(std::move(h));
     }
     return rows;
 }
@@ -199,6 +233,10 @@ void ChangeModel::SelectRevision(int64_t revisionId)
     }
     selected_ = revisionId;
     detail_ = nlohmann::json();
+    hunks_.clear();
+    hunksComplete_ = false;
+    hunksFailed_ = false;
+    ++hunksSerial_;
     if (revisionId != 0) {
         MarkStale(TrackPart::Detail, true);
     } else {
@@ -267,15 +305,61 @@ void ChangeModel::Fetch(TrackPart part, int64_t now)
     case TrackPart::Detail: {
         const int64_t asked = selected_;
         client_->Request(trackop::kDescribe, { { "revisionId", asked } }, [this, asked](const nlohmann::json& response) {
-            part_[Index(TrackPart::Detail)].inFlight = false;
             // 選び直したあとに届いた古い応答は捨てる
-            if (asked == selected_ && IsOk(response)) {
-                detail_ = response["result"];
+            if (asked != selected_ || !IsOk(response)) {
+                part_[Index(TrackPart::Detail)].inFlight = false;
+                return;
+            }
+            detail_ = response["result"];
+            // Hunk の本文は describe の後に取る (行のある変更だけ)。取り終えるまで Detail は取得中のまま
+            const std::string mode = Str(detail_, "diffMode");
+            const bool hasBody = (mode == "lines" || mode == "whole") && detail_.contains("hunks") && detail_["hunks"].is_array()
+                                 && !detail_["hunks"].empty();
+            if (hasBody) {
+                FetchHunks(asked, {}, std::string(), 0);
+            } else {
+                part_[Index(TrackPart::Detail)].inFlight = false;
+                hunks_.clear();
+                hunksComplete_ = true;
+                hunksFailed_ = false;
+                ++hunksSerial_;
             }
         });
         break;
     }
     }
+}
+
+// 1 ページ取って、続きがあれば次を要求する。全部そろうまで Detail は取得中のまま (その間の通知による取り直しは待たせる)
+void ChangeModel::FetchHunks(int64_t revisionId, std::vector<TrackHunk> collected, const std::string& cursor, int page)
+{
+    nlohmann::json args = { { "revisionId", revisionId } };
+    if (!cursor.empty()) {
+        args["cursor"] = cursor;
+    }
+    client_->Request(trackop::kHunks, args, [this, revisionId, page, collected = std::move(collected)](const nlohmann::json& response) mutable {
+        PartState& detail = part_[Index(TrackPart::Detail)];
+        if (revisionId != selected_) {
+            detail.inFlight = false; // 選び直した後の古いページ
+            return;
+        }
+        std::string next;
+        if (IsOk(response)) {
+            std::vector<TrackHunk> rows = ParseHunks(response["result"]);
+            collected.insert(collected.end(), std::make_move_iterator(rows.begin()), std::make_move_iterator(rows.end()));
+            next = Str(response["result"], "nextCursor");
+        }
+        const bool failed = !IsOk(response) || (!next.empty() && page + 1 >= kTrackModelMaxHunkPages);
+        if (!failed && !next.empty() && client_->CanRequest()) {
+            FetchHunks(revisionId, std::move(collected), next, page + 1);
+            return;
+        }
+        detail.inFlight = false;
+        hunks_ = std::move(collected);
+        hunksComplete_ = !failed && next.empty();
+        hunksFailed_ = failed || !next.empty();
+        ++hunksSerial_;
+    });
 }
 
 void ChangeModel::FetchList(bool append)

@@ -3,4 +3,4 @@
 {"mcp":{"isError":false,"body":{"baseCommit":null,"resumed":false,"sessionId":"<UUID>","status":"running","trackingCapabilities":["observed","op_window","before_match","declared_edit_match","time_near","preexisting","overlap","report_hash_match","report_only"]}}}
 {"mcp":{"isError":false,"body":{"coverage":{"baselineScanned":1,"baselineTotal":1,"baselining":false,"phase":"watching","unrecorded":false},"items":[],"limit":50,"nextCursor":null}}}
 {"mcp":{"isError":false,"body":{"changeCount":0,"sessionId":"<UUID>","status":"finished"}}}
-{"id":3,"ok":true,"result":{"items":[{"baseCommit":null,"clientSessionId":"mcp-attach","endedAt":<N>,"provider":"codex","sessionId":"<UUID>","source":"mcp","startedAt":<N>,"status":"finished","workspace":"<ROOT>"}],"limit":50,"nextCursor":null}}
+{"id":3,"ok":true,"result":{"items":[{"baseCommit":null,"changeCount":0,"clientSessionId":"mcp-attach","endedAt":<N>,"provider":"codex","sessionId":"<UUID>","source":"mcp","startedAt":<N>,"status":"finished","workspace":"<ROOT>"}],"limit":50,"nextCursor":null}}

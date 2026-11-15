@@ -4,7 +4,7 @@
 - 状態: 未着手
 - 往復: 0
 - 順序: sub-10 → **sub-23** → sub-11 (番号は末尾。sub-09 の VERDICT で、sub-10 から分けた)
-- 書き込みの深さ: 骨子 (sub-10 の VERDICT で planner が詳細にする)
+- 書き込みの深さ: **着手可** (2026-11-15、sub-10 の VERDICT で planner が見直した。保存の経路の洗い出しそのものがこのサブの仕事なので、経路の一覧は coder が作る)
 - 質問の運用: 推奨で進め、Notion に後回し。
 
 ## 目的
@@ -22,6 +22,12 @@ Editor の利用者が Editor で保存したファイルが、AI Changes 窓で
    - ハッシュの計算がフレームを止めないこと (大きいファイルは保存そのものが既に同じ量の仕事をしている。二重に読み直さない。書いたバイト列から計算する)。
    - 送れなかった (切断中、時間切れ) 場合は何もしない (その保存が `unknown` / `inferred` に落ちるだけ)。保存を失敗させない・遅らせない。
 3. 非対話起動 (`allowChangeTracking` が偽) と追跡が無効のときは、ハッシュも計算しない。
+
+4. sub-10 の結果 (2026-11-15):
+   - AI Changes 窓の整形は `src\Editor\ChangeTracking\ChangeFormat.h/.cpp` にある。行為者が `editor_user` のときの文面 (「Editor の利用者」) と、根拠 `editor_saved` の文面が既にあるかを確かめ、無ければ足す (英日)。
+   - 「セッションなし (不明 / 推定)」の項目を、読み込み済みの行からではなく、`list` の `attribution` フィルタ (unknown / inferred) で取るように直す (sub-10 の nit)。`editor_user` / `restore` の変更は、既定では AI の変更の節にも不明の節にも出さず、「Editor / 復元による変更」の節 (切り替えで表示) に分ける。
+   - サービスの op を足すときは `protocol.rs` の `IMPLEMENTED_OPS` と `role_allows`、ipc の表を更新する。`schema\v1.sql` は変えない (根拠は `attribution_evidence` に入る)。
+   - スクショは sub-10 と同じ流儀 (一時のプローブ。コミットしない)。撮るのは「Editor の利用者」の変更が出ている一覧の 1 枚。
 
 ## やらないこと (このサブでは)
 

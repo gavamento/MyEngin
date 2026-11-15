@@ -52,9 +52,11 @@
     <ClCompile Include="..\src\Editor\Asset\AssetOps.cpp" />
     <ClCompile Include="..\src\Editor\Asset\AssetOpsSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Asset\AssetPreviewCache.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ChangeFormat.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeModel.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackClient.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackIo.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackLaunch.cpp" />
@@ -115,6 +117,7 @@
     <ClCompile Include="..\src\Editor\Update\UpdateWindowSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\CreateMenu.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\CurveEditorWidget.cpp" />
+    <ClCompile Include="..\src\Editor\Widgets\DiffView.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorComponentCatalog.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorToolbar.cpp" />
     <ClCompile Include="..\src\Editor\Widgets\EditorWidgets.cpp" />
@@ -139,6 +142,7 @@
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindowTabs.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\AiChangesWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
@@ -175,6 +179,7 @@
     <ClInclude Include="..\src\Editor\Asset\AssetOps.h" />
     <ClInclude Include="..\src\Editor\Asset\AssetOpsSelfTest.h" />
     <ClInclude Include="..\src\Editor\Asset\AssetPreviewCache.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\ChangeFormat.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeModel.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h" />
@@ -241,6 +246,7 @@
     <ClInclude Include="..\src\Editor\Update\UpdateWindowSelfTest.h" />
     <ClInclude Include="..\src\Editor\Widgets\CreateMenu.h" />
     <ClInclude Include="..\src\Editor\Widgets\CurveEditorWidget.h" />
+    <ClInclude Include="..\src\Editor\Widgets\DiffView.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorComponentCatalog.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorToolbar.h" />
     <ClInclude Include="..\src\Editor\Widgets\EditorWidgets.h" />
@@ -265,6 +271,7 @@
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWidgets.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\TimelineWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\AiChangesWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />

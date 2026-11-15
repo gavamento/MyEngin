@@ -21,6 +21,8 @@ inline constexpr const char* kSubscribe = "subscribe";
 inline constexpr const char* kList = "list";
 inline constexpr const char* kDescribe = "describe";
 inline constexpr const char* kSessions = "sessions";
+inline constexpr const char* kHunks = "hunks";
+inline constexpr const char* kBlobGet = "blob_get";
 inline constexpr const char* kShutdown = "shutdown";
 } // namespace trackop
 

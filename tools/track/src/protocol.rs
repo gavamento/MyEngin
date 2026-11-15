@@ -44,8 +44,8 @@ impl Role {
 
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
-    "hello", "status", "list", "describe", "sessions", "shutdown", "subscribe", "session_begin", "session_end", "op_begin", "op_end",
-    "report",
+    "hello", "status", "list", "describe", "sessions", "hunks", "blob_get", "shutdown", "subscribe", "session_begin", "session_end",
+    "op_begin", "op_end", "report",
 ];
 
 /// `subscribe` で選べる通知の名前 (ipc-contract.md §4.5)。`resync` は購読に関わらず必ず届くので、ここには入れない。
@@ -57,6 +57,8 @@ pub fn role_allows(role: Role, op: &str) -> bool {
     match op {
         "status" => true,
         "list" | "describe" | "sessions" => matches!(role, Role::Mcp | Role::Editor),
+        // Hunk の本文と Blob の中身は Editor の表示のためのもの (MCP・フックへ本文を渡さない)
+        "hunks" | "blob_get" => role == Role::Editor,
         // サービスの終了は Editor だけ (MCP・フックが他の利用者のサービスを止めない)
         "shutdown" => role == Role::Editor,
         // 通知は Editor の窓のためのもの。MCP・フックは要求ごとに繋ぐので購読しない
@@ -79,6 +81,7 @@ pub mod code {
     pub const UNKNOWN_OP: &str = "unknown_op";
     pub const BAD_ARGS: &str = "bad_args";
     pub const NOT_FOUND: &str = "not_found";
+    pub const BLOB_MISSING: &str = "blob_missing";
     pub const TOO_LARGE: &str = "too_large";
     pub const BUSY: &str = "busy";
     pub const DB_DEGRADED: &str = "db_degraded";
@@ -279,5 +282,9 @@ mod tests {
         assert!(role_allows(Role::Editor, "subscribe"));
         assert!(!role_allows(Role::Mcp, "subscribe"));
         assert!(!role_allows(Role::Hook, "subscribe"));
+        assert!(role_allows(Role::Editor, "hunks") && role_allows(Role::Editor, "blob_get"));
+        for op in ["hunks", "blob_get"] {
+            assert!(!role_allows(Role::Mcp, op) && !role_allows(Role::Hook, op));
+        }
     }
 }

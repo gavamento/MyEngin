@@ -1,0 +1,27 @@
+# hunks と blob_get: editor は Hunk の本文と Blob の中身を引ける。欠けた Blob は blob_missing、64 桁の 16 進でない hash は bad_args、mcp / hook は forbidden
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.txt hello\nworld\n
+# wait-recorded 1
+# write a.txt hello\nthere\nworld\n
+# wait-recorded 2
+{"id":2,"op":"hunks","args":{"revisionId":1}}
+{"id":3,"op":"hunks","args":{"revisionId":2}}
+{"id":4,"op":"hunks","args":{"revisionId":2,"cursor":"0"}}
+{"id":5,"op":"hunks","args":{"revisionId":99}}
+{"id":6,"op":"hunks","args":{"revisionId":2,"cursor":"x"}}
+{"id":7,"op":"blob_get","args":{"hash":"51a040135768de4578713429fa2a1b997f4e999c9145d44d169364e2e9f42855"}}
+{"id":8,"op":"blob_get","args":{"hash":"51a040135768de4578713429fa2a1b997f4e999c9145d44d169364e2e9f42855","offset":6,"length":5}}
+{"id":9,"op":"blob_get","args":{"hash":"51a040135768de4578713429fa2a1b997f4e999c9145d44d169364e2e9f42855","offset":100}}
+{"id":10,"op":"blob_get","args":{"hash":"0000000000000000000000000000000000000000000000000000000000000000"}}
+{"id":11,"op":"blob_get","args":{"hash":"../../tracking.db"}}
+{"id":12,"op":"blob_get","args":{"hash":"51A040135768DE4578713429FA2A1B997F4E999C9145D44D169364E2E9F42855"}}
+{"id":13,"op":"blob_get","args":{"hash":"51a040135768de4578713429fa2a1b997f4e999c9145d44d169364e2e9f42855","length":0}}
+{"id":14,"op":"blob_get","args":{}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"hunks","args":{"revisionId":2}}
+{"id":3,"op":"blob_get","args":{"hash":"51a040135768de4578713429fa2a1b997f4e999c9145d44d169364e2e9f42855"}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"hunks","args":{"revisionId":2}}
+{"id":3,"op":"blob_get","args":{"hash":"51a040135768de4578713429fa2a1b997f4e999c9145d44d169364e2e9f42855"}}

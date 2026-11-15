@@ -37,6 +37,7 @@
 #include "Editor/Windows/Debug/TimelineWindow.h"
 #include "Editor/Windows/Project/ProjectSettingsWindow.h"
 #include "Editor/Windows/Scene/SceneViewWindow.h"
+#include "Editor/Windows/Project/AiChangesWindow.h"
 #include "Editor/Windows/Project/SourceControlWindow.h"
 #include "Editor/Windows/Asset/SearchWindow.h"
 #include "Editor/Windows/Audio/AudioMixerWindow.h"
@@ -194,6 +195,7 @@ private:
     SourceControlWindow sourceControl_;
     // M104j: AI Change Tracking。窓 (M104k) と独立に生きる。設定が無効なら何も起動しない
     ChangeTrackingSession changeTracking_;
+    AiChangesWindow aiChanges_; // M104k (既定は閉じている)
     // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
     GitTransaction gitTx_;
     // M66e: Asset Browser の [Rebuild Scripts] で起動した子プロセス (void* = HANDLE)。

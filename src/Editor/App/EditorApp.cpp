@@ -118,6 +118,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Network", &net_.open },
                     { "Source Control", &sourceControl_.open },
                     { "Diff", &sourceControl_.diffOpen },
+                    { "AI Changes", &aiChanges_.open },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -1020,6 +1021,26 @@ void EditorApp::OnImGui(EngineContext& ctx)
         };
         sourceControl_.OnImGui(scm_, scmHost);
     }
+    {
+        // M104k: AI Changes 窓。設定の切り替えは保存して Start し直す (無効にしてもサービスは止めず、接続を閉じるだけ)
+        AiChangesHost host;
+        host.allowTracking = allowChangeTracking;
+        host.enabled = settings_.changeTrackingEnabled;
+        host.projectRoot = ctx.projectRoot;
+        host.setEnabled = [this, &ctx](bool enabled) {
+            settings_.changeTrackingEnabled = enabled;
+            settings_.Save();
+            changeTracking_.Start(GetExecutableDir(), ctx.projectRoot, allowChangeTracking && enabled);
+        };
+        host.openFile = [this, &ctx](const std::wstring& absPath, int line) {
+            OpenScriptInIde(ctx, settings_.externalEditorCmd, vsLauncher_, absPath, line);
+        };
+        host.showInExplorer = [](const std::wstring& absPath) {
+            const std::wstring args = L"/select,\"" + absPath + L"\"";
+            ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+        };
+        aiChanges_.OnImGui(changeTracking_, host);
+    }
     if (sourceControl_.TakeAdoptCanonicalRoot()) {
         const bool adopted = scm_.AdoptCanonicalRoot();
         toasts_.Notify(adopted ? LogLevel::Info : LogLevel::Error,
@@ -1710,6 +1731,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
         ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
         ImGui::MenuItem(Tr(StrId::Win_Diff), nullptr, &sourceControl_.diffOpen);
+        ImGui::MenuItem(Tr(StrId::Win_AiChanges), nullptr, &aiChanges_.open);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
@@ -2109,6 +2131,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow("Animator", bottom);
     ImGui::DockBuilderDockWindow("Behavior Tree", center); // 広いキャンバスが要るので中央 (閉じている間はタブを作らない)
+    ImGui::DockBuilderDockWindow("AiChanges", center);     // 3 列 + 差分で横に広いので中央。既定は閉じている (ウィンドウ ID は ### の右辺)
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);
     // ★束の既定タブを明示する。ImGui は「最後に足されたタブ」を選ぶので、

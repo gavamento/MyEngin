@@ -41,6 +41,7 @@ struct TrackSessionRow {
     std::string status; // running / finished / interrupted
     int64_t startedAt = 0;
     int64_t endedAt = -1; // -1 = 終わっていない
+    int64_t changeCount = 0; // そのセッションが候補に入っている変更の数
 };
 
 struct TrackChangeRow {
@@ -54,10 +55,30 @@ struct TrackChangeRow {
     std::string completeness;
     std::string diffMode;
     std::string review;
+    std::string changeState; // active / superseded / ...
     int64_t observedAt = 0;
     int64_t hunkCount = 0;
     int64_t beforeSize = -1; // -1 = 無い
     int64_t afterSize = -1;
+};
+
+// hunks の 1 件 (本文つき)。oversize のときは本文が空で、大きさだけが入る
+struct TrackHunk {
+    int64_t hunkId = 0;
+    int64_t ordinal = 0;
+    int64_t oldStart = 0;
+    int64_t oldCount = 0;
+    int64_t newStart = 0;
+    int64_t newCount = 0;
+    std::string beforeText;
+    std::string afterText;
+    std::string contextPre;
+    std::string contextPost;
+    bool eolOnly = false;
+    bool oversize = false;
+    int64_t beforeBytes = 0;
+    int64_t afterBytes = 0;
+    std::string state; // active / restored / conflicted
 };
 
 struct TrackListFilter {
@@ -78,6 +99,8 @@ constexpr uint32_t kTrackAllParts = 15;
 constexpr int64_t kTrackModelMinRefetchMs = 500;
 // 一覧・セッション 1 ページの件数 (サービスの既定と同じ)
 constexpr int kTrackModelPageSize = 50;
+// 1 つの Revision の Hunk を取るページ数の上限 (サービスは 1 ページ約 768 KiB まで返す。取り終わらない暴走を止める)
+constexpr int kTrackModelMaxHunkPages = 64;
 
 // 追跡サービスから取った内容の保持 (表示用)。要求は TrackClient 経由で、応答はこのクラスが解釈する
 class ChangeModel {
@@ -118,6 +141,13 @@ public:
     int64_t SelectedRevision() const { return selected_; }
     // describe の結果 (null = まだ無い)
     const nlohmann::json& Detail() const { return detail_; }
+    // 選んだ Revision の Hunk (本文つき)。describe の後に全ページを取る。HunksComplete が偽の間は途中
+    const std::vector<TrackHunk>& Hunks() const { return hunks_; }
+    bool HunksComplete() const { return hunksComplete_; }
+    // hunks の取得が失敗した (Hunk の本文だけ見えない。describe の内容は見える)
+    bool HunksFailed() const { return hunksFailed_; }
+    // Hunk の入れ替えのたびに増える。DiffView の入力を作り直す合図
+    uint64_t HunksSerial() const { return hunksSerial_; }
 
     // 試験用: その部分を取りに行った回数と、古い印
     int FetchCount(TrackPart part) const { return part_[Index(part)].fetches; }
@@ -127,6 +157,7 @@ public:
     static TrackStatusInfo ParseStatus(const nlohmann::json& result);
     static std::vector<TrackSessionRow> ParseSessions(const nlohmann::json& result);
     static std::vector<TrackChangeRow> ParseChanges(const nlohmann::json& result);
+    static std::vector<TrackHunk> ParseHunks(const nlohmann::json& result);
 
 private:
     struct PartState {
@@ -140,6 +171,7 @@ private:
     void MarkStale(TrackPart part, bool force = false);
     void Fetch(TrackPart part, int64_t now);
     void FetchList(bool append);
+    void FetchHunks(int64_t revisionId, std::vector<TrackHunk> collected, const std::string& cursor, int page);
 
     TrackClient* client_ = nullptr;
     uint32_t interest_ = 0;
@@ -155,6 +187,10 @@ private:
     TrackListFilter filter_;
     int64_t selected_ = 0;
     nlohmann::json detail_;
+    std::vector<TrackHunk> hunks_;
+    bool hunksComplete_ = false;
+    bool hunksFailed_ = false;
+    uint64_t hunksSerial_ = 0;
 };
 
 } // namespace mye

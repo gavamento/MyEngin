@@ -1,7 +1,11 @@
-//! 取得の op (`list` / `describe` / `sessions`) と、`status` の DB から読む部分 (ipc-contract.md §4)。
+//! 取得の op (`list` / `describe` / `sessions` / `hunks`) と、`status` の DB から読む部分 (ipc-contract.md §4)。
+//! `blob_get` は Blob のファイルを読む (DB は引かない)。
 //!
 //! 読み取り専用の接続で引く。Writer のキューを通らないので、ベースラインの最中も答えられる。
-//! 結果の JSON は camelCase。Blob と Hunk の本文は返さない (本文は `hunks` / `blob_get`、後続のサブ)。
+//! 結果の JSON は camelCase。`list` / `describe` は Blob と Hunk の本文を返さない (本文は `hunks` / `blob_get`)。
+
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
@@ -290,8 +294,10 @@ pub fn sessions(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         .map_err(internal)?;
     let rows = stmt
         .query_map(params![cursor_at, cursor_id, limit + 1], |r| {
+            let session_id: String = r.get(0)?;
             Ok(json!({
-                "sessionId": r.get::<_, String>(0)?,
+                "changeCount": crate::session::change_count(conn, &session_id)?,
+                "sessionId": session_id,
                 "provider": r.get::<_, String>(1)?,
                 "source": r.get::<_, String>(2)?,
                 "clientSessionId": r.get::<_, Option<String>>(3)?,
@@ -311,6 +317,162 @@ pub fn sessions(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         None
     };
     Ok(json!({ "items": items, "nextCursor": next_cursor, "limit": limit }))
+}
+
+/// `hunks` の 1 ページに入れる Hunk の JSON の合計の上限 (バイト)。1 行の上限 (1 MiB) に、他の項目と余裕を残す値。
+pub const HUNKS_PAGE_BUDGET: usize = 768 * 1024;
+
+/// `blob_get` の 1 回の最大。
+pub const BLOB_GET_MAX_LENGTH: i64 = 512 * 1024;
+
+/// 1 つの Revision の Hunk を、本文つきでページ送りして返す。`cursor` は直前のページの最後の `ordinal`。
+///
+/// 1 ページは Hunk の JSON の合計が `HUNKS_PAGE_BUDGET` 以内。1 つだけで収まらない Hunk は本文を入れず
+/// `oversize: true` と `beforeBytes` / `afterBytes` だけを返す (本文は `blob_get` で原本から取る)。
+pub fn hunks(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
+    let revision_id = args.required_int("revisionId")?;
+    let cursor = args.string("cursor")?;
+    args.finish()?;
+    let after_ordinal = match &cursor {
+        None => -1,
+        Some(text) => text.parse::<i64>().map_err(|_| OpError::bad_args("cursor が読めない"))?,
+    };
+    let exists: bool = conn
+        .query_row("SELECT EXISTS (SELECT 1 FROM change_revisions WHERE revision_id = ?1)", [revision_id], |r| r.get(0))
+        .map_err(internal)?;
+    if !exists {
+        return Err(OpError::new(code::NOT_FOUND, format!("revisionId {revision_id} は無い")));
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT hunk_id, ordinal, old_start, old_count, new_start, new_count, before_text, after_text,
+                    context_pre, context_post, eol_only, state
+               FROM change_hunks WHERE revision_id = ?1 AND ordinal > ?2 ORDER BY ordinal",
+        )
+        .map_err(internal)?;
+    let mut rows = stmt.query(params![revision_id, after_ordinal]).map_err(internal)?;
+    let mut items: Vec<Value> = Vec::new();
+    let mut used = 0usize;
+    let mut next_cursor: Option<String> = None;
+    while let Some(r) = rows.next().map_err(internal)? {
+        let ordinal: i64 = r.get(1).map_err(internal)?;
+        let before: String = r.get(6).map_err(internal)?;
+        let after: String = r.get(7).map_err(internal)?;
+        let pre: String = r.get(8).map_err(internal)?;
+        let post: String = r.get(9).map_err(internal)?;
+        let mut item = json!({
+            "hunkId": r.get::<_, i64>(0).map_err(internal)?,
+            "ordinal": ordinal,
+            "oldStart": r.get::<_, i64>(2).map_err(internal)?,
+            "oldCount": r.get::<_, i64>(3).map_err(internal)?,
+            "newStart": r.get::<_, i64>(4).map_err(internal)?,
+            "newCount": r.get::<_, i64>(5).map_err(internal)?,
+            "eolOnly": r.get::<_, i64>(10).map_err(internal)? != 0,
+            "state": r.get::<_, String>(11).map_err(internal)?,
+            "oversize": false,
+        });
+        // JSON の長さは生の長さ以上なので、生の長さで単独でも収まらないと分かれば JSON にしない
+        let mut fits = before.len() + after.len() + pre.len() + post.len() <= HUNKS_PAGE_BUDGET;
+        if fits {
+            item["beforeText"] = json!(before);
+            item["afterText"] = json!(after);
+            item["contextPre"] = json!(pre);
+            item["contextPost"] = json!(post);
+            fits = serde_json::to_string(&item).is_ok_and(|text| text.len() <= HUNKS_PAGE_BUDGET);
+        }
+        if !fits {
+            for key in ["beforeText", "afterText", "contextPre", "contextPost"] {
+                item.as_object_mut().expect("object").remove(key);
+            }
+            item["oversize"] = json!(true);
+            item["beforeBytes"] = json!(before.len());
+            item["afterBytes"] = json!(after.len());
+        }
+        let size = serde_json::to_string(&item).map_or(usize::MAX, |text| text.len());
+        if !items.is_empty() && used + size > HUNKS_PAGE_BUDGET {
+            // 入らない。次のページは直前に入れた Hunk の次から
+            next_cursor = items.last().and_then(|v| v["ordinal"].as_i64()).map(|n| n.to_string());
+            break;
+        }
+        used += size;
+        items.push(item);
+    }
+    Ok(json!({ "items": items, "nextCursor": next_cursor }))
+}
+
+/// 16 進 64 桁 (SHA-256、小文字) か。Blob のパスへ変換するので、これ以外の文字列は通さない。
+fn is_blob_hash(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Blob の中身の一部。`hash` は 64 桁の 16 進 (小文字) だけ。`length` は最大 512 KiB。結果は base64 の `data` と総サイズ。
+/// 範囲読みなので中身とハッシュの照合はしない (書き込み時の検証と起動時の確認で済んでいる)。
+pub fn blob_get(blobs_dir: &Path, mut args: Args) -> Result<Value, OpError> {
+    let hash = args.required_string("hash")?;
+    let offset = args.int("offset")?.unwrap_or(0);
+    let length = args.int("length")?.unwrap_or(BLOB_GET_MAX_LENGTH);
+    args.finish()?;
+    if !is_blob_hash(&hash) {
+        return Err(OpError::bad_args("hash は 64 桁の 16 進 (小文字)"));
+    }
+    if offset < 0 {
+        return Err(OpError::bad_args("offset は 0 以上"));
+    }
+    if length < 1 {
+        return Err(OpError::bad_args("length は 1 以上"));
+    }
+    let length = length.min(BLOB_GET_MAX_LENGTH) as u64;
+    let path = blobs_dir.join(&hash[..2]).join(&hash[2..]);
+    let missing = || OpError::new(code::BLOB_MISSING, "Blob が無い (除外された・回収された)");
+    let mut file = std::fs::File::open(&path).map_err(|_| missing())?;
+    let total = file.metadata().map_err(|_| missing())?.len();
+    let offset = offset as u64;
+    let mut bytes = Vec::new();
+    if offset < total {
+        file.seek(SeekFrom::Start(offset)).map_err(|_| missing())?;
+        file.take(length).read_to_end(&mut bytes).map_err(|_| missing())?;
+    }
+    Ok(json!({ "data": base64_encode(&bytes), "size": total, "offset": offset, "length": bytes.len() }))
+}
+
+/// 標準の base64 (パディングあり)。
+pub fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16) | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8) | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_matches_the_rfc_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64_encode(&[0xff, 0xfe, 0xfd]), "//79");
+    }
+
+    #[test]
+    fn blob_hash_must_be_64_lowercase_hex() {
+        assert!(is_blob_hash(&"a".repeat(64)));
+        assert!(!is_blob_hash(&"a".repeat(63)));
+        assert!(!is_blob_hash(&"A".repeat(64)));
+        assert!(!is_blob_hash(&format!("..\\{}", "a".repeat(62))));
+        assert!(!is_blob_hash(&format!("{}/", "a".repeat(63))));
+    }
 }
 
 /// `status` が DB から引く部分: Blob の総量と、欠落区間。

@@ -3034,3 +3034,162 @@ MYE_STR(Insp_IkLimbFootL,     "left foot",             "左足")
 MYE_STR(Insp_IkLimbFootR,     "right foot",            "右足")
 MYE_STR(Insp_IkLimbMissing,   "Not found by joint name: %s (pick the end joint by hand).",
                               "骨名から見つからない手足: %s (先端ジョイントを手で選んでください)")
+
+// ---- AI Changes 窓 と DiffView (M104k) ----
+// 数や名前を文の途中へ差し込む文面は持たない (変換指定子なし)。「ラベル: 値」の形で、値はコードが足す
+MYE_STR(Win_AiChanges,        "AI Changes###AiChanges",                "AI の変更###AiChanges")
+MYE_STR(DiffView_EolOnly,     "line-ending change only",               "改行だけの変更")
+MYE_STR(DiffView_Oversize,    "Too large to show here",                "大きすぎてここでは表示できない")
+MYE_STR(AiChg_StateDisabled,  "Change tracking is off. Turn it on below to record changes to this project's files.",
+                              "変更の追跡は無効です。下のチェックを入れると、このプロジェクトのファイルの変更を記録します。")
+MYE_STR(AiChg_StateNoProject, "Open a project to track its changes.", "プロジェクトを開くと変更を追跡できます。")
+MYE_STR(AiChg_StateNonInteractive, "Tracking does not run in automated launches (self-test, screenshot, replay).",
+                              "自動実行の起動 (自己テスト・スクリーンショット・リプレイ) では追跡しません。")
+MYE_STR(AiChg_StateConnecting, "Connecting to the tracking service...", "追跡サービスへ接続しています...")
+MYE_STR(AiChg_StateReady,     "Tracking is running.",                  "追跡中です。")
+MYE_STR(AiChg_StateNoService, "mye_track.exe was not found next to the editor. Build it with tools\\build_track.bat, then toggle tracking off and on to search again.",
+                              "エディタの隣に mye_track.exe が見つかりません。tools\\build_track.bat で作ったあと、追跡を一度切って入れ直すと探し直します。")
+MYE_STR(AiChg_StateProtoMismatch, "The running service speaks a different protocol version. End mye_track.exe and toggle tracking off and on.",
+                              "動いているサービスのプロトコルの版が違います。mye_track.exe を終了して、追跡を切って入れ直してください。")
+MYE_STR(AiChg_StateWrongProject, "The service that answered belongs to another project.",
+                              "応答したサービスは別のプロジェクトのものです。")
+MYE_STR(AiChg_StateDbDegraded, "The service cannot write its database, so recording is paused. Reason",
+                              "サービスがデータベースへ書けないため、記録が止まっています。理由")
+MYE_STR(AiChg_StateDisconnected, "Lost the connection to the service. Reconnecting...",
+                              "サービスとの接続が切れました。再接続しています...")
+MYE_STR(AiChg_StatBaseline,   "Baseline scan",                         "最初の走査")
+MYE_STR(AiChg_StatBaselineDone, "done",                                "完了")
+MYE_STR(AiChg_StatFiles,      "files",                                 "ファイル")
+MYE_STR(AiChg_StatTracked,    "Tracked files",                         "追跡中のファイル")
+MYE_STR(AiChg_StatBlobs,      "Stored content",                        "保存した内容")
+MYE_STR(AiChg_StatBlobCount,  "copies",                                "件")
+MYE_STR(AiChg_StatGaps,       "Gaps in coverage",                      "取りこぼしの区間")
+MYE_STR(AiChg_StatWatchFallback, "Watching the whole project as one root (finer watches were dropped).",
+                              "監視をプロジェクト全体の 1 本へ戻しています (細かい監視を外しました)。")
+MYE_STR(AiChg_Enable,         "Track changes in this project",         "このプロジェクトの変更を追跡する")
+MYE_STR(AiChg_EnableNote,     "Turning this off only closes the editor's connection; the service keeps running and recording.",
+                              "切っても、エディタの接続を閉じるだけです。サービスは止まらず、記録を続けます。")
+MYE_STR(AiChg_NonInteractiveNote, "This launch cannot track changes, so the switch has no effect.",
+                              "この起動では追跡できないため、切り替えは効きません。")
+MYE_STR(AiChg_ConfirmTitle,   "Turn on change tracking?###AiChgConfirm", "変更の追跡を有効にしますか?###AiChgConfirm")
+MYE_STR(AiChg_ConfirmBody,    "The first scan copies the contents of the project's files into .mye\\ai_changes\\blobs\\ so changes can be compared and restored later. Large projects need a lot of disk space; the actual total is shown here once tracking is running. A background service (mye_track.exe) keeps recording even after the editor closes.",
+                              "最初の走査で、プロジェクトのファイルの内容を .mye\\ai_changes\\blobs\\ へ複製します (変更の比較と復元のため)。大きいプロジェクトではディスクを多く使います。実際の総量は、追跡が動き出したあとこの窓に出ます。バックグラウンドのサービス (mye_track.exe) は、エディタを閉じても記録を続けます。")
+MYE_STR(AiChg_ConfirmOk,      "Turn on",                               "有効にする")
+MYE_STR(AiChg_Sessions,       "Sessions",                              "セッション")
+MYE_STR(AiChg_AllChanges,     "All changes",                           "すべての変更")
+MYE_STR(AiChg_UncertainScope, "Without a session (unknown / inferred)", "セッションなし (不明 / 推定)")
+MYE_STR(AiChg_SessionChanges, "changes",                               "件の変更")
+MYE_STR(AiChg_SessionRunning, "running",                               "実行中")
+MYE_STR(AiChg_SessionFinished, "finished",                             "終了")
+MYE_STR(AiChg_SessionInterrupted, "interrupted",                       "中断")
+MYE_STR(AiChg_NoSessions,     "No AI sessions yet.",                   "AI のセッションはまだありません。")
+MYE_STR(AiChg_Changes,        "Changes",                               "変更")
+MYE_STR(AiChg_NoChanges,      "No changes recorded yet.",              "記録された変更はまだありません。")
+MYE_STR(AiChg_ListIncomplete, "The first scan is still running, so this list may be incomplete.",
+                              "最初の走査の最中なので、この一覧は不完全かもしれません。")
+MYE_STR(AiChg_LoadMore,       "Load more",                             "続きを読み込む")
+MYE_STR(AiChg_SectionMain,    "AI changes (verified / claimed)",       "AI の変更 (検証済み / 申告あり)")
+MYE_STR(AiChg_SectionUncertain, "Unknown / inferred (author not confirmed)", "不明 / 推定 (書いた主体は未確認)")
+MYE_STR(AiChg_MixSections,    "Mix unknown / inferred into one list",  "不明 / 推定を 1 つの一覧に混ぜる")
+MYE_STR(AiChg_FilterPath,     "Path",                                  "パス")
+MYE_STR(AiChg_FilterKind,     "Kind",                                  "種類")
+MYE_STR(AiChg_FilterAttribution, "Attribution",                        "帰属")
+MYE_STR(AiChg_FilterAny,      "(any)",                                 "(すべて)")
+MYE_STR(AiChg_KindAdded,      "Added",                                 "追加")
+MYE_STR(AiChg_KindModified,   "Modified",                              "変更")
+MYE_STR(AiChg_KindDeleted,    "Deleted",                               "削除")
+MYE_STR(AiChg_KindRenamed,    "Renamed",                               "リネーム")
+MYE_STR(AiChg_AttrVerified,   "Verified",                              "検証済み")
+MYE_STR(AiChg_AttrClaimed,    "Claimed",                               "申告あり")
+MYE_STR(AiChg_AttrInferred,   "Inferred",                              "推定")
+MYE_STR(AiChg_AttrUnknown,    "Unknown",                               "不明")
+MYE_STR(AiChg_AttrVerifiedNote, "The edit the AI tool declared produces exactly the content that was written.",
+                              "AI の道具が宣言した編集の結果が、書かれた内容と一致している。")
+MYE_STR(AiChg_AttrClaimedNote, "The AI (or its tool) reported this change and nothing observed contradicts it.",
+                              "AI (またはその道具) が申告した変更で、観測と矛盾しない。")
+MYE_STR(AiChg_AttrInferredNote, "Nobody reported it; only the timing matches an active AI session.",
+                              "誰も申告していない。時刻が稼働中の AI セッションに近いだけ。")
+MYE_STR(AiChg_AttrUnknownNote, "Nothing ties this change to an AI session or to the editor.",
+                              "この変更を AI のセッションにもエディタにも結び付ける根拠が無い。")
+MYE_STR(AiChg_ActorAi,        "AI",                                    "AI")
+MYE_STR(AiChg_ActorEditor,    "Editor user",                           "エディタの操作")
+MYE_STR(AiChg_ActorRestore,   "Restore",                               "復元")
+MYE_STR(AiChg_ActorUnknown,   "Unknown",                               "不明")
+MYE_STR(AiChg_CompleteLabel,  "Complete",                              "完全")
+MYE_STR(AiChg_CoalescedLabel, "coalesced",                             "まとまった変更")
+MYE_STR(AiChg_GapLabel,       "gap",                                   "取りこぼし")
+MYE_STR(AiChg_NoBeforeLabel,  "no before",                             "変更前なし")
+MYE_STR(AiChg_CoalescedNote,  "Several writes may have happened between the two states shown; the states in between were not recorded.",
+                              "表示している 2 つの状態の間に複数回書かれた可能性がある。途中の状態は記録されていない。")
+MYE_STR(AiChg_GapNote,        "Recorded after a period that was not watched (the service was stopped or the watcher overflowed): it shows only the difference across the gap.",
+                              "監視していなかった間 (サービスの停止・監視のあふれ) の変更を後から拾った。間の経過は分からず、前後の差だけを示す。")
+MYE_STR(AiChg_GapVerifyNote,  "Missed by the watcher and picked up later by the verification scan, so the time it was written is not known.",
+                              "監視が取りこぼし、あとから検証の走査で拾った変更。書かれた時刻は分からない。")
+MYE_STR(AiChg_NoBeforeNote,   "The content before the change was never seen, so there may be nothing to compare with and it cannot be restored.",
+                              "変更前の内容を見ていないため、比較の相手が無いことがあり、元へ戻せない。")
+MYE_STR(AiChg_Superseded,     "superseded",                            "置き換え済み")
+MYE_STR(AiChg_SupersededNote, "A newer change took over this path (it was deleted and recreated, or renamed away).",
+                              "このパスは、より新しい変更に引き継がれている (削除後の再作成、またはリネームで離れた)。")
+MYE_STR(AiChg_Detail,         "Details",                               "詳細")
+MYE_STR(AiChg_SelectRevision, "Select a change to see its details.",   "変更を選ぶと詳細が出ます。")
+MYE_STR(AiChg_Attribution,    "Attribution",                           "帰属")
+MYE_STR(AiChg_Evidence,       "Evidence",                              "根拠")
+MYE_STR(AiChg_NoEvidence,     "(none)",                                "(なし)")
+MYE_STR(AiChg_Candidates,     "Candidate sessions",                    "候補のセッション")
+MYE_STR(AiChg_EvObserved,     "The file watcher saw this change.",     "ファイル監視がこの変更を見た。")
+MYE_STR(AiChg_EvOpWindow,     "It happened while an AI tool operation was running on this path.",
+                              "AI の道具がこのパスを操作している間に起きた。")
+MYE_STR(AiChg_EvBeforeMatch,  "The content before the change equals what the tool read when its operation began.",
+                              "変更前の内容が、道具が操作の開始時に読んだ内容と一致した。")
+MYE_STR(AiChg_EvDeclaredEditMatch, "Applying the edit the tool declared gives exactly the content that was written.",
+                              "道具が宣言した編集を当てた結果が、書かれた内容と一致した。")
+MYE_STR(AiChg_EvReportHashMatch, "The AI's change report names the same before and after content.",
+                              "AI の変更報告の Before / After が、観測した内容と一致した。")
+MYE_STR(AiChg_EvReportOnly,   "The AI reported this change, but it could not be matched to what was observed.",
+                              "AI が変更を報告したが、観測と照合できなかった。")
+MYE_STR(AiChg_EvWorktree,     "It happened inside the dedicated working tree of the session.",
+                              "そのセッション専用の作業ツリーの中で起きた。")
+MYE_STR(AiChg_EvTimeNear,     "It happened close in time to an active AI session (timing only).",
+                              "稼働中の AI セッションの活動に時刻が近かった (時刻だけの推定)。")
+MYE_STR(AiChg_EvEditorSaved,  "The editor reported saving this content.", "エディタがこの内容を保存したと知らせた。")
+MYE_STR(AiChg_EvRestoreExpected, "The editor announced a restore that writes this content.",
+                              "エディタが、この内容を書く復元を予告していた。")
+MYE_STR(AiChg_EvOverlap,      "Operations of different sessions overlapped on this path, so one session cannot be named.",
+                              "別のセッションの操作がこのパスで重なっていて、1 つのセッションに絞れない。")
+MYE_STR(AiChg_EvPreexisting,  "The change was already in the working tree before the session started, or happened while nothing was watching.",
+                              "セッションの開始より前から作業ツリーにあった変更、または監視していない間の変更。")
+MYE_STR(AiChg_EvOther,        "Other evidence",                        "その他の根拠")
+MYE_STR(AiChg_SrcStartupGap,  "Found by the rescan when the service started (it had been stopped).",
+                              "サービスが止まっていた間の変更を、起動時の再走査で見つけた。")
+MYE_STR(AiChg_SrcOverflowGap, "Found by a rescan after the watcher overflowed.",
+                              "監視があふれたあと、再走査で見つけた。")
+MYE_STR(AiChg_SrcVerifyGap,   "Missed by the watcher and picked up later by the verification scan.",
+                              "監視が取りこぼし、あとから検証の走査で拾った。")
+MYE_STR(AiChg_ModeLines,      "line diff",                             "行の差分")
+MYE_STR(AiChg_ModeWhole,      "whole file",                            "ファイル全体")
+MYE_STR(AiChg_ModeBinary,     "binary",                                "バイナリ")
+MYE_STR(AiChg_ModeExcluded,   "excluded",                              "除外")
+MYE_STR(AiChg_ModeUnavailable, "unavailable",                          "取得不可")
+MYE_STR(AiChg_ModeWholeNote,  "The file was too big to diff line by line, so the whole file is shown as one change.",
+                              "大きいため行ごとの差分にできず、ファイル全体を 1 つの変更として示している。")
+MYE_STR(AiChg_ModeBinaryNote, "Binary file: there is no line diff.",   "バイナリのファイルなので、行の差分はありません。")
+MYE_STR(AiChg_ModeExcludedNote, "The file matches a secret-file pattern, so its content was not stored and no diff is shown.",
+                              "秘密情報のパターンに当たるファイルなので、内容を保存しておらず、差分も出せません。")
+MYE_STR(AiChg_ModeUnavailableNote, "The content could not be read, so no diff is available.",
+                              "内容を読めなかったため、差分がありません。")
+MYE_STR(AiChg_BlobMissing,    "The content cannot be shown (its stored copy is missing).",
+                              "内容を表示できません (保存した複製が欠けています)。")
+MYE_STR(AiChg_HunksLoading,   "Loading the diff...",                   "差分を読み込んでいます...")
+MYE_STR(AiChg_HunksFailed,    "Could not load the whole diff.",        "差分を最後まで読み込めませんでした。")
+MYE_STR(AiChg_NoHunks,        "No line changes in this revision.",     "この変更には行の差分がありません。")
+MYE_STR(AiChg_LayoutInline,   "Inline",                                "インライン")
+MYE_STR(AiChg_LayoutSplit,    "Side by side",                          "左右に並べる")
+MYE_STR(AiChg_OpenFile,       "Open file",                             "ファイルを開く")
+MYE_STR(AiChg_ShowInExplorer, "Show in Explorer",                      "エクスプローラーで場所を開く")
+MYE_STR(AiChg_Size,           "Size",                                  "大きさ")
+MYE_STR(AiChg_Observed,       "Observed",                              "観測した時刻")
+MYE_STR(AiChg_Review,         "Review",                                "レビュー")
+MYE_STR(AiChg_ColPath,        "Path",                                  "パス")
+MYE_STR(AiChg_ColKind,        "Kind",                                  "種類")
+MYE_STR(AiChg_ColWho,         "Attribution",                           "帰属")
+MYE_STR(AiChg_ColTime,        "Time",                                  "時刻")

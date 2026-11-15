@@ -134,6 +134,8 @@ struct Context {
     started_at_ms: i64,
     started: Instant,
     db_path: PathBuf,
+    /// Blob の置き場所 (`blob_get` が読む)。
+    blobs_dir: PathBuf,
     /// DB へ書ける状態か (`false` = `db_degraded`。取得の op は `db_degraded` で断る)。
     db_recording: bool,
     db_summary: Value,
@@ -462,6 +464,8 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         }),
         "describe" => with_reader(ctx, conn, |db| ops::describe(db, args)),
         "sessions" => with_reader(ctx, conn, |db| ops::sessions(db, args)),
+        "hunks" => with_reader(ctx, conn, |db| ops::hunks(db, args)),
+        "blob_get" => ops::blob_get(&ctx.blobs_dir, args),
         "shutdown" => args.finish().map(|()| json!({})),
         "subscribe" => subscribe(ctx, conn, args),
         "session_begin" | "session_end" | "op_begin" | "op_end" | "report" => record_op(ctx, conn, role, &request.op, args),
@@ -783,6 +787,7 @@ pub fn run(
         started_at_ms,
         started: Instant::now(),
         db_path: paths.db.clone(),
+        blobs_dir: paths.blobs.clone(),
         db_recording: !degraded,
         db_summary: summarize_startup(&report),
         status: tracker.status_reader(),
