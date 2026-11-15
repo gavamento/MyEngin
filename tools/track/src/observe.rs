@@ -239,7 +239,11 @@ fn apply_one(store: &mut Store, o: Observation, plan: Result<DiffPlan, String>) 
     // 差分を計算できなかった観測は、何も書かずに Err で返す (状態を進めず、欠落として扱う)
     let plan = plan.map_err(|detail| RecordFailure { reason: GAP_WRITE_FAILED, detail })?;
     let excluded = o.after.is_some() && store.blobs.is_excluded(&o.path);
-    let payload = observation_payload(&o, excluded);
+    let mut payload = observation_payload(&o, excluded);
+    // 観測の時点の `.meta` の guid (Diff ワーカーが読んだもの)。作り直しが同じ文書 ID を導けるようイベントへ残す
+    if let Some(guid) = &plan.doc_guid {
+        payload["doc_guid"] = json!(guid);
+    }
     let input = RevisionInput::from_payload(&store.blobs, &payload)
         .ok_or_else(|| RecordFailure { reason: GAP_WRITE_FAILED, detail: "観測の payload を読めない".to_string() })?;
     // 先にジャーナルへ。これが失敗したら観測は無かったことにして呼び出し側へ返す

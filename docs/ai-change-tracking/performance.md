@@ -183,3 +183,16 @@ tools\track\target\release\mye_track.exe bench plan --project .
 
 - このリポジトリ (`bench plan --project .`): **76 本** (非再帰 20、再帰 56)、計画づくり 46 ms。上限は 256 本で、超えたらルートの再帰 1 本へ戻して `status` の `watches.fallback` に出す。
 - 付け替えは、ディレクトリの出入りと `.gitignore` の書き込みで起きる。ディレクトリを大量に作る間は、最短 200 ms 間隔、直近の計画づくりの 8 倍の時間より短くは空けない。
+
+## 9. シーン構造 diff (M104l)
+
+計測の手順 (release。測る前に他のビルドを止める):
+
+```
+cargo test --release --manifest-path tools\track\Cargo.toml --test scene_diff -- --ignored --nocapture --test-threads=1
+```
+
+- 入力: エンティティ 2 万個のシーン (1 エンティティ 2 コンポーネント、1 文書 4.87 MB、Before と After)。1000 個ごとに 1 フィールドを変えた (変更 20 件)。
+- **構造比較 (純粋な関数 `scene_diff::diff`)**: 約 160 ms (162.9 ms、1 回)。字句を保つ読み (2 回分) + `fileId` の対応付け + 比較で、入力の大きさにほぼ比例する (エンティティごとに同じ字句なら比較せず通す)。
+- **Tracker を通した記録** (監視 → Diff ワーカー → Writer): シーンを書いてから Revision が確定するまで約 540 ms (デバウンス 150 ms と書き手の待ちを含む)。同時に書いた小さなファイル (`other.txt`) は同じ約 540 ms で確定した (構造比較は Diff ワーカーの中で、Writer のキューを止めない。Collector は比較が終わるまで次のバッチを渡さないが、2 万個で 0.2 秒未満)。
+- 環境は §2 と同じ (1 回の計測。値は揺れる)。上限 (1 文書 8 MiB、行 diff の合計上限の半分) までの入力でも比例の範囲。

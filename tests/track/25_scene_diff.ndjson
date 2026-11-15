@@ -1,0 +1,24 @@
+# scene_diff と describe の sceneSummary: .meta の guid が documentId になり、構造の変更が (documentId, fileId, component, field, 字句のままの値) で引ける。mcp / hook は scene_diff を呼べない
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.scene.json.meta {"guid":"0123456789abcdef","type":"scene","version":1}
+# wait-recorded 1
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"LocalTransform":{"position":[0.0,1.0,0.0],"scale":[1.0,1.0,1.0]}},"fileId":1,"name":"A"}],"nextFileId":2,"sceneName":"s","version":4}
+# wait-recorded 2
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"LocalTransform":{"position":[0.0,2.50,0.0],"scale":[1.0,1.0,1.0]}},"fileId":1,"name":"B"},{"childIndex":1,"components":{},"fileId":2,"name":"C"}],"nextFileId":3,"sceneName":"s","version":4}
+# wait-recorded 3
+{"id":2,"op":"scene_diff","args":{"revisionId":3}}
+{"id":3,"op":"describe","args":{"revisionId":3}}
+{"id":4,"op":"scene_diff","args":{"revisionId":2}}
+{"id":5,"op":"scene_diff","args":{"revisionId":3,"cursor":"x"}}
+{"id":6,"op":"scene_diff","args":{"revisionId":99}}
+# write a.scene.json {"version":4,"entities":[
+# wait-recorded 4
+{"id":7,"op":"scene_diff","args":{"revisionId":4}}
+{"id":8,"op":"describe","args":{"revisionId":4}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"scene_diff","args":{"revisionId":3}}
+{"id":3,"op":"describe","args":{"revisionId":3}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"scene_diff","args":{"revisionId":3}}

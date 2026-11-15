@@ -3,12 +3,15 @@
 //! 結果は観測と一緒に返し、呼び出し側 (Collector) が Writer へ渡す。ワーカーは DB に触れず、
 //! Blob を読むだけ。計算が panic しても、その観測の Err として返し、ワーカー自体は続ける。
 
+use std::path::{Path, PathBuf};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use crate::blob::BlobStore;
 use crate::diff::DiffLimits;
+use crate::document;
+use crate::scene_diff::DocKind;
 use crate::observe::{observation_payload, Observation};
 use crate::revision::{plan_diff, DiffPlan, RevisionInput};
 
@@ -25,12 +28,12 @@ pub struct DiffWorker {
 }
 
 impl DiffWorker {
-    /// `blobs` は読み取り用 (`BlobStore::reader`)。
-    pub fn spawn(blobs: BlobStore, limits: DiffLimits) -> DiffWorker {
+    /// `blobs` は読み取り用 (`BlobStore::reader`)。`root` は作業ツリー (`.meta` の guid を読む)。
+    pub fn spawn(blobs: BlobStore, limits: DiffLimits, root: PathBuf) -> DiffWorker {
         let (sender, receiver) = channel::<Job>();
         let handle = std::thread::Builder::new()
             .name("mye-track-diff".into())
-            .spawn(move || run(blobs, limits, receiver))
+            .spawn(move || run(blobs, limits, root, receiver))
             .expect("diff worker thread");
         DiffWorker { sender: Some(sender), handle: Some(handle) }
     }
@@ -61,13 +64,13 @@ impl Drop for DiffWorker {
     }
 }
 
-fn run(blobs: BlobStore, limits: DiffLimits, receiver: Receiver<Job>) {
+fn run(blobs: BlobStore, limits: DiffLimits, root: PathBuf, receiver: Receiver<Job>) {
     for job in receiver {
         let plans = job
             .observations
             .iter()
             .map(|o| {
-                catch_unwind(AssertUnwindSafe(|| plan_one(&blobs, &limits, o)))
+                catch_unwind(AssertUnwindSafe(|| plan_one(&blobs, &limits, &root, o)))
                     .unwrap_or_else(|_| Err("差分の計算が panic した".to_string()))
             })
             .collect();
@@ -75,9 +78,21 @@ fn run(blobs: BlobStore, limits: DiffLimits, receiver: Receiver<Job>) {
     }
 }
 
-fn plan_one(blobs: &BlobStore, limits: &DiffLimits, o: &Observation) -> Result<DiffPlan, String> {
+fn plan_one(blobs: &BlobStore, limits: &DiffLimits, root: &Path, o: &Observation) -> Result<DiffPlan, String> {
     let excluded = o.after.is_some() && blobs.is_excluded(&o.path);
     let payload = observation_payload(o, excluded);
     let input = RevisionInput::from_payload(blobs, &payload).ok_or_else(|| "観測の payload を読めない".to_string())?;
-    plan_diff(blobs, &input, o.after.as_ref().map(|a| a.bytes.as_slice()), limits)
+    let mut plan = plan_diff(blobs, &input, o.after.as_ref().map(|a| a.bytes.as_slice()), limits)?;
+    plan.doc_guid = document_guid(root, o);
+    Ok(plan)
+}
+
+/// 観測の時点の guid。scene / prefab / actor は作業ツリーの `.meta` を読む (Editor を経由しない)。
+/// `.meta` 自身の観測は、書かれた内容から読む。削除や、読めない・不正な `.meta` は None。
+fn document_guid(root: &Path, o: &Observation) -> Option<String> {
+    let after = o.after.as_ref()?;
+    if DocKind::from_path(&o.path).is_some() {
+        return document::read_meta_guid(root, &o.path);
+    }
+    document::meta_target(&o.path).and_then(|_| document::parse_guid(&after.bytes))
 }

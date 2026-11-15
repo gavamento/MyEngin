@@ -44,7 +44,7 @@ impl Role {
 
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
-    "hello", "status", "list", "describe", "sessions", "hunks", "blob_get", "shutdown", "subscribe", "session_begin", "session_end",
+    "hello", "status", "list", "describe", "sessions", "hunks", "scene_diff", "blob_get", "shutdown", "subscribe", "session_begin", "session_end",
     "op_begin", "op_end", "report", "editor_saved",
 ];
 
@@ -58,7 +58,7 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         "status" => true,
         "list" | "describe" | "sessions" => matches!(role, Role::Mcp | Role::Editor),
         // Hunk の本文と Blob の中身は Editor の表示のためのもの (MCP・フックへ本文を渡さない)
-        "hunks" | "blob_get" => role == Role::Editor,
+        "hunks" | "scene_diff" | "blob_get" => role == Role::Editor,
         // サービスの終了は Editor だけ (MCP・フックが他の利用者のサービスを止めない)
         "shutdown" => role == Role::Editor,
         // 通知は Editor の窓のためのもの。MCP・フックは要求ごとに繋ぐので購読しない

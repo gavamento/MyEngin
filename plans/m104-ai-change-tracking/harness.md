@@ -20,9 +20,10 @@
 | sub-08 (M104i) フック CLI | OK | 1 | 0c511cac | nit: bad_token 再試行などの試験が MCP / フック側に無い、hook.rs の 8 秒のしきい値は CI で見る。条件 13 (本物のフックの実走) は未確認。Phase 2 の最後。Notion Q-12〜15 |
 | sub-09 (M104j) Editor の pipe クライアント、モデル、規則 19 | OK | 1 | 17caa0ec | 詳細化済み (条件 10 件)。追跡は既定で無効 (planner の推奨、Notion Q-12)。初めて src\Editor を触る |
 | sub-10 (M104k) AI Changes 窓、Diff 表示部品 | OK | 1 | c6b93988 | nit: 「セッションなし」の取り方は sub-23、oversize の表示は sub-15 で対応。未確認: 見た目の目視 (cache/m104k_shots の 5 枚)、手での GUI 操作 (条件 10)。Notion Q-16〜20 |
-| sub-23 (M104k2) Editor の保存をサービスへ知らせる | OK | 0 | (このコミット) | should: 読み直しの穴を狭める確認は sub-12、nit: ipc-contract.md の制御文字は sub-11。DB スキーマ版 2。未確認: 実 Editor での保存 (条件 6)、スクショの目視 (cache/m104k2_shots)。Notion Q-21〜23 |
-| sub-11 (M104l) シーン構造 diff | 実装中 | 0 | | 着手可 (sub-23 の VERDICT で詳細化)。範囲は tools/track だけ |
-| sub-12 (M104m) Hierarchy / Inspector / Scene View の表示 | 未着手 | | | 骨子。着手前にユーザー確認 (未決事項 5) |
+| sub-23 (M104k2) Editor の保存をサービスへ知らせる | OK | 0 | 3f14e59d | should: 読み直しの穴を狭める確認は sub-12、nit: ipc-contract.md の制御文字は sub-11。DB スキーマ版 2。未確認: 実 Editor での保存 (条件 6)、スクショの目視 (cache/m104k2_shots)。Notion Q-21〜23 |
+| sub-11 (M104l) シーン構造 diff | OK | 0 | (このコミット) | DB スキーマ版 3。nit: v1.sql のコメントに BEL (凍結なので直さない)、.meta と本体の観測順の組み合わせ試験は sub-19 の候補。計測は 1 回 (2 万エンティティ 162.9 ms)。Notion Q-24〜27 |
+| sub-12 (M104m) シーンの変更の集約、一覧、Hierarchy のバッジ、選択の同期 | 実装中 | 0 | | 着手可 (sub-11 の VERDICT で詳細化)。sub-23 の持ち越し (大きさと更新時刻の確認) を含む |
+| sub-24 (M104m2) Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | 未着手 | | | 骨子。sub-11 の VERDICT で sub-12 から分割。順序は sub-12 → sub-24 → sub-13 → sub-14 |
 | sub-13 (M104n) 未保存シーンへの外部変更の確認 | 未着手 | | | 骨子。依存 sub-08。着手前にユーザー確認 (未決事項 1) |
 | sub-14 (M104o) レビュー | 未着手 | | | 骨子。依存 sub-12, sub-13。Phase 4 の最後 |
 | sub-15 (M104p) ファイルと Hunk の復元、ジャーナル、回復 | 未着手 | | | 骨子。分割の可能性あり |
@@ -72,4 +73,5 @@
 - planner (2026-11-15、sub-06 の VERDICT round 2): sub-22 (M104g2) を足した。順序は sub-06 → sub-22 → sub-07。`src\` を触らないサブは sub-01〜08、sub-21、sub-22。
 - planner (2026-11-15、sub-08 の VERDICT): Phase 3 を見直した。sub-09 は詳細、sub-10〜13 は骨子 + 追記。planner は sub-09 の VERDICT で sub-10 を、以後は各サブの VERDICT で次のサブを詳細にする。sub-09 から `src\` を触るので、ビルドと `Editor.exe --selftest` が検証に入る。
 - planner (2026-11-15、sub-09 の VERDICT): sub-23 (M104k2) を足した。順序は sub-10 → sub-23 → sub-11。sub-23 は骨子で、sub-10 の VERDICT で詳細にする。
+- planner (2026-11-15、sub-11 の VERDICT): sub-24 (M104m2) を足した。Phase 3 の順序は sub-12 → sub-24 → sub-13、その後 sub-14。sub-24 は骨子で、sub-12 の VERDICT で詳細にする。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

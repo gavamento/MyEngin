@@ -1,7 +1,7 @@
 # sub-11: シーン構造 diff (M104l)
 
 - 依存: sub-23 (順序は sub-10 → sub-23 → sub-11)
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-15、sub-23 の VERDICT で planner が書き直した)
 - 質問の運用: 推奨で進め、Notion に後回し。着手前の確認は無い。
@@ -104,4 +104,61 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-11 (round 1)
+実装:
+  - tools/track/src/lexjson.rs (新規) — 字句を保つ JSON の読み手 (数値は字句、各値にバイト範囲、キー重複は失敗、深さ 200 まで)。(b) の自前を選択。serde_json の feature は変えていない
+  - tools/track/src/scene_diff.rs (新規) — 純粋な構造比較 (11 種のうち PrefabPropagation 以外 + unparsed)。fileId の HashMap で対応付け、同じ字句は比較せず通す
+  - tools/track/src/document.rs (新規) — .meta の guid / パスの仮 ID / 結び付け (引き継ぎ・断絶・リネーム) / resolve
+  - tools/track/src/revision.rs — RevisionInput.doc_guid、DiffPlan.scene / doc_guid、plan_diff が構造比較、write_revision が documents / scene_changes を同じ SAVEPOINT で書く、changes.kind を拡張子で、rebuild_derived が documents / scene_changes も作り直す
+  - tools/track/src/diff_worker.rs / collector.rs / observe.rs — ワーカーが作業ツリーの .meta を読み、payload に doc_guid を残す (作り直しが同じ document_id になる)
+  - tools/track/src/ops.rs / protocol.rs / server.rs — op scene_diff (editor だけ、ページ送り、oversize)、describe の sceneSummary
+  - tools/track/src/notify.rs — change_recorded に documentId (シーン等のときだけ)
+  - tools/track/src/schema/v3.sql, mod.rs — 版 3: documents.successor_id と索引 2 本
+  - tools/track/tests/scene_diff.rs (新規 13 + 計測 2 の ignore)、tests/pipe.rs (scene_diff の結合 1)、tests/storage.rs (索引数 12)、tests/track/25_scene_diff.ndjson (+expected)、tests/track/fixture/ (実シーン・プレハブ・アクターの切り出し)
+  - docs/ai-change-tracking/{ipc-contract,db-schema,architecture,performance}.md、plans/m104-ai-change-tracking.md (進捗表)。ipc-contract.md の制御文字 (TAB と DC3) と、`\n` に化けて途中で改行されていた notify.rs のパスを直した
+仕様との差分:
+  - [追加] DB スキーマ版 3 (documents.successor_id、idx_documents_current_path、idx_scene_changes_revision) — 引き継ぎの表し方として「古い行に引き継ぎ先を書く」を選んだため (履歴の行を書き換えない)。v1/v2.sql は不変
+  - [追加] describe / scene_diff の結果に resolvedDocumentId、describe に sceneSummary (構造の変更が有る Revision だけ。無い Revision の応答は従来のまま) — sub 本文の「要約」と「引き継ぎをたどれる」の具体化
+  - [追加] 種別 unparsed は scene_changes.change_type の 1 行、理由は after_value に JSON 文字列 (推奨どおり、列は足さない)。ルート直下の変化は file_id = component = NULL の FieldModified (推奨どおり、DocumentModified は足さない)。nextFileId は出さない (注記済み)
+  - [追加] 追加 (Before 無し)・削除 (After 無し) の文書は、シーンは構造の変更なし、プレハブ/アクターは PrefabAssetChanged 1 件 — 仕様に無い場合の最小解釈
+  - [追加] HierarchyChanged は parent / childIndex ごとに 1 件 (親付け替えで childIndex も変われば 2 件) — 仕様は「parent か childIndex の変化」で件数の規定が無い
+  - [追加] PrefabAssetChanged は中の変更が 1 件以上のときだけ (空白だけの変更では出さない。受け入れ条件 2 と整合)
+  - [追加] 構造の上限は DiffLimits.max_bytes / 2 (行 diff の合計上限の半分 = 既定 8 MiB)
+  - [追加] 版の扱い: シーンは version 1〜4 (無ければ 1、SceneSerializer の value("version", 1) に合わせた)、プレハブ/アクターは prefab / actor = 1 (どちらのキーでも可、前後でキーが違えば解析不可)
+  - [追加] changes.kind を拡張子で scene / prefab / actor / meta にする (従来は text / binary)。actor は db の列コメントに無かった値
+  - [追加] PrefabOverrideChanged の集合の増減は component / field を分割 (Comp.field → (Comp, field)、+Comp → (Comp, "+"))、値は要素の文字列リテラル
+  - [未実装] Blob が読めない・バイナリ・除外パスの Revision の unparsed 行 (行だけ戻す、の仕様どおり構造の変更も unparsed も無し)
+  - [逸脱] 受け入れ条件 12 は #[ignore] の計測試験 2 本 (純粋な関数 / Tracker 経由) で、mye_track bench には足していない (sub が「or」と許容)
+検証:
+  - cargo test (tools\track、--no-fail-fast) 3 回 → 3 回とも 236 passed / 0 failed / 3 ignored (前は 206 件。うち ignored は計測 2 本 + 既存 1)
+  - tools\build_track.bat Release → 成功。tools\track_verify.bat 3 回 → 3 回とも 25 シナリオ全 PASS (新規 25_scene_diff を --update で作成し、期待値の中身を読んで確認)、終了後に mye_track.exe 無し、C:\HAL\MyEngin\.mye 無し
+  - cargo test --release --test scene_diff -- --ignored --nocapture --test-threads=1 → 2 万エンティティ (4.87 MB) の構造比較 162.9 ms、Tracker 経由で Revision 確定 540 ms (同時に書いた小ファイルも同じ 539 ms)。1 回の計測、performance.md §9
+  - pwsh -NoProfile -File tools\check_rules.ps1 → 0 error / 61 warning (私が足した警告は無し。performance.md:111 は既存)。途中、早い段階の編集で CRLF 化した 6 ファイルを規則 14-c が検出したので LF に戻した
+  - git diff --stat HEAD -- src tools\mcp → 空。したがって Editor のビルドと selftest は回していない (planner の指示どおり)
+  - D の制御文字: docs\ai-change-tracking\*.md と plans\m104-ai-change-tracking.md を機械で走査 → 修正前は ipc-contract.md の 2 行 (TAB 4 個・DC3 1 個、うち `\notify.rs` が改行に化けて 2 行に割れていた) → 修正後はタブ以外の制御文字 0、タブ 0、U+FFFD 0
+  - 未実行: Editor 実機での表示 (sub-12)、Rust 1.89 でのビルド、CI
+自己採点 (1-5):
+  仕様適合: 4 — 受け入れ条件 1〜14 に対応する試験・計測・検査は全部回した。差分欄の解釈の追加が多い (planner の判断待ち)
+  正しさ: 4 — 実ファイル切り出し・生成入力・pipe・DB 作り直しの比較で確認。.meta をディスクから読む時点の競合 (読んだ後に動く) は次の .meta の観測で見直す設計だが、全順序は試験していない
+  コード品質: 4 — 純粋関数と書く 1 箇所を分け既存の経路 (plan_diff / write_revision) に乗せた。bind がやや長い
+  テスト: 4 — 単体 + 結合 + pipe + シナリオ + 作り直し。リネームの `.meta` / 本体の観測順の全組み合わせと、実 Editor は未試験
+不安・質問:
+  - 仮の ID から guid への「引き継ぎ」は、同じパスのときだけ (リネームを伴う新規 guid は断絶扱い)。ユーザーの意図 (「後で .meta が付いたら引き継ぐ」) の範囲と読んだが、planner に確認したい
+  - 空白だけの変更の PrefabAssetChanged を出さない解釈 (差分欄)。sub-12 の表示で「プレハブが変わった」を行 diff だけで出すなら問題ない
+  - build_track.bat の出力に、文字化けしたエラー行 (「...は、内部コマンドまたは外部コマンド...」相当の cmd のメッセージ) が 1 行出る。ビルドと copy は成功しており、このサブの変更とは無関係に見える (未調査)
+触ったファイル:
+  tools/track/src/{lexjson,scene_diff,document}.rs (新規)、tools/track/src/schema/v3.sql (新規)、tools/track/src/{revision,diff_worker,collector,observe,ops,protocol,server,notify,lib}.rs、tools/track/src/schema/mod.rs、tools/track/tests/scene_diff.rs (新規)、tools/track/tests/{pipe,storage}.rs、tests/track/25_scene_diff.ndjson / 25_scene_diff.expected.ndjson (新規)、tests/track/fixture/ (6 ファイル、新規)、docs/ai-change-tracking/{ipc-contract,db-schema,architecture,performance}.md、plans/m104-ai-change-tracking.md、plans/m104-ai-change-tracking/sub-11.md (実装メモ)
+  消した・止めたもの: %TEMP%\mye_track_sd_unparsed_22204 / _41088 (私の試験が失敗したとき残した一時ディレクトリ 2 個。既存の mye_track_* と mye_m104b は触っていない)。止めたプロセスは無い (試験・シナリオが起動した mye_track.exe は自分で終了し、最後に残っていないことを確認)。
+申し送り:
+  - sub-12 (Editor 表示) は scene_diff / describe.sceneSummary / change_recorded.documentId を使える。構造の値は JSON の断片。unparsed は afterValue が理由の JSON 文字列
+  - sub-16 (復元) は before_value / after_value をそのまま書き戻せる。引き継ぎは resolvedDocumentId
+  - sub-19 (PrefabPropagation) は scene_changes.caused_by を使える (列は既存)。プレハブの変更の Revision は PrefabAssetChanged の行を持つ
+  - v1.sql の先頭コメントに docs\ai の `\a` (BEL) が混じっている疑い (`docsi-change-tracking` と見える)。凍結ファイルなので触っていない
+  - 作業ツリーが CRLF の Windows で Python から text モードで書くと CRLF 化する (規則 14-c が検出)。直した
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `cargo` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、`src` と `tools\mcp` に差分なし、`schema\v1.sql` / `v2.sql` / `Cargo.toml` に差分なし (字句保持の読み手は自前で、`serde_json` の feature を変えていない)、`docs\ai-change-tracking\*.md` と計画に制御文字 0。planner の実走: `cargo test` (track) 236 件通過、`tools\track_verify.bat` 全シナリオ PASS (25_scene_diff を含む)。計測 (2 万エンティティで 162.9 ms) は coder の 1 回の結果による。
+  - 追加の判定: スキーマ版 3 (`documents.successor_id` と索引 2 本)、`resolvedDocumentId`、`sceneSummary`、`unparsed` の表し方、ルート直下の変化の表し方、追加・削除の文書の最小解釈、`HierarchyChanged` を parent / childIndex ごとに 1 件、中の変更が無ければ `PrefabAssetChanged` を出さない、上限、版の扱い、`changes.kind` の値、override の component / field の分け方、は全部採る。
+  - 質問への回答: (1) 仮の ID から guid への引き継ぎは同じパスのときだけ、でよい (リネームを伴って別の guid が付いたら断絶)。(2) 空白だけの変更でプレハブの `PrefabAssetChanged` を出さない、でよい。(3) `build_track.bat` の化けたエラー行は、ビルドとコピーが成功している限り追わない (別件)。
+  - nit: `tools\track\src\schema\v1.sql` の先頭コメントに BEL (0x07) が混じっている。凍結したファイルで、SQL のコメントの中なので動作に関係しない。直さない (直すと「凍結」の意味が曖昧になる)。
+  - 未確認: `.meta` と本体の観測の順の全組み合わせ、実 Editor での表示 (sub-12)。

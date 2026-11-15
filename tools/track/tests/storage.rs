@@ -84,8 +84,8 @@ fn fresh_project_creates_layout_and_all_tables() {
         assert_eq!(n, 1, "表 {table}");
     }
     assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), latest_version());
-    // db-schema.md §3 の索引 8 本 + events の一意索引 + 版 2 の events(kind, at)
-    assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"), 10);
+    // db-schema.md §3 の索引 8 本 + events の一意索引 + 版 2 の events(kind, at) + 版 3 の 2 本
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"), 12);
     // PRAGMA は接続ごと。WAL はファイルに残る設定
     let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
     assert_eq!(mode, "wal");

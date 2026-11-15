@@ -12,6 +12,7 @@ pub struct Migration {
 pub const MIGRATIONS: &[Migration] = &[
     Migration { version: 1, note: "初版: 14 表と索引", sql: include_str!("v1.sql") },
     Migration { version: 2, note: "events(kind, at) の索引 (editor_saved の照合)", sql: include_str!("v2.sql") },
+    Migration { version: 3, note: "documents.successor_id と文書・シーン変更の索引", sql: include_str!("v3.sql") },
 ];
 
 /// このビルドが知っている最新のスキーマ版。

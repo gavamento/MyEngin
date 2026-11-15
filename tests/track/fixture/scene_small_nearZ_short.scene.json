@@ -1,0 +1,114 @@
+{
+  "engine": "MyEngine",
+  "entities": [
+    {
+      "childIndex": 0,
+      "components": {
+        "Camera": {
+          "farZ": 1000.0,
+          "fovYDeg": 60.0,
+          "isPrimary": true,
+          "nearZ": 0.1,
+          "orthoSize": 5.0,
+          "orthographic": false
+        },
+        "LocalTransform": {
+          "position": [
+            0.0,
+            6.0,
+            -14.0
+          ],
+          "rotation": [
+            0.1736481636762619,
+            0.0,
+            0.0,
+            0.9848077297210693
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "fileId": 14,
+      "name": "Main Camera"
+    },
+    {
+      "childIndex": 1,
+      "components": {
+        "Light": {
+          "ambient": [
+            0.15000000596046448,
+            0.1599999964237213,
+            0.18000000715255737
+          ],
+          "castShadow": false,
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "intensity": 1.0,
+          "range": 15.0,
+          "safeRadius": 0.0,
+          "spotInnerDeg": 25.0,
+          "spotOuterDeg": 35.0,
+          "type": 0
+        },
+        "LocalTransform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.4082179069519043,
+            -0.23456971347332,
+            0.10938165336847305,
+            0.8754260540008545
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "fileId": 15,
+      "name": "Sun"
+    },
+    {
+      "childIndex": 2,
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            16.0,
+            0.5,
+            16.0
+          ]
+        },
+        "MeshRenderer": {
+          "material": 6777745483033203856,
+          "mesh": 1506918697593860217
+        }
+      },
+      "fileId": 16,
+      "name": "Floor"
+    }
+  ],
+  "nextFileId": 26,
+  "sceneName": "flow_title",
+  "version": 4
+}

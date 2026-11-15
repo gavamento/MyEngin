@@ -465,6 +465,7 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         "describe" => with_reader(ctx, conn, |db| ops::describe(db, args)),
         "sessions" => with_reader(ctx, conn, |db| ops::sessions(db, args)),
         "hunks" => with_reader(ctx, conn, |db| ops::hunks(db, args)),
+        "scene_diff" => with_reader(ctx, conn, |db| ops::scene_diff(db, args)),
         "blob_get" => ops::blob_get(&ctx.blobs_dir, args),
         "shutdown" => args.finish().map(|()| json!({})),
         "subscribe" => subscribe(ctx, conn, args),

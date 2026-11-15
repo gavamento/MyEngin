@@ -224,8 +224,8 @@ impl Collector {
     ) -> Self {
         Collector {
             ignore: IgnoreRules::new(root.clone()),
+            diff: DiffWorker::spawn(blob_reader, cfg.diff_limits.clone(), root.clone()),
             root,
-            diff: DiffWorker::spawn(blob_reader, cfg.diff_limits.clone()),
             held: Vec::new(),
             cfg,
             writer,

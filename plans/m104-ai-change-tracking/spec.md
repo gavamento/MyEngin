@@ -159,8 +159,9 @@ harness の sub-NN と計画の M104x は 1 対 1。コミット件名は `M104x
 | sub-23 | M104k2 | 3 | Editor の保存をサービスへ知らせる (`editor_saved`) | sub-10 | A10 |
 | sub-11 | M104l | 3 | シーン構造 diff | sub-23 | A11 | `M104l: 追跡サービスにシーンの構造 diff を足す` |
 | sub-12 | M104m | 3 | Hierarchy / Inspector / Scene View の表示 | sub-11 | A12 | `M104m: シーン上に AI の変更を表示する` |
+| sub-24 | M104m2 | 3 | Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | sub-12 | A12 |
 | sub-13 | M104n | 3 | 未保存シーンへの外部変更の確認 | sub-08 | A13 | `M104n: 未保存のシーンへ外部の変更を自動で適用しない` |
-| sub-14 | M104o | 4 | レビュー | sub-12、sub-13 | A14、A20 | `M104o: AI の変更の承認・却下を足す` |
+| sub-14 | M104o | 4 | レビュー | sub-24、sub-13 | A14、A20 | `M104o: AI の変更の承認・却下を足す` |
 | sub-15 | M104p | 5 | ファイルと Hunk の復元、ジャーナル、回復 | sub-14 | A15 | `M104p: ファイルと Hunk の復元と復元ジャーナルを足す` |
 | sub-16 | M104q | 5 | ライブのシーンの復元 | sub-15 | A16、A20 | `M104q: シーンの復元を Undo に載せる` |
 | sub-17 | M104r | 6 | 削除エンティティのゴースト、Overlay | sub-16 | A17 | `M104r: 削除されたエンティティのゴーストを表示する` |
@@ -217,6 +218,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-11 の VERDICT round 1): sub-12 を詳細に書き直した (サービス側に `scene_overlay` と `document_for_path`、`SceneChangeOverlay`、AI Changes 窓の「シーンの変更」の一覧、Hierarchy のバッジ、選択の同期、受け入れ条件 13 件)。大きいので Inspector の Field 差分・Scene View のワイヤ箱・色の設定を **sub-24 (M104m2)** に分け、sub-14 の依存を sub-24 と sub-13 にした。DB のスキーマ版は 3。
 - 2026-11-15 (planner、sub-23 の VERDICT round 1): sub-11 を詳細に書き直した (文書の同一性、字句のままの構造比較、解析不可の扱い、`scene_diff`、作り直し、受け入れ条件 14 件)。sub-23 の読み直しの穴を狭める直しを sub-12 に、`ipc-contract.md` の制御文字の直しを sub-11 に足した。DB のスキーマ版は 2 (sub-23 が索引を足した)。
 - 2026-11-15 (planner、sub-10 の VERDICT round 1): Diff 表示の部品のクラス名は `DiffViewer` / `DiffRows` (ファイルは `src\Editor\Widgets\DiffView.h`)。既存の `mye::DiffView` (`SourceControlState.h`) と同名を避けた。以後の sub で「DiffView」と書いてあるのはこの部品のこと。oversize の Hunk の表示の残りを sub-15 に、「セッションなし」の取り方の直しを sub-23 に足した。sub-23 を着手可にした。
 - 2026-11-15 (planner、sub-09 の VERDICT round 1): sub-10 を詳細に書き直した (`hunks` / `blob_get`、DiffView、AI Changes 窓、受け入れ条件 12 件)。大きいので `editor_saved` を **sub-23 (M104k2)** に分け、sub-11 の依存を sub-23 にした (順序は sub-10 → sub-23 → sub-11)。

@@ -12,6 +12,8 @@ use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtensio
 use serde_json::{json, Value};
 
 use crate::attribution;
+use crate::document;
+use crate::scene_diff::change_type;
 use crate::protocol::{code, Args, OpError, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT};
 use crate::session::session_candidate_sql;
 
@@ -259,6 +261,9 @@ pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         })
         .map_err(internal)?;
     detail["hunks"] = Value::Array(hunks.collect::<rusqlite::Result<_>>().map_err(internal)?);
+    if let Some(summary) = scene_summary(conn, revision_id).map_err(internal)? {
+        detail["sceneSummary"] = summary;
+    }
 
     // 区分だけでなく根拠の一覧と候補のセッションを出す (attribution-rules.md §8)
     let mut stmt = conn
@@ -405,6 +410,97 @@ pub fn hunks(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         if !items.is_empty() && used + size > HUNKS_PAGE_BUDGET {
             // 入らない。次のページは直前に入れた Hunk の次から
             next_cursor = items.last().and_then(|v| v["ordinal"].as_i64()).map(|n| n.to_string());
+            break;
+        }
+        used += size;
+        items.push(item);
+    }
+    Ok(json!({ "items": items, "nextCursor": next_cursor }))
+}
+
+/// `describe` のシーン変更の要約: 種別ごとの件数、文書の ID、解析不可ならその理由。構造の変更が無い Revision は None。
+fn scene_summary(conn: &Connection, revision_id: i64) -> rusqlite::Result<Option<Value>> {
+    let mut stmt = conn.prepare(
+        "SELECT document_id, change_type, after_value FROM scene_changes WHERE revision_id = ?1 ORDER BY scene_change_id",
+    )?;
+    let rows: Vec<(String, String, Option<String>)> =
+        stmt.query_map([revision_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    let Some(first) = rows.first() else { return Ok(None) };
+    let mut counts = serde_json::Map::new();
+    let mut unparsed: Option<String> = None;
+    for (_, kind, after) in &rows {
+        if kind == change_type::UNPARSED {
+            unparsed = after.as_deref().and_then(|text| serde_json::from_str::<String>(text).ok());
+        }
+        let n = counts.get(kind).and_then(Value::as_i64).unwrap_or(0);
+        counts.insert(kind.clone(), json!(n + 1));
+    }
+    Ok(Some(json!({
+        "documentId": first.0,
+        "resolvedDocumentId": document::resolve(conn, &first.0)?,
+        "counts": counts,
+        "unparsedReason": unparsed,
+    })))
+}
+
+/// 1 つの Revision の構造の変更 (`scene_changes`) を、ページ送りして返す。`cursor` は直前のページの最後の `sceneChangeId`。
+///
+/// 1 ページは JSON の合計が `HUNKS_PAGE_BUDGET` 以内。値が単独で収まらない変更は、値を入れず `oversize: true` と
+/// `beforeBytes` / `afterBytes` だけを返す (切らない)。
+pub fn scene_diff(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
+    let revision_id = args.required_int("revisionId")?;
+    let cursor = args.string("cursor")?;
+    args.finish()?;
+    let after_id = match &cursor {
+        None => 0,
+        Some(text) => text.parse::<i64>().map_err(|_| OpError::bad_args("cursor が読めない"))?,
+    };
+    let exists: bool = conn
+        .query_row("SELECT EXISTS (SELECT 1 FROM change_revisions WHERE revision_id = ?1)", [revision_id], |r| r.get(0))
+        .map_err(internal)?;
+    if !exists {
+        return Err(OpError::new(code::NOT_FOUND, format!("revisionId {revision_id} は無い")));
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT scene_change_id, document_id, file_id, change_type, component, field, before_value, after_value, state
+               FROM scene_changes WHERE revision_id = ?1 AND scene_change_id > ?2 ORDER BY scene_change_id",
+        )
+        .map_err(internal)?;
+    let mut rows = stmt.query(params![revision_id, after_id]).map_err(internal)?;
+    let mut items: Vec<Value> = Vec::new();
+    let mut used = 0usize;
+    let mut next_cursor: Option<String> = None;
+    while let Some(r) = rows.next().map_err(internal)? {
+        let scene_change_id: i64 = r.get(0).map_err(internal)?;
+        let document_id: String = r.get(1).map_err(internal)?;
+        let before: Option<String> = r.get(6).map_err(internal)?;
+        let after: Option<String> = r.get(7).map_err(internal)?;
+        let mut item = json!({
+            "sceneChangeId": scene_change_id,
+            "documentId": document_id,
+            "resolvedDocumentId": document::resolve(conn, &document_id).map_err(internal)?,
+            "fileId": r.get::<_, Option<i64>>(2).map_err(internal)?,
+            "changeType": r.get::<_, String>(3).map_err(internal)?,
+            "component": r.get::<_, Option<String>>(4).map_err(internal)?,
+            "field": r.get::<_, Option<String>>(5).map_err(internal)?,
+            "state": r.get::<_, String>(8).map_err(internal)?,
+            "oversize": false,
+        });
+        let raw = before.as_ref().map_or(0, String::len) + after.as_ref().map_or(0, String::len);
+        item["beforeValue"] = json!(before);
+        item["afterValue"] = json!(after);
+        let fits = raw <= HUNKS_PAGE_BUDGET && serde_json::to_string(&item).is_ok_and(|text| text.len() <= HUNKS_PAGE_BUDGET);
+        if !fits {
+            item["beforeValue"] = Value::Null;
+            item["afterValue"] = Value::Null;
+            item["oversize"] = json!(true);
+            item["beforeBytes"] = json!(before.as_ref().map(String::len));
+            item["afterBytes"] = json!(after.as_ref().map(String::len));
+        }
+        let size = serde_json::to_string(&item).map_or(usize::MAX, |text| text.len());
+        if !items.is_empty() && used + size > HUNKS_PAGE_BUDGET {
+            next_cursor = items.last().and_then(|v| v["sceneChangeId"].as_i64()).map(|n| n.to_string());
             break;
         }
         used += size;

@@ -13,7 +13,9 @@ use crate::attribution::{self, AttributionConfig};
 use crate::baseline::ContentKind;
 use crate::blob::BlobStore;
 use crate::diff::{diff_lines, DiffLimits, Hunk};
+use crate::document;
 use crate::observe::{ChangeType, Completeness};
+use crate::scene_diff::{self, DocKind, SceneOutcome};
 use crate::session;
 use crate::store::Store;
 
@@ -64,6 +66,8 @@ pub struct RevisionInput {
     pub after: Option<StateRef>,
     pub completeness: Completeness,
     pub observed_at: i64,
+    /// 観測の時点の `.meta` の guid (scene / prefab / actor と `.meta` の観測だけ。無ければ None)。
+    pub doc_guid: Option<String>,
 }
 
 impl RevisionInput {
@@ -85,6 +89,7 @@ impl RevisionInput {
             change_type: ChangeType::parse(payload["change_type"].as_str()?)?,
             completeness: Completeness::parse(payload["completeness"].as_str()?)?,
             observed_at: payload["observed_at"].as_i64()?,
+            doc_guid: payload["doc_guid"].as_str().map(str::to_string),
             before: state(&payload["before"], blobs.is_excluded(&before_path)),
             after: state(&payload["after"], payload["after"]["excluded"].as_bool().unwrap_or(false)),
             path,
@@ -98,11 +103,26 @@ impl RevisionInput {
 pub struct DiffPlan {
     pub mode: DiffMode,
     pub hunks: Vec<Hunk>,
+    /// scene / prefab / actor の構造比較の結果 (それ以外・比べられない状態では None)。
+    pub scene: Option<SceneOutcome>,
+    /// Diff ワーカーが作業ツリーの `.meta` から読んだ guid。Writer が `observed` の payload (`doc_guid`) へ入れる。
+    pub doc_guid: Option<String>,
 }
 
 impl DiffPlan {
     fn without_hunks(mode: DiffMode) -> DiffPlan {
-        DiffPlan { mode, hunks: Vec::new() }
+        DiffPlan { mode, hunks: Vec::new(), scene: None, doc_guid: None }
+    }
+}
+
+/// 構造比較 (scene / prefab / actor の拡張子のときだけ)。片側しか無い (追加・削除) ときは文書全体の扱い。
+fn scene_outcome(input: &RevisionInput, before: &[u8], after: &[u8], limits: &DiffLimits) -> Option<SceneOutcome> {
+    let kind = DocKind::from_path(&input.path)?;
+    match (input.before.is_some(), input.after.is_some()) {
+        // 行 diff の上限は Before と After の合計。1 つの文書はその半分まで
+        (true, true) => Some(scene_diff::diff(kind, before, after, limits.max_bytes / 2)),
+        (false, false) => None,
+        _ => Some(scene_diff::whole_file(kind)),
     }
 }
 
@@ -159,11 +179,17 @@ pub fn plan_diff(
             }
         }
     };
+    let scene = scene_outcome(input, &before_bytes, after_view, limits);
     let (Ok(before_text), Ok(after_text)) = (std::str::from_utf8(&before_bytes), std::str::from_utf8(after_view)) else {
-        return Ok(DiffPlan::without_hunks(DiffMode::Binary));
+        return Ok(DiffPlan { scene, ..DiffPlan::without_hunks(DiffMode::Binary) });
     };
     let diff = diff_lines(before_text, after_text, limits);
-    Ok(DiffPlan { mode: if diff.whole_file { DiffMode::Whole } else { DiffMode::Lines }, hunks: diff.hunks })
+    Ok(DiffPlan {
+        mode: if diff.whole_file { DiffMode::Whole } else { DiffMode::Lines },
+        hunks: diff.hunks,
+        scene,
+        doc_guid: None,
+    })
 }
 
 /// Revision と Hunk を 1 つの塊として確定する。途中で失敗したら全部取り消す (Hunk の無い Revision を作らない)。
@@ -222,10 +248,12 @@ fn write_revision_rows(
     let (change_id, last_seq) = match reuse {
         Some(found) => found,
         None => {
-            let kind = input.after.as_ref().and_then(|s| s.kind).or(input.before.as_ref().and_then(|s| s.kind));
+            let content = input.after.as_ref().and_then(|s| s.kind).or(input.before.as_ref().and_then(|s| s.kind));
+            // scene / prefab / actor / meta は拡張子が正 (内容の判定より優先)
+            let kind = document::path_kind(&input.path).unwrap_or_else(|| content.map_or("text", ContentKind::as_str));
             conn.execute(
                 "INSERT INTO changes (path, kind, first_seen, state) VALUES (?1, ?2, ?3, 'active')",
-                params![input.path, kind.map_or("text", ContentKind::as_str), input.observed_at],
+                params![input.path, kind, input.observed_at],
             )?;
             (conn.last_insert_rowid(), 0)
         }
@@ -269,7 +297,51 @@ fn write_revision_rows(
             i64::from(hunk.eol_only),
         ])?;
     }
+    write_document_rows(conn, input, plan, change_id, revision_id)?;
     Ok(revision_id)
+}
+
+/// 文書の同一性 (`documents`) と構造の変更 (`scene_changes`)。Revision と同じ SAVEPOINT の中で書く。
+fn write_document_rows(
+    conn: &Connection,
+    input: &RevisionInput,
+    plan: &DiffPlan,
+    change_id: i64,
+    revision_id: i64,
+) -> rusqlite::Result<()> {
+    if let Some(kind) = DocKind::from_path(&input.path) {
+        let document_id = if input.after.is_some() {
+            Some(document::assign(conn, &input.path, input.old_path.as_deref(), kind, input.doc_guid.as_deref(), input.observed_at)?)
+        } else {
+            document::mark_deleted(conn, &input.path)?
+        };
+        let Some(document_id) = document_id else { return Ok(()) };
+        conn.execute("UPDATE changes SET document_id = ?1 WHERE change_id = ?2", params![document_id, change_id])?;
+        if let Some(outcome) = &plan.scene {
+            let mut insert = conn.prepare_cached(
+                "INSERT INTO scene_changes
+                   (revision_id, document_id, file_id, change_type, component, field, before_value, after_value)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
+            for row in outcome.rows() {
+                insert.execute(params![
+                    revision_id,
+                    document_id,
+                    row.file_id,
+                    row.change_type,
+                    row.component,
+                    row.field,
+                    row.before_value,
+                    row.after_value,
+                ])?;
+            }
+        }
+    } else if let Some((asset_path, kind)) = document::meta_target(&input.path) {
+        // `.meta` の変更は、対象の文書の同一性を見直す引き金。削除なら guid は無い
+        let guid = if input.after.is_some() { input.doc_guid.as_deref() } else { None };
+        document::rebind_for_meta(conn, asset_path, kind, guid, input.observed_at)?;
+    }
+    Ok(())
 }
 
 /// 再構成した数。
@@ -408,8 +480,8 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
     let tx = conn.transaction()?;
     // 参照する側から先に消す (外部キー)
     tx.execute_batch(
-        "DELETE FROM attribution_evidence; DELETE FROM change_hunks; DELETE FROM change_revisions;
-         DELETE FROM operations; DELETE FROM sessions; DELETE FROM changes; DELETE FROM snapshots;",
+        "DELETE FROM attribution_evidence; DELETE FROM scene_changes; DELETE FROM change_hunks; DELETE FROM change_revisions;
+         DELETE FROM operations; DELETE FROM sessions; DELETE FROM changes; DELETE FROM documents; DELETE FROM snapshots;",
     )?;
     let mut deriver = Deriver::empty();
     deriver.cfg = store.attribution.clone();

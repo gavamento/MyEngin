@@ -217,6 +217,8 @@
 - `.meta` が無いファイルは、正規化パスのハッシュを仮の documentId にし、`id_source = path` と記録する。あとで `.meta` が付いたら同じ文書として引き継ぐ。
 - エディタ外でリネームされて guid が変わった場合は、**別の文書として扱い、旧文書の側に「ここで追跡が切れた」と記録する。** 内容が似ているからといって同じ文書とは決めない。
 
+実装 (M104l): 識別と構造比較の決定は [db-schema.md](db-schema.md) §3.3、op は [ipc-contract.md](ipc-contract.md) §9.4。決定: (1) 字句を保つ読み手を自前で持つ (`lexjson.rs`。`serde_json` の feature を変えると crate 全体の `Value` が変わるため)。(2) 比較は Diff ワーカーの `plan_diff` の中で行い、Writer は書くだけ。(3) ルート直下の変化は `file_id = NULL` の `FieldModified`、解析不可は `change_type = unparsed` の 1 行。(4) 仮の ID の文書の引き継ぎは `successor_id` (履歴の行を書き換えない)。(5) `.meta` はディスクを読む時点の値で、観測のイベントに `doc_guid` として残す (読んだ後に `.meta` が動く競合は、次の `.meta` の観測が結び付けを見直す)。
+
 ### 6.2 スナップショットの 3 種
 
 | 種類 | 取る場所 | 取り方 | 制約 |

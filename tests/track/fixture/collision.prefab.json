@@ -1,0 +1,76 @@
+{
+  "prefab": 1,
+  "name": "Player_Researcher_FP_Collision",
+  "entities": [
+    {
+      "fileId": 1,
+      "name": "Player_Researcher_FP_Body",
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0,
+            0.9,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "CharacterController": {
+          "radius": 0.3,
+          "height": 1.8,
+          "slopeLimitDeg": 45,
+          "skinWidth": 0.02,
+          "gravityScale": 1,
+          "moveInput": [
+            0,
+            0,
+            0
+          ]
+        },
+        "Collider": {
+          "shape": 2,
+          "radius": 0.3,
+          "height": 1.8,
+          "isTrigger": false,
+          "layer": 0,
+          "mask": 4294967295
+        }
+      }
+    },
+    {
+      "fileId": 2,
+      "parent": 1,
+      "childIndex": 0,
+      "name": "Player_FP_VisualAnchor",
+      "components": {
+        "LocalTransform": {
+          "position": [
+            0,
+            -0.9,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      }
+    }
+  ]
+}

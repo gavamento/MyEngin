@@ -700,3 +700,117 @@ fn hunks_are_paged_oversize_ones_are_flagged_and_blobs_come_in_chunks() {
         assert_eq!(reply["error"]["code"], "forbidden", "{role}: {reply}");
     }
 }
+
+/// シーンの本文。`values` は (fileId, 位置フィールドの文字列)。
+fn scene_text(values: &[(i64, String)]) -> String {
+    let entities: Vec<String> = values
+        .iter()
+        .map(|(id, text)| {
+            format!("{{\"childIndex\":{id},\"components\":{{\"Note\":{{\"text\":\"{text}\"}}}},\"fileId\":{id},\"name\":\"e{id}\"}}")
+        })
+        .collect();
+    format!("{{\"engine\":\"MyEngine\",\"entities\":[{}],\"nextFileId\":100,\"sceneName\":\"s\",\"version\":4}}", entities.join(",\n"))
+}
+
+#[test]
+fn scene_diff_is_paged_oversize_values_are_flagged_and_only_the_editor_may_ask() {
+    let project = temp_project("scene_diff");
+    const GUID: &str = "0123456789abcdef";
+    fs::write(project.join("main.scene.json.meta"), format!("{{\"guid\":\"{GUID}\",\"type\":\"scene\",\"version\":1}}")).unwrap();
+    // 30 個のエンティティの値を 40 KB ずつ + 1 個は 900 KB (単独でページの予算を超える)
+    let small = |c: char| c.to_string().repeat(40_000);
+    let huge = |c: char| c.to_string().repeat(900_000);
+    let build = |c: char| {
+        let mut values: Vec<(i64, String)> = (1..=30).map(|i| (i, small(c))).collect();
+        values.push((31, huge(c)));
+        scene_text(&values)
+    };
+    let before = build('a');
+    let after = build('b');
+    fs::write(project.join("main.scene.json"), &before).unwrap();
+
+    let mut service = ServiceProc::spawn(&project);
+    service.wait_watching();
+    let mut editor = service.connect("editor");
+    subscribe_all(&mut editor);
+    fs::write(project.join("main.scene.json"), &after).unwrap();
+
+    // 通知には documentId が付く
+    let recorded = expect_event(&mut editor, "change_recorded main.scene.json", |e| {
+        e["event"] == "change_recorded" && e["path"] == "main.scene.json"
+    });
+    assert_eq!(recorded["documentId"], GUID, "{recorded}");
+    let revision = recorded["revisionId"].as_i64().unwrap();
+
+    // ページをたどる: 31 件、2 ページ以上、重複なし。900 KB の 1 件は値を入れず oversize
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    let mut ids: Vec<i64> = Vec::new();
+    let mut oversize = 0;
+    loop {
+        let args = match &cursor {
+            Some(c) => json!({ "revisionId": revision, "cursor": c }),
+            None => json!({ "revisionId": revision }),
+        };
+        let reply = editor.request(10, "scene_diff", args).unwrap();
+        assert_eq!(reply["ok"], true, "{}", reply.to_string().chars().take(300).collect::<String>());
+        pages += 1;
+        for item in reply["result"]["items"].as_array().unwrap() {
+            ids.push(item["sceneChangeId"].as_i64().unwrap());
+            assert_eq!(item["documentId"], GUID);
+            assert_eq!((item["changeType"].as_str(), item["component"].as_str(), item["field"].as_str()), (Some("FieldModified"), Some("Note"), Some("text")));
+            if item["oversize"] == true {
+                oversize += 1;
+                assert!(item["beforeValue"].is_null() && item["afterValue"].is_null());
+                assert_eq!(item["beforeBytes"], 900_002);
+                assert_eq!(item["fileId"], 31);
+            } else {
+                assert_eq!(item["beforeValue"].as_str().map(str::len), Some(40_002), "引用符つきの字句");
+            }
+        }
+        match reply["result"]["nextCursor"].as_str() {
+            Some(next) => cursor = Some(next.to_string()),
+            None => break,
+        }
+        assert!(pages < 50, "ページ送りが終わらない");
+    }
+    assert!(pages >= 2, "ページ送りになっていない: {pages}");
+    assert_eq!(ids.len(), 31);
+    assert_eq!(oversize, 1);
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(sorted, ids, "昇順で重複なし");
+
+    // describe に要約が出る (mcp でも)。値は含めない
+    let mut mcp = service.connect("mcp");
+    let detail = mcp.request(3, "describe", json!({ "revisionId": revision })).unwrap();
+    assert_eq!(detail["ok"], true);
+    let summary = &detail["result"]["sceneSummary"];
+    assert_eq!(summary["documentId"], GUID, "{detail}");
+    assert_eq!(summary["counts"]["FieldModified"], 31);
+    assert!(summary["unparsedReason"].is_null());
+    assert!(detail.to_string().len() < 20_000, "describe に値が入っている");
+
+    // 引数と役割
+    let reply = editor.request(11, "scene_diff", json!({ "revisionId": 999_999 })).unwrap();
+    assert_eq!(reply["error"]["code"], "not_found");
+    let reply = editor.request(12, "scene_diff", json!({ "revisionId": revision, "cursor": "x" })).unwrap();
+    assert_eq!(reply["error"]["code"], "bad_args");
+    let reply = editor.request(13, "scene_diff", json!({ "revisionId": revision, "zzz": 1 })).unwrap();
+    assert_eq!(reply["error"]["code"], "bad_args");
+    for role in ["mcp", "hook"] {
+        let mut other = service.connect(role);
+        let reply = other.request(2, "scene_diff", json!({ "revisionId": revision })).unwrap();
+        assert_eq!(reply["error"]["code"], "forbidden", "{role}: {reply}");
+    }
+    // 構造の変更が無い Revision (テキスト) は空の配列、describe に sceneSummary は付かない
+    fs::write(project.join("note.txt"), "hi\n").unwrap();
+    let note = wait_latest_revision(&mut editor, "note.txt", 3);
+    let reply = editor.request(14, "scene_diff", json!({ "revisionId": note })).unwrap();
+    assert_eq!(reply["result"]["items"], json!([]));
+    let detail = editor.request(15, "describe", json!({ "revisionId": note })).unwrap();
+    assert!(detail["result"].get("sceneSummary").is_none());
+    let recorded = expect_event(&mut editor, "change_recorded note.txt", |e| e["event"] == "change_recorded" && e["path"] == "note.txt");
+    assert!(recorded.get("documentId").is_none(), "{recorded}");
+}

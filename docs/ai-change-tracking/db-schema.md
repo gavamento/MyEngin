@@ -71,10 +71,11 @@ CREATE TABLE operations (
 CREATE TABLE documents (
   document_id  TEXT PRIMARY KEY,                -- .meta の guid、またはパスのハッシュ
   id_source    TEXT NOT NULL,                   -- meta / path
-  kind         TEXT NOT NULL,                   -- scene / prefab / actor / other
+  kind         TEXT NOT NULL,                   -- scene / prefab / actor
   current_path TEXT,                            -- 最後に観測したパス (消えたら NULL)
   broken_at    INTEGER,                         -- 同一性が切れた時刻 (guid が変わった、など)
-  broken_note  TEXT
+  broken_note  TEXT,
+  successor_id TEXT REFERENCES documents(document_id)  -- 版 3: 仮の ID から guid の文書へ引き継いだ先 (§3.3)
 );
 
 CREATE TABLE changes (
@@ -126,7 +127,7 @@ CREATE TABLE scene_changes (
   revision_id     INTEGER NOT NULL REFERENCES change_revisions(revision_id),
   document_id     TEXT NOT NULL REFERENCES documents(document_id),
   file_id         INTEGER,                      -- エンティティの fileId (文書全体の変更なら NULL)
-  change_type     TEXT NOT NULL,                -- 仕様書 §7.2 の 11 種
+  change_type     TEXT NOT NULL,                -- 仕様書 §7.2 の 11 種 (PrefabPropagation は sub-19) と、解析不可の unparsed (§3.3)
   component       TEXT,
   field           TEXT,
   before_value    TEXT,                         -- JSON の字句のまま
@@ -194,7 +195,7 @@ CREATE TABLE events (
 ```
 
 索引は `change_revisions(change_id, seq)`、`change_revisions(observed_at)`、`change_revisions(operation_id)`、
-`changes(path)`、`scene_changes(document_id, file_id)`、`attribution_evidence(revision_id)`、`reviews(revision_id)`、`snapshots(blob_hash)` に張る。
+`changes(path)`、`scene_changes(document_id, file_id)`、(版 3 で `documents(current_path)` と `scene_changes(revision_id)` を足した)`attribution_evidence(revision_id)`、`reviews(revision_id)`、`snapshots(blob_hash)` に張る。
 これに加えて `events(journal_pos)` に一意索引を張る (実装で追加。起動時の入れ直しが同じジャーナル行を二重に入れないための最後の砦)。
 
 ### 3.1 形の理由
@@ -226,6 +227,22 @@ CREATE TABLE events (
 - **`eol_only`**: Hunk の全行が、本文が同じで行末 (LF / CRLF / 末尾の改行の有無) だけ違うとき 1。本文の変更と同じ Hunk に混ざったら 0。
 - **Hunk ID**: `hunk_id` は表の通し番号で、Revision が変われば変わる。`(revision_id, ordinal)` が Revision 内の位置。
 
+### 3.3 シーン構造と文書の同一性 (M104l)
+
+正本は `tools\track\src\scene_diff.rs` (比較。純粋な関数)、`lexjson.rs` (字句を保つ読み手)、`document.rs` (同一性)、`revision.rs` の `write_revision` (書く 1 箇所)。
+
+- **書き方**: `scene_changes` と `documents` は Revision と同じ SAVEPOINT で書く (構造の変更の無い Revision が外から見える瞬間を作らない)。Diff ワーカーが `plan_diff` の中で比較し、Writer が書く。作り直し (§6) も同じ `plan_diff` / `write_revision` を通る。
+- **種類**: 拡張子で決まる (`.scene.json` / `.prefab.json` / `.actor.json`)。`changes.kind` と `documents.kind` に入れる (`changes.kind` は `.meta` の変更で `meta`)。それ以外の JSON はただのテキスト。
+- **documentId**: 作業ツリーの `<asset>.meta` の `guid` (16 桁の 16 進、小文字にそろえる。`id_source = meta`)。無い・読めない・不正なら正規化したパス (`/` 区切り) の SHA-256 の先頭 16 桁 (`id_source = path`)。サービスが自分で読む (Editor を経由しない)。
+- **観測の時点の guid** は `observed` の payload の `doc_guid` に入れる (§5.1。無ければ項目を持たない)。scene / prefab / actor は Diff ワーカーが読む時点のディスクの `.meta`、`.meta` 自身の観測は書かれた内容から。作り直しはこの値から同じ `document_id` を導く。
+- **結び付け** (`document::bind`): (1) 同じ guid は同じ文書。`.meta` ごと動いたリネーム・移動は `current_path` だけ更新。(2) 同じパスで仮の ID から guid へ変わったら引き継ぐ: 仮の文書の `successor_id` に guid の文書を書き、`current_path` を NULL にする。**`scene_changes` / `changes` の `document_id` は書き換えない** (履歴の行は元のまま)。たどるのは `document::resolve` で、`scene_diff` / `describe` は `resolvedDocumentId` に出す。(3) guid が変わった・`.meta` が無くなった・パスだけが変わった (guid が無い) ときは別の文書とし、古い文書に `broken_at` / `broken_note` を書いて `current_path` を NULL にする。内容が似ていても同じ文書とは決めない。(4) 削除の観測は `current_path` を NULL にするだけ。
+- **`.meta` の変更**は 1 つのテキストの変更として記録され (`changes.kind = meta`)、対象のアセットの文書が既にあるときだけ、新しい guid で結び付けを見直す引き金になる。
+- **構造の変更の種別**: `EntityAdded` / `EntityRemoved` (`fileId` の増減。値は断片)、`HierarchyChanged` (`parent` / `childIndex` ごとに 1 件。`field` に名前)、`ComponentAdded` / `ComponentRemoved`、`FieldModified` (`field` はコンポーネントの最上位のキー。入れ子の中だけが変わっても 1 件)、`EntityModified` (`name` / `tagMask` など)、`PrefabAssetChanged` (プレハブ / アクターは、中の変更が 1 件以上、または追加・削除のとき 1 件。`file_id` NULL)、`PrefabInstanceChanged` (`PrefabInstanceComponent.prefabHash`)、`PrefabOverrideChanged` (`overrides` は文字列の集合として比べ、増減ごとに 1 件。override 済みの `Comp.field` / `name` / `tagMask` の**値の変化はこの種別で、`FieldModified` と二重に出さない**。増減の `component` / `field` は `Comp.field` → (Comp, field)、`+Comp` → (Comp, `+`)、`-Comp` → (Comp, `-`)、`name` → (NULL, `name`)。値は集合の要素の文字列リテラル)。
+- **ルート直下の変化** (`sceneName` など。`entities` と版の宣言と `nextFileId` を除く) は、`file_id = NULL`・`component = NULL` の `FieldModified` (`field` にキー)。`nextFileId` はエンティティの追加に付随するので出さない。**`DocumentModified` の種別は足さない**。
+- **追加・削除**: Before の無い (追加) / After の無い (削除) 文書は、シーンは構造の変更を出さず、プレハブ / アクターは `PrefabAssetChanged` 1 件だけ。
+- **解析不可**: `change_type = unparsed` の 1 行 (`file_id` NULL、`after_value` に理由の JSON 文字列。列は足さない)。理由: 空・壊れた JSON・UTF-8 でない・ルートがオブジェクトでない・`entities` が無い / 配列でない・`fileId` が無い / 整数でない / 重複・版が前後で違う・知らない版 (シーンは 1〜4 (無ければ 1)、プレハブ / アクターは `prefab` / `actor` = 1)・1 つの文書が上限 (行 diff の合計上限の半分、既定 8 MiB) を超える。ファイル単位の Revision と行 diff は残る。Blob が読めない・バイナリ・除外パスの Revision は行だけで、構造の変更も `unparsed` も無い。
+- **値**: `before_value` / `after_value` は元のバイト列から切り出した JSON の断片 (数値は字句のまま。そのまま書き戻せる)。キーの重複した JSON は曖昧なので解析不可。
+
 ## 4. Blob ストア
 
 - 名前は内容の SHA-256 (hex)。同じ内容は 1 つしか持たない。
@@ -255,7 +272,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 | `service_stop` | `reason` (`stdin_eof` / `signal` / `dropped` ...) |
 | `baseline` | `taken_at`、`files[]` = `{path, hash, size, kind, excluded}` (最初の起動のベースライン。500 件ごとに 1 イベント) |
 | `baseline_complete` | `files`、`tracked_files`、`bytes`、`changes`、`elapsed_ms`、`first_run`。これがあれば「ベースラインを取り終えた」 |
-| `observed` | `path`、`change_type`、`old_path`、`before` / `after` = `{hash, size, kind[, excluded]}` または null、`completeness`、`source` (`watch` / `startup_gap` / `overflow_gap` / `verify_gap`)、`window`、`observed_at` |
+| `observed` | `path`、`change_type`、`old_path`、`before` / `after` = `{hash, size, kind[, excluded]}` または null、`completeness`、`source` (`watch` / `startup_gap` / `overflow_gap` / `verify_gap`)、`window`、`observed_at`、`doc_guid` (M104l。scene / prefab / actor と `.meta` の観測だけ。観測の時点の guid。無ければ項目を持たない) |
 | `coverage_gap` | `reason`、`from_at`、`to_at`、`scope` |
 | `client_hello` | pipe の `hello` を通った接続の証跡 (M104f): `role`、`pid` (pipe から得た値)、`claimedPid` (申告)、`processStartedAt` (PID のプロセスの開始時刻)。派生の表には反映しない |
 
@@ -284,7 +301,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 0. (起動の最初) `blobs\` の下の書きかけの一時ファイル (`.tmp-*`) を消す。自分が書いたもので、どこからも指されない。サービスは 1 つだけ動く前提なので、起動時なら安全。
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
-   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed` とセッション・操作のイベント、`editor_saved`) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` と、`sessions` / `operations` / `attribution_evidence` (M104g) を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
+   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed` とセッション・操作のイベント、`editor_saved`) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` と、`documents` / `scene_changes` (M104l。Hunk と同じく Blob から計算し直す。Blob が欠けた Revision は構造の変更なし)、`sessions` / `operations` / `attribution_evidence` (M104g) を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
    退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。
 3. (前段) 前回の最後のイベントの 10 分前から後に書かれた Blob を読み、ハッシュが名前と違えば消す (§4)。続けて、`snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする (前段で消したものを含む)。
@@ -328,5 +345,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 **版 2** (M104k2): `events(kind, at)` の索引 `idx_events_kind_at` だけを足した (`schema\v2.sql`)。表と列は変えない。`editor_saved` の知らせを観測の時刻の前後で引くため (全イベントを走査しない)。
 `editor_saved` のイベントの payload は `{ path, hash }` (path はプロジェクトルート基準、`/` 区切り。`at` は受けた時刻)。作り直し (§6 の 1) はこのイベントも順に読み、観測が先でも後でも同じ `attribution_evidence` (`kind = editor_saved`、`session_id` / `operation_id` は NULL) になる。
+
+**版 3** (M104l): `documents.successor_id` (仮の ID の文書から guid の文書への引き継ぎ、§3.3) と、`idx_documents_current_path`、`idx_scene_changes_revision` を足した (`schema\v3.sql`)。
 
 **スキーマの凍結** (M104f 以降): `tools\track\src\schema\v1.sql` はこのサブのコミット以降、書き換えない。表や列を変えるときは `schema\mod.rs` の `MIGRATIONS` へ移行 (v2 以降) を足す (上の方針どおり、旧版の DB は移行の前に `.bak-v<旧版>` へコピーされる)。

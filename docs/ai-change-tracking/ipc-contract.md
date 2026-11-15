@@ -132,6 +132,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `list` | mcp, editor | フィルタ (`sessionId`, `path`, `from`, `to`, `review`, `attribution` (文字列、または文字列の配列 = どれかに合う), `changeType`)、`cursor?`, `limit` | 変更の要約の配列、`nextCursor` |
 | `describe` | mcp, editor | `revisionId` | Before / After のハッシュとサイズ、Hunk の要約、シーン変更の要約、帰属と根拠、レビュー状態、復元可否、競合状態 |
 | `hunks` | editor | `revisionId`, `cursor?` | Hunk の配列 (行の本文付き) |
+| `scene_diff` | editor | `revisionId`, `cursor?` | シーン / プレハブ / アクターの構造の変更の配列 (M104l。§9.4) |
 | `scene_diff` | editor | `revisionId` | シーン構造差分の配列 |
 | `blob_get` | editor | `hash`, `offset`, `length` | base64 の中身、総サイズ |
 | `sessions` | mcp, editor | フィルタ、`cursor?` | セッションの配列 |
@@ -163,7 +164,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 
 | event | いつ | 中身 |
 |---|---|---|
-| `change_recorded` | Revision が確定した | `revisionId`, `changeId`, `path`, `changeType`, `attribution` |
+| `change_recorded` | Revision が確定した | `revisionId`, `changeId`, `path`, `changeType`, `attribution` (+ `actor`、シーン / プレハブ / アクターなら `documentId`) |
 | `attribution_updated` | あとから帰属が変わった (報告が届いた、など) | `revisionId`, 新しい帰属 |
 | `coverage_gap` | 取り逃しや停止区間を記録した | 区間、理由 |
 | `session_changed` | セッションの開始・終了・中断 | `sessionId`, `status` |
@@ -252,16 +253,17 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 - 空行は無視する。行末の CR は取る。JSON として読めない・`id` が正の整数でない・知らない項目がある行は `bad_args` (`id` が読めればそれを返し、読めなければ `null`)。`hello` の前でも同じ (形が読めないので `need_hello` にはならない)。
 - `hello` の検査の順: 形 (`proto` / `role` / `token` / `projectRoot` が要り、`pid` は任意、他は `bad_args`) → 版 (`proto_mismatch`。detail にサービスの版) → 役割 (知らない値は `bad_args`) → トークン (`bad_token`) → プロジェクト (`wrong_project`。`projectId` が合うかだけを見て、DB は開き直さない)。失敗したら応答のあと切る。`hello` より前の要求 (知らない op を含む) は `need_hello` で切る。2 回目の `hello` は `bad_args` (接続は残る)。
 - 成功した `hello` は証跡を `events` に残す (`client_hello`。db-schema.md §5.1)。申告した `pid` と違えば、パイプから得た値を採る。Writer のキューが上限 (1024 件) を超えていたら `busy` で `hello` を断る。
-- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`hunks`、`blob_get`、`shutdown`、`subscribe`、`session_begin`、`session_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
+- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`hunks`、`scene_diff`、`blob_get`、`shutdown`、`subscribe`、`session_begin`、`session_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
 - 取得の op は読み取り専用の SQLite 接続で引く (WAL なので書き手を止めない。接続ごとに 1 本、最初に必要になったとき開く)。ベースラインの最中も答える。DB へ書けない状態 (`db_degraded`) では `list` / `describe` / `sessions` が `db_degraded` を返し、`status` は答える。
 
 ### 9.4 op の引数と結果 (JSON は camelCase、時刻は UTC ミリ秒)
 
 - `status`: `proto`、`projectId`、`pid`、`startedAt`、`uptimeMs`、`phase` (`starting` / `baselining` / `watching` / `failed` / `stopped`)、`failure`、`trackedFiles`、`baseline` (`firstRun`、`files`、`bytes`、`elapsedMs`、`scanDone`、`scanTotal`、`walkMs` / `readMs` / `hashMs` / `commitMs`)、`verify` (`runs`、`gaps`、`lastScanMs` = 直近の検証の走査の前半だけの所要時間)、`recent.recordUs` (直近に記録した観測 1 件あたりの Writer への往復、マイクロ秒)、`watches` (`count` = いま張っている OS の監視の本数、`fallback` = 分けた結果が上限 256 本を超えてルートの再帰 1 本へ戻している)、`overflows`、`unrecorded` (記録に失敗している区間 `sinceMs` / `reason`、無ければ `null`)、`db` (`state` = `recording` / `db_degraded`、`reason`、`failedSteps` = 起動時の検査 3〜6 で失敗した段と理由、`brokenDb`、`replayedEvents`、`blobsMarkedMissing`、`blobsCorrupted`、`orphanBlobs` ほか)、`blobs` (`count`、`bytes` = 重複を除いた存在する Blob)、`gaps` (`count`、`recent` = 新しい順に 20 件)。
 - `list`: 引数は `path` (完全一致。末尾が `/` なら前方一致。リネーム前のパスにも当たる)、`from` / `to` (`observedAt` の範囲、両端を含む)、`changeType` (`added` / `modified` / `deleted` / `renamed`)、`sessionId`、`review`、`attribution`、`cursor`、`limit` (既定 50、最大 200。超えたら 200 に切る。1 未満は `bad_args`)。新しい Revision から順に返し、`cursor` は直前のページの最後の `revisionId` (それより古いものを返す)。結果は `items`、`nextCursor` (最後なら `null`)、`limit`、`coverage` (`phase`、`baselining`、`baselineScanned` / `baselineTotal`、`unrecorded`。**`baselining` が真の間は、一覧が不完全でありうる**)。1 件は `revisionId`、`changeId`、`seq`、`path`、`oldPath`、`changeType`、`contentKind`、`changeState` (`superseded` の Change も出す)、`observedAt`、`completeness`、`actor`、`attribution`、`diffMode`、`operationId`、`beforeSize`、`afterSize`、`hunkCount`、`review`。Blob と Hunk の本文は入れない。`sessionId` は、そのセッションが候補に入っている Revision (結論が 1 つの操作に絞れていればその操作、複数候補・操作の無い根拠は根拠のセッション)。`attribution` は M104g から実データ、`review` は全部 `pending` (レビューは後続のサブ)。`attribution` の引数は 1 つの文字列か文字列の配列 (M104k2。「不明 / 推定」を 1 回で取る `["unknown","inferred"]` のため。要素が知らない値なら `bad_args`)。`sessionId` で絞るとき、Editor の保存・復元で確定した変更 (`actor` が `editor_user` / `restore`) は、AI の根拠が残っていても入れない。
-- `describe` (`revisionId`): 一覧の項目に加えて `before` / `after` (`hash`、`size`、`blobState`。無ければ `null`)、`hunks` (`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`eolOnly`、`state`。本文は返さない)、`restorable` (Before の Blob が有る、または新規 = 削除で戻せる。Before を見ていない・Blob が無いものは `false`)、`evidence[]` (`kind`、`sessionId`、`operationId`、`detail`、`recordedAt`。増えるだけ)、`candidateSessions` (根拠から決まる候補のセッション)。無ければ `not_found`。`diffMode` が `lines` 以外のときは Hunk が無い理由が分かる (db-schema.md §3.2)。
+- `describe` (`revisionId`): 一覧の項目に加えて `before` / `after` (`hash`、`size`、`blobState`。無ければ `null`)、`hunks` (`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`eolOnly`、`state`。本文は返さない)、`restorable` (Before の Blob が有る、または新規 = 削除で戻せる。Before を見ていない・Blob が無いものは `false`)、`evidence[]` (`kind`、`sessionId`、`operationId`、`detail`、`recordedAt`。増えるだけ)、`candidateSessions` (根拠から決まる候補のセッション)、`sceneSummary` (M104l。構造の変更が記録された Revision だけ: `documentId`、`resolvedDocumentId` (引き継ぎをたどった先)、`counts` (種別ごとの件数)、`unparsedReason` (解析不可ならその理由、そうでなければ `null`)。値は含めない。`change_describe` はそのまま通す)。無ければ `not_found`。`diffMode` が `lines` 以外のときは Hunk が無い理由が分かる (db-schema.md §3.2)。
 - `sessions`: 引数は `cursor` (直前のページの最後の `<startedAt>:<sessionId>`)、`limit`。結果は `items` (セッションの一覧。`sessionId`、`provider`、`source`、`clientSessionId`、`workspace`、`baseCommit`、`startedAt`、`endedAt`、`status`、`changeCount` = そのセッションが候補に入っている Revision の数 (`list` の `sessionId` と同じ条件))、`nextCursor`、`limit`。
 - `hunks` (`revisionId`、`cursor?`。**role = editor だけ**): 結果は `items` と `nextCursor` (最後なら `null`)。1 件は `hunkId`、`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`beforeText`、`afterText`、`contextPre`、`contextPost`、`eolOnly`、`state`、`oversize`。`cursor` は直前のページの最後の `ordinal` (それより後ろを返す)。1 ページは Hunk の JSON の合計が 768 KiB 以内 (1 行の上限 1 MiB に余裕を残す)。**単独で 768 KiB に収まらない Hunk** は本文を入れず `oversize: true` と `beforeBytes` / `afterBytes` だけを返す (`diff_mode = whole` の大きいファイルがこれに当たる)。Editor は `blob_get` で原本を取って自分で扱う。無い `revisionId` は `not_found`、`cursor` が整数でなければ `bad_args`。Hunk の無い Revision (`binary` / `excluded` / `unavailable`) は `items` が空。
+- `scene_diff` (`revisionId`、`cursor?`。**role = editor だけ**。M104l): 結果は `items` と `nextCursor` (最後なら `null`)。1 件は `sceneChangeId`、`documentId` (記録した時点の ID)、`resolvedDocumentId` (引き継ぎをたどった先。通常は同じ)、`fileId` (文書全体の変更なら `null`)、`changeType` (要求 §7.2 の種別と、解析不可の `unparsed`)、`component`、`field`、`beforeValue`、`afterValue` (元のファイルのバイト列から切り出した JSON の断片。`unparsed` の `afterValue` は理由の JSON 文字列)、`state`、`oversize`。`cursor` は直前のページの最後の `sceneChangeId`。1 ページは JSON の合計が 768 KiB 以内で、**値が単独で収まらない変更**は値を入れず `oversize: true` と `beforeBytes` / `afterBytes` だけを返す (切らない。原本は `blob_get`)。無い `revisionId` は `not_found`、`cursor` が整数でなければ `bad_args`。構造の変更が無い Revision は `items` が空。
 - `blob_get` (`hash`、`offset?`、`length?`。**role = editor だけ**): 結果は `data` (base64、パディングあり)、`size` (Blob の総バイト数)、`offset`、`length` (返したバイト数)。`length` の既定と最大は 512 KiB (超えたら切る)、末尾を越える `offset` は空の `data`。**`hash` は 64 桁の 16 進 (小文字) だけを受け**、それ以外は `bad_args` (Blob のパスとして解釈される余地を残さない)。Blob が無ければ (除外されたスナップショット・回収された) `blob_missing`。範囲読みなので中身とハッシュの照合はしない。DB を引かないので `db_degraded` でも答える。
 - `shutdown`: 結果は `{}`。応答を返したあと、サービスが止まる。
 
@@ -296,19 +298,18 @@ Rust の `Command` は継承可能なハンドルを子へ複製するため、�
 
 ### 9.8 通知 (M104j)
 
-正本は `tools	rack\src
-otify.rs`。
+正本は `tools\track\src\notify.rs`。
 
 - `subscribe` (`role = editor` だけ。他は `forbidden`) は、`events` の名前 (`change_recorded` / `attribution_updated` / `coverage_gap` / `session_changed` / `shutting_down`) を検査して購読を登録する。検査が全部通ってから登録するので、失敗した要求で購読は残らない。2 回目は `bad_args` (接続と通知は続く)。結果は `{}`。
 - **通知は記録の経路に触れずに作る。** 購読者がいる間だけ、読み取り専用の DB 接続が 200 ms ごとに新しい行を引き、通知にする (購読者が 0 の間は引かない)。位置は購読したときの DB の末尾で、購読より前の出来事は通知にならない (取り直しは `list` で行う)。Writer も監視も通知を待たない。通知の遅れの上限は 200 ms + 接続の送り出しの間隔 (10 ms)。
-  - `change_recorded`: 新しい `change_revisions` の行ごとに 1 件。`revisionId`、`changeId`、`path`、`changeType`、`actor`、`attribution` (その時点の値。`actor` は仕様の項目に足した)。
+  - `change_recorded`: 新しい `change_revisions` の行ごとに 1 件。`revisionId`、`changeId`、`path`、`changeType`、`actor`、`attribution` (その時点の値。`actor` は仕様の項目に足した)。シーン / プレハブ / アクターのときは `documentId` が付く (M104l。Editor が開いている文書の変更かをすぐ判定できる。項目の追加なのでプロトコル版は上げない)。
   - `attribution_updated`: **すでに知らせた** Revision に `attribution_evidence` が足されたら 1 件 (回ごとに Revision 1 つにつき 1 件)。`revisionId`、`actor`、`attribution` (その時点の値)。同じ回で初めて知らせる Revision の根拠は `change_recorded` に含まれるので、重ねて出さない。
   - `coverage_gap`: 新しい `coverage_gaps` の行ごとに 1 件。`gapId`、`fromAt`、`toAt`、`reason`、`scope`。
   - `session_changed`: セッションの `status` が変わった (新しいセッションを含む) ごとに 1 件。`sessionId`、`status`。
   - `shutting_down`: サービスが終わるとき、購読者へ `reason` (`shutdown_op` / `idle_timeout` / `signal` ...) を送り、書き終わるのを最大 500 ms 待ってから止める。
 - **購読ごとの上限つきキュー** (既定 256 件。`serve --notify-queue <n>` で変える。試験用)。あふれたら一番古い通知を捨て、次の送り出しの先頭に `resync` を 1 つ付ける (あふれの区間で 1 つ)。読まないクライアントがいても、積むだけなので Writer と監視は止まらない。サービスの接続スレッドは、読み取りで止まる前に通知を送る (同期ハンドルの `ReadFile` で止まっている間は別スレッドから `WriteFile` できないので、購読した接続は `PeekNamedPipe` で入力を見ながら 10 ms ごとに送り出しを見る)。
 - プロトコル版は上げない (op の追加だけ。§7)。
-- 検証: `tools	rack	ests\pipe.rs` (`subscribe_is_editor_only_and_checks_its_arguments`、`subscribed_editor_receives_the_notifications`、`an_unread_subscriber_does_not_stop_recording_and_gets_one_resync`)、`notify.rs` の単体試験 (キューのあふれ、`coverage_gap` を含む引き)、`tests	rack_subscribe.ndjson`。
+- 検証: `tools\track\tests\pipe.rs` (`subscribe_is_editor_only_and_checks_its_arguments`、`subscribed_editor_receives_the_notifications`、`an_unread_subscriber_does_not_stop_recording_and_gets_one_resync`)、`notify.rs` の単体試験 (キューのあふれ、`coverage_gap` を含む引き)、`tests\track\23_subscribe.ndjson`。
 
 ### 9.9 Editor のクライアント (M104j)
 

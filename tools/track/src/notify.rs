@@ -123,23 +123,26 @@ pub fn poll_once(conn: &Connection, cursors: &mut Cursors) -> rusqlite::Result<V
     let revision_before = cursors.revision;
     {
         let mut stmt = tx.prepare(
-            "SELECT r.revision_id, r.change_id, c.path, r.change_type, r.actor, r.attribution
+            "SELECT r.revision_id, r.change_id, c.path, r.change_type, r.actor, r.attribution,
+                    COALESCE((SELECT s.document_id FROM scene_changes s WHERE s.revision_id = r.revision_id LIMIT 1), c.document_id)
                FROM change_revisions r JOIN changes c ON c.change_id = r.change_id
               WHERE r.revision_id > ?1 ORDER BY r.revision_id LIMIT ?2",
         )?;
         let rows = stmt.query_map([revision_before, BATCH_LIMIT], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                json!({
-                    "event": "change_recorded",
-                    "revisionId": r.get::<_, i64>(0)?,
-                    "changeId": r.get::<_, i64>(1)?,
-                    "path": r.get::<_, String>(2)?,
-                    "changeType": r.get::<_, String>(3)?,
-                    "actor": r.get::<_, String>(4)?,
-                    "attribution": r.get::<_, String>(5)?,
-                }),
-            ))
+            let mut event = json!({
+                "event": "change_recorded",
+                "revisionId": r.get::<_, i64>(0)?,
+                "changeId": r.get::<_, i64>(1)?,
+                "path": r.get::<_, String>(2)?,
+                "changeType": r.get::<_, String>(3)?,
+                "actor": r.get::<_, String>(4)?,
+                "attribution": r.get::<_, String>(5)?,
+            });
+            // シーン / プレハブ / アクターのときだけ。Editor が開いているシーンの変更かをすぐ判定できる
+            if let Some(document_id) = r.get::<_, Option<String>>(6)? {
+                event["documentId"] = json!(document_id);
+            }
+            Ok((r.get::<_, i64>(0)?, event))
         })?;
         for row in rows {
             let (id, event) = row?;
