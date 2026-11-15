@@ -34,7 +34,7 @@
 | sub-17 (M104r) 削除エンティティのゴースト、Overlay | OK | 0 | 0a21f30e | round 1 で OK。World を書かない (grep で確認)。scene_overlay に before / uncertain を追加。副作用: coder がリポジトリ直下の imgui.ini を書き換えた (控えなし) |
 | sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | OK | 0 | 28c87fb9 | round 1 で OK。プレビュー専用のシーンと RT で比較。規則 16 の許可リストに ScenePreviewWindow.cpp。Debug のスタックの件は sub-19 の A (D43) |
 | sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | OK | 0 | ccfeac5e | round 1 で OK。D38 解消 (EditorApp をヒープへ。Debug の physics が通る)。プレハブ伝播。replay_verify は MYE_REPLAY_JOBS=3 で PASS (既定の並列度の demo の失敗と imgui.ini の書き換えは bat の既存の性質、D44) |
-| sub-20 (M104u) エンジン配布物へのサービス同梱 | OK | 0 | (このコミット) | round 1 で OK。全サブ OK。release.yml の実走と展開先 Editor からの接続は push 後 / 手動 (未確認) |
+| sub-20 (M104u) エンジン配布物へのサービス同梱 | OK | 0 | 3995eda6 | round 1 で OK。全サブ OK。release.yml の実走と展開先 Editor からの接続は push 後 / 手動 (未確認) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
