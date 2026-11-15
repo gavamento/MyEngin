@@ -92,10 +92,39 @@ std::vector<OverlayField> SceneChangeOverlay::ParseFields(const nlohmann::json& 
         f.lastRevisionId = Int(item, "lastRevisionId", 0);
         f.changeType = Str(item, "changeType");
         f.overrideField = Bool(item, "override");
+        f.propagated = Bool(item, "propagated");
+        f.causePath = Str(item, "causePath");
         f.oversize = Bool(item, "oversize");
         out.push_back(std::move(f));
     }
     return out;
+}
+
+// 更新のエンティティで、変更がすべて伝播 (1 件以上) か
+static bool IsPropagatedOnly(const OverlayEntity& e)
+{
+    if (e.status != OverlayStatus::Modified) {
+        return false;
+    }
+    size_t count = 0;
+    auto allPropagated = [&count](const std::vector<OverlayField>& fields) {
+        for (const OverlayField& f : fields) {
+            if (!f.propagated) {
+                return false;
+            }
+            ++count;
+        }
+        return true;
+    };
+    if (!allPropagated(e.hierarchy) || !allPropagated(e.entityFields)) {
+        return false;
+    }
+    for (const OverlayComponent& c : e.components) {
+        if (c.status != OverlayStatus::Modified || !allPropagated(c.fields)) {
+            return false;
+        }
+    }
+    return count > 0;
 }
 
 void SceneChangeOverlay::ParseEntities(const nlohmann::json& result, std::unordered_map<int64_t, OverlayEntity>& out)
@@ -134,6 +163,7 @@ void SceneChangeOverlay::ParseEntities(const nlohmann::json& result, std::unorde
                 }
             }
         }
+        e.propagatedOnly = IsPropagatedOnly(e);
         if (e.status != OverlayStatus::None) {
             out[e.fileId] = std::move(e);
         }
@@ -208,6 +238,13 @@ void SceneChangeOverlay::Reset()
     force_ = false;
 }
 
+// プレハブ / アクターのファイルのパスか (通知の path は相対パス)
+static bool IsComposeAssetPath(const std::string& path)
+{
+    const std::wstring wide = Utf8ToWide(path);
+    return EndsWithNoCase(wide, L".prefab.json") || EndsWithNoCase(wide, L".actor.json");
+}
+
 void SceneChangeOverlay::OnNotification(const nlohmann::json& event)
 {
     const std::string name = Str(event, "event");
@@ -217,6 +254,8 @@ void SceneChangeOverlay::OnNotification(const nlohmann::json& event)
             // 開いている文書の変更だけ。別の文書の通知では取り直さない
             if (!documentId_.empty() && doc == documentId_) {
                 MarkStale(false);
+            } else if (!documentId_.empty() && IsComposeAssetPath(Str(event, "path"))) {
+                MarkStale(false); // プレハブ / アクターの変更は、開いているシーンのインスタンスへ伝わりうる (サービスが影響範囲を計算する)
             }
             return;
         }
@@ -400,6 +439,7 @@ OverlayBadge SceneChangeOverlay::BadgeFor(uint64_t fileId) const
     if (it != table_.end() && (it->second.status == OverlayStatus::Added || it->second.status == OverlayStatus::Modified)) {
         badge.status = it->second.status;
         badge.uncertain = it->second.uncertain;
+        badge.propagated = it->second.status == OverlayStatus::Modified && it->second.propagatedOnly;
         return badge;
     }
     badge.descendantOnly = ancestors_.count(static_cast<int64_t>(fileId)) != 0;

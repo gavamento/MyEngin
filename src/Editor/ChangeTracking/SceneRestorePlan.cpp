@@ -773,6 +773,11 @@ SceneRestorePlan Builder::Run()
         // 既定は Ready。各行の判定で書き換える
         rows_[i].verdict = Verdict::Ready;
         rows_[i].issue = Issue::None;
+        // 伝播の行は、どのシーンを開いていても戻せない。原因のプレハブの変更へ案内する (NotOpenDocument より先に判定する)
+        if (row.changeType == "PrefabPropagation") {
+            Set(i, Verdict::NotRestorable, Issue::PropagatedRow);
+            continue;
+        }
         const std::string document = row.resolvedDocumentId.empty() ? row.documentId : row.resolvedDocumentId;
         if (input_.openDocumentId.empty() || document != input_.openDocumentId) {
             Set(i, Verdict::NotRestorable, Issue::NotOpenDocument);

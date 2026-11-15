@@ -96,6 +96,8 @@ pub struct StoreStats {
 }
 
 pub struct Store {
+    /// プロジェクトのルート。プレハブ伝播が `.meta` の無いプレハブのキー (パスのハッシュ) を作るのに使う。
+    pub project_root: PathBuf,
     pub stats: StoreStats,
     /// 試験用: Some(OS のエラー番号) の間、`record_event` がそのエラーで失敗する (ジャーナルへ書けない状態を模す)。
     #[doc(hidden)]

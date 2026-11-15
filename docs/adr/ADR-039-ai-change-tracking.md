@@ -1,6 +1,6 @@
 # ADR-039: AI による変更の追跡を、独立した追跡サービスと Editor 専用の表示・復元に分けて作る
 
-- 状態: 設計確定・実装中 (2026-11-13、M104。試作 6 件の結果を 2026-11-14 に反映、M104b)
+- 状態: 実装済み (2026-11-16、M104t。配布物への同梱は M104u)。設計は 2026-11-13 に確定、試作 6 件の結果を 2026-11-14 に反映 (M104b)
 - 出所: 要求の正本は [docs\ai-change-tracking\spec-v1.1.md](../ai-change-tracking/spec-v1.1.md)。
   設計は [architecture.md](../ai-change-tracking/architecture.md) / [ipc-contract.md](../ai-change-tracking/ipc-contract.md) /
   [db-schema.md](../ai-change-tracking/db-schema.md) / [attribution-rules.md](../ai-change-tracking/attribution-rules.md) /
@@ -70,9 +70,20 @@ git の差分には AI 以前の未コミットの変更が混ざり、シーン
 - ADR-032 の「道具は 5 つ」が 10 になる。実装時に ADR-032 と [docs\mcp-server.md](../mcp-server.md) を直す。
 - Engine 層の変更は `ReloadHub` だけ: 「今適用してよいか」を問う口 1 つ (`SetSceneApplyGate`) と、保留の操作 (`HasPendingScene` / `PendingScenePath` / `RequestApplyPendingScene` / `DiscardPendingScene` / `TakePendingSceneResult`)。口が未設定なら挙動は今と同じ。
 - Editor の既存挙動の変更は 1 つ: 未保存のシーンに外部の変更が来たとき、確認が出る。
+- サブを足した経緯 (計画の M104b〜M104t を実装しながら、`/harness` の判定で増やした): M104d2 (取りこぼしの検出)、M104g2 (無視するディレクトリを監視から外す)、
+  M104k2 (Editor の保存の通知)、M104m2 (Inspector と Scene View の表示)、M104m3 / M104o2 (時間に依存する試験を負荷に強くする)、M104p2 (ファイルと Hunk の復元の適用・ジャーナル・回復)。
+  最後に M104u (配布物への同梱) を足した (ユーザー判断、2026-11-14)。
+- 実装で変わった設計の細部: シーンの構造比較の対象に、プレハブ伝播 (`PrefabPropagation`) を足した ([architecture.md](../ai-change-tracking/architecture.md) §6.4)。
+  行は原因のプレハブの Revision に付け、確認 (レビュー) と復元の対象にしない。DB のスキーマは版 3 (events の索引と、`.meta` が後から付いた文書の引き継ぎ列)。
+- Editor 層の起動の変更が 1 つ: `EditorApp` を `wWinMain` のローカル変数から `std::unique_ptr` でヒープへ移した (`EditorMain.cpp`)。
+  M104 でメンバが増えて (約 11 KB)、Debug の 1 MB のスタックの余裕が減り、既存の `physics` の自己テストがスタックオーバーフローで落ちたため (D38 / D43)。
+  スタックを大きくした exe の複製では通り、ヒープへ移した後の Debug でも通った。Engine 層の physics のコードとリンカの設定は変えていない。
 
 ## 未決のまま残したもの
 
 ユーザーの判断が要る項目は [plans\m104-ai-change-tracking.md](../../plans/m104-ai-change-tracking.md) にまとめた。
 試作 6 件 (M104b) の結果は [prototype-results.md](../ai-change-tracking/prototype-results.md)。決定 2 と 3 の実現手段 (Win32 API の呼び方、SQLite の組み込み方) は試作で確定し、責務の分け方は変わらなかった。
-残る未検証は、CI での `bundled` のビルド (sub-05)、本物の Claude Code が渡すフックの入力 (sub-08)、C# コンポーネントの Field 復元の実走 (sub-16)、親の Job の性質 (sub-05 / sub-07 / sub-09)。
+実装後に残った未確認は [acceptance.md](../ai-change-tracking/acceptance.md) の末尾にまとめた: 見た目の目視、実 Editor での通しの操作 (`docs\test_checklists.md` の「M104 通しの確認」)、
+CI での `bundled` のビルドと Rust 1.89 での実ビルド、本物の Claude Code が渡すフックの入力と終了後のサービスの生存、実際のプロセスの強制終了での復元の回復、実プレハブ + 実シーンでの伝播。
+C# コンポーネントの Field 復元の実走 (M104q) と、親の Job の性質 (M104j) は確認済み。
+性能は [performance.md](../ai-change-tracking/performance.md) に計測と目標値がある。極端な場合 (変更 2 万件の文書の取り直し、読み込んだシーンの最初の `FindByFileId` の線形走査) は目標の外で、別のサブの候補。

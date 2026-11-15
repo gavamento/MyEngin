@@ -126,7 +126,7 @@ pub fn poll_once(conn: &Connection, cursors: &mut Cursors) -> rusqlite::Result<V
     {
         let mut stmt = tx.prepare(
             "SELECT r.revision_id, r.change_id, c.path, r.change_type, r.actor, r.attribution,
-                    COALESCE((SELECT s.document_id FROM scene_changes s WHERE s.revision_id = r.revision_id LIMIT 1), c.document_id)
+                    COALESCE((SELECT s.document_id FROM scene_changes s WHERE s.revision_id = r.revision_id ORDER BY s.scene_change_id LIMIT 1), c.document_id)
                FROM change_revisions r JOIN changes c ON c.change_id = r.change_id
               WHERE r.revision_id > ?1 ORDER BY r.revision_id LIMIT ?2",
         )?;

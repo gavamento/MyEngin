@@ -59,6 +59,7 @@ enum class SceneRestoreIssue : uint8_t {
     NoRows,              // 範囲に行が無い
     TooManyRows,         // 行が多すぎる
     RowUnsupported,      // 文書全体・プレハブの付け替え・解析不可・コンポーネント全体の値
+    PropagatedRow,       // プレハブのベースの変更が伝わった行 (戻す対象は原因のプレハブの変更)
     OverrideKeyOnly,     // 上書きの印だけで、値の行が無い
     ValueOversize,       // 値が大きすぎて保持していない
     NoBefore,            // 戻す先の値が無い (C# のフィールドを「無い」へ戻す)

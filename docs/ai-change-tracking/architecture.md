@@ -268,17 +268,24 @@ Editor Snapshot を取るのは「保存していない編集と、ディスク�
 
 ### 6.4 プレハブ
 
-確認済みの保存表現: インスタンスのルートに `PrefabInstanceComponent{prefabHash, outerLocalId}`、全メンバに `PrefabLinkComponent{localId}`。
+確認済みの保存表現: インスタンスのルートに `PrefabInstance{prefabHash, outerLocalId}`、全メンバに `PrefabLink{localId}` (JSON のコンポーネント名は登録名。C++ の型名は `PrefabInstanceComponent` / `PrefabLinkComponent`)。
 override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"name"` / `"tagMask"` と、構造上書きの `"+Comp"` / `"-Comp"`。子エンティティの追加・削除は override として追跡されていない。
 
 | 観測 | 変更種別 |
 |---|---|
 | `.prefab.json` / `.actor.json` の内容が変わった | `PrefabAssetChanged` |
-| シーン側で `PrefabInstanceComponent` の `prefabHash` が変わった | `PrefabInstanceChanged` |
+| シーン側で `PrefabInstance` コンポーネント (C++ の型名は `PrefabInstanceComponent`) の `prefabHash` が変わった | `PrefabInstanceChanged` |
 | シーン側で `overrides` の集合が変わった、または override 済みフィールドの値が変わった | `PrefabOverrideChanged` |
 | プレハブのベースが変わり、override していないフィールドが変わった | `PrefabPropagation` (原因の Change ID を付ける) |
 
 - `PrefabPropagation` は**ディスク上のシーンファイルには現れない**。伝播はロード時 (`RefreshNonOverridden`) とホットリロード時 (`PropagateBaseChange`) にメモリ上で起きるため。サービスは「このプレハブを参照しているインスタンスと、override していないフィールド」から影響範囲を計算して記録する。実際の値は Editor Snapshot があるときだけ分かる。
+- **実装 (M104t、`tools\track\src\propagation.rs`)**: プレハブ / アクターのファイルの Revision を書くとき (`write_revision` の中、同じ SAVEPOINT の入れ子の SAVEPOINT。失敗しても Revision と Hunk は残す)、その Revision の構造の変更のうち**フィールドの値の変化** (`FieldModified` と、`EntityModified` の `name` / `tagMask`) を原因にして、参照しているシーンのインスタンスのメンバへ `PrefabPropagation` の行を足す。
+  - 対応: プレハブのキー `prefabHash` は `.meta` の guid (16 桁の 16 進を u64 として) か、無ければ正規化した絶対パス (小文字・`\` 区切り) の FNV-1a 64 (エンジンの `PrefabLibrary::HashForPath` と同じ。`tests\propagation.rs` と `propagation.rs` の単体試験で既知の値を確かめている)。シーン側の JSON のコンポーネント名は登録名の `PrefabInstance` / `PrefabLink` (C++ の型名の `PrefabInstanceComponent` ではない。M104l の `PrefabInstanceChanged` の判定がこの名前を取り違えていたのを M104t で直した)。メンバの `PrefabLink.localId` がプレハブの中のエンティティの `fileId` と対応する。
+  - 読むシーン: `snapshots` の各シーンの**最新の記録** (ディスクではなく Blob。DB を作り直しても同じ行になるため)。削除・リネームで去ったシーンは除く。`prefabHash` の数字を含まないシーンは JSON として読まない。上限: 読むシーン 300、合計 256 MiB、1 シーン 16 MiB、出す行 20000。超えたら打ち切り、読めなかった・読まなかった・省いた数と、`overrides` の記録が無い旧形式のインスタンス (override かどうか分からないので行を出さない) の数を、プレハブの文書の `PrefabPropagation` の行 1 つ (`file_id` なし、`after_value` に JSON の件数) に残す。
+  - 行: `revision_id` は**原因の Revision (プレハブ側)**、`document_id` は影響を受けるシーンの文書 (一度も変更の記録が無いシーンは、その場で `documents` に作る。ID は `.meta` の最新の記録の guid、無ければパス)、`file_id` はインスタンスのメンバの `fileId`、`before_value` / `after_value` は**プレハブの値** (インスタンスのライブの値ではない)、`caused_by` は同じ Revision のプレハブ側の行の `scene_change_id`。
+  - override の判定: メンバの `overrides` に `Comp.field` (エンティティ直下は `name` / `tagMask`) があれば出さない。
+  - 限界: 入れ子のプレハブは、シーンに書かれているインスタンス (内側のルートを含む) まで。外側のプレハブの変更が内側へ及ぶ連鎖は追わない。プレハブ側のエンティティの追加・削除・親子の変更・コンポーネントの追加・削除は伝播の行にしない (フィールドの値の変化だけ)。インスタンスのライブの値は分からない。
+  - 確認の対象にしない: `review.rs` の葉の列挙・数え上げは `PrefabPropagation` を除く (確認するのは原因のプレハブの変更)。復元もしない (restore-safety.md §3.3、§8.3)。`scene_overlay` は行を `propagated: true` と `causePath` (原因のプレハブのパス。`lastRevisionId` が原因の Revision) 付きで返し、`scene_diff` は各行に `causedBy` を返す。
 - 子エンティティの追加・削除は override ではないので、`EntityAdded` / `EntityRemoved` として出す。
 
 ## 7. Editor 側の表示 (決定)
@@ -302,7 +309,7 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 - **実装 (M104s)**: Before / After の 3D 比較。**比べるのは、ある Revision の Before と After (どちらもサービスの Blob)、または After の代わりに今のディスクの内容**で、エディタの未保存の状態は比べない (`SaveToJson` は fileId を採番しアーキタイプを動かすので、比較のためだけに呼ばない)。対象はシーンの文書 (`*.scene.json`) だけ。状態は `ScenePreviewSession` (`ChangeTracking\`。ImGui も GPU も持たない) で、内容の取得 (`PreviewContentFetch`: `blob_get` を 512 KiB ずつ、応答のたびに次を要求するので数フレームに分かれる。今のファイルは `RestoreFileIo` で 1 回 1 MiB。上限 32 MiB。ハッシュを確かめてから見せる)、プレビュー専用の `Scene` (`PreviewScene`。生きている数を数える。**同時に最大 2 つ**) への読み込み (`LoadPreviewScene`)、変わったエンティティの印とカメラを持つ。描画は `ScenePreviewWindow` (`Windows\Project\`。`AnimationPreviewWindow` と同じ作りの専用 `RenderSystem` + `RenderTexture`。側ごとに `RenderSystem` を持つ) で、表示は Before / After / 重ね / 左右 (カメラは 1 つで共有)。窓の外 (GameView・撮影・Runtime) には出ない。**生の D3D 型は `ScenePreviewWindow.cpp` だけ** (RT の形式指定。規則 16 の許可リストに足し、`engine_spec.md` §6.3 も更新した。`ChangeTracking\` には足さない)。デバイス消失では `ReleaseGpu` が RT と `RenderSystem` の GPU 資源だけを手放し、Scene は CPU 側に残って次の描画で RT を作り直す。
   - 読み込みは本番と同じ `SceneSerializer::LoadFromJson` を、**自前の `Scene` に対して**呼ぶ。本番の World・`fileIdHistory_`・Undo・選択・`ReloadHub`・`SceneChangeOverlay` に触れる口を持たない (窓も `ScenePreviewSession` もそれらの参照を受け取らない)。**C# コンポーネントは JSON から取り除いてから渡す** (`ManagedHost::IsManagedComponent` で名前を問い合わせるだけ。managed のインスタンスを作ると本番の C# の状態に触れうる)。読み込まなかった数は画面に出す。アセットは**新しく読み込まず**、本番と共有のライブラリに今読み込まれているものを描く (読み込まれていないものは描かれない)。`.meta` の作成 (`GuidForPath(…, true)`) もアセットの登録の変更も起こさない。
   - エンティティが `kPreviewMaxEntities` = 10000 を超える文書は**一部だけを読まず**「大きすぎます」と出す (一部だけでは Before と After で映る範囲が食い違い、比較として嘘になる)。版が新しい・壊れた JSON・シーンの形でない・Blob の欠け・ハッシュ不一致・追跡サービスと話せない・今のファイルが無い、は側ごとに理由を出し、もう一方の側は見せる。
-  - **アセットは今の内容で描く** (過去の内容は Blob にしか無く、描画の経路は今の内容を引くので、比較の時点を完全には再現できない)。その旨を常に注記に出し、さらに Before の後 (この Revision より新しい `revisionId`) に、シーンが参照するアセット (`AssetRef` の値を `AssetDatabase::PathForGuid` で相対パスにしたもの) へ記録された変更があれば、件数と先頭 8 件のパスを出す (`list` の `path` 絞り込みで 1 件ずつ。先頭 64 件だけ。引けなければ「確かめられません」。組み込み・サブアセットの鍵はパスに引けないので数えない)。`tools	rack` は変えていない。
+  - **アセットは今の内容で描く** (過去の内容は Blob にしか無く、描画の経路は今の内容を引くので、比較の時点を完全には再現できない)。その旨を常に注記に出し、さらに Before の後 (この Revision より新しい `revisionId`) に、シーンが参照するアセット (`AssetRef` の値を `AssetDatabase::PathForGuid` で相対パスにしたもの) へ記録された変更があれば、件数と先頭 8 件のパスを出す (`list` の `path` 絞り込みで 1 件ずつ。先頭 64 件だけ。引けなければ「確かめられません」。組み込み・サブアセットの鍵はパスに引けないので数えない)。`tools\track` は変えていない。
   - 重ねは After (After が無い削除は Before) を描き、変わったエンティティの印を ImGui の描画リストで重ねる (追加・更新は After の位置、削除は Before の位置で斜線つき)。ゴーストの半透明メッシュは重ねの中では描かない (Scene View のゴーストと違い、専用の RT に追加の描画パスを足さない)。入口は AI Changes 窓の詳細の「Before / After を見る...」(`AiChangesHost::openScenePreview`。C# の判定とアセットのパスの解決は `EditorApp` が足す)。
 - 表示状態は `SceneChangeOverlay` が (documentId, fileId) → 変更種別の表として持つ。各窓は毎フレーム `Scene::FindByFileId` で引く。`Selection` と同じやり方で、イベントも World のコンポーネントも使わない。
 - fileId を**読むだけ**の関数を使う。`Scene::EnsureFileId` は未採番なら採番してしまうので、表示のために呼ばない。
@@ -349,7 +356,13 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 
 ## 11. 性能の考え方 (決定)
 
-- 目標値はまだ置かない。仕様書 §14.1 のとおり、既存 Editor の計測を取ってから決める (AGENTS.md §3.5)。
+- 目標値 (M104t。計測は [performance.md](performance.md) §10。値は計測に余裕を持たせたもの。外れる極端な場合も同じ節に書いてある):
+  - 表示側 (毎フレーム): 変更 1000 件までで、Scene View の候補作りと選び方の合計が 0.5 ms 以内。Hierarchy の描画に追跡の有無の差が出ない。
+  - 取り直し 1 ページの `Poll()` (解析と表への反映): 1000 件までのページで 20 ms 以内。取り直しのあとの `FindByFileId` の最初の走査: 1000 件までで 20 ms 以内。
+  - 記録: 1 件の変更が `tracking.db` に出るまで、デバウンスを除いて 30 ms 前後。構造 diff は 2 万エンティティで 200 ms 以内。
+  - プレハブ伝播の計算: 100 シーン x 100 インスタンスで 50 ms 以内の増分。`scene_overlay` の応答: 変更 1000 件までで 50 ms 以内。
+  - 外れるもの (測ってある): 変更 2 万件の取り直し (1 ページの解析 31 ms、最初の走査 約 300 ms、`scene_overlay` 約 1.1 秒、毎フレームの候補作り 4〜6 ms)。そういう文書が実際に出てから直す。
+  - 変えないと決めたもの: Scene View の可視の判定は原点だけ (AABB にしても 2 万件で毎フレーム +2.5 ms。performance.md §10.3)。
 - 重い処理 (ハッシュ、diff、JSON の比較、DB) はすべてサービス側のプロセスで行う。Editor のフレームに入るのは pipe の `Poll()` と表の参照だけ。
 - 一覧はページ単位で取り、Hunk と Blob は開いたときに取る。
 - 計測できるようにするもの: ベースラインの所要時間とファイル数、1 件の変更の記録にかかった時間、Blob の総量、pipe の往復時間。サービスの `status` で返す。ベースラインと記録のスループットは `mye_track.exe bench ...` で取り直せる ([performance.md](performance.md))。

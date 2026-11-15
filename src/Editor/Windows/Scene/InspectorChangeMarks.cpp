@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Editor/Windows/Scene/InspectorChangeMarks.h"
 
+#include <algorithm>
 #include <string>
 
 #include "Editor/ChangeTracking/ChangeFormat.h"
@@ -21,9 +22,14 @@ ImU32 ToU32(const OverlayColor& c)
 }
 
 // 点を center に描き、その上にマウスがあればツールチップを出す
-void DrawDotWithTooltip(const ImVec2& center, ImU32 color, const std::string& tooltip)
+// hollow = プレハブから伝わった変更 (直接の編集の塗りの丸と区別して輪だけにする)
+void DrawDotWithTooltip(const ImVec2& center, ImU32 color, const std::string& tooltip, bool hollow)
 {
-    ImGui::GetWindowDrawList()->AddCircleFilled(center, kMarkRadius, color);
+    if (hollow) {
+        ImGui::GetWindowDrawList()->AddCircle(center, kMarkRadius - 0.5f, color, 0, 1.5f);
+    } else {
+        ImGui::GetWindowDrawList()->AddCircleFilled(center, kMarkRadius, color);
+    }
     const ImVec2 hitMin(center.x - kMarkRadius * 1.5f, center.y - kMarkRadius * 1.5f);
     const ImVec2 hitMax(center.x + kMarkRadius * 1.5f, center.y + kMarkRadius * 1.5f);
     if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(hitMin, hitMax) && !tooltip.empty()) {
@@ -52,7 +58,9 @@ void InspectorChangeMarks::DrawComponentMark(const char* componentName, bool fie
     const ImVec2 mn = ImGui::GetItemRectMin();
     const ImVec2 mx = ImGui::GetItemRectMax();
     const ImVec2 center(mx.x - offsetFromRight, (mn.y + mx.y) * 0.5f);
-    DrawDotWithTooltip(center, ToU32(overlay_->Palette().Get(id)), ComponentMarkTooltip(*component, fieldsListedInTooltip));
+    const bool propagated = component->status == OverlayStatus::Modified && !component->fields.empty()
+                            && std::all_of(component->fields.begin(), component->fields.end(), [](const OverlayField& f) { return f.propagated; });
+    DrawDotWithTooltip(center, ToU32(overlay_->Palette().Get(id)), ComponentMarkTooltip(*component, fieldsListedInTooltip), propagated);
     ++componentMarks_;
 }
 
@@ -67,7 +75,7 @@ void InspectorChangeMarks::DrawFieldMark(const char* componentName, const char* 
     ImGui::Dummy(ImVec2(size, size));
     const ImVec2 mn = ImGui::GetItemRectMin();
     const ImVec2 center(mn.x + kMarkRadius, mn.y + ImGui::GetFrameHeight() * 0.5f);
-    DrawDotWithTooltip(center, ToU32(overlay_->Palette().Get(OverlayColorId::Modified)), FieldMarkTooltip(*field));
+    DrawDotWithTooltip(center, ToU32(overlay_->Palette().Get(OverlayColorId::Modified)), FieldMarkTooltip(*field), field->propagated);
     ++fieldMarks_;
 }
 

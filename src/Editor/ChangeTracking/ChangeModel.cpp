@@ -201,6 +201,7 @@ std::vector<TrackSceneChange> ChangeModel::ParseSceneChanges(const nlohmann::jso
         c.afterBytes = Int(item, "afterBytes", 0);
         c.review = Str(item, "review");
         c.state = Str(item, "state");
+        c.causedBy = Int(item, "causedBy", 0);
         rows.push_back(std::move(c));
     }
     return rows;

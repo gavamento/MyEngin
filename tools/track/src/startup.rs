@@ -125,6 +125,7 @@ pub fn open_project_with(
         Opened::Degraded(reason) => (None, Mode::DbDegraded(reason)),
     };
     let mut store = Store {
+        project_root: project_root.to_path_buf(),
         stats: Default::default(),
         inject_journal_error: None,
         attribution: Default::default(),
@@ -235,7 +236,9 @@ fn replay_journal(store: &mut Store, now: i64, report: &mut StartupReport, deriv
                     .map_err(|e| e.to_string())?;
                 if derive && inserted == 1 && Deriver::wants(&entry.kind) {
                     if deriver.is_none() {
-                        deriver = Some(Deriver::from_db(&tx).map_err(|e| e.to_string())?);
+                        let mut fresh = Deriver::from_db(&tx).map_err(|e| e.to_string())?;
+                        fresh.root = Some(store.project_root.clone());
+                        deriver = Some(fresh);
                     }
                     if let Some(deriver) = deriver.as_mut() {
                         deriver

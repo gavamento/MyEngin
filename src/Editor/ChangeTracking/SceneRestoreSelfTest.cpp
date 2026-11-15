@@ -291,6 +291,12 @@ void RunPureTests(const Check& check)
         check(BuildSceneRestorePlan(input, view).issue == SceneRestoreIssue::ValueOversize, "plan: an oversize value cannot be restored");
         input = Input({ Row(1, "PrefabOverrideChanged", 1, "Camera", "nearZ", nullptr, "\"Camera.nearZ\"") });
         check(BuildSceneRestorePlan(input, view).issue == SceneRestoreIssue::OverrideKeyOnly, "plan: an override key without its value row cannot be restored alone");
+        // プレハブから伝わった行は戻さない。別のシーンを開いていても、原因のプレハブの変更へ案内する理由になる
+        input = Input({ Row(1, "PrefabPropagation", 1, "Camera", "fov", "60", "75") });
+        check(BuildSceneRestorePlan(input, view).verdict == SceneRestoreVerdict::NotRestorable && BuildSceneRestorePlan(input, view).issue == SceneRestoreIssue::PropagatedRow,
+              "plan: a prefab propagation row is never restored (the prefab's own change is)");
+        input.openDocumentId = "someOtherScene";
+        check(BuildSceneRestorePlan(input, view).issue == SceneRestoreIssue::PropagatedRow, "plan: the propagation reason wins over 'not the open scene'");
         // 復元済みの状態の行 (サービスが restored にした行) は何もしない
         input = Input({ Row(1, "FieldModified", 1, "Camera", "nearZ", "0.1", "1") });
         input.rows[0].state = "restored";

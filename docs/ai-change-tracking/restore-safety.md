@@ -269,7 +269,7 @@ World を書き換える唯一の復元 (`src\Editor\ChangeTracking\SceneRestore
 - **C# コンポーネント** (試作 4 の残り。M104q の実走で確かめた): (a) `DeserializeComponent` へ渡した 1 キーの JSON は、そのフィールドだけを変え、他は変えない。(b) `Record` 経由の復元は Undo で戻り、Redo でもう一度当たる (スナップショットに managed の値が入っている)。(c) プレハブのインスタンスでは、C# のフィールドは `FieldDesc` を持たないので、エンジンの上書きのライブ diff が記録しない (既存の仕様。M104q 前から同じ)。復元しても上書きの記録は壊れず、保存して読み直しても同じ。以上が成り立ったので、C# も Field 単位で戻せる。.NET ランタイムか `MyeScripting.dll` が無い環境では、この試験は SKIP と明記して成功とは数えない。
 - **正規形の限界**: 比べるのは `FieldDesc` のあるフィールドだけ。ファイルにあってエンジンが知らないキー (古いフィールドなど) は、ロードで捨てられるので比べない。キーが無い側は既定値として比べるので、AI が既定値のキーを消しただけの変更は「同じ値」とみなされて戻す操作が空になる (復元済みと表示)。エンティティの照合は `childIndex` と `overrides` の印を見ない。
 - **削除を含むファイルの復元のあとのアセットの登録** (sub-27 からの持ち越し): `ReloadHub::EndBatch` は削除を扱わず、新しいファイルも登録しない。Editor の復元のフック (`EditorApp`) が `EndBatch` のあとに `SyncAssetRegistry` (`AssetRegistrySync.*`) を呼び、削除は `AssetDatabase::MoveAsset(path, path)` (Asset Browser の削除と同じ経路で旧キーを外す)、追加は `GuidForPath(path, true)` (git の `RegisterAdded` と同じ)、名前の変更は `MoveAsset(旧, 新)` を行う。`assets\` の外は触らない。Asset Browser の一覧は、ファイルシステムを見る画面なので別 (必要なら更新する)。段階 B / C (再コンパイル・再起動) は自動にしない (プレビューの注記のまま)。
-- **限界**: 開いていないシーンは項目ごとには戻せない (ファイル・Hunk の経路)。プレハブのアセットそのものと、`PrefabPropagation` は戻さない (後者は sub-19 で表示される)。Entity の `fileId` の無い (採番されていない) 子孫は「After に無い子孫」として扱う。C# のフィールドが追加・削除された変更は戻せない (既定値が分からない)。
+- **限界**: 開いていないシーンは項目ごとには戻せない (ファイル・Hunk の経路)。プレハブのアセットそのものと、`PrefabPropagation` は戻さない (後者は M104t で表示される。伝播の行を選んで「復元...」を押すと、原因のプレハブの変更へ案内する文面が出る = `SceneRestoreIssue::PropagatedRow`)。Entity の `fileId` の無い (採番されていない) 子孫は「After に無い子孫」として扱う。C# のフィールドが追加・削除された変更は戻せない (既定値が分からない)。
 
 ## 9. 受け入れ条件との対応
 

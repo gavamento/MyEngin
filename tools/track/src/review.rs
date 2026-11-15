@@ -255,7 +255,8 @@ pub struct LeafInfo {
 /// Revision の葉。構造の変更があればそれ、無ければ Hunk、どちらも無ければ Revision 自身。
 pub fn load_leaves(conn: &Connection, revision_id: i64) -> rusqlite::Result<Vec<LeafInfo>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT scene_change_id, file_id, component, field FROM scene_changes WHERE revision_id = ?1 ORDER BY scene_change_id",
+        "SELECT scene_change_id, file_id, component, field FROM scene_changes
+          WHERE revision_id = ?1 AND change_type <> 'PrefabPropagation' ORDER BY scene_change_id",
     )?;
     let scene: Vec<LeafInfo> = stmt
         .query_map([revision_id], |r| {
@@ -281,7 +282,8 @@ pub fn load_leaves(conn: &Connection, revision_id: i64) -> rusqlite::Result<Vec<
 /// Revision の葉の数 (`load_leaves` の長さを、行を読まずに数える)。
 fn leaf_count(conn: &Connection, revision_id: i64) -> rusqlite::Result<u64> {
     let (scene, hunks): (i64, i64) = conn.query_row(
-        "SELECT (SELECT COUNT(*) FROM scene_changes WHERE revision_id = ?1), (SELECT COUNT(*) FROM change_hunks WHERE revision_id = ?1)",
+        "SELECT (SELECT COUNT(*) FROM scene_changes WHERE revision_id = ?1 AND change_type <> 'PrefabPropagation'),
+                (SELECT COUNT(*) FROM change_hunks WHERE revision_id = ?1)",
         [revision_id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
@@ -343,8 +345,8 @@ pub fn group_counts(
 ) -> rusqlite::Result<(Counts, bool)> {
     let sql = format!(
         "SELECT r.revision_id,
-                CASE WHEN (SELECT COUNT(*) FROM scene_changes s WHERE s.revision_id = r.revision_id) > 0
-                       THEN (SELECT COUNT(*) FROM scene_changes s WHERE s.revision_id = r.revision_id)
+                CASE WHEN (SELECT COUNT(*) FROM scene_changes s WHERE s.revision_id = r.revision_id AND s.change_type <> 'PrefabPropagation') > 0
+                       THEN (SELECT COUNT(*) FROM scene_changes s WHERE s.revision_id = r.revision_id AND s.change_type <> 'PrefabPropagation')
                      WHEN (SELECT COUNT(*) FROM change_hunks h WHERE h.revision_id = r.revision_id) > 0
                        THEN (SELECT COUNT(*) FROM change_hunks h WHERE h.revision_id = r.revision_id)
                      ELSE 1 END,

@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -580,7 +581,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         config.startupObserver = &startupSplash;
     }
 
-    mye::EditorApp app;
+    // EditorApp は約 200 KB あり、wWinMain のローカルにすると --selftest でもその分のスタックを使えない (Debug 既定の 1 MB の枠が狭まる)
+    const std::unique_ptr<mye::EditorApp> appHolder = std::make_unique<mye::EditorApp>();
+    mye::EditorApp& app = *appHolder;
     app.startupObserver = config.startupObserver;
     app.saveSceneOnStart = saveSceneOnStart;
     app.allowAutoUpdateCheck = !automation; // CI / 検証の起動ではネットワークに出ない

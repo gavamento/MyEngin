@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use crate::attribution;
 use crate::baseline::{ContentKind, FileState};
 use crate::blob::BlobError;
+use crate::propagation;
 use crate::revision::{write_revision, DiffPlan, RevisionInput};
 use crate::store::{Store, StoreError};
 
@@ -281,7 +282,8 @@ fn apply_one(store: &mut Store, o: Observation, plan: Result<DiffPlan, String>) 
         // Revision と Hunk は 1 つの塊で確定する (revision.rs)。失敗したら何も残さず Err
         let before_snapshot = o.before.as_ref().and_then(|s| s.snapshot_id);
         let after_snapshot = after_state.as_ref().and_then(|s| s.snapshot_id);
-        let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan)
+        let env = propagation::Env { conn, blobs: &store.blobs, root: Some(store.project_root.as_path()) };
+        let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan, &env)
             .map_err(|e| RecordFailure::from_store(&StoreError::Sqlite(e)))?;
         // 帰属の計算に失敗しても Revision は残す (結論は unknown のまま。次の作り直しで直る)
         if let Err(e) = attribution::evaluate_new_revision(conn, &store.attribution, revision_id, o.observed_at, o.source.as_str(), None) {

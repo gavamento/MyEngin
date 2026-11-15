@@ -99,8 +99,13 @@ void HierarchyWindow::DrawChangeBadge(uint64_t fileId, const ImVec2& rowMin, con
     constexpr float kRadius = 4.0f;
     const float cx = rowMax.x - kRadius * 3.0f;
     const float cy = (rowMin.y + rowMax.y) * 0.5f;
-    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cx, cy), kRadius,
-                                                ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, faint ? kOverlayFaintAlpha : color.a)));
+    const ImU32 badgeColor = ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, faint ? kOverlayFaintAlpha : color.a));
+    if (badge.propagated) {
+        // プレハブから伝わった変更は、直接の編集 (塗りの丸) と区別して輪だけにする
+        ImGui::GetWindowDrawList()->AddCircle(ImVec2(cx, cy), kRadius - 0.5f, badgeColor, 0, 1.5f);
+    } else {
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cx, cy), kRadius, badgeColor);
+    }
     ++(faint ? drawnFaintBadges_ : drawnBadges_);
     // 帰属が未確認 (unknown / inferred) の変更には、色ではなく小さい印を添える (要求 §8.1)
     float hitLeft = cx - kRadius * 1.5f;

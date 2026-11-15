@@ -205,6 +205,7 @@ private:
     void DrawSceneBand(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawColorSettings(SceneChangeOverlay& overlay);
     void DrawSceneChanges(ChangeTrackingSession& session, const AiChangesHost& host);
+    void DrawPropagationCause(const ChangeModel& model);
     void ApplyFilter(ChangeModel& model);
     void DrawReviewStatus(ChangeTrackingSession& session);
     void DrawReviewPanel(ChangeTrackingSession& session);
@@ -244,6 +245,7 @@ private:
     int64_t selectedHunkId_ = 0;  // 詳細を取り直しても選んでいる Hunk を保つ
     int64_t shownRevision_ = 0;
     int64_t selectedSceneId_ = 0;
+    int64_t scrollToSceneId_ = 0; // 「原因の変更へ移動」で選んだ行へ、次の 1 フレームだけ一覧を送る
     int sceneScope_ = 0;
     bool bulkPending_ = false;    // まとめての確認を出す
     bool bulkOpenRequested_ = false;

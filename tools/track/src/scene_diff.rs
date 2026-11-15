@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::lexjson::{self, Kind, Node};
 
-/// 構造の変更の種別 (`scene_changes.change_type`。要求 §7.2 の 11 種のうち `PrefabPropagation` 以外は、このサブが出す)。
+/// 構造の変更の種別 (`scene_changes.change_type`。要求 §7.2 の 11 種のうち `PrefabPropagation` は `propagation.rs` が出し、他はここが出す)。
 pub mod change_type {
     pub const ENTITY_ADDED: &str = "EntityAdded";
     pub const ENTITY_REMOVED: &str = "EntityRemoved";
@@ -20,6 +20,8 @@ pub mod change_type {
     pub const PREFAB_ASSET_CHANGED: &str = "PrefabAssetChanged";
     pub const PREFAB_INSTANCE_CHANGED: &str = "PrefabInstanceChanged";
     pub const PREFAB_OVERRIDE_CHANGED: &str = "PrefabOverrideChanged";
+    /// プレハブのベースの変更が、override していないインスタンスのフィールドへ及ぶ (`propagation.rs`)。
+    pub const PREFAB_PROPAGATION: &str = "PrefabPropagation";
     /// 構造を比べられなかった。`after_value` に理由の JSON 文字列を入れる (db-schema.md §3)。
     pub const UNPARSED: &str = "unparsed";
 }
@@ -99,7 +101,8 @@ impl SceneOutcome {
 const SCENE_VERSIONS: std::ops::RangeInclusive<i64> = 1..=4;
 /// プレハブ / アクターの宣言キー (`"prefab": 1` / `"actor": 1`) の知っている値。
 const COMPOSE_VERSION: i64 = 1;
-const COMPONENT_PREFAB_INSTANCE: &str = "PrefabInstanceComponent";
+/// JSON のコンポーネント名は登録名 (`RegisterComponent<PrefabInstanceComponent>("PrefabInstance")`)。C++ の型名ではない
+const COMPONENT_PREFAB_INSTANCE: &str = "PrefabInstance";
 const FIELD_PREFAB_HASH: &str = "prefabHash";
 
 /// 比べる。`max_side_bytes` は 1 つの文書の大きさの上限 (超えたら解析不可)。
@@ -599,7 +602,7 @@ mod tests {
     fn prefab_overrides_and_instance() {
         let base = |extra: &str, pos: &str, hash: &str| {
             format!(
-                "{{\"fileId\":1,\"name\":\"p\",\"childIndex\":0{extra},\"components\":{{\"LocalTransform\":{{\"position\":{pos},\"scale\":1}},\"PrefabInstanceComponent\":{{\"prefabHash\":{hash},\"x\":1}}}}}}"
+                "{{\"fileId\":1,\"name\":\"p\",\"childIndex\":0{extra},\"components\":{{\"LocalTransform\":{{\"position\":{pos},\"scale\":1}},\"PrefabInstance\":{{\"prefabHash\":{hash},\"x\":1}}}}}}"
             )
         };
         // 値の変化だけ (override 済み) → PrefabOverrideChanged 1 件、FieldModified は出ない

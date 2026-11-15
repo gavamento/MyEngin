@@ -74,6 +74,7 @@ std::string SceneRestoreIssueText(SceneRestoreIssue issue, const std::string& de
     case SceneRestoreIssue::NoRows: return Tr(StrId::AiChg_SrIssueNoRows);
     case SceneRestoreIssue::TooManyRows: return Tr(StrId::AiChg_SrIssueTooMany);
     case SceneRestoreIssue::RowUnsupported: return Tr(StrId::AiChg_SrIssueUnsupported);
+    case SceneRestoreIssue::PropagatedRow: return Tr(StrId::AiChg_SrIssuePropagated);
     case SceneRestoreIssue::OverrideKeyOnly: return Tr(StrId::AiChg_SrIssueOverrideKey);
     case SceneRestoreIssue::ValueOversize: return Tr(StrId::AiChg_SrIssueOversize);
     case SceneRestoreIssue::NoBefore: return Tr(StrId::AiChg_SrIssueNoBefore);

@@ -33,6 +33,7 @@ pub mod ops_record;
 pub mod pipe;
 pub mod process;
 pub mod project;
+pub mod propagation;
 pub mod protocol;
 pub mod random;
 pub mod rename;

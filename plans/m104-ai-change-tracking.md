@@ -15,32 +15,34 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 
 | サブ | Phase | 状態 | 内容 |
 |---|---|---|---|
-| M104a | 0 | 完了 | 設計文書 6 本、ADR-039、この計画 |
-| M104b | 0 | 完了 | 試作 6 件 (下の「試作で確かめること」)。結果は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)。設計文書へ反映済み |
-| M104c | 1 | 完了 | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
-| M104d | 1 | 完了 | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
-| M104d2 | 1 | 完了 | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
-| M104e | 1 | 完了 | 行 diff (Myers)、Hunk、Change / Revision の確定 (`write_revision`)、リネームのまとめ (窓をまたぐ預かり込み)、DB の作り直しの再構成、Diff ワーカー。保存形式は db-schema.md §3.2、規則と上限の実測は architecture.md §5 |
-| M104f | 1 | 実装済み (判定待ち) | pipe サーバ (`mye_track serve`)、`hello`、単一インスタンス (mutex + `service.lock` + pipe 名)、`status` / `list` / `describe` / `sessions` / `shutdown`、`mye_track client`、`tools\build_track.bat`、`tools\track_verify.bat` (シナリオ 11 本)、CI への段の追加 (CI での実走は未確認)。プロトコルは ipc-contract.md §9 |
-| M104g | 2 | 実装済み (判定待ち) | `session_begin` / `session_end` / `op_begin` / `op_end` / `report` (pipe。mcp・hook)、帰属 (根拠 10 種 + `conclude`、後から届く根拠で計算し直す)、セッションの基準 (時刻とジャーナルの位置、D30)、管理された操作の即時の読み取り (D31)、`clientOpId` (D32)、`worktree` の構造確認 (D33)、宣言された編集の適用、`.git` の読み取り (`baseCommit`)、寿命 (中断・放棄・無接続の時間切れの条件)。セッション・操作・根拠はイベントから作り直せる。`tools\track` の中だけ (MCP は M104h、フックは M104i)。設計文書 (attribution-rules / ipc-contract / db-schema) を同時に更新 |
-| M104g2 | 2 | 実装済み (判定待ち) | 監視の取りこぼしを減らす。先に計測 (`mye_track bench flood` / `burst` / `plan`。洪水の最中の追跡対象 200 件が、CPU 負荷のもとで 8〜21 件 `gap` になると確認)、監視を分ける (`tools\track\src\watch_plan.rs`: 無視するディレクトリを含む所は非再帰、含まない子は再帰。付け替え、上限 256 本、`status` の `watches`)。分けた後は 12 回とも `gap` 0。自前の `ReadDirectoryChangesW` は、入れる根拠の実測が無く、試作の欠陥の原因も未解明なので入れていない。値と手順は [performance.md](../docs/ai-change-tracking/performance.md) §8 |
-| M104h | 2 | 実装済み (判定待ち) | MCP の 5 ツール (`change_session_begin` / `change_session_end` / `change_report` / `change_list` / `change_describe`)、`tools\mcp\src\track_client.rs` (pipe クライアント、サービスの切り離し起動、SHA-256 と projectId を自前で持つ。依存は増やさない)、規則 15-c / 15-d の許可表と規則 9 の版定数の組、`tools\mcp_verify.ps1` の `# env`、`tools\track_verify.ps1` の `# mcp` / `# mcp-nostart` / `# wait-watching` とシナリオ 16 / 17 (MCP がサービスを起動して記録が通る)、ADR-032 と `docs\mcp-server.md` の更新。起動のとき自分の標準入出力を継承不可にする (しないとサービスが MCP の stdout を掴む。`# mcp` が実測で検出した)。**未確認**: 本物の Claude Code 終了後のサービスの生存 (手順は `docs\test_checklists.md`) |
-| M104i | 2 | 完了 | フック CLI (`mye_track.exe hook`)、Claude Code のフック設定の手順 (本物のフックの実走は未確認) |
-| M104j | 3 | 実装済み (判定待ち) | Editor の pipe クライアント (`src\Editor\ChangeTracking\`。スレッドなし・`Poll()` は待たない・overlapped)、`ChangeModel` (通知で古い印・500 ms の間引き・`resync`)、`ChangeTrackingSession` (`EditorApp` のメンバ。Shutdown は接続を閉じるだけ)、サービスの切り離し起動 (`bInheritHandles = FALSE`)、`EditorSettings` の `changeTrackingEnabled` (既定 false) と `allowChangeTracking = !automation`、サービス側の `subscribe` と通知 5 種 + `resync` (`tools\track\src\notify.rs`)、規則 19 と規則 9 の C++ の版定数、`changetracking` スイート (偽の I/O。`MYE_TRACK_PROBE=1` で実サービスとの結合)。窓は M104k |
-| M104k | 3 | 実装済み (判定待ち) | AI Changes 窓 (`src\Editor\Windows\Project\AiChangesWindow`。状態の帯、有効・無効の切り替えと確認、セッション / 変更 / 詳細の 3 列、Unknown・Inferred の別の節、根拠の一覧、`completeness` の注記)、Diff 表示部品 (`src\Editor\Widgets\DiffView.h`、クラス名は `DiffViewer`。インライン / 左右、`ImGuiListClipper`)、文面の整形 (`ChangeFormat`、ImGui を呼ばない)、サービスの `hunks` (本文つき・ページ送り・単独で大きい Hunk は `oversize`) と `blob_get` (512 KiB ずつ)、`sessions` に `changeCount`。`editor_saved` は M104k2 |
-| M104k2 | 3 | 実装済み (判定待ち) | Editor の保存をサービスへ知らせる (`editor_saved`)。サービス: op (role = editor だけ)、観測が先でも知らせが先でも同じ照合 (前後 10 秒、ハッシュ一致)、`events` から作り直せる根拠、スキーマ版 2 (`events(kind, at)` の索引)、`list` の `attribution` に配列。Editor: 保存直後の通知の口 (`EditorApp::NoteFileSaved`) から接続中だけ、書いた後のファイルのハッシュを `Poll()` で 1 回 2 件まで送る。経路の一覧は `docs\ai-change-tracking\editor-save-routes.md`。AI Changes 窓: 「エディタ / 復元による変更」の節 (切り替えで表示)、「セッションなし」をサービスの絞り込みで取る。M104k の後、M104l の前 |
-| M104l | 3 | 実装済み (判定待ち) | シーン構造 diff (サービス)、プレハブの区別、`scene_diff` |
-| M104m | 3 | 実装済み (判定待ち) | シーンの変更の集約 (サービスの `scene_overlay` / `document_for_path`)、Editor の `SceneChangeOverlay` (表・取り直しの契機・「ここまで確認済みにする」)、Hierarchy のバッジ (通常表示と検索表示の両方、子孫の薄い印)、AI Changes 窓の帯と「シーンの変更」の一覧、一覧の行から `Selection` への同期。sub-23 から持ち越した `editor_saved` の大きさ・更新時刻の確認も含む。Inspector の Field 差分・Scene View のワイヤ箱・色の設定は M104m2 |
-| M104m2 | 3 | 未着手 | Inspector の Field 差分、Scene View のワイヤ箱、色の設定 (4 色)。M104m の後、M104n の前 |
-| M104m3 | 3 | 実装中 | 追跡クライアントの試験から実時間への依存を外す。`TrackIo::NowMicros` を足し、`Poll()` の時間の上限を差し替えられる時計で測る (製品の挙動は同じ)。試験は偽の時計で決定的にする |
-| M104n | 3 | 未着手 | 未保存シーンへの外部変更の確認 (`ReloadHub` の口)。他のサブから独立しているので前倒しできる |
-| M104o | 4 | 実装済み (判定待ち) | レビュー: サービスの `review_set` (role = editor だけ・1 回 1000 件まで・追記だけ・`events` から作り直せる)、葉ごとの今の状態 (新しさで決まる) と集約 (Revision / 変更 / 操作 / セッション)、`describe` / `hunks` / `scene_diff` / `list` / `sessions` への反映、通知 `review_changed`、`scene_overlay` は承認済みを強調から外す。Editor: `ReviewManager`、AI Changes 窓の承認・却下・要確認・再開 (Revision / Hunk / シーンの変更の範囲)、まとめて (セッション・複数選択) は件数つきの確認 1 回、履歴、集約の表示と絞り込み。sub-13 から持ち越した自分の保存の確認 (`OwnSaveRecord`)。Phase 3〜4 の横断の検証を含む。スキーマは版 3 のまま |
-| M104p | 5 | 実装済み (判定待ち) | 復元の判定 (書かない): ゲートの共有 (`EditorApp::BuildGateInputs` を `AiChangesHost` 越しに、窓ごとの編集中の文書)、競合の検証 (ファイル全体・Hunk。Rust と同じ固定表 `tests\track\fixture\hunk_apply_cases.json`)、パスの検査 (`PathGuard`)、プレビュー (AI Changes 窓の「復元...」。実行は押せない)、注記 (削除・stage 済み・作り直しの見込み)。sub-10 / sub-14 から持ち越した大きいファイルの先頭・操作全体のまとめてレビュー・ファイル単位の集約。サービスは `list` の `operationId` 絞り込みを足した (記録は書かない・スキーマは版 3 のまま) |
-| M104p2 | 5 | 未着手 | ファイルと Hunk の適用 (`ReloadHub::BeginBatch` / `EndBatch`・`WriteFileReplacing`)、復元ジャーナル (`recovery\`)、巻き戻し、起動時の回復、`restore_record` / `restore_expect`。M104p の判定とプレビューの上に載せる。復元の試験は必ず一時プロジェクトで行う |
-| M104q | 5 | 実装済み (判定待ち) | ライブのシーンの復元 (Entity / Component / Field / Override)、Undo 連携。今開いているシーンだけ (開いていないシーンはファイル・Hunk)。World を `UndoStack::Record` の中で書き、ディスクは書かない。サービスは `scene_changes.state` を `restored` にする。C# コンポーネントの Field も戻せることを実走で確認。Phase 5 の横断の検証 (A20) と `replay_verify` を回した |
-| M104r | 6 | 実装済み (判定待ち) | 削除エンティティのゴースト (Before の JSON だけから World にエンティティを作らずに描く。親の連鎖でワールド行列を合成し、ライブの `WorldMatrix` と一致することを試験で確認。メッシュは今読み込まれているものを引くだけ)、Before の読み取り専用の表示と復元への導線、未確認 (`unknown` / `inferred`) の印 (Hierarchy・Scene View)、ゴーストの入・切。サービスは `scene_overlay` に `before` / `beforeOversize` / `uncertain` を足した (スキーマは版 3 のまま) |
-| M104s | 6 | 実装済み (判定待ち) | Before / After のプレビュー、左右並べた 3D 比較。比べるのは Revision の Before と After (Blob)、または After の代わりに今のディスクの内容 (エディタの未保存は比べない)。プレビュー専用の `Scene` (最大 2 つ) と専用の RT。本番の Scene・Undo・選択・`ReloadHub`・プロジェクトのファイルに触れない。C# は読み込まない。アセットは今の内容で描き、その旨と Before の後に変わったアセットの件数を出す。`tools	rack` は変えていない |
-| M104t | 6 | 未着手 | プレハブ伝播の表示、大きいシーンでの表示の計測と軽量化 |
+| M104a | 0 | 完了 (ca6a3991) | 設計文書 6 本、ADR-039、この計画 |
+| M104b | 0 | 完了 (723bf633) | 試作 6 件 (下の「試作で確かめること」)。結果は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)。設計文書へ反映済み |
+| M104c | 1 | 完了 (79008917) | `tools\track` の骨組み、SQLite の初期化と移行、Blob ストア、イベントジャーナル |
+| M104d | 1 | 完了 (76d0e2df) | ファイル監視、ベースライン、スナップショット、欠落区間の記録、起動時の検査 |
+| M104d2 | 1 | 完了 (35da2917) | 取りこぼしの検出 (検証の走査)、記録に失敗した観測の欠落区間、ベースラインの中断と進捗、ベースライン・記録の計測と軽量化 (1 件ごとの `sync_all` をやめた)。結果は [performance.md](../docs/ai-change-tracking/performance.md) |
+| M104e | 1 | 完了 (8a07401a) | 行 diff (Myers)、Hunk、Change / Revision の確定 (`write_revision`)、リネームのまとめ (窓をまたぐ預かり込み)、DB の作り直しの再構成、Diff ワーカー。保存形式は db-schema.md §3.2、規則と上限の実測は architecture.md §5 |
+| M104f | 1 | 完了 (14ddde31) | pipe サーバ (`mye_track serve`)、`hello`、単一インスタンス (mutex + `service.lock` + pipe 名)、`status` / `list` / `describe` / `sessions` / `shutdown`、`mye_track client`、`tools\build_track.bat`、`tools\track_verify.bat` (シナリオ 11 本)、CI への段の追加 (CI での実走は未確認)。プロトコルは ipc-contract.md §9 |
+| M104g | 2 | 完了 (ee65e43e) | `session_begin` / `session_end` / `op_begin` / `op_end` / `report` (pipe。mcp・hook)、帰属 (根拠 10 種 + `conclude`、後から届く根拠で計算し直す)、セッションの基準 (時刻とジャーナルの位置、D30)、管理された操作の即時の読み取り (D31)、`clientOpId` (D32)、`worktree` の構造確認 (D33)、宣言された編集の適用、`.git` の読み取り (`baseCommit`)、寿命 (中断・放棄・無接続の時間切れの条件)。セッション・操作・根拠はイベントから作り直せる。`tools\track` の中だけ (MCP は M104h、フックは M104i)。設計文書 (attribution-rules / ipc-contract / db-schema) を同時に更新 |
+| M104g2 | 2 | 完了 (a0f6fa85) | 監視の取りこぼしを減らす。先に計測 (`mye_track bench flood` / `burst` / `plan`。洪水の最中の追跡対象 200 件が、CPU 負荷のもとで 8〜21 件 `gap` になると確認)、監視を分ける (`tools\track\src\watch_plan.rs`: 無視するディレクトリを含む所は非再帰、含まない子は再帰。付け替え、上限 256 本、`status` の `watches`)。分けた後は 12 回とも `gap` 0。自前の `ReadDirectoryChangesW` は、入れる根拠の実測が無く、試作の欠陥の原因も未解明なので入れていない。値と手順は [performance.md](../docs/ai-change-tracking/performance.md) §8 |
+| M104h | 2 | 完了 (0a598efb) | MCP の 5 ツール (`change_session_begin` / `change_session_end` / `change_report` / `change_list` / `change_describe`)、`tools\mcp\src\track_client.rs` (pipe クライアント、サービスの切り離し起動、SHA-256 と projectId を自前で持つ。依存は増やさない)、規則 15-c / 15-d の許可表と規則 9 の版定数の組、`tools\mcp_verify.ps1` の `# env`、`tools\track_verify.ps1` の `# mcp` / `# mcp-nostart` / `# wait-watching` とシナリオ 16 / 17 (MCP がサービスを起動して記録が通る)、ADR-032 と `docs\mcp-server.md` の更新。起動のとき自分の標準入出力を継承不可にする (しないとサービスが MCP の stdout を掴む。`# mcp` が実測で検出した)。**未確認**: 本物の Claude Code 終了後のサービスの生存 (手順は `docs\test_checklists.md`) |
+| M104i | 2 | 完了 (0c511cac) | フック CLI (`mye_track.exe hook`)、Claude Code のフック設定の手順 (本物のフックの実走は未確認) |
+| M104j | 3 | 完了 (17caa0ec) | Editor の pipe クライアント (`src\Editor\ChangeTracking\`。スレッドなし・`Poll()` は待たない・overlapped)、`ChangeModel` (通知で古い印・500 ms の間引き・`resync`)、`ChangeTrackingSession` (`EditorApp` のメンバ。Shutdown は接続を閉じるだけ)、サービスの切り離し起動 (`bInheritHandles = FALSE`)、`EditorSettings` の `changeTrackingEnabled` (既定 false) と `allowChangeTracking = !automation`、サービス側の `subscribe` と通知 5 種 + `resync` (`tools\track\src\notify.rs`)、規則 19 と規則 9 の C++ の版定数、`changetracking` スイート (偽の I/O。`MYE_TRACK_PROBE=1` で実サービスとの結合)。窓は M104k |
+| M104k | 3 | 完了 (c6b93988) | AI Changes 窓 (`src\Editor\Windows\Project\AiChangesWindow`。状態の帯、有効・無効の切り替えと確認、セッション / 変更 / 詳細の 3 列、Unknown・Inferred の別の節、根拠の一覧、`completeness` の注記)、Diff 表示部品 (`src\Editor\Widgets\DiffView.h`、クラス名は `DiffViewer`。インライン / 左右、`ImGuiListClipper`)、文面の整形 (`ChangeFormat`、ImGui を呼ばない)、サービスの `hunks` (本文つき・ページ送り・単独で大きい Hunk は `oversize`) と `blob_get` (512 KiB ずつ)、`sessions` に `changeCount`。`editor_saved` は M104k2 |
+| M104k2 | 3 | 完了 (3f14e59d) | Editor の保存をサービスへ知らせる (`editor_saved`)。サービス: op (role = editor だけ)、観測が先でも知らせが先でも同じ照合 (前後 10 秒、ハッシュ一致)、`events` から作り直せる根拠、スキーマ版 2 (`events(kind, at)` の索引)、`list` の `attribution` に配列。Editor: 保存直後の通知の口 (`EditorApp::NoteFileSaved`) から接続中だけ、書いた後のファイルのハッシュを `Poll()` で 1 回 2 件まで送る。経路の一覧は `docs\ai-change-tracking\editor-save-routes.md`。AI Changes 窓: 「エディタ / 復元による変更」の節 (切り替えで表示)、「セッションなし」をサービスの絞り込みで取る。M104k の後、M104l の前 |
+| M104l | 3 | 完了 (d6619bf0) | シーン構造 diff (サービス)、プレハブの区別、`scene_diff` |
+| M104m | 3 | 完了 (235887d9) | シーンの変更の集約 (サービスの `scene_overlay` / `document_for_path`)、Editor の `SceneChangeOverlay` (表・取り直しの契機・「ここまで確認済みにする」)、Hierarchy のバッジ (通常表示と検索表示の両方、子孫の薄い印)、AI Changes 窓の帯と「シーンの変更」の一覧、一覧の行から `Selection` への同期。sub-23 から持ち越した `editor_saved` の大きさ・更新時刻の確認も含む。Inspector の Field 差分・Scene View のワイヤ箱・色の設定は M104m2 |
+| M104m2 | 3 | 完了 (98355cb7) | Inspector の Field 差分、Scene View のワイヤ箱、色の設定 (4 色)。M104m の後、M104n の前 |
+| M104m3 | 3 | 完了 (d1d4d8e7) | 追跡クライアントの試験から実時間への依存を外す。`TrackIo::NowMicros` を足し、`Poll()` の時間の上限を差し替えられる時計で測る (製品の挙動は同じ)。試験は偽の時計で決定的にする |
+| M104n | 3 | 完了 (42a1b552) | 未保存シーンへの外部変更の確認 (`ReloadHub` の口)。他のサブから独立しているので前倒しできる |
+| M104o | 4 | 完了 (c9b14f4c) | レビュー: サービスの `review_set` (role = editor だけ・1 回 1000 件まで・追記だけ・`events` から作り直せる)、葉ごとの今の状態 (新しさで決まる) と集約 (Revision / 変更 / 操作 / セッション)、`describe` / `hunks` / `scene_diff` / `list` / `sessions` への反映、通知 `review_changed`、`scene_overlay` は承認済みを強調から外す。Editor: `ReviewManager`、AI Changes 窓の承認・却下・要確認・再開 (Revision / Hunk / シーンの変更の範囲)、まとめて (セッション・複数選択) は件数つきの確認 1 回、履歴、集約の表示と絞り込み。sub-13 から持ち越した自分の保存の確認 (`OwnSaveRecord`)。Phase 3〜4 の横断の検証を含む。スキーマは版 3 のまま |
+| M104o2 | 4 | 完了 (a53053db) | 追跡サービスの時間に依存する試験を、機械の負荷に強くする (負荷で結果が変わる 4 試験は `--test watch -- --ignored` へ) |
+| M104p | 5 | 完了 (dca6fee0) | 復元の判定 (書かない): ゲートの共有 (`EditorApp::BuildGateInputs` を `AiChangesHost` 越しに、窓ごとの編集中の文書)、競合の検証 (ファイル全体・Hunk。Rust と同じ固定表 `tests\track\fixture\hunk_apply_cases.json`)、パスの検査 (`PathGuard`)、プレビュー (AI Changes 窓の「復元...」。実行は押せない)、注記 (削除・stage 済み・作り直しの見込み)。sub-10 / sub-14 から持ち越した大きいファイルの先頭・操作全体のまとめてレビュー・ファイル単位の集約。サービスは `list` の `operationId` 絞り込みを足した (記録は書かない・スキーマは版 3 のまま) |
+| M104p2 | 5 | 完了 (a0131815) | ファイルと Hunk の適用 (`ReloadHub::BeginBatch` / `EndBatch`・`WriteFileReplacing`)、復元ジャーナル (`recovery\`)、巻き戻し、起動時の回復、`restore_record` / `restore_expect`。M104p の判定とプレビューの上に載せる。復元の試験は必ず一時プロジェクトで行う |
+| M104q | 5 | 完了 (8ba1c687) | ライブのシーンの復元 (Entity / Component / Field / Override)、Undo 連携。今開いているシーンだけ (開いていないシーンはファイル・Hunk)。World を `UndoStack::Record` の中で書き、ディスクは書かない。サービスは `scene_changes.state` を `restored` にする。C# コンポーネントの Field も戻せることを実走で確認。Phase 5 の横断の検証 (A20) と `replay_verify` を回した |
+| M104r | 6 | 完了 (0a21f30e) | 削除エンティティのゴースト (Before の JSON だけから World にエンティティを作らずに描く。親の連鎖でワールド行列を合成し、ライブの `WorldMatrix` と一致することを試験で確認。メッシュは今読み込まれているものを引くだけ)、Before の読み取り専用の表示と復元への導線、未確認 (`unknown` / `inferred`) の印 (Hierarchy・Scene View)、ゴーストの入・切。サービスは `scene_overlay` に `before` / `beforeOversize` / `uncertain` を足した (スキーマは版 3 のまま) |
+| M104s | 6 | 完了 (28c87fb9) | Before / After のプレビュー、左右並べた 3D 比較。比べるのは Revision の Before と After (Blob)、または After の代わりに今のディスクの内容 (エディタの未保存は比べない)。プレビュー専用の `Scene` (最大 2 つ) と専用の RT。本番の Scene・Undo・選択・`ReloadHub`・プロジェクトのファイルに触れない。C# は読み込まない。アセットは今の内容で描き、その旨と Before の後に変わったアセットの件数を出す。`tools	rack` は変えていない |
+| M104t | 6 | 実装済み (判定待ち) | プレハブ伝播 (`tools\track\src\propagation.rs`: override していないインスタンスのメンバへ `PrefabPropagation` を、原因のプレハブの Revision に付けて記録。DB を作り直しても同じ)、Editor の表示 (Hierarchy・Inspector の輪の印、一覧の「原因の変更へ移動」、復元は原因へ案内)、大きいシーンの計測 ([performance.md](../docs/ai-change-tracking/performance.md) §10)、受け入れの対応表 ([acceptance.md](../docs/ai-change-tracking/acceptance.md))、通しの確認 (test_checklists.md)、最後の横断の検証。Debug のスタックオーバーフロー (D38) は `EditorApp` を `wWinMain` のローカルから `std::unique_ptr` へ移して解消 |
+| M104u | 6 | 未着手 | エンジン配布物 (`tools\make_dist.ps1`、`release.yml`) へ `mye_track.exe` を同梱する。ゲームの配布物 (`--package`) には入れない |
 
 仕様書 §19 の順序 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較) を守る。Phase をまたいで先へ進まない。
 
@@ -76,12 +78,12 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
 
 | # | 決めること | 推奨 | 止まるサブ |
 |---|---|---|---|
-| 1 | Play 中に、開いているシーンへ外部の変更が来たときの扱い。今は Play 中の World へそのまま適用され、Stop で消える | Play 中は保留し、Stop の後で未保存かどうかに従って適用か確認 | M104n |
+| 1 | Play 中に、開いているシーンへ外部の変更が来たときの扱い。今は Play 中の World へそのまま適用され、Stop で消える | Play 中は保留し、Stop の後で未保存かどうかに従って適用か確認 | M104n。**決着 (M104n、推奨どおり)**: Play 中は保留し、Stop の後で適用か確認 |
 | 2 | `tools\track` を CI に入れるか (collab は入れている、mcp は入れていない) | **決着 (2026-11-15)**: `cargo test` と `track_verify.bat` を CI に入れる (collab の段の隣)。CI での実走は push の後まで未確認 | M104f |
-| 3 | 追跡を既定で有効にするか | **推奨どおり裁定 (2026-11-15、ユーザーの回答待ち)**: 既定で無効 (`EditorSettings.changeTrackingEnabled`)。Phase 3 が終わった後 (M104m の後) にもう一度決める。逆の答えなら、既定値 1 つと試験の期待値を直す | M104j |
-| 4 | Blob の除外パターンの既定値と、上限・保存期間の既定値 (2 GiB、90 日) | 設計どおり (2026-11-14 にユーザーが確定)。設定で変えられる | M104c |
-| 5 | ハイライトの色を利用者が変えられるようにする範囲 (色の設定を保存する前例が無い) | `EditorSettings` に 4 色だけ持つ。設定の画面は AI Changes 窓の歯車 | M104m |
-| 6 | 実装を `/harness` に載せるか、1 サブ 1 セッションで進めるか | 規模からは `/harness` | M104b 以降の全部 |
+| 3 | 追跡を既定で有効にするか | **推奨どおり裁定 (2026-11-15、ユーザーの回答待ち)**: 既定で無効 (`EditorSettings.changeTrackingEnabled`)。Phase 3 が終わった後 (M104m の後) にもう一度決める。逆の答えなら、既定値 1 つと試験の期待値を直す。**決着 (M104t 時点)**: 既定で無効のまま。M104m の後の再確認は、ユーザーの回答待ちのまま (推奨どおり進行) | M104j |
+| 4 | Blob の除外パターンの既定値と、上限・保存期間の既定値 (2 GiB、90 日) | 設計どおり (2026-11-14 にユーザーが確定)。設定で変えられる | M104c。**決着 (2026-11-14)** |
+| 5 | ハイライトの色を利用者が変えられるようにする範囲 (色の設定を保存する前例が無い) | `EditorSettings` に 4 色だけ持つ。設定の画面は AI Changes 窓の歯車 | M104m。**決着 (M104m2、推奨どおり)**: 4 色 (追加・更新・削除・競合)。伝播の印は色を足さず、同じ「更新」の色の輪にした (M104t) |
+| 6 | 実装を `/harness` に載せるか、1 サブ 1 セッションで進めるか | 規模からは `/harness` | M104b 以降の全部。**決着 (2026-11-14)**: `/harness` に載せた (サブ分割は `plans\m104-ai-change-tracking\`) |
 
 ## 実装時に直す既存のもの
 
@@ -118,6 +120,12 @@ M104b (2026-11-14) で 6 件とも走らせた。試作コードはコミット�
 
 ## 申し送り
 
+- M104t (2026-11-16、最後の横断):
+  - **Debug のスタックオーバーフロー (D38 / D43)**: 原因は `EditorApp` (約 200 KB。`sizeof` を実測: 現在 204096 バイト、M104 で足したメンバの合計は約 11 KB) が `wWinMain` のローカル変数で、Debug の 1 MB のスタックの余裕を食っていたこと。スタックを 8 MB にした exe の複製 (`editbin`) では `physics` が通り、`EditorApp` を `std::unique_ptr` でヒープへ置いたあとの Debug でも通った。Engine 層の physics のコードとリンカの設定は変えていない。
+  - **プレハブ伝播**: 入れ子のプレハブの連鎖、プレハブ側のエンティティの追加・削除・親子の変更の伝播、旧形式 (`overrides` キーの無い) インスタンス、インスタンスのライブの値は出していない (限界。architecture.md §6.4)。実プレハブ + 実シーンの通しは未確認。
+  - **性能の持ち越し** ([performance.md](../docs/ai-change-tracking/performance.md) §10.3): 読み込んだシーンの最初の `FindByFileId` は全エンティティの線形走査 (2 万個で約 0.3 秒、1000 件で約 15 ms。Engine 層の `Scene`)。直すなら Engine 側で索引を温めるか、Editor が全エンティティの走査を 1 か所で行って各窓で共有する (別のサブの候補)。変更 2 万件の `scene_overlay` は約 1.1 秒 (全ページの再畳み込み)。
+  - **見つけた既存の不具合を直した**: M104l の `PrefabInstanceChanged` の判定がコンポーネント名を C++ の型名 (`PrefabInstanceComponent`) で探していて、実データ (登録名 `PrefabInstance`) では一度も成り立たなかった。
+  - **未確認** ([acceptance.md](../docs/ai-change-tracking/acceptance.md) の末尾): 見た目の目視、実 Editor での通しの操作、本物の Claude Code / フック、CI での実走と Rust 1.89、実際のプロセスの強制終了と復元の回復。
 - M104b (2026-11-14、試作 6 件。結果の詳細は [prototype-results.md](../docs/ai-change-tracking/prototype-results.md)):
   - 後続のサブが使う決定: pipe は `windows-sys` 0.61 (feature 7 つは ipc-contract §1)。クライアントは `ERROR_PIPE_BUSY` を `WaitNamedPipeW` で再試行する。サーバの最初の 1 本は `FILE_FLAG_FIRST_PIPE_INSTANCE`。
   - M104d (ファイル監視) が使う決定: デバウンスはパスごと 300 ms / 最大 2 秒。flush は `FILE_SHARE_READ` だけで開き、共有違反なら 250 ms 後にやり直す (30 秒で打ち切り `coalesced`)。別ディレクトリへの移動は `Remove` + `Create` なので、削除 + 同じハッシュの作成のまとめが主たる手段。ディレクトリ単位の操作 (名前変更・移し入れ・移し出し) は中のファイルのイベントが来ないので、ベースラインと突き合わせる。バッファあふれは再現しなかったので、sub-03 で人工的に起こして確かめる。

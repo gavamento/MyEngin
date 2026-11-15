@@ -5,6 +5,7 @@
 //! 2 通りの実装を持たないので、作り直した DB は元の DB と同じ Change / Revision / Hunk になる。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
@@ -15,6 +16,7 @@ use crate::blob::BlobStore;
 use crate::diff::{diff_lines, DiffLimits, Hunk};
 use crate::document;
 use crate::observe::{ChangeType, Completeness};
+use crate::propagation;
 use crate::scene_diff::{self, DocKind, SceneOutcome};
 use crate::session;
 use crate::store::Store;
@@ -203,9 +205,10 @@ pub fn write_revision(
     before_snapshot: Option<i64>,
     after_snapshot: Option<i64>,
     plan: &DiffPlan,
+    env: &propagation::Env,
 ) -> rusqlite::Result<i64> {
     conn.execute_batch("SAVEPOINT write_revision")?;
-    match write_revision_rows(conn, input, before_snapshot, after_snapshot, plan) {
+    match write_revision_rows(conn, input, before_snapshot, after_snapshot, plan, env) {
         Ok(id) => {
             conn.execute_batch("RELEASE write_revision")?;
             Ok(id)
@@ -223,6 +226,7 @@ fn write_revision_rows(
     before_snapshot: Option<i64>,
     after_snapshot: Option<i64>,
     plan: &DiffPlan,
+    env: &propagation::Env,
 ) -> rusqlite::Result<i64> {
     if let Some(old) = &input.old_path {
         conn.execute("UPDATE changes SET state = 'superseded' WHERE path = ?1 AND state = 'active'", [old])?;
@@ -297,7 +301,7 @@ fn write_revision_rows(
             i64::from(hunk.eol_only),
         ])?;
     }
-    write_document_rows(conn, input, plan, change_id, revision_id)?;
+    write_document_rows(conn, input, plan, change_id, revision_id, env)?;
     Ok(revision_id)
 }
 
@@ -308,6 +312,7 @@ fn write_document_rows(
     plan: &DiffPlan,
     change_id: i64,
     revision_id: i64,
+    env: &propagation::Env,
 ) -> rusqlite::Result<()> {
     if let Some(kind) = DocKind::from_path(&input.path) {
         let document_id = if input.after.is_some() {
@@ -323,6 +328,8 @@ fn write_document_rows(
                    (revision_id, document_id, file_id, change_type, component, field, before_value, after_value)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
+            let mut causes: Vec<propagation::Cause> = Vec::new();
+            let mut asset_row: Option<i64> = None;
             for row in outcome.rows() {
                 insert.execute(params![
                     revision_id,
@@ -334,12 +341,78 @@ fn write_document_rows(
                     row.before_value,
                     row.after_value,
                 ])?;
+                let id = conn.last_insert_rowid();
+                if row.change_type == scene_diff::change_type::PREFAB_ASSET_CHANGED {
+                    asset_row = Some(id);
+                } else if let Some(cause) =
+                    propagation::cause_of(id, row.file_id, row.change_type, &row.component, &row.field, &row.before_value, &row.after_value)
+                {
+                    causes.push(cause);
+                }
+            }
+            // プレハブ / アクターの中身が変わったら、参照しているシーンのインスタンスへの影響を記録する (architecture.md §6.4)
+            if kind != DocKind::Scene && input.after.is_some() && !causes.is_empty() {
+                // 伝播は付随の情報。計算に失敗しても Revision と Hunk は残す (入れ子の SAVEPOINT で伝播の分だけ取り消す)
+                conn.execute_batch("SAVEPOINT propagation")?;
+                match write_propagation(conn, env, input, &document_id, revision_id, asset_row, &causes) {
+                    Ok(()) => conn.execute_batch("RELEASE propagation")?,
+                    Err(e) => {
+                        conn.execute_batch("ROLLBACK TO propagation; RELEASE propagation")?;
+                        eprintln!("[track] プレハブ伝播を計算できない: {}: {e}", input.path);
+                    }
+                }
             }
         }
     } else if let Some((asset_path, kind)) = document::meta_target(&input.path) {
         // `.meta` の変更は、対象の文書の同一性を見直す引き金。削除なら guid は無い
         let guid = if input.after.is_some() { input.doc_guid.as_deref() } else { None };
         document::rebind_for_meta(conn, asset_path, kind, guid, input.observed_at)?;
+    }
+    Ok(())
+}
+
+/// プレハブ伝播の行を書く。行は原因の Revision (プレハブ側) に付け、`document_id` は影響を受けるシーンの文書。
+/// 読み飛ばし・打ち切りがあれば、プレハブの文書に要約の行を 1 つ足す (`field` 無し)。
+fn write_propagation(
+    conn: &Connection,
+    env: &propagation::Env,
+    input: &RevisionInput,
+    prefab_document_id: &str,
+    revision_id: i64,
+    asset_row: Option<i64>,
+    causes: &[propagation::Cause],
+) -> rusqlite::Result<()> {
+    let outcome = propagation::propagate(env, &input.path, input.doc_guid.as_deref(), causes, input.observed_at)?;
+    let mut insert = conn.prepare_cached(
+        "INSERT INTO scene_changes
+           (revision_id, document_id, file_id, change_type, component, field, before_value, after_value, caused_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    )?;
+    for row in &outcome.rows {
+        insert.execute(params![
+            revision_id,
+            row.document_id,
+            row.file_id,
+            scene_diff::change_type::PREFAB_PROPAGATION,
+            row.component,
+            row.field,
+            row.before,
+            row.after,
+            row.caused_by,
+        ])?;
+    }
+    if outcome.has_limits() {
+        insert.execute(params![
+            revision_id,
+            prefab_document_id,
+            None::<i64>,
+            scene_diff::change_type::PREFAB_PROPAGATION,
+            None::<String>,
+            None::<String>,
+            None::<String>,
+            outcome.summary_json(),
+            asset_row,
+        ])?;
     }
     Ok(())
 }
@@ -361,12 +434,14 @@ pub struct Deriver {
     latest: HashMap<(String, Option<String>), i64>,
     /// 帰属の計算の設定。通常の記録と同じ値を使う (違うと作り直した DB が元と変わる)。
     pub cfg: AttributionConfig,
+    /// プロジェクトのルート (プレハブ伝播が `.meta` の無いプレハブのキーを作るのに使う)。
+    pub root: Option<PathBuf>,
     pub report: RebuildReport,
 }
 
 impl Deriver {
     pub fn empty() -> Deriver {
-        Deriver { latest: HashMap::new(), cfg: AttributionConfig::default(), report: RebuildReport::default() }
+        Deriver { latest: HashMap::new(), cfg: AttributionConfig::default(), root: None, report: RebuildReport::default() }
     }
 
     /// 今の DB の `snapshots` から始める (起動時の入れ直しが、途中のイベントから続けるとき)。
@@ -429,7 +504,8 @@ impl Deriver {
                 // 計算できなかった (読み取りの失敗) ときは、Hunk の無い Revision として残す。作り直しは止めない
                 let plan = plan_diff(blobs, &input, None, limits)
                     .unwrap_or_else(|_| DiffPlan::without_hunks(DiffMode::Unavailable));
-                let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan)?;
+                let env = propagation::Env { conn, blobs, root: self.root.as_deref() };
+                let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan, &env)?;
                 // 作り直しは全イベントが入っているので、いま処理しているイベントまでの知らせだけを数える
                 let through: Option<i64> =
                     conn.query_row("SELECT event_id FROM events WHERE journal_pos = ?1", [pos], |r| r.get(0)).optional()?;
@@ -485,6 +561,7 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
     )?;
     let mut deriver = Deriver::empty();
     deriver.cfg = store.attribution.clone();
+    deriver.root = Some(store.project_root.clone());
     {
         let mut stmt = tx.prepare(
             "SELECT at, kind, payload, journal_pos FROM events

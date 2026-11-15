@@ -3256,11 +3256,15 @@ MYE_STR(AiChg_ScKindPrefabOverride, "Prefab override changed (an edit that appli
                               "プレハブの上書き (このインスタンスだけの編集) の変更")
 MYE_STR(AiChg_ScKindPrefabPropagation, "Propagated from a prefab change", "プレハブの変更の波及")
 MYE_STR(AiChg_ScKindUnparsed, "Could not compare structurally",        "構造を比べられなかった")
+MYE_STR(AiChg_ScGoCause,      "Go to the cause",                       "原因の変更へ移動")
+MYE_STR(AiChg_ScPropLimits,   "Not every scene was covered: {unreadable} unreadable, {skipped} skipped by the limit, {omitted} rows omitted, {legacy} old-format instances",
+                              "波及を調べきれなかった範囲: 読めないシーン {unreadable}、上限で読まなかったシーン {skipped}、省いた行 {omitted}、旧形式のインスタンス {legacy}")
 MYE_STR(AiChg_ScWholeScene,   "(whole document)",                      "(文書全体)")
 MYE_STR(AiChg_BadgeAdded,     "Added in the file",                     "ファイルに追加された")
 MYE_STR(AiChg_BadgeModified,  "Modified in the file",                  "ファイルで変更された")
 MYE_STR(AiChg_BadgeDescendant, "A descendant has changes",             "子孫に変更があります")
 MYE_STR(AiChg_BadgeMore,      "(and more)",                            "(ほか)")
+MYE_STR(AiChg_BadgePropagated, "Carried over from a prefab change (not edited in this file)", "プレハブの変更が伝わった (このファイルでは編集されていない)")
 
 // ---- Inspector の印・ワイヤ箱・色の設定 (M104m2) ----
 MYE_STR(AiChg_InspBefore,     "Before:",                               "変更前:")
@@ -3268,6 +3272,7 @@ MYE_STR(AiChg_InspAfter,      "After:",                                "変更�
 MYE_STR(AiChg_InspNone,       "(none)",                                "(なし)")
 MYE_STR(AiChg_InspOverride,   "Prefab override changed in the file (applies to this instance only)",
                               "ファイルでプレハブの上書きが変更された (このインスタンスだけの編集)")
+MYE_STR(AiChg_InspPropagated, "Carried over from a prefab change. Cause:", "プレハブの変更が伝わった。原因:")
 MYE_STR(AiChg_InspComponentAdded, "Component added in the file",       "コンポーネントがファイルに追加された")
 MYE_STR(AiChg_InspChangedFields, "Changed fields (before):",           "変更されたフィールド (変更前):")
 MYE_STR(AiChg_OverlayConflict, "conflict",                             "競合")
@@ -3531,6 +3536,7 @@ MYE_STR(AiChg_SrIssueActor, "Only changes made by an AI or by an unknown actor c
 MYE_STR(AiChg_SrIssueNotOpen, "This is not a change of the scene that is open now.", "今開いているシーンの変更ではありません。")
 MYE_STR(AiChg_SrIssueNoRows, "There is nothing in this scope.", "この範囲に項目がありません。")
 MYE_STR(AiChg_SrIssueTooMany, "Too many items to restore at once. Choose a narrower scope.", "項目が多すぎて一度に戻せません。範囲を狭めてください。")
+MYE_STR(AiChg_SrIssuePropagated, "This change was carried over from a prefab, so it cannot be restored here. Restore the prefab's own change instead (use \"Go to the cause\" in the list).", "この変更はプレハブから伝わったもので、ここでは戻せません。原因のプレハブの変更を戻してください (一覧の「原因の変更へ移動」)。")
 MYE_STR(AiChg_SrIssueUnsupported, "This kind of change cannot be restored item by item (a whole-document value, a prefab relink, or a scene that could not be parsed).", "この種類の変更は項目ごとには戻せません (文書全体の値・プレハブの付け替え・解析できなかったシーン)。")
 MYE_STR(AiChg_SrIssueOverrideKey, "This only marks a prefab override. Restore the field it belongs to; the mark follows.", "プレハブの上書きの印だけの変更です。対応するフィールドを戻すと、印も連動して戻ります。")
 MYE_STR(AiChg_SrIssueOversize, "The value is too large to be kept, so it cannot be restored here.", "値が大きすぎて保持していないため、ここでは戻せません。")

@@ -4,7 +4,9 @@
 //                                          開いているシーンの変更の強調・一覧・選択の同期の回帰テスト
 //====================================================================================
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1712,6 +1714,174 @@ void TestGhostPlayInvariance(const Check& check)
     check(withGhosts.world.GetComponent<FileIdComponent>(withGhosts.plain.Id()) == nullptr, "ghost play invariance: an entity without a fileId did not get one");
 }
 
+// プレハブ伝播 (M104t): 直接の編集と別の印・文面になり、原因のプレハブへ案内する
+void TestPropagation(const Check& check)
+{
+    json propagated = { { "name", "fov" }, { "before", "60" }, { "after", "75" }, { "lastRevisionId", 4 }, { "changeType", "PrefabPropagation" },
+                        { "override", false }, { "propagated", true }, { "causePath", "assets/p.prefab.json" }, { "oversize", false } };
+    json direct = { { "name", "nearZ" }, { "before", "0.1" }, { "after", "0.2" }, { "lastRevisionId", 5 }, { "changeType", "FieldModified" },
+                    { "override", false }, { "propagated", false }, { "oversize", false } };
+    json onlyPropagated = EntityJson(11, "modified", "Kid");
+    onlyPropagated["components"] = json::array({ { { "name", "Camera" }, { "status", "modified" }, { "fields", json::array({ propagated }) } } });
+    json mixed = EntityJson(12, "modified", "Kid2");
+    mixed["components"] = json::array({ { { "name", "Camera" }, { "status", "modified" }, { "fields", json::array({ propagated, direct }) } } });
+    std::unordered_map<int64_t, OverlayEntity> table;
+    SceneChangeOverlay::ParseEntities({ { "entities", json::array({ onlyPropagated, mixed }) } }, table);
+    const OverlayField& field = table[11].components[0].fields[0];
+    check(field.propagated && field.causePath == "assets/p.prefab.json" && !table[11].components[0].fields[0].overrideField,
+          "propagation parse: the propagated flag and the cause path are read");
+    check(table[11].propagatedOnly && !table[12].propagatedOnly, "propagation parse: an entity is propagated-only only when no direct edit is mixed in");
+    InBothLanguages([&](Lang) {
+        const std::string tip = FieldMarkTooltip(field);
+        check(tip.find("assets/p.prefab.json") != std::string::npos && tip.find(Tr(StrId::AiChg_InspPropagated)) == 0
+                  && FieldMarkTooltip(table[12].components[0].fields[1]).find(Tr(StrId::AiChg_InspPropagated)) == std::string::npos,
+              "propagation text: the field tooltip names the cause prefab; a direct edit's tooltip does not");
+        check(OverlayBadgeTooltip(&table[11], false).find(Tr(StrId::AiChg_BadgePropagated)) == 0
+                  && OverlayBadgeTooltip(&table[12], false).find(Tr(StrId::AiChg_BadgePropagated)) == std::string::npos,
+              "propagation text: the badge tooltip says the change was carried over only for a propagated-only entity");
+    });
+
+    // 一覧の行: causedBy を読み、要約の行は数を文にする
+    const json page = { { "items", json::array({ { { "sceneChangeId", 8 }, { "documentId", "S" }, { "fileId", 11 }, { "changeType", "PrefabPropagation" },
+                                                    { "component", "Camera" }, { "field", "fov" }, { "causedBy", 7 }, { "state", "active" } } }) } };
+    const std::vector<TrackSceneChange> rows = ChangeModel::ParseSceneChanges(page);
+    check(rows.size() == 1 && rows[0].causedBy == 7, "propagation rows: causedBy is read from scene_diff");
+    TrackSceneChange summary;
+    summary.changeType = "PrefabPropagation";
+    summary.afterValue = "{\"scenesChecked\":3,\"scenesUnreadable\":2,\"scenesSkipped\":0,\"rowsOmitted\":0,\"legacyMembers\":5}";
+    const std::string note = FormatSceneChange(summary, "").note;
+    check(!note.empty() && note.find('{') == std::string::npos && note.find('2') != std::string::npos && note.find('5') != std::string::npos,
+          "propagation rows: the summary row states the counts (no unfilled placeholder)");
+}
+
+// 計測 (M104t)。環境変数 MYE_CHANGETRACKING_PERF が有るときだけ動く (結果は docs/ai-change-tracking/performance.md §10)。
+// 20000 エンティティのシーン (200 の親 x 99 の子 + 親) で、変更済みの数を変えて表示側の費用を測る。実時間は表示の計測だけに使う
+void TestPerformanceProbe(const Check& check)
+{
+    if (std::getenv("MYE_CHANGETRACKING_PERF") == nullptr) {
+        return;
+    }
+    using namespace DirectX;
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::time_point from) { return std::chrono::duration<double, std::milli>(Clock::now() - from).count(); };
+    constexpr int kParents = 200;
+    constexpr int kChildren = 99;
+    SceneRig rig;
+    World& world = rig.world;
+    std::vector<uint64_t> fileIds;
+    for (int p = 0; p < kParents; ++p) {
+        GameObject parent = rig.scene.CreateGameObjectTracked("P");
+        fileIds.push_back(world.GetComponent<FileIdComponent>(parent.Id())->value);
+        for (int c = 0; c < kChildren; ++c) {
+            GameObject child = rig.scene.CreateGameObjectTracked("C");
+            world.SetParent(child.Id(), parent.Id());
+            fileIds.push_back(world.GetComponent<FileIdComponent>(child.Id())->value);
+        }
+    }
+    world.ApplyStructuralChanges();
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    XMStoreFloat4x4(&view, XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -200.0f, 1.0f), XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)));
+    XMStoreFloat4x4(&proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f, 0.1f, 1000.0f));
+    MYE_LOG_INFO("[perf] scene entities=%zu", fileIds.size());
+    for (const size_t changed : { static_cast<size_t>(10), static_cast<size_t>(1000), fileIds.size() }) {
+        json list = json::array();
+        const size_t step = (std::max)(static_cast<size_t>(1), fileIds.size() / changed);
+        for (size_t i = 0; i < fileIds.size() && list.size() < changed; i += step) {
+            list.push_back(EntityWithField(static_cast<int64_t>(fileIds[i]), "Light", "intensity"));
+        }
+        // 取り直し 1 回 (JSON 化した応答の解析と表の入れ替え。fake の pipe 越し)
+        OverlayRig r;
+        constexpr size_t kPageEntities = 1900; // サービスは 1 ページを 768 KiB の予算で区切る。この試験の 1 エンティティは約 400 バイトで、1 ページがその予算に近い
+        for (size_t from = 0; from < list.size(); from += kPageEntities) {
+            json chunk = json::array();
+            for (size_t i = from; i < (std::min)(list.size(), from + kPageEntities); ++i) {
+                chunk.push_back(list[i]);
+            }
+            r.pages.push_back(std::move(chunk));
+        }
+        const Clock::time_point t0 = Clock::now();
+        r.overlay.SetDocumentPath(kScenePath);
+        double maxPollMs = 0.0; // 返事 1 ページを読む Poll() 1 回 (応答の受信・JSON の解析・表への反映)
+        for (int frame = 0; frame < 2000 && !(r.overlay.Loaded() && r.overlay.Counts().Total() > 0); ++frame) {
+            r.Answer();
+            const Clock::time_point tp = Clock::now();
+            r.session.Poll();
+            maxPollMs = (std::max)(maxPollMs, ms(tp));
+        }
+        const double fetchMs = ms(t0);
+        // 表の解析だけ
+        std::unordered_map<int64_t, OverlayEntity> table;
+        const json page = { { "entities", list } };
+        const Clock::time_point t1 = Clock::now();
+        SceneChangeOverlay::ParseEntities(page, table);
+        const double parseMs = ms(t1);
+        const Clock::time_point t2 = Clock::now();
+        r.overlay.RebuildAncestors(rig.scene);
+        const double ancestorsMs = ms(t2);
+        // Hierarchy の 1 行ぶんの引き (全エンティティを引いた合計)
+        const Clock::time_point t3 = Clock::now();
+        size_t badges = 0;
+        for (const uint64_t id : fileIds) {
+            badges += r.overlay.BadgeFor(id).Any() ? 1 : 0;
+        }
+        const double badgeMs = ms(t3);
+        // Scene View: 毎フレームの候補作りと選び方
+        std::vector<ChangeBoxCandidate> candidates;
+        constexpr int kFrames = 20;
+        ChangeBoxSelection pick;
+        double collectMs = 0.0;
+        double collectFirstMs = 0.0;
+        double selectMs = 0.0;
+        for (int f = 0; f < kFrames; ++f) {
+            const Clock::time_point tc = Clock::now();
+            CollectChangeBoxCandidates(rig.scene, r.overlay, view, proj, candidates);
+            const double thisMs = ms(tc);
+            if (f == 0) {
+                collectFirstMs = thisMs; // 最初の 1 回 (FindByFileId の索引が温まっていなければここで払う)
+            } else {
+                collectMs += thisMs;
+            }
+            const Clock::time_point ts = Clock::now();
+            pick = SelectChangeBoxes(candidates, kMaxChangeWireBoxes);
+            selectMs += ms(ts);
+        }
+        collectMs /= (kFrames - 1);
+        // 可視の判定を AABB (8 隅のどれかが見えれば可視) にしたときの追加の費用の見積もり: 候補ごとに 8 点を ProjectChangePoint へ通す
+        const Clock::time_point tCorners = Clock::now();
+        size_t cornerHits = 0;
+        for (const ChangeBoxCandidate& c : candidates) {
+            for (int corner = 0; corner < 8; ++corner) {
+                const XMFLOAT3 p = { c.position.x + ((corner & 1) != 0 ? 0.5f : -0.5f), c.position.y + ((corner & 2) != 0 ? 0.5f : -0.5f),
+                                     c.position.z + ((corner & 4) != 0 ? 0.5f : -0.5f) };
+                float depth = 0.0f;
+                cornerHits += ProjectChangePoint(p, view, proj, depth) ? 1 : 0;
+            }
+        }
+        const double cornersMs = ms(tCorners);
+        selectMs /= kFrames;
+        // Hierarchy の 1 フレーム (ヘッドレス。追跡あり / なし)
+        Selection selection;
+        UndoStack undo;
+        HierarchyWindow withOverlay;
+        withOverlay.SetChangeOverlay(&r.overlay);
+        HierarchyWindow without;
+        auto frames = [&](HierarchyWindow& window) {
+            const Clock::time_point t = Clock::now();
+            for (int f = 0; f < kFrames; ++f) {
+                DrawHierarchy(window, rig, selection, undo);
+            }
+            return ms(t) / kFrames;
+        };
+        const double hierarchyWith = frames(withOverlay);
+        const double hierarchyWithout = frames(without);
+        MYE_LOG_INFO("[perf] changed=%zu page=%zu bytes fetch+parse(fake io)=%.2f ms maxPoll=%.2f ms parse=%.2f ms rebuildAncestors=%.2f ms badgeLookup(all)=%.3f ms (hits %zu) "
+                     "aabb8Corners=%.3f ms (hits %zu) boxCollect first=%.3f ms boxCollect/frame=%.3f ms boxSelect/frame=%.3f ms (chosen %zu, candidates %zu) hierarchy/frame with=%.3f ms without=%.3f ms",
+                     list.size(), r.pages.empty() ? static_cast<size_t>(0) : r.pages[0].dump().size(), fetchMs, maxPollMs, parseMs, ancestorsMs, badgeMs, badges, cornersMs, cornerHits, collectFirstMs, collectMs, selectMs, pick.chosen.size(), candidates.size(), hierarchyWith, hierarchyWithout);
+    }
+    check(true, "perf probe ran");
+}
+
 } // namespace
 
 void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>& check)
@@ -1728,6 +1898,8 @@ void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>
     TestPlayModeInvariance(check);
     TestSelectionSync(check);
     TestFieldMarkText(check);
+    TestPropagation(check);
+    TestPerformanceProbe(check);
     TestInspectorMarks(check);
     TestChangeBoxSelection(check);
     TestChangeBoxesDrawn(check);

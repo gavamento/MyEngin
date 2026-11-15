@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <utility>
 
@@ -601,6 +602,32 @@ std::string UnparsedReason(const std::string& afterValue)
     return parsed.is_string() ? parsed.get<std::string>() : afterValue;
 }
 
+namespace {
+
+// 伝播の要約の行 (読み飛ばし・打ち切りの数)。{名前} を数に置き換える (Tr の結果を書式文字列にしない)
+std::string PropagationLimitsText(const std::string& afterValue)
+{
+    const nlohmann::json counts = nlohmann::json::parse(afterValue, nullptr, false);
+    auto count = [&counts](const char* key) {
+        return std::to_string(counts.is_object() && counts.contains(key) && counts[key].is_number_integer() ? counts[key].get<int64_t>() : 0);
+    };
+    const std::pair<const char*, std::string> values[] = {
+        { "{unreadable}", count("scenesUnreadable") },
+        { "{skipped}", count("scenesSkipped") },
+        { "{omitted}", count("rowsOmitted") },
+        { "{legacy}", count("legacyMembers") },
+    };
+    std::string text = Tr(StrId::AiChg_ScPropLimits);
+    for (const auto& [token, value] : values) {
+        for (size_t pos = text.find(token); pos != std::string::npos; pos = text.find(token, pos + value.size())) {
+            text.replace(pos, std::strlen(token), value);
+        }
+    }
+    return text;
+}
+
+} // namespace
+
 SceneChangeText FormatSceneChange(const TrackSceneChange& c, const std::string& entityName)
 {
     SceneChangeText text;
@@ -614,6 +641,10 @@ SceneChangeText FormatSceneChange(const TrackSceneChange& c, const std::string& 
     text.field = c.field;
     if (c.changeType == "unparsed") {
         text.note = UnparsedReason(c.afterValue);
+        return text;
+    }
+    if (c.changeType == "PrefabPropagation" && !c.hasFileId) {
+        text.note = PropagationLimitsText(c.afterValue); // どのインスタンスでもない要約の行
         return text;
     }
     if (c.oversize) {
@@ -631,7 +662,9 @@ std::string OverlayBadgeTooltip(const OverlayEntity* e, bool descendantOnly)
     constexpr size_t kMaxNames = 3;
     std::string out;
     if (e != nullptr && (e->status == OverlayStatus::Added || e->status == OverlayStatus::Modified)) {
-        out = Tr(e->status == OverlayStatus::Added ? StrId::AiChg_BadgeAdded : StrId::AiChg_BadgeModified);
+        out = Tr(e->status == OverlayStatus::Added ? StrId::AiChg_BadgeAdded
+                 : e->propagatedOnly                 ? StrId::AiChg_BadgePropagated
+                                                     : StrId::AiChg_BadgeModified);
         size_t shown = 0;
         size_t total = 0;
         auto put = [&](const std::string& label) {
@@ -709,7 +742,12 @@ std::string FieldValueText(const OverlayField& field, bool present, const std::s
 
 std::string FieldMarkTooltip(const OverlayField& field)
 {
-    std::string out = Tr(field.overrideField ? StrId::AiChg_InspOverride : StrId::AiChg_BadgeModified);
+    std::string out = Tr(field.propagated ? StrId::AiChg_InspPropagated
+                         : field.overrideField ? StrId::AiChg_InspOverride
+                                               : StrId::AiChg_BadgeModified);
+    if (field.propagated && !field.causePath.empty()) {
+        out += " " + field.causePath; // 原因のプレハブ (名前だけを連結する。書式文字列にはしない)
+    }
     out += "\n";
     out += Tr(StrId::AiChg_InspBefore);
     out += " " + FieldValueText(field, field.hasBefore, field.before) + "\n";

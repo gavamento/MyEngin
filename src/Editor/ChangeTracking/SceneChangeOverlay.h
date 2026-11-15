@@ -33,6 +33,9 @@ struct OverlayField {
     int64_t lastRevisionId = 0;
     std::string changeType;
     bool overrideField = false;
+    // プレハブのベースの変更が伝わった項目 (ファイルの直接の編集ではない)。causePath = 原因のプレハブのファイル
+    bool propagated = false;
+    std::string causePath;
     bool oversize = false;
 };
 
@@ -57,6 +60,8 @@ struct OverlayEntity {
     bool hasBefore = false;
     bool beforeOversize = false;
     std::string before;
+    // 変更がすべてプレハブから伝わったもの (直接の編集を含まない)。Hierarchy の印を別の形にする
+    bool propagatedOnly = false;
 };
 
 struct OverlayCounts {
@@ -71,6 +76,7 @@ struct OverlayBadge {
     OverlayStatus status = OverlayStatus::None;
     bool descendantOnly = false;
     bool uncertain = false; // status が追加・更新で、帰属が未確認
+    bool propagated = false; // status が更新で、変更がすべてプレハブから伝わったもの
     bool Any() const { return status != OverlayStatus::None || descendantOnly; }
 };
 

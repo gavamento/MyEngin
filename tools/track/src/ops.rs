@@ -547,7 +547,7 @@ pub fn scene_diff(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     }
     let mut stmt = conn
         .prepare(
-            "SELECT scene_change_id, document_id, file_id, change_type, component, field, before_value, after_value, state
+            "SELECT scene_change_id, document_id, file_id, change_type, component, field, before_value, after_value, state, caused_by
                FROM scene_changes WHERE revision_id = ?1 AND scene_change_id > ?2 ORDER BY scene_change_id",
         )
         .map_err(internal)?;
@@ -578,6 +578,10 @@ pub fn scene_diff(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
             "state": r.get::<_, String>(8).map_err(internal)?,
             "oversize": false,
         });
+        // PrefabPropagation の原因 (同じ Revision のプレハブ側の行)。伝播の行だけに付ける (他の行の応答の形は変えない)
+        if let Some(cause) = r.get::<_, Option<i64>>(9).map_err(internal)? {
+            item["causedBy"] = json!(cause);
+        }
         let raw = before.as_ref().map_or(0, String::len) + after.as_ref().map_or(0, String::len);
         item["beforeValue"] = json!(before);
         item["afterValue"] = json!(after);

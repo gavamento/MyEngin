@@ -116,6 +116,8 @@ struct TrackSceneChange {
     int64_t afterBytes = 0;
     std::string review; // 今のレビューの状態 (pending / approved / rejected / needs_review)
     std::string state;  // active / restored (ライブのシーンの復元で戻した行)
+    // PrefabPropagation の原因 (同じ Revision のプレハブ側の行の sceneChangeId)。伝播以外は 0
+    int64_t causedBy = 0;
 };
 
 struct TrackListFilter {

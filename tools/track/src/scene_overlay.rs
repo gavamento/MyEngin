@@ -42,6 +42,8 @@ pub struct OverlayRow {
     pub after: Option<String>,
     /// この行の Revision の帰属が確定していない (`unknown` / `inferred`)。Editor が「未確認」の印を出す。
     pub uncertain: bool,
+    /// `PrefabPropagation` の行の原因のプレハブのパス (原因の Revision のファイル)。それ以外は None。
+    pub cause_path: Option<String>,
 }
 
 /// 1 つの Revision の行 (古い順に並べて渡す)。
@@ -75,6 +77,8 @@ pub struct FieldOut {
     pub after: Option<String>,
     pub last_revision: i64,
     pub change_type: String,
+    /// `PrefabPropagation` のとき、原因のプレハブのパス。`last_revision` が原因の Revision。
+    pub cause_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +121,7 @@ struct FieldAcc {
     after: Option<String>,
     last_revision: i64,
     change_type: String,
+    cause_path: Option<String>,
 }
 
 struct CompAcc {
@@ -163,6 +168,7 @@ fn fold_field(map_entry: &mut FieldAcc, fresh: bool, revision: i64, row: &Overla
     map_entry.after = row.after.clone();
     map_entry.last_revision = revision;
     map_entry.change_type = row.change_type.clone();
+    map_entry.cause_path = row.cause_path.clone();
 }
 
 fn name_of_entity_fragment(fragment: &str) -> Option<String> {
@@ -311,6 +317,7 @@ fn synth_rows(file_id: i64, before: &str, after: &str, component: Option<&String
                 before: c.before_value,
                 after: c.after_value,
                 uncertain,
+                cause_path: None,
             })
             .collect(),
         SceneOutcome::Unparsed(_) => Vec::new(),
@@ -326,6 +333,7 @@ fn surviving(map: BTreeMap<String, FieldAcc>) -> Vec<FieldOut> {
             after: acc.after,
             last_revision: acc.last_revision,
             change_type: acc.change_type,
+            cause_path: acc.cause_path,
         })
         .collect()
 }
@@ -384,7 +392,14 @@ fn finalize(file_id: i64, ent: EntAcc) -> Option<EntityOut> {
             continue;
         }
         let Some(name) = field else { continue };
-        let out = FieldOut { name, before: acc.before, after: acc.after, last_revision: acc.last_revision, change_type: acc.change_type };
+        let out = FieldOut {
+            name,
+            before: acc.before,
+            after: acc.after,
+            last_revision: acc.last_revision,
+            change_type: acc.change_type,
+            cause_path: acc.cause_path,
+        };
         match component {
             None => entity_fields.push(out),
             Some(c) => by_component.entry(c).or_default().push(out),
@@ -426,6 +441,13 @@ fn field_json(f: &FieldOut, budget_left: &mut usize) -> Value {
     let size = f.before.as_ref().map_or(0, String::len) + f.after.as_ref().map_or(0, String::len);
     let mut v = json!({ "name": f.name, "lastRevisionId": f.last_revision, "changeType": f.change_type,
         "override": f.change_type == change_type::PREFAB_OVERRIDE_CHANGED });
+    // 伝播の項目だけに付ける (他の項目の応答の形は変えない)。原因のプレハブへ案内する (`lastRevisionId` が原因の Revision)
+    if f.change_type == change_type::PREFAB_PROPAGATION {
+        v["propagated"] = json!(true);
+        if let Some(path) = &f.cause_path {
+            v["causePath"] = json!(path);
+        }
+    }
     let fits = f.before.as_ref().map_or(0, String::len) <= MAX_VALUE_BYTES
         && f.after.as_ref().map_or(0, String::len) <= MAX_VALUE_BYTES
         && size <= *budget_left;
@@ -556,8 +578,10 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
     // 行為者が AI か不明の Revision だけ (利用者の編集と復元は強調しない)。無効にされた行は除く
     let sql = format!(
         "SELECT r.revision_id, s.file_id, s.change_type, s.component, s.field, s.before_value, s.after_value,
-                r.attribution IN ('unknown', 'inferred')
+                r.attribution IN ('unknown', 'inferred'),
+                CASE WHEN s.change_type = 'PrefabPropagation' THEN c.path END
            FROM scene_changes s JOIN change_revisions r ON r.revision_id = s.revision_id
+           JOIN changes c ON c.change_id = r.change_id
           WHERE s.document_id IN ({marks}) AND s.state = 'active' AND r.actor IN ('ai', 'unknown')
             AND r.revision_id > {after}
           ORDER BY r.revision_id, s.scene_change_id LIMIT {limit}",
@@ -586,12 +610,16 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
             before: r.get(5).map_err(internal)?,
             after: r.get(6).map_err(internal)?,
             uncertain: r.get(7).map_err(internal)?,
+            cause_path: r.get(8).map_err(internal)?,
         };
-        if let Some(index) = reviews.get(&revision_id) {
-            let leaf = review::Leaf::Scene { file_id: row.file_id, component: row.component.clone(), field: row.field.clone() };
-            if index.state_of(&leaf) == review::LeafState::Approved {
-                approved_hidden += 1;
-                continue;
+        // 伝播の行は確認の対象にしない (確認するのは原因のプレハブの変更)
+        if row.cause_path.is_none() {
+            if let Some(index) = reviews.get(&revision_id) {
+                let leaf = review::Leaf::Scene { file_id: row.file_id, component: row.component.clone(), field: row.field.clone() };
+                if index.state_of(&leaf) == review::LeafState::Approved {
+                    approved_hidden += 1;
+                    continue;
+                }
             }
         }
         match revisions.last_mut() {
@@ -678,6 +706,7 @@ mod tests {
             before: before.map(str::to_string),
             after: after.map(str::to_string),
             uncertain: false,
+            cause_path: None,
         }
     }
 

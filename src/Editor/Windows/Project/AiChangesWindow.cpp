@@ -1055,6 +1055,24 @@ void AiChangesWindow::DrawColorSettings(SceneChangeOverlay& overlay)
     }
 }
 
+// 伝播の行を選んでいるとき、原因 (同じ Revision のプレハブ側の行) へ移る
+void AiChangesWindow::DrawPropagationCause(const ChangeModel& model)
+{
+    const std::vector<TrackSceneChange>& changes = model.SceneChanges();
+    const auto selected = std::find_if(changes.begin(), changes.end(), [this](const TrackSceneChange& c) { return c.sceneChangeId == selectedSceneId_; });
+    if (selected == changes.end() || selected->changeType != "PrefabPropagation" || selected->causedBy == 0) {
+        return;
+    }
+    const int64_t causeId = selected->causedBy;
+    const bool loaded = std::any_of(changes.begin(), changes.end(), [causeId](const TrackSceneChange& c) { return c.sceneChangeId == causeId; });
+    ImGui::BeginDisabled(!loaded);
+    if (ImGui::SmallButton(Tr(StrId::AiChg_ScGoCause))) {
+        SelectSceneChange(causeId);
+        scrollToSceneId_ = causeId;
+    }
+    ImGui::EndDisabled();
+}
+
 // 選んだ Revision の構造の変更の一覧。見えている行だけを組み立てる (数万件でも重くしない)
 void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiChangesHost& host)
 {
@@ -1079,8 +1097,19 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
         const float lineH = ImGui::GetTextLineHeightWithSpacing();
         const float height = (std::min)(static_cast<float>(changes.size()), 8.0f) * lineH + 6.0f;
         if (ImGui::BeginChild("##scenechanges", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
+            int scrollIndex = -1;
+            if (scrollToSceneId_ != 0) {
+                for (size_t i = 0; i < changes.size(); ++i) {
+                    if (changes[i].sceneChangeId == scrollToSceneId_) {
+                        scrollIndex = static_cast<int>(i);
+                    }
+                }
+            }
             ImGuiListClipper clipper;
             clipper.Begin(static_cast<int>(changes.size()), lineH);
+            if (scrollIndex >= 0) {
+                clipper.IncludeItemByIndex(scrollIndex); // 画面外の行も、送り先として描く
+            }
             while (clipper.Step()) {
                 for (int n = clipper.DisplayStart; n < clipper.DisplayEnd; ++n) {
                     const TrackSceneChange& c = changes[static_cast<size_t>(n)];
@@ -1114,6 +1143,9 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
                             ShowRemovedBefore(c, model.SelectedRevision(), overlay); // 実体が無いので選択はせず、Before を読み取り専用で見せる
                         }
                     }
+                    if (n == scrollIndex) {
+                        ImGui::SetScrollHereY(0.5f);
+                    }
                     if (tinted) {
                         ImGui::PopStyleColor();
                     }
@@ -1121,9 +1153,11 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
                 }
             }
             clipper.End();
+            scrollToSceneId_ = 0;
         }
         ImGui::EndChild();
     }
+    DrawPropagationCause(model);
     DrawSceneReview(session);
     DrawSceneRestoreButton(session, host);
     if (hasActivation_ && lastActivation_ != SceneChangeActivation::Selected && lastActivation_ != SceneChangeActivation::NoEntity) {

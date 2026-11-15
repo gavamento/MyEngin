@@ -1580,6 +1580,14 @@ confirmation.
   A document over 32 MiB or 10000 entities, from a newer engine version, that is broken, or whose Blob is missing is reported per side without stopping the other side.
   Prefab and actor documents are not previewed. The window's render targets are the only raw D3D use (`ScenePreviewWindow.cpp`, on the rule 16 allow list); a device loss
   releases them and the next draw re-creates them.
+- **Prefab propagation (M104t).** When a prefab or actor file changes a field (or an entity's name / tag mask), the service records a `PrefabPropagation`
+  row for every instance member in the scenes that reference that prefab and have **not** overridden the field (the instance's `overrides` list does not name it).
+  The scene file on disk does not change, so these rows describe what the load / hot-reload propagation will do in memory; the before / after values are the
+  prefab's, not the instance's live values. The rows belong to the prefab's change (the cause), they are not reviewable and not restorable. The Hierarchy shows
+  such an entity with a **hollow ring** instead of the solid dot of a direct edit (and the Inspector does the same on the component heading and the field), the tooltip
+  names the cause prefab, and in the details list *Go to the cause* selects the prefab-side row; *Restore...* on a propagated row only explains that the prefab's own
+  change is the one to restore. Limits (shown as a summary row, not hidden): scenes that are unreadable or beyond the read limits, instances saved without an
+  `overrides` list, nested prefabs beyond the instance roots written in the scene.
 - The window asks the model for only the parts it shows (`ChangeModel::SetInterest`); while it is closed nothing is fetched.
 - *Open file* uses the existing external-editor path (`externalEditorCmd`) at the first line of the selected hunk; *Show in Explorer*
   opens the folder.
