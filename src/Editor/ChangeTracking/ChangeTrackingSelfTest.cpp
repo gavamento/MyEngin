@@ -1560,6 +1560,9 @@ bool RunChangeTrackingSelfTest()
     // ---- (q) ライブのシーンの復元 (M104q) ----
     RunSceneRestoreSelfTests(check);
 
+    // ---- (s) Before / After の 3D 比較 (M104s) ----
+    RunScenePreviewSelfTests(check);
+
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {
         RunProbe(probe, check);

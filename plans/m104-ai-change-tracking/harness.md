@@ -31,9 +31,9 @@
 | sub-15 (M104p) 復元の判定 — ゲート、競合の検証、パスの検査、プレビュー | OK | 0 | dca6fee0 | round 1 で OK。ファイルを書かない (planner が grep で確認)。「復元する」は常に押せない。list に operationId を追加 |
 | sub-27 (M104p2) ファイルと Hunk の適用、復元ジャーナル、巻き戻し、起動時の回復 | OK | 0 | a0131815 | round 1 で OK。書き込みの口は RestoreWriteIo 1 か所 (planner が grep で確認)。削除の後のアセット登録の残りは sub-16 へ |
 | sub-16 (M104q) ライブのシーンの復元 | OK | 0 | 8ba1c687 | round 1 で OK。Phase 5 完了。Undo の中で書き、ディスクを書かない (planner が grep で確認)。C# のフィールドの復元も実走で成立。横断 (replay_verify / --selftest-full) は coder の結果 |
-| sub-17 (M104r) 削除エンティティのゴースト、Overlay | OK | 0 | (このコミット) | round 1 で OK。World を書かない (grep で確認)。scene_overlay に before / uncertain を追加。副作用: coder がリポジトリ直下の imgui.ini を書き換えた (控えなし) |
-| sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | 実装中 | 0 | | 着手可 (sub-17 の VERDICT で詳細化、D42)。窓を出す起動は作業ディレクトリをリポジトリの外に |
-| sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | 未着手 | | | 骨子。Phase 6 の最後 |
+| sub-17 (M104r) 削除エンティティのゴースト、Overlay | OK | 0 | 0a21f30e | round 1 で OK。World を書かない (grep で確認)。scene_overlay に before / uncertain を追加。副作用: coder がリポジトリ直下の imgui.ini を書き換えた (控えなし) |
+| sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | OK | 0 | (このコミット) | round 1 で OK。プレビュー専用のシーンと RT で比較。規則 16 の許可リストに ScenePreviewWindow.cpp。Debug のスタックの件は sub-19 の A (D43) |
+| sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | 実装中 | 0 | | 着手可 (sub-18 の VERDICT で詳細化)。最初に Debug のスタックオーバーフローの原因 (D38 と同系統か) を確かめる。M104 の最後の横断 |
 | sub-20 (M104u) エンジン配布物へのサービス同梱 | 未着手 | | | 骨子。依存 sub-19 (Phase 6 を止めたら planner が依存を付け替える) |
 
 ## レビュー

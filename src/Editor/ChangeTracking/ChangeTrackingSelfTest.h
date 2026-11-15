@@ -4,8 +4,11 @@
 //                                          AI Change Tracking の Editor 側の回帰テスト (宣言)
 //====================================================================================
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <string>
+
+#include "Engine/Core/Ecs/EntityID.h"
 
 namespace mye {
 
@@ -45,6 +48,17 @@ void RunRestoreApplySelfTests(const std::function<void(bool, const char*)>& chec
 // 別のシーンに当たらない / 読み直しが合わなければ戻す / プレハブの上書きの記録 / C# コンポーネント (MyeScripting.dll と .NET が無ければ SKIP と明記) /
 // ゲート / 窓 (偽のサービス。ファイルを書かない・ジャーナルを作らない・記録を送る) / アセットの登録の後始末。RunChangeTrackingSelfTest の末尾から呼ぶ
 void RunSceneRestoreSelfTests(const std::function<void(bool, const char*)>& check);
+
+// Before / After の 3D 比較 (M104s。プレビュー専用の Scene へ読む。ファイルもライブのシーンも書かない) の回帰テスト (ScenePreviewSelfTest.cpp)。
+// 読み込み・印・カメラ・Scene の数 / 失敗 (欠け・版・壊れた JSON・上限・接続なし・ファイルなし) / 512 KiB ずつの取得と古い応答 / アセットの注記 (偽の履歴) /
+// C# を読み込まない / 窓 (ヘッドレスの ImGui フレーム・デバイス消失) / 入口 / 本番の Scene・Undo・選択・一時プロジェクトのファイルが変わらないこと /
+// Play 中に開いても sim のハッシュが変わらないこと。RunChangeTrackingSelfTest の末尾から呼ぶ
+void RunScenePreviewSelfTests(const std::function<void(bool, const char*)>& check);
+
+// 本物の ManagedHost (SceneRestoreSelfTest が起動したもの) で、プレビューが C# コンポーネントを読み込まず、ライブの C# の状態に触れないことを確かめる
+class ManagedHost;
+class Scene;
+void RunScenePreviewManagedChecks(const std::function<void(bool, const char*)>& check, ManagedHost& host, Scene& liveScene, ComponentTypeId probeType);
 
 // 実サービスとの結合 (RunProbe から呼ぶ。MYE_TRACK_PROBE=1)。root = 一時プロジェクト。pump(条件, 上限ms) はセッションを回して条件を待つ
 void RunSceneRestoreProbe(ChangeTrackingSession& session, const std::wstring& root, const std::function<bool(const std::function<bool()>&, int)>& pump,

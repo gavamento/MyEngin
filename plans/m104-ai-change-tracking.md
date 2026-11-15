@@ -39,7 +39,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104p2 | 5 | 未着手 | ファイルと Hunk の適用 (`ReloadHub::BeginBatch` / `EndBatch`・`WriteFileReplacing`)、復元ジャーナル (`recovery\`)、巻き戻し、起動時の回復、`restore_record` / `restore_expect`。M104p の判定とプレビューの上に載せる。復元の試験は必ず一時プロジェクトで行う |
 | M104q | 5 | 実装済み (判定待ち) | ライブのシーンの復元 (Entity / Component / Field / Override)、Undo 連携。今開いているシーンだけ (開いていないシーンはファイル・Hunk)。World を `UndoStack::Record` の中で書き、ディスクは書かない。サービスは `scene_changes.state` を `restored` にする。C# コンポーネントの Field も戻せることを実走で確認。Phase 5 の横断の検証 (A20) と `replay_verify` を回した |
 | M104r | 6 | 実装済み (判定待ち) | 削除エンティティのゴースト (Before の JSON だけから World にエンティティを作らずに描く。親の連鎖でワールド行列を合成し、ライブの `WorldMatrix` と一致することを試験で確認。メッシュは今読み込まれているものを引くだけ)、Before の読み取り専用の表示と復元への導線、未確認 (`unknown` / `inferred`) の印 (Hierarchy・Scene View)、ゴーストの入・切。サービスは `scene_overlay` に `before` / `beforeOversize` / `uncertain` を足した (スキーマは版 3 のまま) |
-| M104s | 6 | 未着手 | Before / After のプレビュー、左右並べた 3D 比較 |
+| M104s | 6 | 実装済み (判定待ち) | Before / After のプレビュー、左右並べた 3D 比較。比べるのは Revision の Before と After (Blob)、または After の代わりに今のディスクの内容 (エディタの未保存は比べない)。プレビュー専用の `Scene` (最大 2 つ) と専用の RT。本番の Scene・Undo・選択・`ReloadHub`・プロジェクトのファイルに触れない。C# は読み込まない。アセットは今の内容で描き、その旨と Before の後に変わったアセットの件数を出す。`tools	rack` は変えていない |
 | M104t | 6 | 未着手 | プレハブ伝播の表示、大きいシーンでの表示の計測と軽量化 |
 
 仕様書 §19 の順序 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較) を守る。Phase をまたいで先へ進まない。

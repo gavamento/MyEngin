@@ -26,6 +26,7 @@
 #include "Editor/ChangeTracking/SceneRestorePlan.h"
 #include "Editor/ChangeTracking/SceneRestoreRunner.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
+#include "Editor/ChangeTracking/ScenePreviewSession.h"
 #include "Editor/Widgets/DiffView.h"
 
 namespace mye {
@@ -69,6 +70,11 @@ struct AiChangesHost {
     std::function<SceneRestoreEnv()> sceneRestoreEnv;
     // 「シーンの変更を復元...」を押した (SceneRestoreDialog を開く)。anchor = 選んだ構造の変更の行。未設定 = ボタンを出さない
     std::function<void(SceneRestoreScope scope, const TrackSceneChange& anchor)> openSceneRestore;
+
+    // ---- Before / After の 3D 比較 (M104s) ----
+    // 比較の窓を開く (ScenePreviewWindow)。args の revision・sceneChanges・projectRoot は AI Changes 窓が詰める。
+    // 持ち主 (EditorApp) が C# の判定とアセットのパスの解決を足す。未設定 = ボタンを出さない
+    std::function<bool(ScenePreviewOpenArgs args)> openScenePreview;
 };
 
 // シーンの変更の行をクリックした結果
@@ -170,6 +176,10 @@ public:
     // 直近のフレームで Before の表に描いた文字列の行 (名前・親・コンポーネント・値・注記)。試験が画面に出ているものを確かめる
     const std::vector<std::string>& LastBeforeLines() const { return beforeLines_; }
 
+    // ---- Before / After の 3D 比較 (M104s)。窓のボタンと試験が同じ口を通る。ファイルもライブのシーンも書かない ----
+    // 選んだ Revision がシーンの文書で、詳細とシーンの変更を取り終えているとき、比較の窓を開く。開けなければ false
+    bool OpenScenePreview(ChangeTrackingSession& session, const AiChangesHost& host);
+
     // 試験用
     const std::set<int64_t>& MultiSelection() const { return multi_; }
     bool BulkConfirmPending() const { return bulkPending_; }
@@ -202,6 +212,7 @@ private:
     void DrawSceneReview(ChangeTrackingSession& session);
     void DrawSceneRestoreButton(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawRemovedBefore(ChangeTrackingSession& session, const AiChangesHost& host);
+    void DrawPreviewButton(ChangeTrackingSession& session, const AiChangesHost& host);
     void TickRestoreRequest(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawBulkPopup(ChangeTrackingSession& session);
     void DrawAggregates(ChangeTrackingSession& session);

@@ -186,6 +186,18 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewContent.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewFormat.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewSelfTest.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewSession.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneRestoreFormat.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
@@ -468,6 +480,9 @@
     <ClCompile Include="..\src\Editor\Windows\Project\RestoreRunWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Project\ScenePreviewWindow.cpp">
+      <Filter>Windows\Project</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Project\SceneRestoreWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
@@ -643,6 +658,15 @@
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ScenePreviewContent.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ScenePreviewFormat.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ScenePreviewSession.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneRestoreFormat.h">
@@ -931,6 +955,9 @@
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\RestoreRunWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Project\ScenePreviewWindow.h">
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\SceneRestoreWindow.h">

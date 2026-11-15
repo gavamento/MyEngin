@@ -612,6 +612,7 @@ void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChanges
 
     DrawReviewPanel(session);
     DrawRestoreButtons(session, host, str("actor"));
+    DrawPreviewButton(session, host);
 
     // 帰属: 区分だけでなく、根拠の一覧と候補のセッション
     ImGui::Spacing();
@@ -1771,6 +1772,66 @@ RestoreNotes AiChangesWindow::RestoreNotesFor(const AiChangesHost& host) const
 }
 
 // 「復元...」「選んだ Hunk を復元...」。押すと必要な内容を集めて計画を作り、プレビューを出す (実行はしない)
+// ---- Before / After の 3D 比較 (M104s) ----
+
+namespace {
+
+bool IsSceneDocumentPath(const std::string& path)
+{
+    constexpr const char* kSuffix = ".scene.json";
+    const size_t n = std::strlen(kSuffix);
+    if (path.size() < n) {
+        return false;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const char c = path[path.size() - n + i];
+        if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c) != kSuffix[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool AiChangesWindow::OpenScenePreview(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    const ChangeModel& model = session.Model();
+    const nlohmann::json& detail = model.Detail();
+    if (!host.openScenePreview || model.SelectedRevision() == 0 || !detail.is_object() || !detail.contains("revisionId")
+        || !detail["revisionId"].is_number_integer() || detail["revisionId"].get<int64_t>() != model.SelectedRevision()) {
+        return false;
+    }
+    ScenePreviewOpenArgs args;
+    args.revision = ParseRestoreRevision(detail);
+    if (!IsSceneDocumentPath(args.revision.path)) {
+        return false;
+    }
+    args.sceneChanges = model.SceneChanges();
+    args.projectRoot = host.projectRoot;
+    return host.openScenePreview(std::move(args));
+}
+
+void AiChangesWindow::DrawPreviewButton(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    const ChangeModel& model = session.Model();
+    if (!host.openScenePreview || !IsSceneDocumentPath(ParseRestoreRevision(model.Detail()).path)) {
+        return;
+    }
+    // 印の元になるシーンの変更を取り終えてから (開いたあとに届いた分は、開き直さない限り印に入らない)
+    const bool ready = model.SceneChangesComplete() || model.SceneChangesFailed();
+    const bool connected = session.Client().CanRequest();
+    ImGui::BeginDisabled(!ready || !connected);
+    if (ImGui::SmallButton(Tr(StrId::ScPv_Open))) {
+        OpenScenePreview(session, host);
+    }
+    ImGui::EndDisabled();
+    if (!connected) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::ScPv_OpenNotConnected));
+    }
+}
+
 void AiChangesWindow::DrawRestoreButtons(ChangeTrackingSession& session, const AiChangesHost& host, const std::string& actor)
 {
     const bool restorable = IsRestorableActor(actor);

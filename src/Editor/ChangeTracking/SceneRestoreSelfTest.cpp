@@ -788,6 +788,7 @@ void RunManagedTests(const Check& check)
         }
         undo.SetPrefabLibrary(nullptr);
     }
+    RunScenePreviewManagedChecks(check, host, *scene, type); // M104s: 比較のプレビューは C# を読み込まない (同じホストを借りる)
     host.Shutdown();
     fs::remove_all(root, ec);
 }

@@ -1384,6 +1384,7 @@ $d3dAllow = @(
     @{ Path = 'src\Editor\Asset\AssetPreviewCache.cpp'; Reason = 'サムネイル / マテリアルプレビューの RT と SRV' },
     @{ Path = 'src\Editor\Project\ProjectManager.cpp'; Reason = 'プロジェクト管理画面のバックバッファクリア' },
     @{ Path = 'src\Editor\Windows\Animation\AnimationPreviewWindow.cpp'; Reason = 'プレビュー RT の形式指定 (M89n)' },
+    @{ Path = 'src\Editor\Windows\Project\ScenePreviewWindow.cpp'; Reason = 'Before / After 比較の RT の形式指定 (M104s。AnimationPreviewWindow と同じ。ChangeTracking の下には足さない)' },
     @{ Path = 'src\Editor\Windows\Asset\AssetBrowserWindow.cpp'; Reason = 'サムネイル SRV を ImGui::Image へ渡す' },
     @{ Path = 'src\Editor\Windows\Scene\InspectorWindowAssets.cpp'; Reason = 'マテリアルプレビュー SRV を ImGui::Image へ渡す (M93g までは InspectorWindow.cpp)' }
 )

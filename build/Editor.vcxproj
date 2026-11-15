@@ -79,6 +79,10 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlaySelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewContent.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewFormat.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ScenePreviewSession.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneRestoreFormat.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneRestorePlan.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneRestoreRunner.cpp" />
@@ -173,6 +177,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\RestoreRunWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\ScenePreviewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SceneRestoreWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp" />
@@ -232,6 +237,9 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\ReviewManager.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\ScenePreviewContent.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\ScenePreviewFormat.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\ScenePreviewSession.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneRestoreFormat.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneRestorePlan.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneRestoreRunner.h" />
@@ -328,6 +336,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\RestoreRunWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\ScenePreviewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SceneRestoreWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h" />

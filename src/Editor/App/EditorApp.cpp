@@ -20,6 +20,8 @@
 #include "Editor/Project/ProjectManager.h" // M66d: 段階 C の RelaunchSelfWithProject
 #include "Editor/Project/ProjectTemplates.h" // M66h: 推奨 .gitignore の正本
 #include "Editor/SourceControl/ScmHint.h" // M66i: 保存ヒントの受け口
+#include "Engine/Core/Ecs/ComponentRegistry.h"
+#include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Script/ManagedHost.h" // M66d: 段階 B の .cs 再コンパイル
 #include "Engine/Core/Util/Hash.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -527,6 +529,7 @@ void EditorApp::OnRenderViews(EngineContext& ctx)
     gameView_.OnRenderViews(ctx); // GameView は常に本シーン (編集モードでも実行結果を見せる)
     preview_.OnRenderViews(ctx);  // アセットサムネイル生成 (D3D 描画はこのフェーズのみ)
     animPreview_.OnRenderViews(ctx); // 骨アニメのプレビュー (M89n)
+    scenePreview_.OnRenderViews(ctx); // Before / After の比較 (M104s。専用の Scene と RT だけ)
 
     // ---- 反射プローブのベイク (M56e) ----
     // ★ここでしか焼かない (メニューのコールバックから直接呼ばない — 理由は EditorApp.h)。
@@ -607,6 +610,7 @@ void EditorApp::OnDeviceLost(EngineContext& ctx)
     gameView_.ReleaseGpu();
     preview_.ReleaseGpu();
     animPreview_.ReleaseGpu();
+    scenePreview_.ReleaseGpu();
 }
 
 void EditorApp::OnDeviceRestored(EngineContext& ctx)
@@ -1145,6 +1149,23 @@ void EditorApp::OnImGui(EngineContext& ctx)
         host.openSceneRestore = [this, &host](SceneRestoreScope scope, const TrackSceneChange& anchor) {
             sceneRestore_.Open(changeTracking_, host, scope, anchor);
         };
+        // Before / After の 3D 比較 (M104s)。C# の判定とアセットのパス解決は読み取りだけ (インスタンスも .meta も作らない)
+        host.openScenePreview = [this, &ctx](ScenePreviewOpenArgs args) {
+            ManagedHost* managed = ctx.managedHost;
+            args.isManaged = [managed](const std::string& componentName) {
+                if (managed == nullptr) {
+                    return false;
+                }
+                const ComponentTypeId type = ComponentRegistry::Get().FindByName(componentName);
+                return type != kInvalidComponentType && managed->IsManagedComponent(type);
+            };
+            AssetDatabase* assetDb = ctx.assetDb;
+            const std::wstring projectRoot = ctx.projectRoot;
+            args.assetPath = [assetDb, projectRoot](uint64_t guid) {
+                return assetDb != nullptr ? RelativeToProject(projectRoot, assetDb->PathForGuid(guid)) : std::string();
+            };
+            return scenePreview_.Open(changeTracking_, std::move(args));
+        };
         host.stagedState = [this](const std::string& rel) {
             // Source Control の status モデルの読み取りだけ (git を起動しない・Index に触れない)。使えなければ「分からない」
             if (scm_.State() != Unavailable::None || !scm_.Model().valid) {
@@ -1157,6 +1178,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
         aiChanges_.OnImGui(changeTracking_, host);
         restoreRun_.OnImGui(changeTracking_, host);
         sceneRestore_.OnImGui(changeTracking_, host);
+        scenePreview_.OnImGui(changeTracking_);
     }
     if (sourceControl_.TakeAdoptCanonicalRoot()) {
         const bool adopted = scm_.AdoptCanonicalRoot();
@@ -2251,6 +2273,7 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Animation", bottom);
     ImGui::DockBuilderDockWindow("Animator", bottom);
     ImGui::DockBuilderDockWindow("Behavior Tree", center); // 広いキャンバスが要るので中央 (閉じている間はタブを作らない)
+    ImGui::DockBuilderDockWindow("ScenePreview", center);  // Before / After の比較。既定は閉じている (AI Changes 窓のボタンから開く)
     ImGui::DockBuilderDockWindow("AiChanges", center);     // 3 列 + 差分で横に広いので中央。既定は閉じている (ウィンドウ ID は ### の右辺)
     ImGui::DockBuilderDockWindow("Scene", center);
     ImGui::DockBuilderDockWindow("Game", center);

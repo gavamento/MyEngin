@@ -41,6 +41,7 @@
 #include "Editor/Windows/Project/AiChangesWindow.h"
 #include "Editor/Windows/Project/RestoreRunWindow.h"
 #include "Editor/Windows/Project/SceneRestoreWindow.h"
+#include "Editor/Windows/Project/ScenePreviewWindow.h"
 #include "Editor/Windows/Project/SourceControlWindow.h"
 #include "Editor/Windows/Asset/SearchWindow.h"
 #include "Editor/Windows/Audio/AudioMixerWindow.h"
@@ -208,6 +209,7 @@ private:
     AiChangesWindow aiChanges_; // M104k (既定は閉じている)
     RestoreRunWindow restoreRun_; // M104p2: 復元の進行・結果・起動時の回復・履歴 (AI Changes 窓が閉じていても出る)
     SceneRestoreDialog sceneRestore_; // M104q: ライブのシーンの復元のプレビュー・結果
+    ScenePreviewWindow scenePreview_; // M104s: Before / After の 3D 比較 (AI Changes 窓の「Before / After を見る」から開く。専用の Scene と RT だけを使う)
     // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
     GitTransaction gitTx_;
     // M66e: Asset Browser の [Rebuild Scripts] で起動した子プロセス (void* = HANDLE)。
