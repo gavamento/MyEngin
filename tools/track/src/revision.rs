@@ -358,7 +358,10 @@ impl Deriver {
                 let plan = plan_diff(blobs, &input, None, limits)
                     .unwrap_or_else(|_| DiffPlan::without_hunks(DiffMode::Unavailable));
                 let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan)?;
-                attribution::evaluate_new_revision(conn, &self.cfg, revision_id, at, payload["source"].as_str().unwrap_or(""))?;
+                // 作り直しは全イベントが入っているので、いま処理しているイベントまでの知らせだけを数える
+                let through: Option<i64> =
+                    conn.query_row("SELECT event_id FROM events WHERE journal_pos = ?1", [pos], |r| r.get(0)).optional()?;
+                attribution::evaluate_new_revision(conn, &self.cfg, revision_id, at, payload["source"].as_str().unwrap_or(""), through)?;
                 self.report.revisions += 1;
                 self.report.hunks += plan.hunks.len();
             }
@@ -414,7 +417,7 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
         let mut stmt = tx.prepare(
             "SELECT at, kind, payload, journal_pos FROM events
               WHERE kind IN ('baseline', 'observed', 'session_begin', 'session_resumed', 'session_end', 'session_interrupted',
-                             'op_begin', 'op_end', 'op_abandoned', 'reported')
+                             'op_begin', 'op_end', 'op_abandoned', 'reported', 'editor_saved')
               ORDER BY event_id",
         )?;
         let mut rows = stmt.query([])?;

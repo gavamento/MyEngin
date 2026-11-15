@@ -49,10 +49,17 @@ public:
     // 一覧の左の項目
     enum class Scope : uint8_t { All, Session, Uncertain };
 
+    // 左の項目を選ぶ (一覧のフィルタを作り直す)。窓の操作と試験が同じ口を通る
+    void SelectScope(ChangeModel& model, Scope scope, const std::string& sessionId);
+
     // 試験用
     Scope CurrentScope() const { return scope_; }
     const std::string& CurrentSessionId() const { return sessionId_; }
     bool MixUncertain() const { return mixUncertain_; }
+    bool ShowEditorChanges() const { return showEditor_; }
+    // 直近に描いた一覧の仮想行の数 (見出しを含む)
+    size_t DrawnItemCount() const { return items_.size(); }
+    void SetShowEditorChanges(bool show) { showEditor_ = show; }
     const DiffViewer& GetDiffViewer() const { return diff_; }
 
 private:
@@ -65,13 +72,14 @@ private:
     Scope scope_ = Scope::All;
     std::string sessionId_;
     bool mixUncertain_ = false;
+    bool showEditor_ = false; // Editor の保存・復元による変更の節を出すか (既定は出さない)
     bool confirmRequested_ = false;
     char pathFilter_[128] = {};
     std::string kindFilter_;
     std::string attributionFilter_;
     DiffViewer diff_;
     uint64_t shownHunksSerial_ = ~0ull;
-    std::vector<int> items_; // 一覧の仮想行。-1 = 主の節の見出し、-2 = 不明 / 推定の節の見出し、0 以上 = Changes の添字
+    std::vector<int> items_; // 一覧の仮想行。-1 = 主の節の見出し、-2 = 不明 / 推定の節の見出し、-3 = Editor / 復元の節の見出し、0 以上 = Changes の添字
 };
 
 } // namespace mye

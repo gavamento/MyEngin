@@ -1008,6 +1008,7 @@ void AssetBrowserWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoS
                 m.tex.sprites = std::move(sprites);
                 m.version = 2;
                 AssetDatabase::WriteMeta(metaPath, m);
+                scmhint::Changed(metaPath);
                 // ロード済みならその場で再ロード (AssetID 不変 = 参照側の再解決不要)
                 ctx.resources->textures.ReplaceFromFile(
                     TextureLibrary::IdForFile(pendingImportPath_), pendingImportPath_);

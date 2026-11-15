@@ -468,7 +468,9 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         "blob_get" => ops::blob_get(&ctx.blobs_dir, args),
         "shutdown" => args.finish().map(|()| json!({})),
         "subscribe" => subscribe(ctx, conn, args),
-        "session_begin" | "session_end" | "op_begin" | "op_end" | "report" => record_op(ctx, conn, role, &request.op, args),
+        "session_begin" | "session_end" | "op_begin" | "op_end" | "report" | "editor_saved" => {
+            record_op(ctx, conn, role, &request.op, args)
+        }
         other => Err(OpError::new(code::INTERNAL, format!("op の配線が無い: {other}"))),
     };
     match result {
@@ -492,6 +494,7 @@ fn record_op(ctx: &Context, conn: &ConnState, role: Role, op: &str, args: Args) 
         "session_end" => ops_record::session_end(env, &caller, args),
         "op_begin" => ops_record::op_begin(env, &caller, args),
         "op_end" => ops_record::op_end(env, &caller, args),
+        "editor_saved" => ops_record::editor_saved(env, &caller, args),
         _ => ops_record::report(env, &caller, args),
     }
 }

@@ -9,7 +9,7 @@ use mye_track::blob::PutOutcome;
 use mye_track::hash::sha256_hex;
 use mye_track::journal::{self, Journal, JournalEntry};
 use mye_track::process::process_start_ms;
-use mye_track::schema::{Migration, MIGRATIONS};
+use mye_track::schema::{latest_version, Migration, MIGRATIONS};
 use mye_track::startup::{
     open_project, open_project_with, ServiceState, StartupOptions, GAP_JOURNAL_UNREADABLE,
 };
@@ -83,9 +83,9 @@ fn fresh_project_creates_layout_and_all_tables() {
         let n = count(&conn, &format!("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"));
         assert_eq!(n, 1, "表 {table}");
     }
-    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), 1);
-    // db-schema.md §3 の索引 8 本 + events の一意索引
-    assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"), 9);
+    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), latest_version());
+    // db-schema.md §3 の索引 8 本 + events の一意索引 + 版 2 の events(kind, at)
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'"), 10);
     // PRAGMA は接続ごと。WAL はファイルに残る設定
     let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
     assert_eq!(mode, "wal");
@@ -100,23 +100,31 @@ fn migrations_are_idempotent() {
         drop(store);
     }
     let conn = db_conn(&root);
-    assert_eq!(count(&conn, "SELECT COUNT(*) FROM schema_migrations"), 1);
-    // 版 1 のままなら移行前のコピーは作らない
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM schema_migrations"), latest_version());
+    // 最新の版のままなら移行前のコピーは作らない (空の DB を 0 から作ったときも作らない)
     let dir = Paths::for_project(&root).dir;
     assert!(!std::fs::read_dir(dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains(".bak-")));
 }
 
-const V2: Migration = Migration { version: 2, note: "テスト用", sql: "CREATE TABLE extra_v2 (x INTEGER);" };
-const V2_BROKEN: Migration = Migration {
-    version: 2,
-    note: "テスト用 (失敗する)",
-    sql: "CREATE TABLE half_done (x INTEGER); CREATE TABLE half_done (x INTEGER);",
-};
+/// 実際の最新版の次の版 (本物の移行が増えても、テスト用の移行が版を重ねない)。
+fn next_version() -> i64 {
+    latest_version() + 1
+}
+fn v_next() -> Migration {
+    Migration { version: next_version(), note: "テスト用", sql: "CREATE TABLE extra_v2 (x INTEGER);" }
+}
+fn v_next_broken() -> Migration {
+    Migration {
+        version: next_version(),
+        note: "テスト用 (失敗する)",
+        sql: "CREATE TABLE half_done (x INTEGER); CREATE TABLE half_done (x INTEGER);",
+    }
+}
 
 #[test]
 fn newer_db_is_not_written_and_degrades() {
     let root = temp_project("newer");
-    let with_v2: Vec<Migration> = MIGRATIONS.iter().copied().chain([V2]).collect();
+    let with_v2: Vec<Migration> = MIGRATIONS.iter().copied().chain([v_next()]).collect();
     let (store, report) = open_project_with(&root, NOW, StartupOptions { migrations: &with_v2, ..Default::default() });
     assert_eq!(report.state, Some(ServiceState::Recording));
     drop(store);
@@ -147,23 +155,23 @@ fn upgrade_backs_up_old_db_and_failed_migration_rolls_back() {
     drop(open_project(&root, NOW).0);
 
     // 失敗する v2: 元のまま db_degraded。コピーは取ってある
-    let broken: Vec<Migration> = MIGRATIONS.iter().copied().chain([V2_BROKEN]).collect();
+    let broken: Vec<Migration> = MIGRATIONS.iter().copied().chain([v_next_broken()]).collect();
     let (_, report) = open_project_with(&root, NOW, StartupOptions { migrations: &broken, ..Default::default() });
     assert!(matches!(report.state, Some(ServiceState::DbDegraded(_))));
     let conn = db_conn(&root);
-    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), 1);
+    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), latest_version());
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM sqlite_master WHERE name='half_done'"), 0, "途中の表が残った");
     drop(conn);
 
     // 成功する v2
-    let ok: Vec<Migration> = MIGRATIONS.iter().copied().chain([V2]).collect();
+    let ok: Vec<Migration> = MIGRATIONS.iter().copied().chain([v_next()]).collect();
     let (store, report) = open_project_with(&root, NOW, StartupOptions { migrations: &ok, ..Default::default() });
     assert_eq!(report.state, Some(ServiceState::Recording));
     drop(store);
     let conn = db_conn(&root);
-    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), 2);
-    assert_eq!(count(&conn, "SELECT COUNT(*) FROM schema_migrations"), 2);
-    let backup = Paths::for_project(&root).dir.join("tracking.db.bak-v1");
+    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), next_version());
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM schema_migrations"), next_version());
+    let backup = Paths::for_project(&root).dir.join(format!("tracking.db.bak-v{}", latest_version()));
     assert!(backup.is_file(), "移行前のコピーが無い");
     // コピーは旧版のまま (v2 の表を持たない)
     let old = Connection::open(&backup).unwrap();
@@ -207,7 +215,7 @@ fn corrupt_db_is_quarantined_and_rebuilt_from_journal_with_gap() {
 
     let conn = db_conn(&root);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM events WHERE kind IN ('observed','op_end')"), 2);
-    assert_eq!(count(&conn, "SELECT COUNT(*) FROM schema_migrations"), 1, "空の DB に移行が当たっていない");
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM schema_migrations"), latest_version(), "空の DB に移行が当たっていない");
     // 区間は壊れた行の前後の観測の時刻 (1000 〜 1200)
     let (from, to, reason): (i64, i64, String) = conn
         .query_row("SELECT from_at, to_at, reason FROM coverage_gaps", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))

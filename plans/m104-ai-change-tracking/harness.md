@@ -19,9 +19,9 @@
 | sub-07 (M104h) MCP の 5 ツール | OK | 1 | 0a598efb | should 2 件は sub-08 で対応 (検証用 mye_mcp.exe の出力先を分ける、verify_job の期待値の撮り直し)。条件 12 (本物の Claude Code 終了後の生存) は未確認。Notion Q-9〜11 |
 | sub-08 (M104i) フック CLI | OK | 1 | 0c511cac | nit: bad_token 再試行などの試験が MCP / フック側に無い、hook.rs の 8 秒のしきい値は CI で見る。条件 13 (本物のフックの実走) は未確認。Phase 2 の最後。Notion Q-12〜15 |
 | sub-09 (M104j) Editor の pipe クライアント、モデル、規則 19 | OK | 1 | 17caa0ec | 詳細化済み (条件 10 件)。追跡は既定で無効 (planner の推奨、Notion Q-12)。初めて src\Editor を触る |
-| sub-10 (M104k) AI Changes 窓、Diff 表示部品 | OK | 1 | (このコミット) | nit: 「セッションなし」の取り方は sub-23、oversize の表示は sub-15 で対応。未確認: 見た目の目視 (cache/m104k_shots の 5 枚)、手での GUI 操作 (条件 10)。Notion Q-16〜20 |
-| sub-23 (M104k2) Editor の保存をサービスへ知らせる | 実装中 | 0 | | 着手可。sub-09 の VERDICT で新設。順序は sub-10 → sub-23 → sub-11 |
-| sub-11 (M104l) シーン構造 diff | 未着手 | | | 骨子 |
+| sub-10 (M104k) AI Changes 窓、Diff 表示部品 | OK | 1 | c6b93988 | nit: 「セッションなし」の取り方は sub-23、oversize の表示は sub-15 で対応。未確認: 見た目の目視 (cache/m104k_shots の 5 枚)、手での GUI 操作 (条件 10)。Notion Q-16〜20 |
+| sub-23 (M104k2) Editor の保存をサービスへ知らせる | OK | 0 | (このコミット) | should: 読み直しの穴を狭める確認は sub-12、nit: ipc-contract.md の制御文字は sub-11。DB スキーマ版 2。未確認: 実 Editor での保存 (条件 6)、スクショの目視 (cache/m104k2_shots)。Notion Q-21〜23 |
+| sub-11 (M104l) シーン構造 diff | 実装中 | 0 | | 着手可 (sub-23 の VERDICT で詳細化)。範囲は tools/track だけ |
 | sub-12 (M104m) Hierarchy / Inspector / Scene View の表示 | 未着手 | | | 骨子。着手前にユーザー確認 (未決事項 5) |
 | sub-13 (M104n) 未保存シーンへの外部変更の確認 | 未着手 | | | 骨子。依存 sub-08。着手前にユーザー確認 (未決事項 1) |
 | sub-14 (M104o) レビュー | 未着手 | | | 骨子。依存 sub-12, sub-13。Phase 4 の最後 |

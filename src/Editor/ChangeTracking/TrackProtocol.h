@@ -24,6 +24,8 @@ inline constexpr const char* kSessions = "sessions";
 inline constexpr const char* kHunks = "hunks";
 inline constexpr const char* kBlobGet = "blob_get";
 inline constexpr const char* kShutdown = "shutdown";
+// Editor が保存した内容のハッシュを知らせる (role = editor だけ)。行為者を「Editor の利用者」にする根拠になる
+inline constexpr const char* kEditorSaved = "editor_saved";
 } // namespace trackop
 
 namespace trackevent {

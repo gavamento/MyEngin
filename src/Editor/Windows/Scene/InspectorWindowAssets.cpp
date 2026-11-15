@@ -17,6 +17,7 @@
 #include "Engine/Engine/Asset/ModelLoader.h" // 同上
 #include "Editor/Project/NavAreaNames.h"
 #include "Editor/Scene/Selection.h"
+#include "Editor/SourceControl/ScmHint.h" // 保存直後の通知 (Source Control のヒントと AI Change Tracking の editor_saved)
 #include "Editor/Windows/Scene/TileAssetInspector.h" // M94j: .tilepalette.json / .tilemap.json の簡易表示
 #include "Engine/Core/Util/Hash.h" // マテリアルプレビューの同一性キー (M53)
 #include "Engine/Core/Localization/Localization.h"
@@ -254,6 +255,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
                 meta.tex.sprites = std::move(sprites);
                 meta.version = 2;
                 AssetDatabase::WriteMeta(metaPath, meta);
+                scmhint::Changed(metaPath);
                 // .meta 単体の変更は ReloadHub が拾わないので SpriteLibrary を直接登録し直す
                 if (SpriteLibrary* sprites2d = spritelib::Library()) {
                     sprites2d->Register(path);
@@ -294,6 +296,7 @@ void InspectorWindow::DrawAssetInspector(EngineContext& ctx, Selection& selectio
                 assetLodEdit_.Normalize();
                 meta.lod = assetLodEdit_;
                 AssetDatabase::WriteMeta(metaPath, meta);
+                scmhint::Changed(metaPath);
                 // 登録済みのメッシュを段つきで登録し直す (AssetID 不変 = 参照側の再解決不要)。
                 // .meta はモデル本体の更新時刻に出ないのでファイル監視は反応しない
                 std::wstring ext = fs::path(path).extension().wstring();
@@ -651,6 +654,7 @@ void InspectorWindow::DrawMaterialInspector(EngineContext& ctx, const std::wstri
         if (out) {
             out << matJson; // プレビューが描いたのと**同じ本文**
             out.close();
+            scmhint::Changed(path);
             // 即時反映: 同一 AssetID のまま再ロード → 全ビューの MeshRenderer に反映
             ctx.resources->materials.LoadFromFile(path, ctx.resources->textures,
                                                   ctx.assetsRoot);
@@ -837,6 +841,7 @@ void InspectorWindow::DrawSoundInspector(EngineContext& ctx, const std::wstring&
         if (out) {
             out << SoundLibrary::ToJson(soundEdit_).dump(2);
             out.close();
+            scmhint::Changed(path);
             // 即時反映: 同一 GUID のまま再ロード (参照側は GUID なので再解決不要)
             if (ctx.sounds) {
                 ctx.sounds->LoadFromFile(path);
@@ -933,6 +938,7 @@ void InspectorWindow::DrawPhysMatInspector(const std::wstring& path)
         if (out) {
             out << PhysMatLibrary::ToJson(physMatEdit_).dump(2);
             out.close();
+            scmhint::Changed(path);
             // 即時反映: 同一 GUID のまま再ロード (参照側は GUID なので再解決不要)
             if (PhysMatLibrary* pm = physmat::Library()) {
                 pm->LoadFromFile(path);
@@ -1028,6 +1034,7 @@ void InspectorWindow::DrawNavFilterInspector(EngineContext& ctx, const std::wstr
         if (out) {
             out << NavFilterLibrary::ToJson(navFilterEdit_).dump(2);
             out.close();
+            scmhint::Changed(path);
             // 同じ GUID のまま読み直す (参照側は GUID なので次の tick から効く)
             if (NavFilterLibrary* nf = navfilter::Library()) {
                 nf->LoadFromFile(path);

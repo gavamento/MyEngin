@@ -108,8 +108,20 @@ std::string OrKey(std::string text, const std::string& key)
 
 } // namespace
 
-ChangeSection ClassifyChange(const std::string& attribution, bool mixUncertain)
+namespace {
+
+bool IsEditorSide(const std::string& actor)
 {
+    return actor == "editor_user" || actor == "restore";
+}
+
+} // namespace
+
+ChangeSection ClassifyChange(const std::string& actor, const std::string& attribution, bool mixUncertain)
+{
+    if (IsEditorSide(actor)) {
+        return ChangeSection::Editor;
+    }
     if (mixUncertain) {
         return ChangeSection::Main;
     }
@@ -120,7 +132,11 @@ ChangePartition PartitionChanges(const std::vector<TrackChangeRow>& rows, bool m
 {
     ChangePartition out;
     for (size_t i = 0; i < rows.size(); ++i) {
-        (ClassifyChange(rows[i].attribution, mixUncertain) == ChangeSection::Main ? out.main : out.uncertain).push_back(i);
+        switch (ClassifyChange(rows[i].actor, rows[i].attribution, mixUncertain)) {
+        case ChangeSection::Main: out.main.push_back(i); break;
+        case ChangeSection::Uncertain: out.uncertain.push_back(i); break;
+        case ChangeSection::Editor: out.editor.push_back(i); break;
+        }
     }
     return out;
 }
@@ -135,8 +151,14 @@ std::string AttributionLabel(const std::string& attribution)
     return OrKey(Lookup(kAttributions, attribution), attribution);
 }
 
-std::string AttributionNote(const std::string& attribution)
+std::string AttributionNote(const std::string& actor, const std::string& attribution)
 {
+    if (actor == "editor_user") {
+        return Tr(StrId::AiChg_AttrEditorNote);
+    }
+    if (actor == "restore") {
+        return Tr(StrId::AiChg_AttrRestoreNote);
+    }
     return Lookup(kAttributionNotes, attribution);
 }
 
@@ -258,7 +280,7 @@ ChangeRowText FormatChangeRow(const TrackChangeRow& row)
     ChangeRowText out;
     out.path = row.changeType == "renamed" && !row.oldPath.empty() ? row.oldPath + " -> " + row.path : row.path;
     out.kind = KindLabel(row.changeType);
-    out.attribution = AttributionLabel(row.attribution);
+    out.attribution = IsEditorSide(row.actor) ? ActorLabel(row.actor) : AttributionLabel(row.attribution);
     out.completeness = row.completeness.empty() || row.completeness == "complete" ? std::string() : CompletenessLabel(row.completeness);
     out.superseded = row.changeState == "superseded" ? std::string(Tr(StrId::AiChg_Superseded)) : std::string();
     out.time = FormatTimeMs(row.observedAt);

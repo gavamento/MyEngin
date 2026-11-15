@@ -3091,6 +3091,9 @@ MYE_STR(AiChg_LoadMore,       "Load more",                             "続き�
 MYE_STR(AiChg_SectionMain,    "AI changes (verified / claimed)",       "AI の変更 (検証済み / 申告あり)")
 MYE_STR(AiChg_SectionUncertain, "Unknown / inferred (author not confirmed)", "不明 / 推定 (書いた主体は未確認)")
 MYE_STR(AiChg_MixSections,    "Mix unknown / inferred into one list",  "不明 / 推定を 1 つの一覧に混ぜる")
+MYE_STR(AiChg_SectionEditor,  "Editor / restore changes (made by you, not by an AI)", "エディタ / 復元による変更 (AI ではなく利用者の操作)")
+MYE_STR(AiChg_EditorHidden,   "changes saved in the editor or by a restore are hidden", "件のエディタ保存・復元の変更は非表示です")
+MYE_STR(AiChg_ShowEditor,     "Show changes saved in the editor or made by a restore", "エディタで保存した変更・復元による変更を表示する")
 MYE_STR(AiChg_FilterPath,     "Path",                                  "パス")
 MYE_STR(AiChg_FilterKind,     "Kind",                                  "種類")
 MYE_STR(AiChg_FilterAttribution, "Attribution",                        "帰属")
@@ -3111,6 +3114,10 @@ MYE_STR(AiChg_AttrInferredNote, "Nobody reported it; only the timing matches an 
                               "誰も申告していない。時刻が稼働中の AI セッションに近いだけ。")
 MYE_STR(AiChg_AttrUnknownNote, "Nothing ties this change to an AI session or to the editor.",
                               "この変更を AI のセッションにもエディタにも結び付ける根拠が無い。")
+MYE_STR(AiChg_AttrEditorNote, "The editor reported saving exactly this content, so this is your own save, not an AI's change.",
+                              "エディタがこの内容を保存したと知らせ、観測した内容と一致した。AI の変更ではなく、利用者自身の保存。")
+MYE_STR(AiChg_AttrRestoreNote, "The editor announced a restore that writes exactly this content.",
+                              "エディタが予告した復元の結果と、観測した内容が一致した。")
 MYE_STR(AiChg_ActorAi,        "AI",                                    "AI")
 MYE_STR(AiChg_ActorEditor,    "Editor user",                           "エディタの操作")
 MYE_STR(AiChg_ActorRestore,   "Restore",                               "復元")

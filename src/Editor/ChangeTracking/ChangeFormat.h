@@ -15,23 +15,26 @@
 
 namespace mye {
 
-// 一覧の節。attribution-rules.md §8: Unknown / Inferred は既定で別の節に分け、切り替えで混ぜられる
-enum class ChangeSection : uint8_t { Main, Uncertain };
+// 一覧の節。attribution-rules.md §8: Unknown / Inferred は既定で別の節に分け、切り替えで混ぜられる。
+// Editor の保存・復元で確定した変更 (actor = editor_user / restore) は AI の変更でも不明でもないので、さらに別の節 (既定は非表示)
+enum class ChangeSection : uint8_t { Main, Uncertain, Editor };
 
-// 帰属の区分から節を決める。mixUncertain が真なら、すべて Main (1 つの一覧)
-ChangeSection ClassifyChange(const std::string& attribution, bool mixUncertain);
+// 行為者と帰属の区分から節を決める。Editor / 復元の変更は常に Editor。mixUncertain が真なら、不明 / 推定も Main
+ChangeSection ClassifyChange(const std::string& actor, const std::string& attribution, bool mixUncertain);
 
 // 一覧の行の添字を節ごとに振り分ける (元の順序を保つ)
 struct ChangePartition {
     std::vector<size_t> main;
     std::vector<size_t> uncertain;
+    std::vector<size_t> editor;
 };
 ChangePartition PartitionChanges(const std::vector<TrackChangeRow>& rows, bool mixUncertain);
 
 // 文面は、呼んだ時点の言語 (Tr) で返す。未知の値は、値そのものを返す (表示から消さない)
 std::string KindLabel(const std::string& changeType);
 std::string AttributionLabel(const std::string& attribution);
-std::string AttributionNote(const std::string& attribution);
+// 帰属の区分の説明。Editor / 復元で確定した変更は、AI の「検証済み」と同じ文面にしない
+std::string AttributionNote(const std::string& actor, const std::string& attribution);
 std::string ActorLabel(const std::string& actor);
 std::string CompletenessLabel(const std::string& completeness);
 // complete 以外の意味を 1 行で。complete は空。evidenceSource は describe の observed の根拠にある source (verify_gap など)
@@ -53,7 +56,7 @@ std::string EvidenceSource(const nlohmann::json& detail);
 struct ChangeRowText {
     std::string path;          // リネームは「旧 -> 新」
     std::string kind;
-    std::string attribution;
+    std::string attribution;   // Editor / 復元で確定した変更は、帰属の区分ではなく行為者の名前
     std::string completeness;  // 空 = complete
     std::string superseded;    // 空 = 引き継がれていない
     std::string time;

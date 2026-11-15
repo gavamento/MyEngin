@@ -85,7 +85,8 @@ struct TrackListFilter {
     std::string sessionId;
     std::string path;
     std::string changeType;
-    std::string attribution;
+    // どれか 1 つに合えばよい (空 = 絞らない)。1 つならサービスへは文字列、複数なら配列で送る
+    std::vector<std::string> attributions;
     std::string review;
     bool operator==(const TrackListFilter&) const = default;
 };

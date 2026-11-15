@@ -1333,6 +1333,9 @@ bool PerformAssetRelocate(EngineContext& ctx, const std::wstring& src, const std
     //   「旧パスの削除 + 新パスの追加」なので、片方だけだと元の場所のバッジが残る
     scmhint::Changed(src);
     scmhint::Changed(dst);
+    if (!isDir) {
+        scmhint::Changed(dst + L".meta"); // 同伴して動いた .meta (AI Change Tracking の保存の知らせに要る。無ければ何もしない)
+    }
     MYE_LOG_INFO(Tr(StrId::Log_Relocated), WideToUtf8(src).c_str(), WideToUtf8(dst).c_str());
     return true;
 }

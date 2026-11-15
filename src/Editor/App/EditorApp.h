@@ -168,6 +168,9 @@ private:
     };
     void OpenActorEdit(EngineContext& ctx, const std::wstring& path);
     void SaveActorEdit(EngineContext& ctx);
+    // Editor が保存・作成・移動したファイルの通知の集まる場所 (Source Control のヒントと、AI Change Tracking の
+    // editor_saved を 1 か所から出す)。scmhint::Changed の受け口と、シーン・アクターの保存がここを通る
+    void NoteFileSaved(const std::wstring& absPath);
     void CloseActorEdit(EngineContext& ctx);
     bool InActorEdit() const { return actorEdit_ != nullptr; }
 

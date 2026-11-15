@@ -45,7 +45,7 @@ impl Role {
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
     "hello", "status", "list", "describe", "sessions", "hunks", "blob_get", "shutdown", "subscribe", "session_begin", "session_end",
-    "op_begin", "op_end", "report",
+    "op_begin", "op_end", "report", "editor_saved",
 ];
 
 /// `subscribe` で選べる通知の名前 (ipc-contract.md §4.5)。`resync` は購読に関わらず必ず届くので、ここには入れない。
@@ -63,10 +63,12 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         "shutdown" => role == Role::Editor,
         // 通知は Editor の窓のためのもの。MCP・フックは要求ごとに繋ぐので購読しない
         "subscribe" => role == Role::Editor,
-        // 記録を伴う op は AI 側 (MCP・フック) だけ。Editor は自分の保存・復元を別の op で知らせる (sub-09 以降)
+        // 記録を伴う op は AI 側 (MCP・フック) だけ。Editor は自分の保存を editor_saved で知らせる (復元は sub-15)
         "session_begin" | "session_end" | "op_begin" | "op_end" => matches!(role, Role::Mcp | Role::Hook),
         // 申告は MCP の change_report だけ (フックは編集の前後を op_begin / op_end で知らせる)
         "report" => role == Role::Mcp,
+        // Editor の保存の知らせは Editor だけ (AI 側が「Editor が書いた」と名乗って帰属を書き換えられないように)
+        "editor_saved" => role == Role::Editor,
         _ => false,
     }
 }
@@ -286,5 +288,7 @@ mod tests {
         for op in ["hunks", "blob_get"] {
             assert!(!role_allows(Role::Mcp, op) && !role_allows(Role::Hook, op));
         }
+        assert!(role_allows(Role::Editor, "editor_saved"));
+        assert!(!role_allows(Role::Mcp, "editor_saved") && !role_allows(Role::Hook, "editor_saved"));
     }
 }

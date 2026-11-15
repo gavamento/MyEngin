@@ -284,7 +284,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 0. (起動の最初) `blobs\` の下の書きかけの一時ファイル (`.tmp-*`) を消す。自分が書いたもので、どこからも指されない。サービスは 1 つだけ動く前提なので、起動時なら安全。
 1. `tracking.db` を開く。開けない、または `PRAGMA quick_check` が通らなければ、`tracking.db.broken-<時刻>` へ退避し、空の DB を作って `journal\` から入れ直す。入れ直せなかった区間は `coverage_gaps` に残す。
-   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed` とセッション・操作のイベント) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` と、`sessions` / `operations` / `attribution_evidence` (M104g) を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
+   作り直した DB は、全イベントを入れ直したあとで `rebuild_derived` が `events` (`baseline` / `observed` とセッション・操作のイベント、`editor_saved`) を順に読み、`snapshots` / `changes` / `change_revisions` / `change_hunks` と、`sessions` / `operations` / `attribution_evidence` (M104g) を作り直す (M104e)。Hunk は Blob から計算し直す。Blob が欠けている Revision は行だけ戻し、そのスナップショットを `blob_state = missing`、Revision を `diff_mode = unavailable` (Hunk 無し) にする。通常の起動で入れ直す (DB のトランザクションが確定する前に落ちた) イベントも、同じ関数で派生の表へ反映する。作り直さないもの: `coverage_gaps` の `watcher_overflow` / `service_down` など (イベントには残るが、表へは戻さない。M104e の範囲外)。
    退避するのは SQLite が「壊れている」と返したとき (`NOTADB` / `CORRUPT` / `quick_check` 不合格) だけ。ロックなどで開けないときは退避せず `db_degraded` で動く。`-wal` / `-shm` も同じ接尾辞で連れていく。接尾辞の時刻は UTC の `YYYYMMDDTHHMMSSmmmZ`。
 2. `schema_migrations` を見て、足りない移行を順に当てる。DB の版が自分より新しければ、書き込まずに `db_degraded` で動く。
 3. (前段) 前回の最後のイベントの 10 分前から後に書かれた Blob を読み、ハッシュが名前と違えば消す (§4)。続けて、`snapshots` が指す Blob の有無を確かめ、無ければ `blob_state = missing` にする (前段で消したものを含む)。
@@ -325,5 +325,8 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 **未検証**: CI のランナー (`windows-2022`、Visual Studio 2022) で `bundled` がビルドできること。push しないと確かめられないので (spec D3)、sub-05 (M104f) で `.github\workflows\ci.yml` に `tools\track` の段 (cargo test → `build_track.bat` → `track_verify.bat`) を足した。**CI での実走は未確認**で、最初に push した後の実行が確認になる。通らなければ `CC` 環境変数で C コンパイラを指定する。
 **未検証**: 最低の Rust (1.89) での実ビルド。開発機の rustc は 1.98 だけで、1.89 のツールチェーンは足していない (ユーザーの判断、2026-11-15)。`rust-version = "1.89"` は依存 (rusqlite 0.42、sha2 0.11) の要求から読んだ値。
+
+**版 2** (M104k2): `events(kind, at)` の索引 `idx_events_kind_at` だけを足した (`schema\v2.sql`)。表と列は変えない。`editor_saved` の知らせを観測の時刻の前後で引くため (全イベントを走査しない)。
+`editor_saved` のイベントの payload は `{ path, hash }` (path はプロジェクトルート基準、`/` 区切り。`at` は受けた時刻)。作り直し (§6 の 1) はこのイベントも順に読み、観測が先でも後でも同じ `attribution_evidence` (`kind = editor_saved`、`session_id` / `operation_id` は NULL) になる。
 
 **スキーマの凍結** (M104f 以降): `tools\track\src\schema\v1.sql` はこのサブのコミット以降、書き換えない。表や列を変えるときは `schema\mod.rs` の `MIGRATIONS` へ移行 (v2 以降) を足す (上の方針どおり、旧版の DB は移行の前に `.bak-v<旧版>` へコピーされる)。

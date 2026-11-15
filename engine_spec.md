@@ -1506,7 +1506,14 @@ review and restore milestones).
   for path / kind / attribution), and details (attribution with **every piece of evidence** and the candidate sessions, a
   one-line meaning for any `completeness` other than `complete`, the diff-mode reason, and the diff).
 - **Unknown / Inferred are separate by default.** They get their own section in the change list; a check box mixes them into
-  one list ([attribution-rules.md](docs/ai-change-tracking/attribution-rules.md) §8).
+  one list ([attribution-rules.md](docs/ai-change-tracking/attribution-rules.md) §8). The *Without a session* item asks the
+  service for `attribution = [unknown, inferred]` (it does not pick them out of the rows already loaded).
+- **Editor saves are not AI changes (M104k2).** While tracking is connected, every file the editor saves is reported to the
+  service (`editor_saved`: path + SHA-256 of what is on disk right after the save, from one place,
+  `EditorApp::NoteFileSaved`). When the service then observes the same content it marks the change `editor_user`
+  (verified). Those changes (and restores) are kept out of both the AI section and the unknown / inferred section; a check
+  box shows them in their own *Editor / restore changes* section. The list of save paths that report, and those that do not,
+  is [editor-save-routes.md](docs/ai-change-tracking/editor-save-routes.md).
 - **Diff view** (`src/Editor/Widgets/DiffView.h`, class `DiffViewer`): read-only, inline or side by side, old / new line numbers,
   hunk headers, `eolOnly` hunks marked as line-ending-only (no add / delete colours), a mark on lines whose ending changed
   (LF / CRLF / none), hunk selection for later milestones. It draws only the visible rows (`ImGuiListClipper`) and scans the text

@@ -663,6 +663,21 @@ bool JointFieldApplies(int32_t type, const char* name)
     return true;
 }
 
+// Apply はプレハブのアセットファイルを書き換える。書き換わったファイルを保存直後の通知へ流す
+// (Source Control のヒントと AI Change Tracking の editor_saved)
+void ApplyPrefabInstanceAndNotify(EngineContext& ctx, EntityID prefabRoot, uint64_t rootFid)
+{
+    std::wstring prefabPath;
+    if (auto* inst = ctx.scene->GetWorld().GetComponent<PrefabInstanceComponent>(prefabRoot)) {
+        if (const PrefabAsset* asset = ctx.prefabs->Get(inst->prefabHash)) {
+            prefabPath = asset->path;
+        }
+    }
+    if (Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs, rootFid) && !prefabPath.empty()) {
+        scmhint::Changed(prefabPath);
+    }
+}
+
 } // namespace
 
 namespace {
@@ -962,7 +977,7 @@ void InspectorWindow::DrawPrefabBar(EngineContext& ctx, Selection& selection, Un
     ImGui::SameLine();
     // Apply は他インスタンス・アセットファイルも更新するため Undo 対象外 (Unity 同様)
     if (ImGui::SmallButton(Tr(StrId::Insp_ApplyAll))) {
-        Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs, rootFid);
+        ApplyPrefabInstanceAndNotify(ctx, tg.prefabRoot, rootFid);
         ctx.scene->GetWorld().ApplyStructuralChanges();
     }
 }
@@ -1237,8 +1252,7 @@ void InspectorWindow::DrawComponentFields(EngineContext& ctx, Selection& selecti
                     });
                 }
                 if (ImGui::MenuItem(Tr(StrId::Insp_ApplyToPrefab))) {
-                    Prefab::ApplyInstance(*ctx.scene, *ctx.prefabs,
-                                          ctx.scene->EnsureFileId(tg.prefabRoot));
+                    ApplyPrefabInstanceAndNotify(ctx, tg.prefabRoot, ctx.scene->EnsureFileId(tg.prefabRoot));
                     ctx.scene->GetWorld().ApplyStructuralChanges();
                 }
                 ImGui::EndPopup();

@@ -67,6 +67,13 @@
 | `time_near` だけがある | `ai` | `inferred` |
 | どれも無い | `unknown` | `unknown` |
 
+`editor_saved` が表の先頭なのは、Editor の保存と AI の宣言が**同じ内容**の Revision に成り立つ (AI の編集とまったく同じ結果をその場で Editor が保存した) ときに、Editor を採るため (M104k2)。
+AI の根拠 (`declared_edit_match` など) は消さずに残し、結論だけが `editor_user` / `verified` になる。このとき Revision は AI の操作に結び付けない (`operation_id` は NULL)。
+内容が違えば `editor_saved` は付かず、AI の判定は変わらない。`gap` の Revision には付けない (観測の時刻が書いた時刻ではないので、知らせとの時刻の照合が成り立たない)。
+
+`editor_saved` の限界 (誤って Editor のものにしうる唯一の形): Editor が保存した内容と**同じ内容**を AI が同じパスへ、知らせの前後 10 秒以内に書いた場合。
+内容は同じなので、Hunk もファイルの中身も同じ。人の保存を AI のせいにするよりは害が小さいと判断して許している。Editor がファイルを書いた直後に別のプロセスが書き換えると、知らせのハッシュは Editor が読み戻した内容になる (Engine 層の書き込みを変えない都合で、Editor は書いた後のファイルを読んでハッシュを取る。[editor-save-routes.md](editor-save-routes.md))。
+
 ### 3.1 なぜ Verified の条件を内容の照合にするか
 
 仕様書 §4.3 は「`change_report` を受けただけでは Verified にしない」「Before / After、操作識別子、隔離された作業領域を照合できたら Verified」としている。

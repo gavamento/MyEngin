@@ -55,14 +55,26 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     let change_type = args.string("changeType")?;
     let session_id = args.string("sessionId")?;
     let review = args.string("review")?;
-    let attribution = args.string("attribution")?;
+    // 帰属は 1 つの文字列か、文字列の配列 (どれか 1 つに合えばよい。「不明 / 推定」を 1 回で取る)
+    let attributions: Vec<String> = match args.value("attribution") {
+        None => Vec::new(),
+        Some(Value::String(one)) => vec![one],
+        Some(Value::Array(items)) => items
+            .into_iter()
+            .map(|v| match v {
+                Value::String(s) => Ok(s),
+                _ => Err(OpError::bad_args("attribution の要素は文字列でなければならない")),
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err(OpError::bad_args("attribution は文字列か文字列の配列でなければならない")),
+    };
     let cursor = args.string("cursor")?;
     let limit = page_limit(&mut args)?;
     args.finish()?;
     if let Some(t) = &change_type {
         one_of("changeType", t, CHANGE_TYPES)?;
     }
-    if let Some(a) = &attribution {
+    for a in &attributions {
         one_of("attribution", a, ATTRIBUTIONS)?;
     }
     if let Some(r) = &review {
@@ -101,9 +113,10 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         let n = bind(&mut values, SqlValue::Text(t));
         conditions.push(format!("r.change_type = ?{n}"));
     }
-    if let Some(a) = attribution {
-        let n = bind(&mut values, SqlValue::Text(a));
-        conditions.push(format!("r.attribution = ?{n}"));
+    if !attributions.is_empty() {
+        let marks: Vec<String> =
+            attributions.into_iter().map(|a| format!("?{}", bind(&mut values, SqlValue::Text(a)))).collect();
+        conditions.push(format!("r.attribution IN ({})", marks.join(", ")));
     }
     if let Some(s) = session_id {
         let n = bind(&mut values, SqlValue::Text(s));

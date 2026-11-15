@@ -129,7 +129,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 
 | op | 役割 | 引数 | 結果 |
 |---|---|---|---|
-| `list` | mcp, editor | フィルタ (`sessionId`, `path`, `from`, `to`, `review`, `attribution`, `changeType`)、`cursor?`, `limit` | 変更の要約の配列、`nextCursor` |
+| `list` | mcp, editor | フィルタ (`sessionId`, `path`, `from`, `to`, `review`, `attribution` (文字列、または文字列の配列 = どれかに合う), `changeType`)、`cursor?`, `limit` | 変更の要約の配列、`nextCursor` |
 | `describe` | mcp, editor | `revisionId` | Before / After のハッシュとサイズ、Hunk の要約、シーン変更の要約、帰属と根拠、レビュー状態、復元可否、競合状態 |
 | `hunks` | editor | `revisionId`, `cursor?` | Hunk の配列 (行の本文付き) |
 | `scene_diff` | editor | `revisionId` | シーン構造差分の配列 |
@@ -150,6 +150,14 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `review_set` | `revisionId`, `scope`, `state`, `note?` | レビューの記録。過去の記録は消さず、追記する |
 | `restore_record` | `restoreId`, `state`, `targets`, `preHashes?`, `postHashes?`, `error?` | 復元の進行を履歴へ記録する。**適用するのは Editor で、サービスは記録だけ** |
 | `restore_expect` | `restoreId`, `paths`, `hashes` | これから Editor が書くファイルと内容。監視が同じ内容を観測したら、行為者を「復元」にする |
+
+`editor_saved` の取り決め (M104k2。実装は `tools\track\src\ops_record.rs` の `editor_saved` と `attribution.rs` の `apply_editor_saved`):
+
+- `role = editor` だけ (`mcp` / `hook` は `forbidden`。AI 側が「Editor が書いた」と名乗って帰属を書き換えられないようにする)。引数は `path` (プロジェクトルート基準の相対パス、または絶対パス。外を指すものは `bad_args`) と `hash` (内容の SHA-256、64 桁の 16 進。大文字も受けて小文字にする)。結果は `{ path, pending }`。
+- サービスは受けたらすぐ対象パスを読んで観測にし (デバウンスを待たない。`op_end` と同じ即時の読み取り、全体で 2 秒まで)、知らせを `editor_saved` のイベントとして記録する。**照合**: 観測した Revision の After のハッシュが知らせの `hash` と同じで、観測時刻が知らせの時刻の前後 `EDITOR_SAVED_WINDOW_MS` (10 秒) 以内なら、`editor_saved` の根拠を付けて行為者を `editor_user` / `verified` にする。**知らせが先でも観測が先でも同じ結果**になる (知らせは窓の間だけ効く)。ハッシュが違えば付かない。`gap` の Revision は観測の時刻が書いた時刻ではないので対象外。
+- 知らせは `events` から派生の表 (`attribution_evidence`) を作り直せる (db-schema.md §6。作り直した DB は元と同じ根拠になる)。引く速さのため、スキーマ版 2 で `events(kind, at)` の索引を足した。
+- Editor の保存と AI の `declared_edit_match` が同じ Revision に成り立つのは、内容が同じときだけ。このとき [attribution-rules.md](attribution-rules.md) §3 の表の先頭の行 (`editor_saved`) が勝つ。AI の根拠は消さない。
+- 送らなくても保存は成り立つ (その変更が `unknown` / `inferred` になるだけ)。Editor の側の送り方と経路の一覧は [editor-save-routes.md](editor-save-routes.md)。
 
 ### 4.5 通知
 
@@ -250,7 +258,7 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 ### 9.4 op の引数と結果 (JSON は camelCase、時刻は UTC ミリ秒)
 
 - `status`: `proto`、`projectId`、`pid`、`startedAt`、`uptimeMs`、`phase` (`starting` / `baselining` / `watching` / `failed` / `stopped`)、`failure`、`trackedFiles`、`baseline` (`firstRun`、`files`、`bytes`、`elapsedMs`、`scanDone`、`scanTotal`、`walkMs` / `readMs` / `hashMs` / `commitMs`)、`verify` (`runs`、`gaps`、`lastScanMs` = 直近の検証の走査の前半だけの所要時間)、`recent.recordUs` (直近に記録した観測 1 件あたりの Writer への往復、マイクロ秒)、`watches` (`count` = いま張っている OS の監視の本数、`fallback` = 分けた結果が上限 256 本を超えてルートの再帰 1 本へ戻している)、`overflows`、`unrecorded` (記録に失敗している区間 `sinceMs` / `reason`、無ければ `null`)、`db` (`state` = `recording` / `db_degraded`、`reason`、`failedSteps` = 起動時の検査 3〜6 で失敗した段と理由、`brokenDb`、`replayedEvents`、`blobsMarkedMissing`、`blobsCorrupted`、`orphanBlobs` ほか)、`blobs` (`count`、`bytes` = 重複を除いた存在する Blob)、`gaps` (`count`、`recent` = 新しい順に 20 件)。
-- `list`: 引数は `path` (完全一致。末尾が `/` なら前方一致。リネーム前のパスにも当たる)、`from` / `to` (`observedAt` の範囲、両端を含む)、`changeType` (`added` / `modified` / `deleted` / `renamed`)、`sessionId`、`review`、`attribution`、`cursor`、`limit` (既定 50、最大 200。超えたら 200 に切る。1 未満は `bad_args`)。新しい Revision から順に返し、`cursor` は直前のページの最後の `revisionId` (それより古いものを返す)。結果は `items`、`nextCursor` (最後なら `null`)、`limit`、`coverage` (`phase`、`baselining`、`baselineScanned` / `baselineTotal`、`unrecorded`。**`baselining` が真の間は、一覧が不完全でありうる**)。1 件は `revisionId`、`changeId`、`seq`、`path`、`oldPath`、`changeType`、`contentKind`、`changeState` (`superseded` の Change も出す)、`observedAt`、`completeness`、`actor`、`attribution`、`diffMode`、`operationId`、`beforeSize`、`afterSize`、`hunkCount`、`review`。Blob と Hunk の本文は入れない。`sessionId` は、そのセッションが候補に入っている Revision (結論が 1 つの操作に絞れていればその操作、複数候補・操作の無い根拠は根拠のセッション)。`attribution` は M104g から実データ、`review` は全部 `pending` (レビューは後続のサブ)。
+- `list`: 引数は `path` (完全一致。末尾が `/` なら前方一致。リネーム前のパスにも当たる)、`from` / `to` (`observedAt` の範囲、両端を含む)、`changeType` (`added` / `modified` / `deleted` / `renamed`)、`sessionId`、`review`、`attribution`、`cursor`、`limit` (既定 50、最大 200。超えたら 200 に切る。1 未満は `bad_args`)。新しい Revision から順に返し、`cursor` は直前のページの最後の `revisionId` (それより古いものを返す)。結果は `items`、`nextCursor` (最後なら `null`)、`limit`、`coverage` (`phase`、`baselining`、`baselineScanned` / `baselineTotal`、`unrecorded`。**`baselining` が真の間は、一覧が不完全でありうる**)。1 件は `revisionId`、`changeId`、`seq`、`path`、`oldPath`、`changeType`、`contentKind`、`changeState` (`superseded` の Change も出す)、`observedAt`、`completeness`、`actor`、`attribution`、`diffMode`、`operationId`、`beforeSize`、`afterSize`、`hunkCount`、`review`。Blob と Hunk の本文は入れない。`sessionId` は、そのセッションが候補に入っている Revision (結論が 1 つの操作に絞れていればその操作、複数候補・操作の無い根拠は根拠のセッション)。`attribution` は M104g から実データ、`review` は全部 `pending` (レビューは後続のサブ)。`attribution` の引数は 1 つの文字列か文字列の配列 (M104k2。「不明 / 推定」を 1 回で取る `["unknown","inferred"]` のため。要素が知らない値なら `bad_args`)。`sessionId` で絞るとき、Editor の保存・復元で確定した変更 (`actor` が `editor_user` / `restore`) は、AI の根拠が残っていても入れない。
 - `describe` (`revisionId`): 一覧の項目に加えて `before` / `after` (`hash`、`size`、`blobState`。無ければ `null`)、`hunks` (`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`eolOnly`、`state`。本文は返さない)、`restorable` (Before の Blob が有る、または新規 = 削除で戻せる。Before を見ていない・Blob が無いものは `false`)、`evidence[]` (`kind`、`sessionId`、`operationId`、`detail`、`recordedAt`。増えるだけ)、`candidateSessions` (根拠から決まる候補のセッション)。無ければ `not_found`。`diffMode` が `lines` 以外のときは Hunk が無い理由が分かる (db-schema.md §3.2)。
 - `sessions`: 引数は `cursor` (直前のページの最後の `<startedAt>:<sessionId>`)、`limit`。結果は `items` (セッションの一覧。`sessionId`、`provider`、`source`、`clientSessionId`、`workspace`、`baseCommit`、`startedAt`、`endedAt`、`status`、`changeCount` = そのセッションが候補に入っている Revision の数 (`list` の `sessionId` と同じ条件))、`nextCursor`、`limit`。
 - `hunks` (`revisionId`、`cursor?`。**role = editor だけ**): 結果は `items` と `nextCursor` (最後なら `null`)。1 件は `hunkId`、`ordinal`、`oldStart`、`oldCount`、`newStart`、`newCount`、`beforeText`、`afterText`、`contextPre`、`contextPost`、`eolOnly`、`state`、`oversize`。`cursor` は直前のページの最後の `ordinal` (それより後ろを返す)。1 ページは Hunk の JSON の合計が 768 KiB 以内 (1 行の上限 1 MiB に余裕を残す)。**単独で 768 KiB に収まらない Hunk** は本文を入れず `oversize: true` と `beforeBytes` / `afterBytes` だけを返す (`diff_mode = whole` の大きいファイルがこれに当たる)。Editor は `blob_get` で原本を取って自分で扱う。無い `revisionId` は `not_found`、`cursor` が整数でなければ `bad_args`。Hunk の無い Revision (`binary` / `excluded` / `unavailable`) は `items` が空。

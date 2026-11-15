@@ -217,6 +217,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-23 の VERDICT round 1): sub-11 を詳細に書き直した (文書の同一性、字句のままの構造比較、解析不可の扱い、`scene_diff`、作り直し、受け入れ条件 14 件)。sub-23 の読み直しの穴を狭める直しを sub-12 に、`ipc-contract.md` の制御文字の直しを sub-11 に足した。DB のスキーマ版は 2 (sub-23 が索引を足した)。
 - 2026-11-15 (planner、sub-10 の VERDICT round 1): Diff 表示の部品のクラス名は `DiffViewer` / `DiffRows` (ファイルは `src\Editor\Widgets\DiffView.h`)。既存の `mye::DiffView` (`SourceControlState.h`) と同名を避けた。以後の sub で「DiffView」と書いてあるのはこの部品のこと。oversize の Hunk の表示の残りを sub-15 に、「セッションなし」の取り方の直しを sub-23 に足した。sub-23 を着手可にした。
 - 2026-11-15 (planner、sub-09 の VERDICT round 1): sub-10 を詳細に書き直した (`hunks` / `blob_get`、DiffView、AI Changes 窓、受け入れ条件 12 件)。大きいので `editor_saved` を **sub-23 (M104k2)** に分け、sub-11 の依存を sub-23 にした (順序は sub-10 → sub-23 → sub-11)。
 - 2026-11-15 (planner、sub-08 の VERDICT round 1 と Phase 3 の見直し): sub-09 を詳細に書き直した (既定は無効、`allowChangeTracking = !automation`、サービス用の起動口、`subscribe` と通知をこのサブでサービス側に足す、`MYE_TRACK_PROBE` の結合試験、規則 19 と規則 9 の 3 site、受け入れ条件 10 件)。`editor_saved` を sub-10 へ移した。sub-10〜13 に Phase 2 までの結果と、着手前の確認の裁定 (推奨どおり) を書き足した。

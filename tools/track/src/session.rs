@@ -75,6 +75,10 @@ pub fn apply_event(
             }
             Ok(())
         }
+        "editor_saved" => match (payload["path"].as_str(), payload["hash"].as_str()) {
+            (Some(path), Some(hash)) => attribution::apply_editor_saved(conn, at, path, hash),
+            _ => Ok(()),
+        },
         _ => operation::apply(conn, blobs, cfg, kind, at, payload).map(|_| ()),
     }
 }
@@ -83,7 +87,15 @@ pub fn apply_event(
 pub fn is_session_event(kind: &str) -> bool {
     matches!(
         kind,
-        "session_begin" | "session_resumed" | "session_end" | "session_interrupted" | "op_begin" | "op_end" | "op_abandoned" | "reported"
+        "session_begin"
+            | "session_resumed"
+            | "session_end"
+            | "session_interrupted"
+            | "op_begin"
+            | "op_end"
+            | "op_abandoned"
+            | "reported"
+            | "editor_saved"
     )
 }
 
@@ -161,10 +173,11 @@ pub fn record_and_apply(store: &mut Store, at: i64, kind: &str, payload: Value) 
 
 /// そのセッションが候補に入っている Revision を選ぶ条件 (`change_revisions r` に対して、`?{n}` がセッション ID)。
 /// 結論が 1 つの操作に絞れていればその操作で、複数候補・操作なし (申告・時刻・作業ツリー) は根拠のセッションで見る。
+/// Editor の保存・復元と結論が出た変更は、AI のセッションの変更に入れない (根拠が残っていても)。
 pub fn session_candidate_sql(n: usize) -> String {
     format!(
         "(r.operation_id IN (SELECT operation_id FROM operations WHERE session_id = ?{n})
-          OR (r.operation_id IS NULL AND EXISTS (SELECT 1 FROM attribution_evidence e
+          OR (r.operation_id IS NULL AND r.actor NOT IN ('editor_user', 'restore') AND EXISTS (SELECT 1 FROM attribution_evidence e
                WHERE e.revision_id = r.revision_id AND e.session_id = ?{n}
                  AND e.kind NOT IN ('preexisting', 'observed', 'overlap'))))"
     )

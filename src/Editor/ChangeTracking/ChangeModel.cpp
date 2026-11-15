@@ -380,8 +380,10 @@ void ChangeModel::FetchList(bool append)
     if (!filter_.changeType.empty()) {
         args["changeType"] = filter_.changeType;
     }
-    if (!filter_.attribution.empty()) {
-        args["attribution"] = filter_.attribution;
+    if (filter_.attributions.size() == 1) {
+        args["attribution"] = filter_.attributions.front();
+    } else if (!filter_.attributions.empty()) {
+        args["attribution"] = filter_.attributions;
     }
     if (!filter_.review.empty()) {
         args["review"] = filter_.review;

@@ -5,12 +5,30 @@
 //====================================================================================
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
 
+#include <filesystem>
+
 #include <Windows.h>
 
 #include "Editor/ChangeTracking/TrackProtocol.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Platform/PathUtil.h"
+#include "Engine/Platform/Sha256.h"
 
 namespace mye {
+
+bool HashFileForSavedNotice(const std::wstring& absPath, std::string& hexOut)
+{
+    std::error_code ec;
+    const std::filesystem::path path(absPath);
+    if (!std::filesystem::is_regular_file(path, ec) || ec) {
+        return false; // 消えた・フォルダ (フォルダの移動は個々のファイルを知らせない)
+    }
+    const uint64_t size = std::filesystem::file_size(path, ec);
+    if (ec || size > kTrackSavedHashMaxBytes) {
+        return false;
+    }
+    return Sha256FileHex(absPath, hexOut);
+}
 
 void ChangeTrackingSession::Start(const std::wstring& exeDir, const std::wstring& projectRoot, bool enabled)
 {
@@ -22,6 +40,8 @@ void ChangeTrackingSession::StartWithIo(std::unique_ptr<TrackIo> io, const std::
 {
     Shutdown();
     seenConnects_ = 0;
+    projectRoot_ = projectRoot;
+    pendingSaved_.clear();
     Wire();
     if (!enabled) {
         client_.SetIdle(TrackState::Disabled);
@@ -63,6 +83,69 @@ void ChangeTrackingSession::Poll()
 {
     client_.Poll();
     model_.Tick();
+    DrainSaved();
+}
+
+namespace {
+
+// 末尾の区切りを落として、1 つだけ付ける (プロジェクトの中かの前方一致用)
+std::wstring RootPrefixKey(const std::wstring& projectRoot)
+{
+    std::wstring key = NormalizePathKey(projectRoot);
+    while (!key.empty() && key.back() == L'\\') {
+        key.pop_back();
+    }
+    return key + L'\\';
+}
+
+} // namespace
+
+void ChangeTrackingSession::NoteSaved(const std::wstring& absPath)
+{
+    // 無効・非対話起動・切断中・DB 停止中は、順番待ちにも積まない (ハッシュは計算しない)
+    if (!client_.Ready() || projectRoot_.empty() || absPath.empty()) {
+        return;
+    }
+    const std::wstring key = NormalizePathKey(absPath);
+    const std::wstring prefix = RootPrefixKey(projectRoot_);
+    if (key.size() <= prefix.size() || key.compare(0, prefix.size(), prefix) != 0) {
+        return; // プロジェクトの外
+    }
+    // .mye の下 (サービス自身のデータ) は追跡の対象外
+    constexpr std::wstring_view kInternalDir = L".mye\\";
+    if (key.compare(prefix.size(), kInternalDir.size(), kInternalDir) == 0) {
+        return;
+    }
+    if (pendingSaved_.size() >= kTrackSavedMaxPending && pendingSaved_.find(key) == pendingSaved_.end()) {
+        return;
+    }
+    pendingSaved_[key] = absPath;
+}
+
+void ChangeTrackingSession::DrainSaved()
+{
+    if (pendingSaved_.empty()) {
+        return;
+    }
+    if (!client_.Ready()) {
+        pendingSaved_.clear(); // 切れた間の保存は、あとから知らせても照合できない
+        return;
+    }
+    for (int budget = kTrackSavedPerPoll; budget > 0 && !pendingSaved_.empty(); --budget) {
+        const auto first = pendingSaved_.begin();
+        const std::wstring path = first->second;
+        pendingSaved_.erase(first);
+        std::string hash;
+        if (!hasher_ || !hasher_(path, hash) || hash.empty()) {
+            continue;
+        }
+        client_.Request(trackop::kEditorSaved, { { "path", WideToUtf8(path) }, { "hash", hash } },
+                        [](const nlohmann::json& response) {
+                            if (!response.value("ok", false)) {
+                                MYE_LOG_INFO("[track] editor_saved が通らなかった: %s", response.dump().c_str());
+                            }
+                        });
+    }
 }
 
 void ChangeTrackingSession::Shutdown()

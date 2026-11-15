@@ -51,12 +51,13 @@ bool AllNonEmptyAndDistinct(const std::vector<std::string>& texts)
     return true;
 }
 
-TrackChangeRow Row(int64_t id, const char* path, const char* attribution)
+TrackChangeRow Row(int64_t id, const char* path, const char* attribution, const char* actor = "ai")
 {
     TrackChangeRow r;
     r.revisionId = id;
     r.path = path;
     r.changeType = "modified";
+    r.actor = actor;
     r.attribution = attribution;
     r.completeness = "complete";
     return r;
@@ -80,9 +81,15 @@ void TestFormat(const Check& check)
         std::vector<std::string> attrNotes;
         for (const char* a : { "verified", "claimed", "inferred", "unknown" }) {
             attrs.push_back(AttributionLabel(a));
-            attrNotes.push_back(AttributionNote(a));
+            attrNotes.push_back(AttributionNote("ai", a));
         }
         check(AllNonEmptyAndDistinct(attrs) && AllNonEmptyAndDistinct(attrNotes), name("format: 4 attribution classes have a label and an explanation").c_str());
+        // Editor / 復元で確定した変更 (帰属は verified) は、AI の「検証済み」と同じ説明にしない
+        const std::string aiVerified = AttributionNote("ai", "verified");
+        const std::string editorNote = AttributionNote("editor_user", "verified");
+        const std::string restoreNote = AttributionNote("restore", "verified");
+        check(!editorNote.empty() && !restoreNote.empty() && editorNote != aiVerified && restoreNote != aiVerified && editorNote != restoreNote,
+              name("format: an editor save and a restore are explained as such, not as an AI's verified edit").c_str());
         std::vector<std::string> actors;
         for (const char* a : { "ai", "editor_user", "restore" }) {
             actors.push_back(ActorLabel(a));
@@ -225,16 +232,34 @@ void TestSections(const Check& check)
 {
     std::vector<TrackChangeRow> rows = { Row(1, "a", "claimed"), Row(2, "b", "unknown"), Row(3, "c", "verified"), Row(4, "d", "inferred"), Row(5, "e", "unknown") };
     const ChangePartition split = PartitionChanges(rows, false);
-    check(split.main == std::vector<size_t>({ 0, 2 }) && split.uncertain == std::vector<size_t>({ 1, 3, 4 }),
+    check(split.main == std::vector<size_t>({ 0, 2 }) && split.uncertain == std::vector<size_t>({ 1, 3, 4 }) && split.editor.empty(),
           "sections: unknown and inferred go to their own section by default, in their original order");
     const ChangePartition mixed = PartitionChanges(rows, true);
     check(mixed.main == std::vector<size_t>({ 0, 1, 2, 3, 4 }) && mixed.uncertain.empty(), "sections: the toggle mixes them into one list");
-    check(ClassifyChange("verified", false) == ChangeSection::Main && ClassifyChange("claimed", false) == ChangeSection::Main
-              && ClassifyChange("inferred", false) == ChangeSection::Uncertain && ClassifyChange("unknown", false) == ChangeSection::Uncertain
-              && ClassifyChange("unknown", true) == ChangeSection::Main && ClassifyChange("never_seen", false) == ChangeSection::Main,
+    check(ClassifyChange("ai", "verified", false) == ChangeSection::Main && ClassifyChange("ai", "claimed", false) == ChangeSection::Main
+              && ClassifyChange("ai", "inferred", false) == ChangeSection::Uncertain && ClassifyChange("unknown", "unknown", false) == ChangeSection::Uncertain
+              && ClassifyChange("unknown", "unknown", true) == ChangeSection::Main && ClassifyChange("ai", "never_seen", false) == ChangeSection::Main,
           "sections: classification by attribution (an unrecognised value is not hidden in the uncertain section)");
     const ChangePartition none = PartitionChanges({}, false);
-    check(none.main.empty() && none.uncertain.empty(), "sections: an empty list partitions into nothing");
+    check(none.main.empty() && none.uncertain.empty() && none.editor.empty(), "sections: an empty list partitions into nothing");
+
+    // Editor の保存・復元で確定した変更 (帰属は verified) は、AI の変更の節にも不明 / 推定の節にも入らない
+    std::vector<TrackChangeRow> withEditor = { Row(1, "a", "claimed"),   Row(2, "scene", "verified", "editor_user"), Row(3, "b", "unknown", "unknown"),
+                                               Row(4, "c", "verified", "restore"), Row(5, "d", "inferred") };
+    const ChangePartition three = PartitionChanges(withEditor, false);
+    check(three.main == std::vector<size_t>({ 0 }) && three.uncertain == std::vector<size_t>({ 2, 4 }) && three.editor == std::vector<size_t>({ 1, 3 }),
+          "sections: changes confirmed as an editor save or a restore get their own section, away from the AI and the unknown ones");
+    const ChangePartition threeMixed = PartitionChanges(withEditor, true);
+    check(threeMixed.main == std::vector<size_t>({ 0, 2, 4 }) && threeMixed.editor == std::vector<size_t>({ 1, 3 }),
+          "sections: mixing unknown / inferred does not pull the editor's changes into the AI list");
+    check(ClassifyChange("editor_user", "verified", false) == ChangeSection::Editor && ClassifyChange("restore", "verified", true) == ChangeSection::Editor,
+          "sections: actor editor_user / restore is the editor section whatever the mixing toggle says");
+    InBothLanguages([&](Lang) {
+        const ChangeRowText editorRow = FormatChangeRow(Row(9, "scene.json", "verified", "editor_user"));
+        check(editorRow.attribution == ActorLabel("editor_user") && editorRow.attribution != AttributionLabel("verified"),
+              "sections: an editor row shows who made it, not the AI-style 'verified'");
+        check(FormatChangeRow(Row(9, "a", "verified")).attribution == AttributionLabel("verified"), "sections: an AI row still shows its attribution");
+    });
 }
 
 std::string Joined(const DiffRows& rows, const std::vector<DiffInlineRow>& list)

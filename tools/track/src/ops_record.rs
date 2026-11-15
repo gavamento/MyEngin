@@ -1,4 +1,5 @@
-//! 記録を伴う op (`session_begin` / `session_end` / `op_begin` / `op_end` / `report`、ipc-contract.md §4.2)。
+//! 記録を伴う op (`session_begin` / `session_end` / `op_begin` / `op_end` / `report` と、Editor の `editor_saved`、
+//! ipc-contract.md §4.2、§4.4)。
 //!
 //! 要求の検査 → 管理された操作は監視を待たずにパスを自分で読む (spec D31) → Writer へ 1 件の塊として渡す、の順。
 //! Writer のキューがあふれていれば `busy`。パスはサービス側で正規化し、プロジェクトの外を指すものは `bad_args`
@@ -562,5 +563,28 @@ pub fn report(env: &RecordEnv, caller: &Caller, mut args: Args) -> Result<Value,
         record_and_apply(store, at, "reported", payload).map_err(store_err)?;
         let results = operation::report_results(conn_of(store)?, &report_id, &row.session_id, &paths).map_err(db_err)?;
         Ok(json!({ "operationId": report_id, "sessionId": row.session_id, "results": results, "pending": pending }))
+    })
+}
+
+// ---- editor_saved -------------------------------------------------------------------------------
+
+/// Editor が「このパスをこの内容で保存した」と知らせる。パスはすぐ読んで観測にし (デバウンスを待たない)、
+/// 知らせをイベントとして記録する。同じ内容の観測があれば、その Revision の行為者が Editor の利用者になる
+/// (観測が知らせより先でも後でも同じ。照合は `attribution::apply_editor_saved` と新しい Revision の評価)。
+pub fn editor_saved(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<Value, OpError> {
+    let path_arg = args.required_string("path")?;
+    let hash_arg = args.required_string("hash")?;
+    args.finish()?;
+    let rel = normalize_path(&env.root, &path_arg, false)?;
+    if hash_arg.len() != 64 || !hash_arg.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(OpError::bad_args("hash は 64 桁の 16 進のハッシュ"));
+    }
+    let hash = hash_arg.to_ascii_lowercase();
+    let flushed = env.flush.flush(vec![rel.clone()], Source::Managed, env.flush_budget);
+    let pending = !flushed.done;
+    let at = now_ms();
+    run_in_writer(env, move |store| {
+        record_and_apply(store, at, "editor_saved", json!({ "path": rel, "hash": hash })).map_err(store_err)?;
+        Ok(json!({ "path": rel, "pending": pending }))
     })
 }

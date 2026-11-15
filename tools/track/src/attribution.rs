@@ -17,6 +17,9 @@ pub const DEFAULT_TIME_NEAR_MS: i64 = 2000;
 pub const REPORT_LOOKAHEAD_MS: i64 = 10_000;
 /// `report` より前の変更を申告の対象にする遡り幅。
 pub const REPORT_BACKLOG_MS: i64 = 10 * 60 * 1000;
+/// `editor_saved` の知らせと、Revision の観測時刻の許容差 (前後とも)。知らせが先に届いても、観測が先でも成り立つ。
+/// 監視のデバウンスと pipe の遅れより十分に長く、別の変更を巻き込むほどは長くしない。
+pub const EDITOR_SAVED_WINDOW_MS: i64 = 10_000;
 
 /// 帰属の計算の設定。試験が短くできる。
 #[derive(Clone, Debug)]
@@ -354,19 +357,22 @@ pub fn current_conclusion(conn: &Connection, revision_id: i64) -> rusqlite::Resu
 }
 
 /// 通常の記録と作り直しの両方が、Revision を作った直後に呼ぶ。`source` は観測の出どころ (`observed` の payload)。
+/// `events_through` は、`editor_saved` の知らせとして数える最後の `event_id` (None = 全部)。作り直しは全イベントを
+/// 先に入れてあるので、いま処理しているイベントまでに絞らないと、記録したときと根拠の入る順が変わる。
 pub fn evaluate_new_revision(
     conn: &Connection,
     cfg: &AttributionConfig,
     revision_id: i64,
     at: i64,
     source: &str,
+    events_through: Option<i64>,
 ) -> rusqlite::Result<()> {
-    evaluate(conn, cfg, revision_id, at, Some(source))
+    evaluate(conn, cfg, revision_id, at, Some(source), events_through)
 }
 
 /// 根拠が増えうる出来事 (セッション・操作・申告) の後に、Revision の結論を計算し直す。
 pub fn reevaluate(conn: &Connection, cfg: &AttributionConfig, revision_id: i64, at: i64) -> rusqlite::Result<()> {
-    evaluate(conn, cfg, revision_id, at, None)
+    evaluate(conn, cfg, revision_id, at, None, None)
 }
 
 /// `observed_at` が [lo, hi] の Revision (`paths` があればそのパスだけ) を計算し直す。
@@ -403,6 +409,7 @@ fn evaluate(
     revision_id: i64,
     at: i64,
     source: Option<&str>,
+    events_through: Option<i64>,
 ) -> rusqlite::Result<()> {
     let fresh = source.is_some();
     // セッションが 1 つも無い (普通の記録の大半) 新しい Revision は、帰属の結論が既定 (unknown / unknown) のまま。
@@ -439,6 +446,12 @@ fn evaluate(
         }),
     )?;
     let verify_gap = rev.completeness == "gap" && source_text.as_deref() == Some("verify_gap");
+    // 先に届いていた Editor の保存の知らせ。後から届く知らせは `apply_editor_saved` が足す
+    if fresh {
+        if let Some(notice_at) = editor_saved_notice(conn, &rev, events_through.unwrap_or(i64::MAX))? {
+            sink.add(Kind::EditorSaved, None, None, editor_saved_detail(&rev, notice_at))?;
+        }
+    }
     if rev.completeness == "gap" && !verify_gap {
         // 止まっていた間 (起動時の再走査)・監視のあふれの変更は、その間にセッションが動いていても見ていない (§4)
         sink.add(Kind::Preexisting, None, None, json!({ "reason": "gap" }))?;
@@ -447,15 +460,70 @@ fn evaluate(
         // 書かれた時刻ではないので、時刻による根拠を作らず、内容による根拠だけを数える (spec D35)
         session_evidence(conn, cfg, &rev, managed_begin, verify_gap, &mut sink)?;
     }
-    if no_sessions && rev.completeness != "gap" {
+    if no_sessions && rev.completeness != "gap" && !sink.has_any(&[Kind::EditorSaved]) {
         return Ok(());
     }
+    recompute_conclusion(conn, revision_id)
+}
+
+/// 根拠の集合から結論を計算し直して Revision へ書く。
+fn recompute_conclusion(conn: &Connection, revision_id: i64) -> rusqlite::Result<()> {
     let evidence = load_evidence(conn, revision_id)?;
     let conclusion = conclude(&evidence);
     conn.execute(
         "UPDATE change_revisions SET actor = ?1, attribution = ?2, operation_id = ?3 WHERE revision_id = ?4",
         params![conclusion.actor, conclusion.attribution, conclusion.operation, revision_id],
     )?;
+    Ok(())
+}
+
+fn editor_saved_detail(rev: &RevisionRow, notice_at: i64) -> Value {
+    json!({ "path": rev.path, "hash": hash_json(&rev.after), "noticeAt": notice_at })
+}
+
+/// この Revision の After と同じ内容の `editor_saved` の知らせ (event_id が `through` 以下、観測時刻の前後
+/// `EDITOR_SAVED_WINDOW_MS` 以内)。あればその知らせの時刻。`gap` の Revision は観測の時刻が書いた時刻ではないので対象外。
+fn editor_saved_notice(conn: &Connection, rev: &RevisionRow, through: i64) -> rusqlite::Result<Option<i64>> {
+    let HashState::Hash(after) = &rev.after else { return Ok(None) };
+    if rev.completeness == "gap" {
+        return Ok(None);
+    }
+    let (lo, hi) = (rev.observed_at - EDITOR_SAVED_WINDOW_MS, rev.observed_at + EDITOR_SAVED_WINDOW_MS);
+    conn.query_row(
+        "SELECT at FROM events
+          WHERE kind = 'editor_saved' AND at BETWEEN ?1 AND ?2 AND event_id <= ?3
+            AND json_extract(payload, '$.hash') = ?4 AND json_extract(payload, '$.path') = ?5 COLLATE NOCASE
+          ORDER BY event_id LIMIT 1",
+        params![lo, hi, through, after, rev.path],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// `editor_saved` のイベントを派生の表へ反映する: 観測が先に届いていた Revision に根拠を足して結論を計算し直す。
+/// 観測が後から届く場合は、新しい Revision の評価 (`editor_saved_notice`) が同じ根拠を足す。
+pub fn apply_editor_saved(conn: &Connection, at: i64, path: &str, hash: &str) -> rusqlite::Result<()> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn.prepare_cached(
+            "SELECT r.revision_id FROM change_revisions r
+               JOIN changes c ON c.change_id = r.change_id
+               JOIN snapshots s ON s.snapshot_id = r.after_snapshot
+              WHERE r.observed_at BETWEEN ?1 AND ?2 AND c.path = ?3 COLLATE NOCASE AND s.blob_hash = ?4
+                AND r.completeness <> 'gap'
+                AND NOT EXISTS (SELECT 1 FROM attribution_evidence e WHERE e.revision_id = r.revision_id AND e.kind = 'editor_saved')
+              ORDER BY r.revision_id",
+        )?;
+        let rows = stmt.query_map(params![at - EDITOR_SAVED_WINDOW_MS, at + EDITOR_SAVED_WINDOW_MS, path, hash], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for id in ids {
+        conn.execute(
+            "INSERT INTO attribution_evidence (revision_id, session_id, operation_id, kind, detail, recorded_at)
+             VALUES (?1, NULL, NULL, 'editor_saved', ?2, ?3)",
+            params![id, json!({ "path": path, "hash": hash, "noticeAt": at }).to_string(), at],
+        )?;
+        recompute_conclusion(conn, id)?;
+    }
     Ok(())
 }
 

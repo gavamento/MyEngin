@@ -22,6 +22,7 @@ namespace {
 // 一覧の仮想行の印
 constexpr int kItemMainHeader = -1;
 constexpr int kItemUncertainHeader = -2;
+constexpr int kItemEditorHeader = -3;
 
 const char* const kKindFilters[] = { "", "added", "modified", "deleted", "renamed" };
 const char* const kAttributionFilters[] = { "", "verified", "claimed", "inferred", "unknown" };
@@ -132,8 +133,22 @@ void AiChangesWindow::ApplyFilter(ChangeModel& model)
     }
     filter.path = pathFilter_;
     filter.changeType = kindFilter_;
-    filter.attribution = attributionFilter_;
+    if (scope_ == Scope::Uncertain) {
+        // 「セッションなし (不明 / 推定)」は、読み込み済みの行から拾わず、サービスの絞り込みで取る
+        filter.attributions = { "unknown", "inferred" };
+    } else if (!attributionFilter_.empty()) {
+        filter.attributions = { attributionFilter_ };
+    }
     model.SetFilter(filter);
+}
+
+void AiChangesWindow::SelectScope(ChangeModel& model, Scope scope, const std::string& sessionId)
+{
+    if (scope_ != scope || sessionId_ != sessionId) {
+        scope_ = scope;
+        sessionId_ = sessionId;
+        ApplyFilter(model);
+    }
 }
 
 void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHost& host)
@@ -244,13 +259,7 @@ void AiChangesWindow::DrawSessions(ChangeModel& model)
         ImGui::EndChild();
         return;
     }
-    auto pick = [&](Scope scope, const std::string& id) {
-        if (scope_ != scope || sessionId_ != id) {
-            scope_ = scope;
-            sessionId_ = id;
-            ApplyFilter(model);
-        }
-    };
+    auto pick = [&](Scope scope, const std::string& id) { SelectScope(model, scope, id); };
     if (ImGui::Selectable(Tr(StrId::AiChg_AllChanges), scope_ == Scope::All)) {
         pick(Scope::All, std::string());
     }
@@ -304,6 +313,8 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-FLT_MIN);
+    // 「セッションなし」の項目は帰属を不明 / 推定に決めて取るので、帰属の絞り込みは効かない
+    ImGui::BeginDisabled(scope_ == Scope::Uncertain);
     if (ImGui::BeginCombo("##attrfilter", AttributionFilterLabel(attributionFilter_))) {
         for (const char* value : kAttributionFilters) {
             if (ImGui::Selectable(AttributionFilterLabel(value), attributionFilter_ == value)) {
@@ -313,7 +324,9 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
         }
         ImGui::EndCombo();
     }
+    ImGui::EndDisabled();
     ImGui::Checkbox(Tr(StrId::AiChg_MixSections), &mixUncertain_);
+    ImGui::Checkbox(Tr(StrId::AiChg_ShowEditor), &showEditor_);
     if (model.ListIncomplete()) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
         ImGui::TextWrapped("%s", Tr(StrId::AiChg_ListIncomplete));
@@ -323,13 +336,17 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
     const std::vector<TrackChangeRow>& rows = model.Changes();
     // 仮想行 (見出しと変更) を組む。節への振り分けは添字だけで、本文を触らない
     items_.clear();
+    size_t hiddenEditor = 0;
     if (scope_ == Scope::Uncertain) {
-        for (const size_t i : PartitionChanges(rows, false).uncertain) {
+        // サービスが不明 / 推定に絞って返した行をそのまま並べる (節に分けない)
+        for (size_t i = 0; i < rows.size(); ++i) {
             items_.push_back(static_cast<int>(i));
         }
     } else {
         const ChangePartition parts = PartitionChanges(rows, mixUncertain_);
-        if (!parts.main.empty() && !parts.uncertain.empty()) {
+        const bool showEditor = showEditor_ && !parts.editor.empty();
+        hiddenEditor = showEditor_ ? 0 : parts.editor.size();
+        if (!parts.main.empty() && (!parts.uncertain.empty() || showEditor)) {
             items_.push_back(kItemMainHeader);
         }
         for (const size_t i : parts.main) {
@@ -341,6 +358,15 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
                 items_.push_back(static_cast<int>(i));
             }
         }
+        if (showEditor) {
+            items_.push_back(kItemEditorHeader);
+            for (const size_t i : parts.editor) {
+                items_.push_back(static_cast<int>(i));
+            }
+        }
+    }
+    if (hiddenEditor > 0) {
+        ImGui::TextDisabled("%s", (std::to_string(hiddenEditor) + " " + Tr(StrId::AiChg_EditorHidden)).c_str());
     }
 
     if (!ImGui::BeginChild("##changelist", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
@@ -368,7 +394,9 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
                 ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, itemH));
                 const ImVec2 min = ImGui::GetItemRectMin();
                 const ImVec2 max = ImGui::GetItemRectMax();
-                const char* title = Tr(item == kItemMainHeader ? StrId::AiChg_SectionMain : StrId::AiChg_SectionUncertain);
+                const char* title = Tr(item == kItemMainHeader        ? StrId::AiChg_SectionMain
+                                       : item == kItemUncertainHeader ? StrId::AiChg_SectionUncertain
+                                                                      : StrId::AiChg_SectionEditor);
                 dl->AddText(ImVec2(min.x + 2.0f, min.y + itemH - lineH - 4.0f), colDim, title);
                 dl->AddLine(ImVec2(min.x, max.y - 2.0f), ImVec2(max.x, max.y - 2.0f), ImGui::GetColorU32(ImGuiCol_Separator));
                 continue;
@@ -392,7 +420,8 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
                 x += ImGui::CalcTextSize(piece.c_str()).x + charGap;
             };
             put(ImGui::GetColorU32(KindColor(row.changeType)), text.kind);
-            put(ImGui::GetColorU32(AttributionColor(row.attribution)), text.attribution);
+            put(ImGui::GetColorU32(AttributionColor(row.actor == "editor_user" || row.actor == "restore" ? std::string("editor") : row.attribution)),
+                text.attribution);
             put(ImGui::GetColorU32(themeColor::Warning), text.completeness.empty() ? std::string() : "[" + text.completeness + "]");
             put(colDim, text.superseded.empty() ? std::string() : "[" + text.superseded + "]");
             put(colDim, text.time);
@@ -445,9 +474,12 @@ void AiChangesWindow::DrawDetail(ChangeModel& model, const AiChangesHost& host)
     ImGui::TextColored(AttributionColor(attribution), "%s", AttributionLabel(attribution).c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("(%s)", ActorLabel(str("actor")).c_str());
-    const std::string note = AttributionNote(attribution);
+    const std::string note = AttributionNote(str("actor"), attribution);
     if (!note.empty()) {
-        ImGui::TextDisabled("%s", note.c_str());
+        // 説明は 1 文が長いので折り返す (狭い詳細の欄で右が切れない)
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", note.c_str());
+        ImGui::PopStyleColor();
     }
     std::string evidenceSource;
     ImGui::TextUnformatted(Tr(StrId::AiChg_Evidence));

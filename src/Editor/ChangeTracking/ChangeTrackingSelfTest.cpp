@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <cwctype>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -29,9 +30,11 @@
 #include "Editor/ChangeTracking/TrackLaunch.h"
 #include "Editor/ChangeTracking/TrackProjectId.h"
 #include "Editor/ChangeTracking/TrackProtocol.h"
+#include "Editor/SourceControl/ScmHint.h"
 #include "Editor/Windows/Project/AiChangesWindow.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Platform/PathUtil.h"
+#include "Engine/Platform/Sha256.h"
 
 namespace fs = std::filesystem;
 using nlohmann::json;
@@ -226,6 +229,8 @@ struct ModelRig {
     int describeHunks = 0;
     // hunks の応答 (ページごとの items。最後のページ以外は nextCursor = そのページの最後の ordinal)
     std::vector<json> hunkPages;
+    // list の応答の items を差し替える (null なら既定の 2 件)
+    json listItems;
     bool failHunks = false;
     size_t hunksServed = 0;
 
@@ -264,9 +269,10 @@ struct ModelRig {
             } else if (op == trackop::kSessions) {
                 result = { { "items", json::array({ { { "sessionId", "s1" }, { "provider", "claude" }, { "status", "running" }, { "startedAt", 5 }, { "changeCount", 3 } } }) } };
             } else if (op == trackop::kList) {
-                result = { { "items", json::array({ { { "revisionId", 9 }, { "path", "a.txt" }, { "changeType", "added" }, { "actor", "ai" }, { "attribution", "claimed" },
-                                                      { "afterSize", 4 }, { "changeState", "superseded" } },
-                                                    { { "revisionId", 8 }, { "path", "b.txt" }, { "changeType", "modified" } } }) },
+                result = { { "items", !listItems.is_null() ? listItems
+                                                           : json::array({ { { "revisionId", 9 }, { "path", "a.txt" }, { "changeType", "added" }, { "actor", "ai" }, { "attribution", "claimed" },
+                                                                             { "afterSize", 4 }, { "changeState", "superseded" } },
+                                                                           { { "revisionId", 8 }, { "path", "b.txt" }, { "changeType", "modified" } } }) },
                            { "nextCursor", req["args"].contains("cursor") ? json() : json("8") },
                            { "coverage", { { "baselining", true } } } };
             } else if (op == trackop::kDescribe) {
@@ -422,6 +428,27 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             host.projectRoot = root.wstring();
             WithHeadlessImGuiFrame([&] { window.OnImGui(session, host); });
             check(window.GetDiffViewer().Rows().HunkCount() == 1, "probe: the window drew the live model's hunk");
+
+            // Editor の保存の知らせ (実サービス): 保存した内容のハッシュを送ると、その変更の行為者が Editor の利用者になる。
+            // 外から書いたファイルは、そのまま「不明」のまま
+            const std::wstring savedPath = (root / L"saved_in_editor.txt").wstring();
+            std::ofstream(savedPath, std::ios::binary) << "saved in the editor\n";
+            std::ofstream(root / L"written_elsewhere.txt", std::ios::binary) << "not the editor\n";
+            session.NoteSaved(savedPath);
+            auto actorOf = [&](const char* path) {
+                for (const TrackChangeRow& r : session.Model().Changes()) {
+                    if (r.path == path) {
+                        return r.actor;
+                    }
+                }
+                return std::string();
+            };
+            const bool marked = pump(session, [&] { return actorOf("saved_in_editor.txt") == "editor_user" && !actorOf("written_elsewhere.txt").empty(); }, 30000);
+            check(marked && actorOf("saved_in_editor.txt") == "editor_user" && actorOf("written_elsewhere.txt") == "unknown",
+                  "probe: a file the editor reported saving is the editor user's change; one written elsewhere stays unknown (live service)");
+            window.SetShowEditorChanges(true);
+            WithHeadlessImGuiFrame([&] { window.OnImGui(session, host); });
+            check(window.DrawnItemCount() >= 2, "probe: the window lists the editor section with the live model");
         }
         session.Shutdown(); // 接続を閉じるだけ
         if (service != nullptr) {
@@ -459,6 +486,224 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
     }
     if (!leave) {
         fs::remove_all(root, ec);
+    }
+}
+
+// ---- Editor の保存の知らせ (editor_saved) ----
+// 実ファイルを一時のプロジェクトへ書き、偽の I/O へ送られた行を確かめる。節ごとに道具立てを作り直す。
+
+struct SavedRig {
+    fs::path root;
+    std::shared_ptr<FakeState> s = std::make_shared<FakeState>();
+    ChangeTrackingSession session;
+    int hashCalls = 0;
+
+    // enabled / connect: 設定で有効か、Ready まで進めるか。root が空なら、プロジェクトを開いていない状態
+    explicit SavedRig(const std::string& name, bool enabled = true, bool connect = true, bool noProject = false)
+    {
+        root = fs::temp_directory_path() / (L"mye_track_saved_" + Utf8ToWide(name) + L"_" + std::to_wstring(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(root, ec);
+        fs::create_directories(root / L"assets", ec);
+        // 本物のハッシュ関数を、呼び出し回数つきで使う
+        session.SetSavedFileHasher([this](const std::wstring& path, std::string& hex) {
+            ++hashCalls;
+            return HashFileForSavedNotice(path, hex);
+        });
+        session.StartWithIo(std::make_unique<FakeIo>(s), noProject ? std::wstring() : root.wstring(), enabled);
+        if (connect) {
+            session.Poll();
+            FeedJson(*s, OkReply(LastHelloId(*s), { { "proto", 1 }, { "projectId", ProjectId(root.wstring()) }, { "role", "editor" } }));
+            session.Poll();
+        }
+    }
+    ~SavedRig()
+    {
+        std::error_code ec;
+        fs::remove_all(root, ec);
+    }
+
+    // プロジェクトの相対パスにファイルを書く。絶対パスを返す
+    std::wstring Write(const std::wstring& rel, const std::string& bytes) const
+    {
+        const fs::path path = root / rel;
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        std::ofstream(path, std::ios::binary) << bytes;
+        return path.wstring();
+    }
+    std::vector<json> Sent() const { return Requests(*s, trackop::kEditorSaved); }
+};
+
+void RunSavedNoticeTests(const std::function<void(bool, const char*)>& check)
+{
+    // (k1) 押さえた経路ごとに、保存すると editor_saved が 1 回送られ、ハッシュが書いた内容と一致する。
+    //      経路はどれも「保存直後の通知の集まる場所」へ絶対パスを渡す (scmhint の受け口 = EditorApp::NoteFileSaved、
+    //      シーンとアクターの保存はそこへ直接)。ここでは、その受け口を ChangeTrackingSession::NoteSaved へ繋いで確かめる
+    struct Route {
+        const char* name;
+        const wchar_t* rel;
+        const char* bytes;
+        bool viaHub; // 偽なら EditorApp が直接呼ぶ経路 (シーン・アクターの保存)
+    };
+    const Route routes[] = {
+        { "scene save", L"assets\\scenes\\main.scene.json", "{\"version\":4,\"entities\":[]}\n", false },
+        { "actor save", L"assets\\prefabs\\enemy.prefab.json", "{\"actor\":true}\n", false },
+        { "prefab apply", L"assets\\prefabs\\ship.prefab.json", "{\"applied\":1}\n", true },
+        { "asset .meta write", L"assets\\textures\\hero.png.meta", "{\"guid\":\"abc\",\"version\":2}\n", true },
+        { "asset move (destination)", L"assets\\moved\\rock.mesh.json", "{\"moved\":true}\n", true },
+        { "asset rename (destination)", L"assets\\renamed.mat.json", "{\"mat\":1}\n", true },
+        { "settings file", L"assets\\project_settings.json", "{\"tags\":[\"a\"]}\n", true },
+        { "inspector asset save (non-ASCII path)", L"assets\\シーン\\メイン.sound.json", "{\"sound\":\"鳴る\"}\n", true },
+    };
+    for (const Route& route : routes) {
+        SavedRig r(std::string("route") + std::to_string(&route - routes));
+        const std::wstring abs = r.Write(route.rel, route.bytes);
+        if (route.viaHub) {
+            scmhint::SetSink([](void* user, const std::wstring& path) { static_cast<ChangeTrackingSession*>(user)->NoteSaved(path); }, &r.session);
+            scmhint::Changed(abs);
+            scmhint::SetSink(nullptr, nullptr);
+        } else {
+            r.session.NoteSaved(abs);
+        }
+        check(r.session.PendingSavedCount() == 1 && r.hashCalls == 0 && r.Sent().empty(),
+              (std::string("saved notice: ") + route.name + ": noting a save only queues it (no hashing, no request inside the save)").c_str());
+        r.session.Poll();
+        const std::vector<json> sent = r.Sent();
+        check(sent.size() == 1 && sent[0]["args"].value("path", std::string()) == WideToUtf8(abs)
+                  && sent[0]["args"].value("hash", std::string()) == Sha256Hex(route.bytes) && sent[0]["args"].size() == 2 && r.hashCalls == 1,
+              (std::string("saved notice: ") + route.name + ": one editor_saved with the path and the SHA-256 of what was written").c_str());
+        r.session.Poll();
+        check(r.Sent().size() == 1 && r.session.PendingSavedCount() == 0, (std::string("saved notice: ") + route.name + ": it is sent once, not again").c_str());
+    }
+
+    // (k2) 追跡が無効 / 非対話起動 / プロジェクト無し / 接続前 / 切断中は、送られず、ハッシュの計算も呼ばれない
+    {
+        SavedRig off("off", false, false); // 設定で無効 (非対話起動も同じ Disabled)
+        off.session.NoteSaved(off.Write(L"assets\\a.scene.json", "a"));
+        off.session.Poll();
+        check(off.session.State() == TrackState::Disabled && off.hashCalls == 0 && off.Sent().empty() && off.session.PendingSavedCount() == 0 && off.s->c.Total() == 0,
+              "saved notice: with tracking off (or a non-interactive launch) nothing is hashed, queued or sent, and no I/O is touched");
+        SavedRig none("noproject", true, false, true);
+        none.session.NoteSaved(none.Write(L"assets\\a.scene.json", "a"));
+        none.session.Poll();
+        check(none.session.State() == TrackState::NoProject && none.hashCalls == 0 && none.Sent().empty(), "saved notice: with no project open nothing is hashed or sent");
+        SavedRig connecting("connecting", true, false);
+        connecting.session.Poll(); // pipe は開いたが hello の応答はまだ
+        connecting.session.NoteSaved(connecting.Write(L"assets\\a.scene.json", "a"));
+        connecting.session.Poll();
+        check(connecting.session.State() == TrackState::Connecting && connecting.hashCalls == 0 && connecting.Sent().empty(),
+              "saved notice: before the service has answered hello nothing is hashed or sent");
+        SavedRig lost("lost");
+        lost.s->peerClosed = true;
+        lost.session.Poll();
+        check(lost.session.State() == TrackState::Disconnected, "saved notice: (setup) the connection is lost");
+        lost.session.NoteSaved(lost.Write(L"assets\\a.scene.json", "a"));
+        lost.session.Poll();
+        check(lost.hashCalls == 0 && lost.Sent().empty() && lost.session.PendingSavedCount() == 0, "saved notice: while disconnected nothing is hashed, queued or sent");
+    }
+
+    // (k3) 切れたのが、知らせを積んだあとでも、ハッシュは計算しない
+    {
+        SavedRig r("dropped");
+        r.session.NoteSaved(r.Write(L"assets\\a.scene.json", "a"));
+        r.s->peerClosed = true;
+        r.session.Poll();
+        check(r.session.State() == TrackState::Disconnected && r.hashCalls == 0 && r.Sent().empty() && r.session.PendingSavedCount() == 0,
+              "saved notice: a connection lost after queueing drops the queue without hashing");
+    }
+
+    // (k4) プロジェクトの外と .mye の下は、積みもしない
+    {
+        SavedRig r("outside");
+        const fs::path outside = r.root.parent_path() / (r.root.filename().wstring() + L"_sibling.txt");
+        {
+            std::ofstream(outside, std::ios::binary) << "x";
+        }
+        r.session.NoteSaved(outside.wstring());
+        r.session.NoteSaved(r.Write(L".mye\\ai_changes\\tracking.db", "db"));
+        r.session.NoteSaved(r.root.wstring()); // ルート自身
+        r.session.NoteSaved(L"");
+        r.session.Poll();
+        std::error_code ec;
+        fs::remove(outside, ec);
+        check(r.hashCalls == 0 && r.Sent().empty() && r.session.PendingSavedCount() == 0,
+              "saved notice: a path outside the project, under .mye, the root itself or empty is ignored without hashing");
+        // 名前が .mye で始まるだけのものは対象
+        r.session.NoteSaved(r.Write(L".myeignore", "x"));
+        check(r.session.PendingSavedCount() == 1, "saved notice: a file whose name merely starts with .mye is tracked");
+    }
+
+    // (k5) 同じファイルの通知は 1 件にまとまる (綴りの大小・区切りの違いも)。保存のたびに何度呼ばれても 1 回
+    {
+        SavedRig r("dedupe");
+        const std::wstring abs = r.Write(L"assets\\scenes\\main.scene.json", "{}\n");
+        std::wstring upper = abs;
+        for (wchar_t& c : upper) {
+            c = static_cast<wchar_t>(towupper(c));
+        }
+        std::wstring slashes = abs;
+        for (wchar_t& c : slashes) {
+            c = c == L'\\' ? L'/' : c;
+        }
+        r.session.NoteSaved(abs);
+        r.session.NoteSaved(upper);
+        r.session.NoteSaved(slashes);
+        check(r.session.PendingSavedCount() == 1, "saved notice: the same file noted three times (case, separators) is one entry");
+        r.session.Poll();
+        check(r.Sent().size() == 1 && r.hashCalls == 1, "saved notice: so it is hashed and sent once");
+    }
+
+    // (k6) 読めない・大きすぎるものは送らない (保存は失敗しない。その変更は不明 / 推定に落ちるだけ)
+    {
+        SavedRig r("unreadable");
+        r.session.NoteSaved((r.root / L"assets" / L"gone.scene.json").wstring()); // 移動元・削除したもの
+        r.session.NoteSaved((r.root / L"assets").wstring());                      // フォルダの移動
+        r.session.NoteSaved(r.Write(L"assets\\big.bin", std::string(static_cast<size_t>(kTrackSavedHashMaxBytes) + 1, 'x')));
+        r.session.NoteSaved(r.Write(L"assets\\edge.bin", std::string(static_cast<size_t>(kTrackSavedHashMaxBytes), 'y')));
+        for (int i = 0; i < 3; ++i) {
+            r.session.Poll();
+        }
+        check(r.Sent().size() == 1 && r.Sent()[0]["args"].value("hash", std::string()) == Sha256Hex(std::string(static_cast<size_t>(kTrackSavedHashMaxBytes), 'y')),
+              "saved notice: a missing file, a folder and a file over the size cap are not sent; one exactly at the cap is");
+        check(r.session.State() == TrackState::Ready, "saved notice: unreadable files never disturb the connection");
+    }
+
+    // (k7) 1 回の Poll で扱う件数に上限がある (フレームを止めない)。順序はパスのキー順で決まる
+    {
+        SavedRig r("budget");
+        for (int i = 0; i < 5; ++i) {
+            r.session.NoteSaved(r.Write(L"assets\\f" + std::to_wstring(i) + L".json", "n" + std::to_string(i)));
+        }
+        std::vector<size_t> sentAfter;
+        for (int i = 0; i < 3; ++i) {
+            r.session.Poll();
+            sentAfter.push_back(r.Sent().size());
+        }
+        check(sentAfter == std::vector<size_t>({ static_cast<size_t>(kTrackSavedPerPoll), static_cast<size_t>(kTrackSavedPerPoll) * 2, 5 }) && r.session.PendingSavedCount() == 0,
+              "saved notice: one Poll handles at most kTrackSavedPerPoll files; the rest follow in later frames");
+        const std::vector<json> sent = r.Sent();
+        check(sent.size() == 5 && sent[0]["args"].value("hash", std::string()) == Sha256Hex("n0") && sent[4]["args"].value("hash", std::string()) == Sha256Hex("n4"),
+              "saved notice: the order is by path key, not by a hash container's order");
+    }
+    {
+        SavedRig r("cap");
+        for (size_t i = 0; i < kTrackSavedMaxPending + 5; ++i) {
+            r.session.NoteSaved((r.root / L"assets" / (L"q" + std::to_wstring(1000 + i) + L".json")).wstring());
+        }
+        check(r.session.PendingSavedCount() == kTrackSavedMaxPending, "saved notice: the queue has an upper bound");
+    }
+
+    // (k8) サービスが断っても (古い版・役割違い)、接続は保たれ、保存の側には何も返らない
+    {
+        SavedRig r("refused");
+        r.session.NoteSaved(r.Write(L"assets\\a.json", "a"));
+        r.session.Poll();
+        const std::vector<json> sent = r.Sent();
+        check(sent.size() == 1, "saved notice: (setup) one request is out");
+        FeedJson(*r.s, ErrReply(sent[0]["id"].get<uint64_t>(), "unknown_op"));
+        r.session.Poll();
+        check(r.session.State() == TrackState::Ready && r.session.Client().PendingCount() <= 1, "saved notice: a refusal is only logged; the connection stays Ready");
     }
 }
 
@@ -925,10 +1170,18 @@ bool RunChangeTrackingSelfTest()
         r.AnswerAll();
         r.session.Poll();
         TrackListFilter filter;
-        filter.attribution = "ai";
+        filter.attributions = { "claimed" };
         r.model.SetFilter(filter);
         r.session.Poll();
-        check(Requests(*r.s, trackop::kList).back()["args"].value("attribution", std::string()) == "ai", "model: the filter is sent with the list request");
+        check(Requests(*r.s, trackop::kList).back()["args"].value("attribution", std::string()) == "claimed", "model: a single attribution is sent as a string");
+        r.AnswerAll();
+        r.session.Poll();
+        TrackListFilter two;
+        two.attributions = { "unknown", "inferred" };
+        r.model.SetFilter(two);
+        r.session.Poll();
+        check(Requests(*r.s, trackop::kList).back()["args"]["attribution"] == json::array({ "unknown", "inferred" }),
+              "model: two attributions are sent as an array (one request, not two lists to merge)");
         r.AnswerAll();
         r.session.Poll();
         r.model.LoadMore();
@@ -1031,6 +1284,59 @@ bool RunChangeTrackingSelfTest()
         check(!window.open, "window: it is closed by default");
         AiChangesWindow fresh;
         check(!fresh.open, "window: a new window starts closed");
+    }
+    {
+        // (g8b) 「セッションなし (不明 / 推定)」は、読み込み済みの行から拾わず、サービスの attribution フィルタで取る
+        ModelRig r;
+        r.session.Poll();
+        r.AnswerAll();
+        r.session.Poll();
+        AiChangesWindow window;
+        window.SelectScope(r.model, AiChangesWindow::Scope::Uncertain, std::string());
+        r.session.Poll();
+        const json uncertainAsk = Requests(*r.s, trackop::kList).back()["args"];
+        check(uncertainAsk["attribution"] == json::array({ "unknown", "inferred" }) && !uncertainAsk.contains("sessionId"),
+              "window: the 'without a session' item asks the service for unknown / inferred only");
+        r.AnswerAll();
+        r.session.Poll();
+        window.SelectScope(r.model, AiChangesWindow::Scope::Session, "s1");
+        r.session.Poll();
+        const json sessionAsk = Requests(*r.s, trackop::kList).back()["args"];
+        check(sessionAsk.value("sessionId", std::string()) == "s1" && !sessionAsk.contains("attribution"),
+              "window: a session item asks for that session without the unknown / inferred restriction");
+        r.AnswerAll();
+        r.session.Poll();
+        window.SelectScope(r.model, AiChangesWindow::Scope::All, std::string());
+        r.session.Poll();
+        check(!Requests(*r.s, trackop::kList).back()["args"].contains("attribution") && !window.ShowEditorChanges(),
+              "window: 'all changes' has no attribution restriction, and the editor section is off by default");
+    }
+    {
+        // (g8c) Editor の保存・復元で確定した変更は、既定では一覧に出ず、切り替えると専用の節に出る
+        ModelRig r;
+        r.listItems = json::array({ { { "revisionId", 12 }, { "path", "a.txt" }, { "changeType", "modified" }, { "actor", "ai" }, { "attribution", "claimed" } },
+                                    { { "revisionId", 11 }, { "path", "scene.json" }, { "changeType", "modified" }, { "actor", "editor_user" }, { "attribution", "verified" } },
+                                    { { "revisionId", 10 }, { "path", "b.txt" }, { "changeType", "modified" }, { "actor", "unknown" }, { "attribution", "unknown" } },
+                                    { { "revisionId", 9 }, { "path", "c.txt" }, { "changeType", "modified" }, { "actor", "restore" }, { "attribution", "verified" } } });
+        for (int i = 0; i < 4; ++i) {
+            r.session.Poll();
+            r.AnswerAll();
+        }
+        r.session.Poll();
+        AiChangesWindow window;
+        window.open = true;
+        AiChangesHost host;
+        host.allowTracking = true;
+        host.enabled = true;
+        host.projectRoot = kRoot;
+        auto draw = [&] { WithHeadlessImGuiFrame([&] { window.OnImGui(r.session, host); }); };
+        draw();
+        // AI の節 (見出し + 1 件) + 不明の節 (見出し + 1 件) = 4 行 (Editor の 2 件は出ない)
+        check(r.model.Changes().size() == 4 && window.DrawnItemCount() == 4, "window: the editor's changes are not in the list by default");
+        window.SetShowEditorChanges(true);
+        draw();
+        // 4 + Editor の見出し + 2 件
+        check(window.DrawnItemCount() == 7, "window: switching the editor section on adds a header and the editor's two changes");
     }
     {
         // 窓を実際に描く (ヘッドレスの 1 フレーム): データのある状態で落ちず、Hunk が DiffViewer へ渡る。使えない状態の帯も描く
@@ -1176,6 +1482,9 @@ bool RunChangeTrackingSelfTest()
             SetEnvironmentVariableW(kTrackExeEnvVar, nullptr);
         }
     }
+
+    // ---- (k) Editor の保存の知らせ (editor_saved): 保存直後の通知の口から、接続中だけ、書いた内容のハッシュと一緒に送る ----
+    RunSavedNoticeTests(check);
 
     // ---- (j) AI Changes 窓の文面・節・DiffView (ImGui を回さない部分と、ヘッドレスの 1 フレーム) ----
     RunChangeViewSelfTests(check);

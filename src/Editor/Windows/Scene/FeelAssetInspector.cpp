@@ -11,6 +11,7 @@
 
 #include "imgui.h"
 
+#include "Editor/SourceControl/ScmHint.h" // 保存直後の通知
 #include "Editor/Widgets/CurveEditorWidget.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Localization/Localization.h"
@@ -211,6 +212,7 @@ void FeelAssetInspector::Draw(EngineContext& ctx, UndoStack& undo, const std::ws
         if (out) {
             out << FeelLibrary::ToJson(d).dump(2);
             out.close();
+            scmhint::Changed(path);
             saved_ = d;
             MYE_LOG_INFO("feel saved: %s", WideToUtf8(path).c_str());
         } else {

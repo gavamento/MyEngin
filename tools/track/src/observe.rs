@@ -280,7 +280,7 @@ fn apply_one(store: &mut Store, o: Observation, plan: Result<DiffPlan, String>) 
         let revision_id = write_revision(conn, &input, before_snapshot, after_snapshot, &plan)
             .map_err(|e| RecordFailure::from_store(&StoreError::Sqlite(e)))?;
         // 帰属の計算に失敗しても Revision は残す (結論は unknown のまま。次の作り直しで直る)
-        if let Err(e) = attribution::evaluate_new_revision(conn, &store.attribution, revision_id, o.observed_at, o.source.as_str()) {
+        if let Err(e) = attribution::evaluate_new_revision(conn, &store.attribution, revision_id, o.observed_at, o.source.as_str(), None) {
             eprintln!("[track] 帰属を計算できない: {}: {e}", o.path);
         }
     }

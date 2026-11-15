@@ -1042,6 +1042,17 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `mye_track.exe client --project <一時プロジェクト>` から `role = mcp` で `hello` して `list` を呼ぶ (`service.json` のトークンを使う)。`Edit` と `Write` の変更が `actor = ai`、`attribution = verified` で出る。**Verified にならなければ**、`describe` の `evidence` と `tool_input` の `old_string` / `new_string` を控える (Edit の CRLF・引用符の扱いが原因のことがある)
 - [ ] 後始末: 動いている `mye_track.exe` が残っていたら、`mye_track.exe client --project <一時プロジェクト>` から `shutdown` を送って止める。記録 (`mye_hook_dump.jsonl`) に秘密が含まれていれば消す。取れた記録を `tests\track\fixture\` に固定入力として置くなら、置く前に内容を確かめる
 
+## M104k2: Editor の保存を追跡サービスへ知らせる (手動確認)
+
+機械検証は `MYE_SELFTEST_ONLY=changetracking` (保存の経路ごとの送信とハッシュ、無効・切断中は計算しないこと)、`cargo test --manifest-path tools\track\Cargo.toml` (照合・作り直し・役割)、`tools\track_verify.bat`。経路の一覧は `docs\ai-change-tracking\editor-save-routes.md`。
+**このリポジトリのルートをプロジェクトにして追跡を有効にしない。** 一時プロジェクトで確かめる。
+
+- [ ] 追跡を有効にした一時プロジェクトで、シーンを保存 (Ctrl+S) すると、AI Changes 窓の「エディタで保存した変更・復元による変更を表示する」を入れたとき、その変更が「エディタ / 復元による変更」の節に「エディタの操作」として出る。詳細の根拠に「エディタがこの内容を保存したと知らせた」が出る
+- [ ] 同じ保存が、既定の一覧 (AI の変更の節・不明 / 推定の節) には出ない。「N 件のエディタ保存・復元の変更は非表示です」と出る
+- [ ] 外から (別のエディタで) 同じシーンを書き換えると、AI Changes 窓では「不明 / 推定」の節に出る (Editor の保存として扱われない)
+- [ ] 左の「セッションなし (不明 / 推定)」を選ぶと、不明 / 推定の変更だけが並び、帰属の絞り込みは灰色になる
+- [ ] 追跡を無効にしている間、または `Editor.exe --selftest` / `--screenshot` では、保存してもサービスへ何も送られない (保存は普通に成功する)
+
 ## M104k: AI Changes 窓と Diff 表示部品 (手動確認)
 
 機械検証は `MYE_SELFTEST_ONLY=changetracking` (文面・節・行の組み立て・1 万行の差分で見えている行だけを描くこと・窓の開閉と設定の切り替え)、`cargo test --manifest-path tools\track\Cargo.toml` (`hunks` / `blob_get`)、`tools\track_verify.bat` (シナリオ 24)。ここは実サービスと目視が要る項目。

@@ -68,6 +68,7 @@ fn slow_watch_cfg() -> TrackerConfig {
 }
 
 const HOOK: Caller = Caller { role: Role::Hook, pid: None };
+const EDITOR: Caller = Caller { role: Role::Editor, pid: None };
 
 fn mcp() -> Caller {
     Caller { role: Role::Mcp, pid: Some(std::process::id()) }
@@ -144,6 +145,7 @@ impl Fx {
             "op_begin" => ops_record::op_begin(env, &caller, args(a)),
             "op_end" => ops_record::op_end(env, &caller, args(a)),
             "report" => ops_record::report(env, &caller, args(a)),
+            "editor_saved" => ops_record::editor_saved(env, &caller, args(a)),
             other => panic!("知らない op {other}"),
         }
     }
@@ -858,6 +860,204 @@ fn a_broken_db_is_rebuilt_to_the_same_sessions_operations_and_evidence() {
     }
 }
 
+/// ---- editor_saved (M104k2): Editor の保存は「Editor の利用者」として確定する --------------------------------------
+
+fn saved(fx: &Fx, path: &str, bytes: &[u8]) -> Value {
+    fx.ok("editor_saved", EDITOR, json!({ "path": path, "hash": sha256_hex(bytes) }))
+}
+
+fn count_evidence(conn: &Connection, kind: &str) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM attribution_evidence WHERE kind = ?1", [kind], |r| r.get(0)).unwrap()
+}
+
+#[test]
+fn a_save_notice_after_the_observation_makes_the_change_the_editor_users() {
+    let mut fx = Fx::new("saved_after");
+    fx.write("scene.json", b"{}\n");
+    fx.start(cfg(2000));
+    fx.write("scene.json", b"{\"a\":1}\n");
+    wait_until("scene.json の Revision", || fx.revision_count("scene.json") == 1);
+    assert_eq!(verdict(&fx.last("scene.json")), ("unknown", "unknown"));
+    let reply = saved(&fx, "scene.json", b"{\"a\":1}\n");
+    assert_eq!(reply["pending"], false, "{reply}");
+    let rev = fx.last("scene.json");
+    assert_eq!(verdict(&rev), ("editor_user", "verified"), "{:?}", fx.evidence(rev.id));
+    assert!(fx.evidence(rev.id).contains(&"editor_saved".to_string()));
+    assert_eq!(fx.describe(rev.id)["actor"], "editor_user");
+}
+
+#[test]
+fn a_save_notice_before_the_observation_gives_the_same_result() {
+    let mut fx = Fx::new("saved_before");
+    fx.write("a.json", b"a0\n");
+    fx.start(cfg(2000));
+    // 知らせが先 (ファイルはまだ書かれていない)。観測が後から届いて、保持していた知らせと照合される
+    saved(&fx, "a.json", b"a1 by the editor\n");
+    assert_eq!(fx.revision_count("a.json"), 0);
+    fx.write("a.json", b"a1 by the editor\n");
+    wait_until("a.json の Revision", || fx.revision_count("a.json") == 1);
+    let rev = fx.last("a.json");
+    assert_eq!(verdict(&rev), ("editor_user", "verified"), "{:?}", fx.evidence(rev.id));
+    assert_eq!(fx.evidence(rev.id), ["observed", "editor_saved"]);
+}
+
+#[test]
+fn a_save_notice_with_another_hash_or_another_path_does_not_match() {
+    let mut fx = Fx::new("saved_mismatch");
+    fx.write("a.json", b"a0\n");
+    fx.write("b.json", b"b0\n");
+    fx.start(cfg(2000));
+    saved(&fx, "a.json", b"not what is written\n");
+    saved(&fx, "b.json", b"b1\n"); // 別のパスの知らせ
+    fx.write("a.json", b"a1\n");
+    wait_until("a.json", || fx.revision_count("a.json") == 1);
+    assert_eq!(verdict(&fx.last("a.json")), ("unknown", "unknown"), "内容が違う知らせで Editor のものにした");
+    // 知らせたパスでも、あとから別の内容に書き換わったら照合しない
+    fx.write("b.json", b"b2 written by someone else\n");
+    wait_until("b.json", || fx.revision_count("b.json") == 1);
+    assert_eq!(verdict(&fx.last("b.json")), ("unknown", "unknown"));
+}
+
+#[test]
+fn a_save_notice_older_than_the_window_is_not_kept() {
+    let mut fx = Fx::new("saved_old");
+    fx.write("a.json", b"a0\n");
+    fx.start(cfg(2000));
+    let old = now_ms() - 2 * mye_track::attribution::EDITOR_SAVED_WINDOW_MS - 5_000;
+    let hash = sha256_hex(b"a1\n");
+    let rx = fx
+        .env()
+        .writer
+        .submit_bounded(1024, move |store| {
+            session::record_and_apply(store, old, "editor_saved", json!({ "path": "a.json", "hash": hash }))
+        })
+        .unwrap();
+    rx.recv().unwrap().unwrap();
+    fx.write("a.json", b"a1\n");
+    wait_until("a.json", || fx.revision_count("a.json") == 1);
+    assert_eq!(verdict(&fx.last("a.json")), ("unknown", "unknown"), "窓より古い知らせが照合された");
+}
+
+#[test]
+fn the_editor_wins_over_an_ai_declared_edit_that_produced_the_same_content() {
+    let mut fx = Fx::new("saved_vs_ai");
+    fx.write("x.txt", b"alpha\nbeta\n");
+    fx.start(cfg(2000));
+    let session = fx.begin_hook("c-ed");
+    begin_op(&fx, HOOK, "c-ed", "x.txt", Some(replace_edit("beta", "BETA")), "t1");
+    fx.write("x.txt", b"alpha\nBETA\n");
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-ed", "clientOpId": "t1", "result": "ok" }));
+    let rev = fx.last("x.txt");
+    assert_eq!(verdict(&rev), ("ai", "verified"), "前提: AI の宣言と一致している");
+    assert_eq!(fx.list_for_session(&session), ["x.txt"]);
+
+    // 同じ内容を Editor が保存したと知らせる: attr §3 の表の先頭の行が勝つ
+    saved(&fx, "x.txt", b"alpha\nBETA\n");
+    let rev = fx.last("x.txt");
+    assert_eq!(verdict(&rev), ("editor_user", "verified"), "{:?}", fx.evidence(rev.id));
+    assert!(rev.operation_id.is_none());
+    let kinds = fx.evidence(rev.id);
+    assert!(
+        kinds.contains(&"declared_edit_match".to_string()) && kinds.contains(&"editor_saved".to_string()),
+        "根拠は消さない: {kinds:?}"
+    );
+    assert!(fx.list_for_session(&session).is_empty(), "Editor の変更が AI のセッションの一覧に残った");
+    assert_eq!(fx.ok("session_end", HOOK, json!({ "sessionId": session }))["changeCount"], 0);
+}
+
+#[test]
+fn editor_saved_rejects_bad_arguments_and_only_the_editor_may_call_it() {
+    let mut fx = Fx::new("saved_args");
+    fx.write("a.txt", b"a\n");
+    fx.start(cfg(2000));
+    let good = sha256_hex(b"a\n");
+    for (name, a) in [
+        ("hash が短い", json!({ "path": "a.txt", "hash": "abc" })),
+        ("hash が 16 進でない", json!({ "path": "a.txt", "hash": "z".repeat(64) })),
+        ("path が無い", json!({ "hash": good })),
+        ("外のパス", json!({ "path": "../outside.txt", "hash": good })),
+        ("知らない引数", json!({ "path": "a.txt", "hash": good, "extra": 1 })),
+    ] {
+        let e = fx.call("editor_saved", EDITOR, a).unwrap_err();
+        assert_eq!(e.code, code::BAD_ARGS, "{name}: {}", e.detail);
+    }
+    for role in [Role::Mcp, Role::Hook] {
+        assert!(!role_allows(role, "editor_saved"), "{role:?} が editor_saved を呼べる");
+    }
+    assert!(role_allows(Role::Editor, "editor_saved"));
+    // 大文字の 16 進も受ける (小文字にして照合する)
+    assert!(fx.call("editor_saved", EDITOR, json!({ "path": "a.txt", "hash": good.to_ascii_uppercase() })).is_ok());
+}
+
+#[test]
+fn list_takes_one_attribution_or_several_and_rejects_unknown_ones() {
+    let mut fx = Fx::new("list_attr");
+    fx.write("a.txt", b"a0\n");
+    fx.write("b.txt", b"b0\n");
+    fx.start(cfg(2000));
+    fx.write("a.txt", b"a1\n");
+    fx.write("b.txt", b"b1\n");
+    wait_until("2 件", || fx.revision_count("a.txt") == 1 && fx.revision_count("b.txt") == 1);
+    saved(&fx, "b.txt", b"b1\n");
+    let conn = ops::open_reader(&Paths::for_project(&fx.root).db).unwrap();
+    let paths = |a: Value| -> Vec<String> {
+        let list = ops::list(&conn, args(json!({ "attribution": a }))).unwrap();
+        let mut out: Vec<String> =
+            list["items"].as_array().unwrap().iter().map(|i| i["path"].as_str().unwrap().to_string()).collect();
+        out.sort();
+        out
+    };
+    assert_eq!(paths(json!("unknown")), ["a.txt"]);
+    assert_eq!(paths(json!("verified")), ["b.txt"]);
+    assert_eq!(paths(json!(["unknown", "inferred"])), ["a.txt"]);
+    assert_eq!(paths(json!(["unknown", "verified"])), ["a.txt", "b.txt"]);
+    assert_eq!(ops::list(&conn, args(json!({ "attribution": ["unknown", "bogus"] }))).unwrap_err().code, code::BAD_ARGS);
+    assert_eq!(ops::list(&conn, args(json!({ "attribution": 5 }))).unwrap_err().code, code::BAD_ARGS);
+    assert_eq!(ops::list(&conn, args(json!({ "attribution": [1] }))).unwrap_err().code, code::BAD_ARGS);
+}
+
+#[test]
+fn a_broken_db_is_rebuilt_with_the_editor_saved_evidence_in_either_order() {
+    let mut fx = Fx::new("saved_rebuild");
+    fx.write("late.txt", b"l0\n");
+    fx.write("early.txt", b"e0\n");
+    fx.write("ai.txt", b"alpha\nbeta\n");
+    fx.start(cfg(2000));
+    let _s = fx.begin_hook("c-sr");
+    // 知らせが後 / 先 / AI の宣言と同じ内容 (Editor が勝つ)
+    fx.write("late.txt", b"l1\n");
+    wait_until("late.txt", || fx.revision_count("late.txt") == 1);
+    saved(&fx, "late.txt", b"l1\n");
+    saved(&fx, "early.txt", b"e1\n");
+    fx.write("early.txt", b"e1\n");
+    wait_until("early.txt", || fx.revision_count("early.txt") == 1);
+    begin_op(&fx, HOOK, "c-sr", "ai.txt", Some(replace_edit("beta", "BETA")), "t1");
+    fx.write("ai.txt", b"alpha\nBETA\n");
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-sr", "clientOpId": "t1", "result": "ok" }));
+    saved(&fx, "ai.txt", b"alpha\nBETA\n");
+    for p in ["late.txt", "early.txt", "ai.txt"] {
+        assert_eq!(verdict(&fx.last(p)), ("editor_user", "verified"), "{p}: 前提");
+    }
+    fx.stop();
+
+    drop(open_project(&fx.root, now_ms()).0);
+    let before = attribution_tables(&fx.db());
+    let paths = Paths::for_project(&fx.root);
+    fs::write(&paths.db, b"this is not a sqlite database").unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", paths.db.display()));
+    }
+    let (store, report) = open_project(&fx.root, now_ms());
+    assert!(report.broken_db.is_some() && report.rebuilt.is_some(), "{report:?}");
+    assert!(report.failed_steps.is_empty(), "{:?}", report.failed_steps);
+    drop(store);
+    let after = attribution_tables(&fx.db());
+    for (table, rows) in &before {
+        assert_eq!(rows, &after[table], "{table} が壊す前と違う");
+    }
+    assert_eq!(count_evidence(&fx.db(), "editor_saved"), 3, "editor_saved の根拠が戻っていない");
+}
+
 // ---- 受け入れ条件 15: 寿命 ----------------------------------------------------------------------------------
 
 #[test]
@@ -1093,6 +1293,37 @@ fn an_mcp_session_takes_the_pid_from_the_pipe_not_from_the_claim() {
     assert_eq!(denied["error"]["code"], "forbidden");
     let denied = hook.request(5, "report", json!({ "sessionId": "x", "paths": ["a"] })).unwrap();
     assert_eq!(denied["error"]["code"], "forbidden");
+}
+
+#[test]
+fn editor_saved_over_the_pipe_is_for_the_editor_only_and_marks_the_change() {
+    let root = temp_root("saved_pipe");
+    fs::write(root.0.join("a.txt"), b"a0\n").unwrap();
+    let service = ServiceProc::spawn(&root.0, 60_000);
+    service.wait_watching();
+    fs::write(root.0.join("a.txt"), b"a1 saved in the editor\n").unwrap();
+    let args = json!({ "path": "a.txt", "hash": sha256_hex(b"a1 saved in the editor\n") });
+
+    // AI 側の役割は、Editor の保存を名乗れない
+    for role in ["mcp", "hook"] {
+        let mut other = service.connect(role, None);
+        let denied = other.request(2, "editor_saved", args.clone()).unwrap();
+        assert_eq!(denied["error"]["code"], "forbidden", "{role}: {denied}");
+    }
+    let mut editor = service.connect("editor", None);
+    let reply = editor.request(2, "editor_saved", args).unwrap();
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["path"], "a.txt");
+
+    // 一覧の行為者が Editor の利用者になる (観測が先でも後でも。ここは書いた直後に知らせた)
+    let mut actor = String::new();
+    wait_until("a.txt が editor_user になる", || {
+        let list = editor.request(3, "list", json!({ "path": "a.txt" })).unwrap();
+        actor = list["result"]["items"][0]["actor"].as_str().unwrap_or("").to_string();
+        actor == "editor_user"
+    });
+    let list = editor.request(4, "list", json!({ "attribution": ["unknown", "inferred"] })).unwrap();
+    assert!(list["result"]["items"].as_array().unwrap().is_empty(), "{list}");
 }
 
 #[test]

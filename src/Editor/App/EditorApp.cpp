@@ -300,7 +300,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     //   「保存した」とだけ言えばよい
     scmhint::SetSink(
         [](void* user, const std::wstring& absPath) {
-            static_cast<EditorApp*>(user)->scm_.HintSaved(absPath);
+            static_cast<EditorApp*>(user)->NoteFileSaved(absPath);
         },
         this);
     // ★既定表示はプロジェクト起動のときだけ開く (spec §4.3、M66c)。Assets と同じ
@@ -726,12 +726,19 @@ void EditorApp::SaveActorEdit(EngineContext& ctx)
                            actorEdit_->actorFormat)) {
         savedStateSerial_ = undo_.StateSerial(); // 現在の状態が保存済み基準になる
         // 配置済みインスタンスへの伝播は ReloadHub (ファイル監視) の既存経路が拾う
-        scm_.HintSaved(actorEdit_->path); // M66i: バッジと Changes の即時反映
+        NoteFileSaved(actorEdit_->path); // M66i: バッジと Changes の即時反映 + AI Change Tracking の保存の知らせ
         toasts_.Notify(LogLevel::Info, "アセットを保存しました: " + actorEdit_->name);
         NotifyUnknownKept(toasts_, actorEdit_->scene); // M70a
     } else {
         toasts_.Notify(LogLevel::Error, "アセットを保存できませんでした");
     }
+}
+
+void EditorApp::NoteFileSaved(const std::wstring& absPath)
+{
+    scm_.HintSaved(absPath);
+    // 追跡が接続中のときだけ中で動く (無効・非対話起動・切断中は何もしない)
+    changeTracking_.NoteSaved(absPath);
 }
 
 void EditorApp::CloseActorEdit(EngineContext& ctx)
@@ -1003,6 +1010,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
             }
             f.write(text.data(), static_cast<std::streamsize>(text.size()));
             f.close();
+            NoteFileSaved(path);
             MYE_LOG_INFO("[collab] appended %d line(s) to %s", missing,
                          WideToUtf8(path).c_str());
             char buf[128];
@@ -1836,8 +1844,8 @@ void EditorApp::SaveCurrentScene(EngineContext& ctx)
         settings_.Save();
         savedStateSerial_ = undo_.StateSerial(); // この状態が保存済み基準になる (M27b)
         // 監視 (300 ms デバウンス) を待たずに status を取り直す (M66i)。
-        // ★EditorApp はセッションを持っているので中継 (scmhint) を通さない
-        scm_.HintSaved(scenePath_);
+        // ★EditorApp はセッションを持っているので中継 (scmhint) を通さず、通知の集まる場所へ直接渡す
+        NoteFileSaved(scenePath_);
         toasts_.Notify(LogLevel::Info,
                        "シーンを保存しました: "
                            + WideToUtf8(std::filesystem::path(scenePath_).filename().wstring()));
