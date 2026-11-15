@@ -183,7 +183,8 @@ fn verification_scan_catches_missed_create_modify_delete_as_gap() {
     fx.write("x.txt", b"x1");
     fx.write("y.txt", b"y0");
     fx.remove("z.txt");
-    std::thread::sleep(Duration::from_millis(100));
+    // 最後の操作 (z.txt の削除) のイベントが捨てられるまで待つ。OS はイベントを起きた順に届ける
+    wait_until("イベントを捨て終わる", WAIT_LIMIT, || tracker.dropped_event_paths().iter().any(|p| p.ends_with("z.txt")));
     tracker.drop_incoming_events(false);
 
     wait_until("gap revisions", WAIT_LIMIT, || {

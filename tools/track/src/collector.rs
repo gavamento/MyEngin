@@ -15,6 +15,7 @@ use crate::baseline::{classify, Baseline, ContentKind};
 use crate::blob::BlobStore;
 use crate::content::{peek_len, peek_stat, read_stable, LenOutcome, ReadOutcome, StatOutcome};
 use crate::db::now_ms;
+use crate::debounce::keep_holding;
 use crate::diff::DiffLimits;
 use crate::diff_worker::DiffWorker;
 use crate::hash::sha256_hex;
@@ -470,7 +471,7 @@ impl Collector {
     /// `flush` 用の書き出し。同じ窓にまだ待ちのパス (新しいファイルは書き手を待つので遅れる) があるとき、
     /// 内容ハッシュを持つ削除は書き出さずに預かり、あとの `flush` で届く同じ内容の作成と `renamed` にまとめる。
     /// 預かりは窓が閉じる (待ちのパスが無くなる) か `max_hold` で終わる。
-    fn drain_holding(&mut self, batch: &mut Batch, open_windows: &HashSet<String>) {
+    fn drain_holding(&mut self, batch: &mut Batch, open_windows: &HashSet<String>, now: Instant) {
         if batch.overflowed {
             return self.drain(batch);
         }
@@ -483,13 +484,12 @@ impl Collector {
         all.extend(
             incoming.into_iter().filter(|o| !(o.change_type == ChangeType::Deleted && since_by_path.contains_key(&o.path))),
         );
-        let now = Instant::now();
         let mut ready = Vec::new();
         for o in merge_renames(all) {
             let holdable = o.change_type == ChangeType::Deleted && o.before.as_ref().is_some_and(|s| s.hash.is_some());
             if holdable {
                 let since = since_by_path.get(&o.path).copied().unwrap_or(now);
-                if open_windows.contains(&o.window) && now.duration_since(since) < self.cfg.max_hold {
+                if keep_holding(open_windows.contains(&o.window), since, now, self.cfg.max_hold) {
                     self.held.push((o, since));
                     continue;
                 }
@@ -513,12 +513,13 @@ impl Collector {
 
     /// flush するパスを処理する。返り値は書き手がまだ開いていて読めなかったパス (後でやり直す)。
     /// `still_pending` はまだデバウンス中のパス。ディレクトリの突き合わせではそれを飛ばす (自分の番で処理する)。
-    /// `pending_windows` はそのパスの窓 (同じ窓の作成を待つ削除を預かる判断に使う)。
+    /// `pending_windows` はそのパスの窓 (同じ窓の作成を待つ削除を預かる判断に使う)。`now` は預かりの期限の判定に使う。
     pub fn flush(
         &mut self,
         items: Vec<DueItem>,
         still_pending: &HashSet<String>,
         pending_windows: &HashSet<String>,
+        now: Instant,
     ) -> Vec<Deferred> {
         let observed_at = now_ms();
         let mut deferred: Vec<Deferred> = Vec::new();
@@ -675,7 +676,7 @@ impl Collector {
         }
         let mut open_windows = pending_windows.clone();
         open_windows.extend(deferred.iter().map(|d| d.window.clone()));
-        self.drain_holding(&mut batch, &open_windows);
+        self.drain_holding(&mut batch, &open_windows, now);
         deferred
     }
 

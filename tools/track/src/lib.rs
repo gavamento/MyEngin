@@ -1,6 +1,6 @@
 //! mye_track — AI Change Tracking の追跡サービスのロジック。
 //! 層: project / hash / ignore / content (純粋寄り) → schema / db / blob / journal → store → startup / writer
-//!     → baseline / observe / collector → watch_plan (監視の分け方) → watch (監視スレッドと Tracker)
+//!     → baseline / observe / debounce (監視の経験則。時刻は引数) / collector → watch_plan (監視の分け方) → watch (監視スレッドと Tracker)
 //!     → declared_edit / gitref / attribution / session / operation (帰属と寿命)
 //!     → review (レビューの状態) → protocol / pipe / ops / ops_record / notify → server (pipe のサービス) / client。
 //! 設計: docs/ai-change-tracking/ (db-schema.md が保存形式の正本)。
@@ -13,6 +13,7 @@ pub mod client;
 pub mod collector;
 pub mod content;
 pub mod db;
+pub mod debounce;
 pub mod declared_edit;
 pub mod diff;
 pub mod diff_worker;

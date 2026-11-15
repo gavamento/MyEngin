@@ -18,6 +18,7 @@ use serde_json::json;
 use crate::baseline::{load_from_db, LoadedState};
 use crate::collector::{Collector, Deferred, DueItem, ManagedFlush, ScanProgress, ScanTimings, TrackerConfig};
 use crate::db::now_ms;
+use crate::debounce::{verify_due, window_expired, Pending};
 use crate::ignore::{under_always_ignored_dir, ALWAYS_IGNORED_DIR_NAMES};
 use crate::observe::{record_gap, Source};
 use crate::store::Store;
@@ -164,6 +165,7 @@ pub struct Tracker {
     shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
     drop_events: Arc<AtomicBool>,
+    dropped_paths: Arc<Mutex<Vec<PathBuf>>>,
     event_delay_us: Arc<AtomicU64>,
     inject: Sender<Stamped>,
     progress: Arc<ScanProgress>,
@@ -203,6 +205,7 @@ impl Tracker {
         });
         let stop = Arc::new(AtomicBool::new(false));
         let drop_events = Arc::new(AtomicBool::new(false));
+        let dropped_paths = Arc::new(Mutex::new(Vec::new()));
         let event_delay_us = Arc::new(AtomicU64::new(0));
         let (tx, rx) = channel::<Stamped>();
         let progress = Arc::new(ScanProgress::default());
@@ -222,6 +225,7 @@ impl Tracker {
                 shared: Arc::clone(&shared),
                 stop: Arc::clone(&stop),
                 drop_events: Arc::clone(&drop_events),
+                dropped_paths: Arc::clone(&dropped_paths),
                 event_delay_us: Arc::clone(&event_delay_us),
                 pending: HashMap::new(),
                 last_from: None,
@@ -248,7 +252,7 @@ impl Tracker {
                 .expect("watch thread")
         };
         let flush = FlushHandle { tx: Arc::new(Mutex::new(flush_tx)) };
-        Tracker { writer, shared, stop, drop_events, event_delay_us, inject: tx, progress, flush, thread: Some(thread), stopped: false }
+        Tracker { writer, shared, stop, drop_events, dropped_paths, event_delay_us, inject: tx, progress, flush, thread: Some(thread), stopped: false }
     }
 
     pub fn status(&self) -> TrackerStatus {
@@ -302,6 +306,13 @@ impl Tracker {
         self.drop_events.store(on, Ordering::SeqCst);
     }
 
+    /// 試験用: `drop_incoming_events` で捨てたイベントのパス (届いた順)。最後の操作のパスが現れれば、
+    /// それより前の操作のイベントは (OS が起きた順に届けるので) 捨て終わっている。固定の待ちの代わりに使う。
+    #[doc(hidden)]
+    pub fn dropped_event_paths(&self) -> Vec<PathBuf> {
+        self.dropped_paths.lock().unwrap().clone()
+    }
+
     /// 溜まっているデバウンス中の変更を処理してから止め、`service_stop` を残す。
     pub fn stop(mut self, reason: &str) {
         self.shutdown(reason);
@@ -333,50 +344,6 @@ impl Drop for Tracker {
     }
 }
 
-/// デバウンス中の 1 パス。
-struct Pending {
-    first: Instant,
-    last_event: Instant,
-    /// 書き込みの塊の数 (`burst_gap` より離れたイベントで区切る)。
-    bursts: u32,
-    /// 内容の変更を表す `Modify` の件数。1 回の書き込みは最大 2 件 (切り詰めと書き込み)。
-    writes: u32,
-    structural: bool,
-    /// 待ち直す前のイベントで、複数回の書き込みと判断していた。
-    carried_multiple: bool,
-    /// 書き手が続いているかもしれない (または共有なしで開かれている) ので、この時刻にやり直す。
-    retry_at: Option<Instant>,
-    busy_since: Option<Instant>,
-    rename_from: Option<String>,
-    rename_to: Option<String>,
-    window: String,
-}
-
-impl Pending {
-    fn new(now: Instant, window: String) -> Self {
-        Pending {
-            window,
-            first: now,
-            last_event: now,
-            bursts: 1,
-            writes: 0,
-            structural: false,
-            carried_multiple: false,
-            retry_at: None,
-            busy_since: None,
-            rename_from: None,
-            rename_to: None,
-        }
-    }
-
-    fn due(&self, now: Instant, cfg: &TrackerConfig) -> bool {
-        if let Some(retry) = self.retry_at {
-            return now >= retry;
-        }
-        now.duration_since(self.last_event) >= cfg.debounce || now.duration_since(self.first) >= cfg.max_hold
-    }
-}
-
 struct WatchLoop {
     root: PathBuf,
     cfg: TrackerConfig,
@@ -386,6 +353,7 @@ struct WatchLoop {
     shared: Arc<Shared>,
     stop: Arc<AtomicBool>,
     drop_events: Arc<AtomicBool>,
+    dropped_paths: Arc<Mutex<Vec<PathBuf>>>,
     event_delay_us: Arc<AtomicU64>,
     pending: HashMap<String, Pending>,
     /// 直前のイベントが `Name(From)` だったときの旧パス。
@@ -470,9 +438,7 @@ impl WatchLoop {
         // 止める前に、届いているイベントとデバウンス中の変更を処理する
         while let Ok((at, item)) = rx.try_recv() {
             if let Ok(event) = item {
-                if !self.drop_events.load(Ordering::SeqCst) {
-                    self.handle_event(event, at);
-                }
+                self.handle_event(event, at);
             }
         }
         self.flush_due(true);
@@ -488,11 +454,7 @@ impl WatchLoop {
         let check_every = self.check_every();
         let timeout = if self.pending.is_empty() { MAX_WAIT } else { check_every.min(MAX_WAIT) };
         match rx.recv_timeout(timeout) {
-            Ok((at, Ok(event))) => {
-                if !self.drop_events.load(Ordering::SeqCst) {
-                    self.handle_event(event, at);
-                }
-            }
+            Ok((at, Ok(event))) => self.handle_event(event, at),
             Ok((_, Err(e))) => self.handle_overflow(&format!("watcher error: {e}")),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => self.stop.store(true, Ordering::SeqCst),
@@ -543,13 +505,9 @@ impl WatchLoop {
         // 処理待ちのイベント (長い flush の間に溜まったもの) を先に取り込む。取り込まないまま走査すると、
         // 待ちのイベントの変更を取りこぼしと取り違える
         self.drain_events(rx);
-        if !self.pending.is_empty() || Instant::now().duration_since(self.last_event) < self.cfg.verify_quiet {
-            return;
-        }
-        let due = self.verify_wanted
-            || self.events_since_verify >= self.cfg.verify_burst_events
-            || now.duration_since(self.last_verify) >= self.cfg.verify_interval;
-        if due {
+        let quiet_for = Instant::now().duration_since(self.last_event);
+        let since_last_verify = now.duration_since(self.last_verify);
+        if verify_due(self.verify_wanted, self.events_since_verify, self.pending.is_empty(), quiet_for, since_last_verify, &self.cfg) {
             self.verify(rx);
         }
     }
@@ -558,11 +516,7 @@ impl WatchLoop {
     fn drain_events(&mut self, rx: &Receiver<Stamped>) {
         while let Ok((at, item)) = rx.try_recv() {
             match item {
-                Ok(event) => {
-                    if !self.drop_events.load(Ordering::SeqCst) {
-                        self.handle_event(event, at);
-                    }
-                }
+                Ok(event) => self.handle_event(event, at),
                 Err(e) => self.handle_overflow(&format!("watcher error: {e}")),
             }
         }
@@ -709,20 +663,16 @@ impl WatchLoop {
         if self.may_change_watch_plan(&rel, path, structural) {
             self.replan_wanted = true;
         }
-        let burst_gap = self.cfg.burst_gap;
-        if now.saturating_duration_since(self.window_last_event) > self.cfg.debounce {
+        if window_expired(now, self.window_last_event, self.cfg.debounce) {
             self.window = self.collector.new_window();
         }
         self.window_last_event = now;
         let window = self.window.clone();
-        let p = self.pending.entry(rel.clone()).or_insert_with(|| Pending::new(now, window));
-        if now.saturating_duration_since(p.last_event) > burst_gap {
-            p.bursts += 1;
-        }
-        p.last_event = now;
-        p.writes += u32::from(write);
-        p.structural |= structural;
-        p.retry_at = None;
+        let burst_gap = self.cfg.burst_gap;
+        self.pending
+            .entry(rel.clone())
+            .or_insert_with(|| Pending::new(now, window))
+            .touch(now, burst_gap, structural, write);
         Some(rel)
     }
 
@@ -838,6 +788,10 @@ impl WatchLoop {
     /// イベントの種別では変更かどうかを決めない。パスを待ち行列へ入れるだけ
     /// (リネームの `Name(From)` の直後の `Name(To)` だけは対にする)。
     fn handle_event(&mut self, event: Event, now: Instant) {
+        if self.drop_events.load(Ordering::SeqCst) {
+            self.dropped_paths.lock().unwrap().extend(event.paths);
+            return;
+        }
         let delay = self.event_delay_us.load(Ordering::Relaxed);
         if delay > 0 {
             std::thread::sleep(Duration::from_micros(delay));
@@ -942,9 +896,9 @@ impl WatchLoop {
             .into_iter()
             .filter_map(|key| {
                 let p = self.pending.remove(&key)?;
-                let multiple = p.carried_multiple || p.bursts > 1 || p.writes > 2;
+                let multiple = p.is_multiple();
                 busy_since.insert(key.clone(), (p.busy_since, p.window.clone(), multiple));
-                let waited_too_long = p.busy_since.is_some_and(|b| now.duration_since(b) >= self.cfg.settle_give_up);
+                let waited_too_long = p.waited_too_long(now, self.cfg.settle_give_up);
                 Some(DueItem {
                     rel: key,
                     structural: p.structural,
@@ -957,25 +911,18 @@ impl WatchLoop {
             .collect();
         let still: HashSet<String> = self.pending.keys().cloned().collect();
         let still_windows: HashSet<String> = self.pending.values().map(|p| p.window.clone()).collect();
-        let deferred = self.collector.flush(items, &still, &still_windows);
+        let deferred = self.collector.flush(items, &still, &still_windows, now);
         self.last_good_ms = now_ms();
         let later = Instant::now();
         for Deferred { rel, delay, .. } in deferred {
             let (since, window, multiple) =
                 busy_since.get(&rel).cloned().unwrap_or((None, self.window.clone(), false));
             let since = since.unwrap_or(now);
-            let mut p = Pending::new(now, window);
-            p.carried_multiple = multiple;
-            p.retry_at = Some(later + delay);
-            p.busy_since = Some(since);
             match self.pending.get_mut(&rel) {
                 // 待っている間に新しいイベントが来ていた: そちらの待ちを使い、判断だけ引き継ぐ
-                Some(newer) => {
-                    newer.carried_multiple |= multiple;
-                    newer.busy_since = newer.busy_since.or(p.busy_since);
-                }
+                Some(newer) => newer.carry_over(multiple, since),
                 None => {
-                    self.pending.insert(rel, p);
+                    self.pending.insert(rel, Pending::deferred(now, window, multiple, since, later + delay));
                 }
             }
         }

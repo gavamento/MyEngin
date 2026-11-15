@@ -1,7 +1,7 @@
 # sub-26: サービス側の時間に依存する試験を、機械の負荷に強くする (M104o2)
 
 - 依存: sub-14
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 順序: sub-14 → **sub-26** → sub-15 (番号は末尾。sub-14 の VERDICT で足した。spec §2 D39)
 - 書き込みの深さ: 詳細
@@ -59,4 +59,38 @@ Phase 5 (復元) は安全性が P0 で、検証がこれらの試験の結果�
 
 ## 実装メモ (coder が追記)
 
+### round 1
+
+原因の区分 (根拠。詳細は `docs\ai-change-tracking\architecture.md` §4「sub-26」):
+
+| 試験 | 区分 | 根拠 |
+|---|---|---|
+| `pipe.rs` の `scene_diff_is_paged_...` (`items` が空でない) | (c) クライアントの不具合 | 通知は 200 ms のポーラが `id` なしの 1 行として差し込む (ipc-contract §4.5)。`Client::request` は次の 1 行を応答として返していた。`list` の直後に `note.txt` の `change_recorded` が届くと、次の応答として通知の行を読み、`reply["result"]` が null になる (観測した症状と一致)。製品のサービス側は正しい。単体試験 (`client.rs`) で再現・固定。実走で落ちた回の生の応答は取れていない (planner の観測のみ)。メッセージに応答を出すようにした |
+| `watch.rs` の `waiting_for_a_writer_gives_up_...` | (b) 経験則が負荷で外れた | 負荷をかけた初回の実行で再現。Revision は 1 件 `[coalesced, after = 最終の内容]` (打ち切りの前に書き手が終わった)。最終の内容は残っており、製品は仕様どおり |
+| `watch.rs` の `single_saves_stay_complete_under_cpu_load` | (b) | 負荷で 1 回の保存のイベントが `burst_gap` (200 ms) を超えて離れた場合の仕様。今回の実行では再現せず (落ちた回の記録は planner の観測のみ) |
+| `reconcile.rs` の `verification_scan_catches_missed_...` (負荷の実行で 1 回落ちた。x.txt が `modified/complete`) | (a) 試験の待ち方 | 「イベントを捨てる」のを固定の 100 ms で待っていた。監視スレッドが遅れて取り出すと旗が戻った後に通常経路で処理される |
+| `watch.rs` の `writes_within_debounce_make_one_coalesced_revision` (負荷の実行で 1 回落ちた。Revision が `complete` + `coalesced` の 2 件) | (b) | 書き込む側が 600 ms のデバウンスを超えて止まった |
+
+実装:
+- `src/debounce.rs` (新規): 経験則の判定を `Instant` の引数を取る純粋な型・関数にした (`Pending` + `touch` / `is_multiple` / `due` / `waited_too_long` / `deferred` / `carry_over`、`window_expired`、`keep_holding`、`verify_due`)。単体試験 10 件 (実時間の `sleep` なし)。
+- `src/watch.rs`: `Pending` を移し、判定を上の関数へ。実時間を渡す点は同じ (挙動は変えない)。`dropped_event_paths` (試験用)。捨てる旗の判定を `handle_event` の先頭へ寄せた (3 か所の呼び出し元から外した)。
+- `src/collector.rs`: `flush` が `now` を受け、預かりの期限を `keep_holding` で判定。
+- `src/client.rs`: `request` が同じ `id` の応答まで読み、先に来た通知を `wait_line` 用に取っておく。単体試験 2 件。
+- `tests\watch.rs`: 3 + 1 試験を `#[ignore]` (計測・負荷) へ移し、負荷に依らない対の試験を既定に置いた。固定の 100 ms 待ちを 1 か所置き換え。`tests\reconcile.rs` も 1 か所。
+- 文書: `architecture.md` §4 に「sub-26」(時刻の口、試験の区分、`#[ignore]` の一覧、切り分け)。
+
+検証 (すべて `tools\track`。負荷 = 自分で起動した `bench load --threads 12` (論理コア 12)、終了後に止めた):
+- 負荷あり・既定の `cargo test --manifest-path tools\track\Cargo.toml` (全体、fail-fast): 最終版で **10 回 / 10 回通過** (15 バイナリ × 10 = `test result: ok` 150 行、FAILED 0)。1 回約 1 分 35 秒〜2 分 20 秒。
+  - 経緯: 変更前 2 回 (1 回失敗: giveup)。client / watch の修正後の 10 回は 9/10 (run 6 で reconcile の 1 件)。reconcile を直した後の 10 回も 9/10 (run 6 で `writes_within_debounce...`)。両方を直した最終版の 10 回が 10/10。つまり 10 回連続通過の確認は最終版の 1 セットだけで、それ以前の失敗は上の表の (a) / (b) で直した。
+- 負荷なし 5 回: 5/5 通過。
+- `cargo test --test watch -- --ignored` (負荷なし): 4 件通過 (5.4 秒)。`cargo test -- --ignored` の全体は既存の巨大試験 (`reconcile.rs` の 64000 ファイルなど、最長 90 分) を含むので回さなかった。
+- `tools\build_track.bat` は `bin\x64\*` の `mye_track.exe` を置き換えるので使わず、`cargo build --release` + `pwsh tools\track_verify.ps1` を 3 回: 3 回とも全シナリオ PASS。
+- `mye_track bench changes --counts 1,1000` (1000 ファイル): 1 件 470〜473 ms、一括 1000 件 2935 ms (performance.md の 422〜474 ms、3723 ms と同じ桁)。
+- `check_rules.ps1`: 0 error (66 warning は既存の docs の規則 17)。`git diff --stat HEAD -- src tools/mcp tools/track/src/schema`: 空。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: 差分は `tools\track\src` (`debounce.rs` 新規、`client.rs`、`collector.rs`、`lib.rs`、`watch.rs`)、`tools\track\tests` (`watch.rs`、`reconcile.rs`、`pipe.rs`)、`architecture.md` だけ。`src`、`tools\mcp`、`tools\track\src\schema` に差分なし。planner の実走 (CPU 使用率 20〜60%、ユーザーの別のプログラムが動いている状態): 全体の `cargo test` を 5 回続けて、5 回とも 277 件通過・7 件 ignored (sub-14 の VERDICT のときは同じコマンドが 5 回中 3 回失敗)。残存プロセスなし。`#[ignore]` へ移ったのは `tests\watch.rs` の 4 件 (`writes_within_debounce_make_one_coalesced_revision`、`file_held_open_for_a_second_is_not_recorded_mid_write`、`waiting_for_a_writer_gives_up_as_coalesced_and_the_final_content_follows`、`single_saves_stay_complete_under_cpu_load`) で、どれも「負荷で製品の経験則の結果が変わる」性質。負荷をかけた 10 回、`-- --ignored`、`track_verify` 3 回、計測は coder の結果による。
+  - 原因の区分を受け入れる: `tests\pipe.rs:811` は (c) = クライアント (`Client::request`) が、応答の前に届いた通知の行を応答として返していた不具合。サービスは正しい。ただし落ちた回の生の応答は取れておらず、仕様の読みと単体での再現による結論 (coder が正直に書いている)。影響するのは通知を購読する接続だけで、`mye_track client` を使う検証と試験。フックは購読しないので影響しない。Editor 側 (C++ の `TrackClient`) は `id` で対にしているので別。
+  - 逸脱 (時計の trait ではなく、判定を時刻引数の純粋な関数に切り出した): 採る。経験則の判定を偽の時刻で確かめる、という目的を満たしている。監視スレッドの待ちが実時間のままなのは製品として正しい。
+  - 質問への回答: 単発の保存の `complete` を表明する既定の試験 (`watch.rs`、`reconcile.rs`、`pipe.rs`、`session.rs` に点在) は、既定に残す。200 ms を超える停止でだけ落ちうるが、普通の条件で成り立つべき性質で、coder の負荷 20 回と planner の 5 回で落ちていない。今後落ちたら、落ちた試験名と停止の長さを見て、その時に移すかを決める。
+  - `bin\x64\Debug|Release\mye_track.exe` が sub-26 の変更を含まない古いままである件: `bin\` はコミットしない生成物なので、コミットには影響しない。sub-15 の最初に `tools\build_track.bat Release` を回す (sub-15.md に書いた)。

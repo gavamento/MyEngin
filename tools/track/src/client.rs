@@ -4,6 +4,7 @@
 //! hello は自動では行わない (hello の失敗を検証できるように、行をそのまま流す)。
 //! フックの CLI (sub-08) もこの接続の実装を共有する。
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
@@ -25,6 +26,8 @@ pub const EXIT_NO_SERVICE: u8 = 4;
 pub struct Client {
     reader: BufReader<File>,
     writer: File,
+    /// `request` の応答を待つ間に届いた通知。`wait_line` が先に返す (通知は id を持たず、応答の前後に割り込む)。
+    notifications: VecDeque<Value>,
 }
 
 impl Client {
@@ -35,7 +38,7 @@ impl Client {
             match open_client(name) {
                 Ok(file) => {
                     let writer = file.try_clone()?;
-                    return Ok(Client { reader: BufReader::new(file), writer });
+                    return Ok(Client::from_files(file, writer));
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound && Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(50));
@@ -43,6 +46,10 @@ impl Client {
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    fn from_files(reader: File, writer: File) -> Client {
+        Client { reader: BufReader::new(reader), writer, notifications: VecDeque::new() }
     }
 
     /// 1 行を送り、応答の 1 行を受ける。切られていれば `None`。
@@ -67,6 +74,9 @@ impl Client {
 
     /// 要求なしに届く 1 行 (通知) を `limit` まで待つ。来なければ `None`。相手が閉じていれば `Err`。
     pub fn wait_line(&mut self, limit: Duration) -> io::Result<Option<Value>> {
+        if let Some(note) = self.notifications.pop_front() {
+            return Ok(Some(note));
+        }
         let deadline = Instant::now() + limit;
         loop {
             if !self.reader.buffer().is_empty() || bytes_available(self.reader.get_ref())? > 0 {
@@ -84,11 +94,23 @@ impl Client {
     }
 
     /// 要求を JSON で組んで送り、応答を JSON で返す。
+    /// 応答より先に届いた通知 (`event` を持ち `id` を持たない行) は、`wait_line` 用に取っておく。
     pub fn request(&mut self, id: u64, op: &str, args: Value) -> io::Result<Value> {
         let line = serde_json::json!({ "id": id, "op": op, "args": args }).to_string();
-        match self.exchange(&line)? {
-            Some(text) => serde_json::from_str(&text).map_err(io::Error::other),
-            None => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "サービスが接続を切った")),
+        let Some(mut text) = self.exchange(&line)? else {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "サービスが接続を切った"));
+        };
+        loop {
+            let value: Value = serde_json::from_str(&text).map_err(io::Error::other)?;
+            if value.get("id").is_some() || value.get("event").is_none() {
+                return Ok(value);
+            }
+            self.notifications.push_back(value);
+            let mut next = String::new();
+            if self.reader.read_line(&mut next)? == 0 {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "サービスが接続を切った"));
+            }
+            text = next.trim_end_matches(['\n', '\r']).to_string();
         }
     }
 }
@@ -156,4 +178,42 @@ pub fn run_cli(args: &[String]) -> u8 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 試験用: 中身が決まったファイルを読む側にした Client (書く側は捨てる)。
+    fn client_reading(lines: &str, tag: &str) -> Client {
+        let path = std::env::temp_dir().join(format!("mye_track_client_{}_{tag}", std::process::id()));
+        std::fs::write(&path, lines).unwrap();
+        let reader = File::open(&path).unwrap();
+        let sink_path = path.with_extension("sink");
+        let writer = File::create(&sink_path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&sink_path);
+        Client::from_files(reader, writer)
+    }
+
+    #[test]
+    fn request_skips_notifications_arriving_before_the_response_and_keeps_them() {
+        let mut client = client_reading(
+            "{\"event\":\"change_recorded\",\"revisionId\":7}\n{\"event\":\"resync\"}\n{\"id\":14,\"ok\":true,\"result\":{\"items\":[]}}\n",
+            "demux",
+        );
+        let reply = client.request(14, "scene_diff", serde_json::json!({})).unwrap();
+        assert_eq!(reply["result"]["items"], serde_json::json!([]), "{reply}");
+        // 取っておいた通知は、届いた順に wait_line が返す
+        let first = client.wait_line(Duration::ZERO).unwrap().unwrap();
+        assert_eq!(first["revisionId"], 7);
+        assert_eq!(client.wait_line(Duration::ZERO).unwrap().unwrap()["event"], "resync");
+    }
+
+    #[test]
+    fn request_returns_a_line_without_id_as_the_response_and_a_closed_connection_is_an_error() {
+        let mut client = client_reading("{\"ok\":false,\"error\":{\"code\":\"bad_args\"}}\n", "noid");
+        assert_eq!(client.request(1, "x", serde_json::json!({})).unwrap()["error"]["code"], "bad_args");
+        assert!(client.request(2, "x", serde_json::json!({})).is_err());
+    }
 }

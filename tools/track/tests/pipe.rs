@@ -808,7 +808,7 @@ fn scene_diff_is_paged_oversize_values_are_flagged_and_only_the_editor_may_ask()
     fs::write(project.join("note.txt"), "hi\n").unwrap();
     let note = wait_latest_revision(&mut editor, "note.txt", 3);
     let reply = editor.request(14, "scene_diff", json!({ "revisionId": note })).unwrap();
-    assert_eq!(reply["result"]["items"], json!([]));
+    assert_eq!(reply["result"]["items"], json!([]), "{reply}");
     let detail = editor.request(15, "describe", json!({ "revisionId": note })).unwrap();
     assert!(detail["result"].get("sceneSummary").is_none());
     let recorded = expect_event(&mut editor, "change_recorded note.txt", |e| e["event"] == "change_recorded" && e["path"] == "note.txt");

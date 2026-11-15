@@ -128,7 +128,7 @@ Editor 側の時刻は全部 `TrackIo` の時計 (`NowMs` / `NowMicros`) を通�
 - **ベースライン。** サービス起動時に追跡対象の全ファイルの内容ハッシュを取り、`snapshots` に残す。以後の Before は「最後に確認できた内容」。
 - **停止していた間の変更。** 起動時にベースラインを取り直して前回と比べ、違っていれば 1 件の変更として記録する。この変更は観測の完全性が `gap` (欠落あり) で、帰属は Unknown。中間の編集は復元しない。
 - **取り逃し。** デバウンス中に同じファイルが複数回書かれたら、最初の Before と最後の After だけが残る。この Revision は `coalesced` (中間状態を見ていない) と記録する。監視バッファがあふれたら、その区間を欠落として記録し、ベースラインを取り直す。
-  - 「複数回書かれた」の判定 (件数は書き込みの回数を表さないので、変更の有無ではなく `coalesced` の印だけに使う。見逃すより多めに付ける側に倒す): ①イベントが 200 ms (`DEFAULT_BURST_GAP`。1 回の保存のイベントは CPU 負荷で数十 ms 離れうるので広く取る。試験: `single_saves_stay_complete_under_cpu_load`) より離れて 2 つ以上の塊に分かれた、②内容の変更を表す `Modify` が 3 件以上 (1 回の書き込みは最大 2 件)、③書き手を待っている間にサイズが変わった・共有なしで開かれていて待った、のどれか。イベントは `notify` のコールバックの中で時刻を付けるので、処理が遅れても間隔は変わらない。
+  - 「複数回書かれた」の判定 (件数は書き込みの回数を表さないので、変更の有無ではなく `coalesced` の印だけに使う。見逃すより多めに付ける側に倒す): ①イベントが 200 ms (`DEFAULT_BURST_GAP`。1 回の保存のイベントは CPU 負荷で数十 ms 離れうるので広く取る。試験: 判定は `debounce.rs` の単体試験、負荷下の実測は `#[ignore]` の `single_saves_stay_complete_under_cpu_load`。下の sub-26) より離れて 2 つ以上の塊に分かれた、②内容の変更を表す `Modify` が 3 件以上 (1 回の書き込みは最大 2 件)、③書き手を待っている間にサイズが変わった・共有なしで開かれていて待った、のどれか。イベントは `notify` のコールバックの中で時刻を付けるので、処理が遅れても間隔は変わらない。
 - **追跡する種類。** テキスト (C / C++ / C# / HLSL / JSON / YAML / Markdown / その他 UTF-8) は行 diff まで。UTF-8 として読めないものと既定サイズ (8 MiB、設定可) を超えるものはバイナリ扱いで、ファイル単位の記録だけ。
 - **秘密情報。** Blob には原本がそのまま入る。既定の除外パターン (`.env`、`*.pem`、`*.key` など) を持ち、除外したファイルは「変わったこと」だけを内容なしで記録する。
 
@@ -176,6 +176,32 @@ Editor 側の時刻は全部 `TrackIo` の時計 (`NowMs` / `NowMicros`) を通�
 - **上限。** 分けた結果が 256 本を超えたらルートの再帰 1 本へ戻し、`status` の `watches.fallback` に出す。本数は `watches.count`。
 - **残る限界。** 追跡対象どうしの洪水 (追跡対象のディレクトリへ数千ファイルを一気に書く) は、そのディレクトリの 16 KiB のバッファを使うので、読む側が CPU を取れないと今でも取りこぼしうる。検証の走査が `gap` として拾う (記録は欠けない。帰属は内容による根拠だけ)。自前の `ReadDirectoryChangesW` (大きいバッファ + あふれの検出) は、sub-06 の試作が「バースト直後の最初の数件が届かない」欠陥の原因を突き止められなかったため実装していない (performance.md §8)。
 - ディレクトリの突き合わせの試験は `tests\watch.rs` (`watches_are_split_around_ignored_directories` ほか)。
+
+**sub-26 (M104o2) で足したもの**: 時刻に依存する経験則を、機械の負荷から切り離して確かめる。
+
+- **時刻の口。** 経験則の判定 (デバウンス 300 ms / 最大 2 秒、書き込みの塊の間隔 `burst_gap`、`Modify` 3 件以上、書き手の待ちの打ち切り `settle_give_up`、預かりの期限 `max_hold`、窓の切れ目、検証の走査の起動条件) は `tools\track\src\debounce.rs` の純粋な関数・型 (`Pending`、`window_expired`、`keep_holding`、`verify_due`) に置き、**時刻は `Instant` の引数で受け取る** (ここでは読まない)。監視スレッド (`watch.rs`) は実時間 (`Instant::now()`、イベントは `notify` のコールバックの中で付けた時刻) を渡し、製品の挙動は変わらない。単体試験は基準の `Instant` に `Duration` を足した値を渡す (実時間の `sleep` を含まない)。時計の trait は置かない (差し替えるのは判定の入力だけで足りる)。
+- **試験の区分。**
+  - **決定的** (既定の `cargo test`): `debounce.rs` の単体試験。1 回の保存 (イベント 2 件・間隔 0) は 1 つの塊、間隔が `burst_gap` ちょうどは 1 塊・1 ナノ秒超えで 2 塊、`Modify` 3 件以上、デバウンスの 300 ms と最大 2 秒、書き手の待ちの打ち切り、預かりの期限、窓の切れ目、検証の走査の条件。`client.rs` の通知の振り分けも決定的。
+  - **結合** (既定の `cargo test`): 本物の `notify`・ファイル・pipe を通す。待ちは「条件が成り立つまで、上限 (60 秒など) つきで待つ」だけで、固定の `sleep` や「N ms 以内」で合否を決めない。合否は**負荷に依らず成り立つこと** (記録の欠落が無い、作業ツリーを書かない、書き手を失敗させない、最後の内容の Revision が残る) だけ。
+  - **計測・負荷** (`#[ignore]`、`cargo test --manifest-path tools\track\Cargo.toml -- --ignored` で回す): **機械が重いと製品の経験則そのものが変わる性質** を見る試験。1 回の保存のイベントが `burst_gap` より離れれば `coalesced` になる・書き手を待つ間に監視スレッドが遅れれば打ち切りの前に書き手が終わる、のは仕様なので、既定の実行の合否にしない。同じ判定は決定的な単体試験が偽の時刻で確かめる。
+- **`#[ignore]` へ移した試験** (いずれも負荷で経験則の結果が変わる性質。理由は右):
+
+  | 試験 (`tests\watch.rs`) | 理由 | 既定の実行に残した、負荷に依らない試験 |
+  |---|---|---|
+  | `single_saves_stay_complete_under_cpu_load` | 負荷で 1 回の保存のイベントが `burst_gap` を超えて離れると `coalesced` になるのが仕様 | `many_saves_are_all_recorded_with_their_final_content` (400 回の保存の最後の内容が全部残る) |
+  | `waiting_for_a_writer_gives_up_as_coalesced_and_the_final_content_follows` | 監視スレッドが負荷で遅れると、打ち切る前に書き手が終わり Revision が 1 件になる | `a_file_appended_for_a_long_time_ends_with_a_revision_of_the_final_content` |
+  | `writes_within_debounce_make_one_coalesced_revision` | 書き込む側のスレッドが負荷で止まると 600 ms のデバウンスが割れ、Revision が 2 件になる (本検証の 2 回目の負荷の実行で 1 回落ちた: `complete` の Revision と `coalesced` の Revision が 1 件ずつ) | `three_quick_writes_chain_from_the_baseline_to_the_final_content` (Revision の列が v0 から v3 まで切れ目なくつながる) |
+  | `file_held_open_for_a_second_is_not_recorded_mid_write` | 書き手 (試験のスレッド) が止まると、サイズが続けて同じになり途中の内容を読む | `file_held_open_for_a_second_ends_with_a_revision_of_the_final_content` |
+
+  「負荷に依らず成り立つべきこと」の試験は `#[ignore]` に移していない。
+- **失敗の切り分け (sub-14 の後に見つかった 3 件)。**
+  - `tests\pipe.rs` の `scene_diff_is_paged_oversize_values_are_flagged_and_only_the_editor_may_ask` (`items` が空の配列でない): **クライアントの不具合 (試験の待ち方でも経験則でもない)**。通知は 200 ms ごとのポーラが `id` を持たない 1 行として応答の前後に差し込む (ipc-contract.md §4.5) のに、`Client::request` は次の 1 行を応答として返していた。直前の `list` の後で通知が届くと、次の `scene_diff` の応答の代わりに通知の行を読む。`Client::request` を、同じ `id` の応答まで読み、先に来た通知を取っておく (`wait_line` が先に返す) ように直した。決定的な再現は `client.rs` の単体試験。
+  - `waiting_for_a_writer_gives_up_...` (Revision が 1 件): 経験則が負荷で外れた。落ちた回の Revision は `[coalesced, 最終の内容]` の 1 件だけ (打ち切りの前に書き手が終わった)。製品は正しく、最後の内容は残っている。
+  - `single_saves_stay_complete_under_cpu_load` (`coalesced` が 1 件): 経験則が負荷で外れた (1 回の保存の 2 つのイベントが 200 ms より離れた)。
+
+  - 負荷をかけた実行で新たに落ちた 2 件 (区分は a / b):
+    - `tests\reconcile.rs` の `verification_scan_catches_missed_create_modify_delete_as_gap` (x.txt が `gap` でなく `complete`): **試験の待ち方 (a)**。「イベントを捨てる」ために固定の 100 ms を待っていたが、監視スレッドがそれより遅れてイベントを取り出すと、捨てる旗が戻った後に通常の経路で処理される。`Tracker::dropped_event_paths` (試験用) を足し、最後の操作 (z.txt の削除) のイベントが捨てられるまで待つ形にした。`tests\watch.rs` の `injected_watcher_error_...` の同じ固定待ちも直した。
+    - `writes_within_debounce_make_one_coalesced_revision` (上の表): 経験則が負荷で外れた (b)。
 
 **未検証**: 数万ファイルのツリーでの初期化時間とバッファの大きさ → sub-21 で計測した (performance.md)。
 
