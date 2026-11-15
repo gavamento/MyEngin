@@ -175,7 +175,7 @@ void TrackClient::Poll()
     }
 
     // 行に分けて配る。行数と時間に上限を持ち、残りは次のフレームへ
-    const auto started = std::chrono::steady_clock::now();
+    const int64_t startedMicros = io_->NowMicros();
     while (stats_.lastPollLines < static_cast<uint32_t>(kTrackMaxLinesPerPoll)) {
         const size_t newline = rx_.find('\n', rxPos_);
         if (newline == std::string::npos) {
@@ -196,7 +196,7 @@ void TrackClient::Poll()
         if (!connected_) {
             return; // 配った先 (hello の失敗など) が接続を閉じた
         }
-        if (std::chrono::steady_clock::now() - started > kTrackPollBudget) {
+        if (io_->NowMicros() - startedMicros > kTrackPollBudget.count()) {
             break;
         }
     }

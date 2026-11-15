@@ -73,6 +73,8 @@ git の差分では AI 以前の未コミット変更が混ざり、シーンは
 
 | D37 | Editor 側の追跡クライアントの試験が、機械が重いと落ちる | 2026-11-15 に planner が再現: CPU 使用率 100% の状態で、Debug の `MYE_SELFTEST_ONLY=changetracking` が 5 回中 5 回失敗 (`poll cap`、`model: describe is stored`、`hunks: …`)。`C:\HAL\MyEngin\src\Editor\ChangeTracking\TrackClient.cpp` 178・199 行目が `Poll()` の時間の上限 (2 ms) を `steady_clock` で直接測っている (他の時刻は差し替えられる `io_->NowMs()`)。Release は同じ状態で通る | 未確認 | sub-24 と sub-13 の間に **sub-25 (M104m3)** を足し、`Poll()` の上限を差し替えられる時計で測り、試験を偽の時計で決定的にする。製品の挙動 (実時間で 2 ms) は変えない。却下: (a) 試験の許容幅を広げる (機械がもっと重ければまた落ちる。CI で落ちうる) (b) sub-24 を差し戻してその中で直す (sub-24 の変更と関係の無い直しが同じコミットに混ざる) (c) 放置して「静かな機械で回す」運用にする (検証の結果が機械の状態に依存する) |
 
+| D38 | Debug の `Editor.exe --selftest-full` が `physics` スイートの開始直後にスタックオーバーフローで落ちる (sub-25 の coder の報告) | 2026-11-15 に planner が `MYE_SELFTEST_ONLY=physics` の Debug で再現 (終了コード -1073741571)。M104 の `src\Engine` の差分は `LocalizationTable.inl` だけで、physics のコードもスタックの設定も変えていない。最後に CI が緑だった push (`a639ed1`) から基点までに、physics / 自己テストのあたりを触ったコミットが M97a〜M103 に 9 本ある。**基点のビルドでの再現は未確認** | 未確認 | M104 より前からの別件と見て、**M104 では直さない**。A20 の横断は「Release は全部、Debug は `physics` を除いた全部」で確かめ、除いたことを明記する (sub-14 に書いた)。却下: (a) M104 の中で原因を調べて直す (追跡と無関係な Engine 層の修正が混ざる) (b) 基点をビルドし直して確定させる (別の作業ツリーでエンジン全体をビルドする手間に対し、結論が変わっても M104 の進め方は同じ) |
+
 ## 3. スコープ
 
 - やる: 計画の進捗表 M104b〜M104t (Phase 0 の試作 〜 Phase 6)。順序は要求 §19 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較)。最後に、エンジン配布物へのサービス同梱 (M104u、D5)。
@@ -221,6 +223,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-25 の VERDICT round 1): D38 を追加 (Debug の `--selftest-full` が `physics` で落ちる件は M104 の外の別件として扱い、A20 の Debug の横断は `physics` を除いて回す)。sub-14 に書いた。sub-13 は変更なし。
 - 2026-11-15 (planner、sub-24 の VERDICT round 1): D37 を追加。sub-24 と sub-13 の間に **sub-25 (M104m3)** を足した (Debug の `changetracking` スイートが負荷の下で落ちるのを、planner が 5 回中 5 回再現した)。sub-13 を着手可にし (確認済みの事実と追加の取り決めを書いた)、依存を sub-25 にした。
 - 2026-11-15 (planner、sub-12 の VERDICT round 1): sub-24 を着手可にした (sub-12 の結果、強調の入・切の保存を色と一緒に入れること、Scene View の試験の分け方を追記)。
 - 2026-11-15 (planner、sub-11 の VERDICT round 1): sub-12 を詳細に書き直した (サービス側に `scene_overlay` と `document_for_path`、`SceneChangeOverlay`、AI Changes 窓の「シーンの変更」の一覧、Hierarchy のバッジ、選択の同期、受け入れ条件 13 件)。大きいので Inspector の Field 差分・Scene View のワイヤ箱・色の設定を **sub-24 (M104m2)** に分け、sub-14 の依存を sub-24 と sub-13 にした。DB のスキーマ版は 3。

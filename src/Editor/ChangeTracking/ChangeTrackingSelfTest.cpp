@@ -167,18 +167,15 @@ struct ModelRig {
     }
 };
 
-// 1 回の Poll の実時間 (ミリ秒) と TrackIo の呼び出し回数
+// 1 回の Poll の TrackIo の呼び出し回数 (実時間は測らない。時間の上限は偽の時計で確かめる)
 struct PollCost {
-    double ms = 0.0;
     int ioCalls = 0;
 };
 PollCost TimedPoll(const std::function<void()>& poll, const FakeState& s)
 {
     const int before = s.c.Total();
-    const auto t0 = std::chrono::steady_clock::now();
     poll();
     PollCost cost;
-    cost.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     cost.ioCalls = s.c.Total() - before;
     return cost;
 }
@@ -886,19 +883,16 @@ bool RunChangeTrackingSelfTest()
 
         // hello に応答が無い (サービスが固まっている): 切って再接続を待つ。フレームは止まらない
         Rig hung;
-        double worst = 0.0;
         hung.client.Poll();
         for (int i = 0; i < 100; ++i) {
             hung.s->nowMs += 100;
             const PollCost cost = TimedPoll([&] { hung.client.Poll(); }, *hung.s);
-            worst = (std::max)(worst, cost.ms);
             if (cost.ioCalls > kTrackMaxIoCallsPerPoll) {
                 check(false, "hung service: a Poll exceeded the I/O call bound");
             }
         }
         check(hung.client.State() == TrackState::Connecting && hung.client.GetStats().timeouts >= 1,
               "hung service: the unanswered hello times out and the client keeps retrying (state only changes)");
-        check(worst < 50.0, "hung service: Poll never blocks the frame");
     }
 
     // ---- (e) 切断 -> 保留中が全部失敗 -> 定数の間隔で再試行 -> 成功。exe が無い場合 ----
@@ -999,17 +993,67 @@ bool RunChangeTrackingSelfTest()
         }
         uint32_t maxLines = 0;
         int polls = 0;
-        double worst = 0.0;
         while (received < 10000 && polls < 1000) {
-            const PollCost cost = TimedPoll([&] { r.client.Poll(); }, *r.s);
-            worst = (std::max)(worst, cost.ms);
+            r.client.Poll();
             maxLines = (std::max)(maxLines, r.client.GetStats().lastPollLines);
             ++polls;
         }
         check(received == 10000, "poll cap: all 10000 lines are eventually processed");
         check(maxLines <= static_cast<uint32_t>(kTrackMaxLinesPerPoll), "poll cap: one Poll never handles more than kTrackMaxLinesPerPoll lines");
-        check(polls >= 10000 / kTrackMaxLinesPerPoll && polls <= 500, "poll cap: it spreads over many frames (a bounded number), not one");
-        check(worst < 100.0, "poll cap: a Poll stays short even with 10000 lines waiting");
+        // 時計が進まない (時間の上限に当たらない) ので、行数の上限 256 だけで区切られる: ceil(10000 / 256) = 40 フレームちょうど
+        check(polls == (10000 + kTrackMaxLinesPerPoll - 1) / kTrackMaxLinesPerPoll && maxLines == static_cast<uint32_t>(kTrackMaxLinesPerPoll),
+              "poll cap: with a stopped clock the line cap alone splits 10000 lines into exactly 40 frames");
+    }
+
+    // ---- (f2) Poll の時間の上限: 偽の時計で、当たる場合と当たらない場合を固定のフレーム数で確かめる ----
+    {
+        // 時計が 1 読み取りごとに 1 ms 進む: 開始 (t=0) のあと 1 行ごとに 1 ms, 2 ms, 3 ms。3 ms > 2 ms で 3 行目の後に止まる
+        Rig r;
+        BringReady(r.client, *r.s);
+        int received = 0;
+        r.client.SetNotifyHandler([&](const json&) { ++received; });
+        std::string text;
+        for (int i = 0; i < 100; ++i) {
+            text += "{\"event\":\"change_recorded\",\"revisionId\":" + std::to_string(i) + "}\n";
+        }
+        r.s->chunks.push_back(std::move(text));
+        r.s->microsPerRead = 1000;
+        uint32_t maxLines = 0;
+        int polls = 0;
+        while (received < 100 && polls < 1000) {
+            r.client.Poll();
+            maxLines = (std::max)(maxLines, r.client.GetStats().lastPollLines);
+            ++polls;
+        }
+        check(received == 100 && maxLines == 3 && polls == 34,
+              "poll budget: a clock that advances 1 ms per read stops each Poll after 3 lines (100 lines = exactly 34 frames)");
+
+        // 2 ms ちょうどは「超えた」に含めない (> 2000 us): 1 読み取り 500 us なら 1, 2, 3, 4 行目の後が 500, 1000, 1500, 2000 で、5 行目の後 2500 で止まる
+        Rig edge;
+        BringReady(edge.client, *edge.s);
+        int edgeReceived = 0;
+        edge.client.SetNotifyHandler([&](const json&) { ++edgeReceived; });
+        std::string six;
+        for (int i = 0; i < 6; ++i) {
+            six += "{\"event\":\"change_recorded\"}\n";
+        }
+        edge.s->chunks.push_back(std::move(six));
+        edge.s->microsPerRead = kTrackPollBudget.count() / 4;
+        edge.client.Poll();
+        check(edge.client.GetStats().lastPollLines == 5 && edgeReceived == 5, "poll budget: exactly the budget is not over it (stops on the first line past it)");
+
+        // 少ない行数で時計も進まない: 上限のどちらにも当たらず 1 フレームで全部
+        Rig few;
+        BringReady(few.client, *few.s);
+        int fewReceived = 0;
+        few.client.SetNotifyHandler([&](const json&) { ++fewReceived; });
+        std::string small;
+        for (int i = 0; i < 10; ++i) {
+            small += "{\"event\":\"change_recorded\"}\n";
+        }
+        few.s->chunks.push_back(std::move(small));
+        few.client.Poll();
+        check(fewReceived == 10 && few.client.GetStats().lastPollLines == 10, "poll budget: under both caps, one Poll handles everything");
     }
 
     // ---- (g) モデル: 節ごとに独立 (それぞれが自分の偽の I/O とセッションを持ち、前の節の状態に依存しない) ----
@@ -1408,10 +1452,8 @@ bool RunChangeTrackingSelfTest()
         const fs::path root = fs::temp_directory_path() / (L"mye_track_noexe_" + std::to_wstring(GetCurrentProcessId()));
         ChangeTrackingSession session;
         session.Start(L"C:\\mye_track_selftest\\bin", root.wstring(), true);
-        const auto t0 = std::chrono::steady_clock::now();
         session.Poll();
-        const double pollMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        check(session.State() == TrackState::NoService && pollMs < 200.0, "launch: no service and no exe -> NoService without blocking");
+        check(session.State() == TrackState::NoService, "launch: no service and no exe -> NoService (Poll returned, so it did not block)");
         if (had > 0 && had < std::size(previous)) {
             SetEnvironmentVariableW(kTrackExeEnvVar, previous);
         } else {

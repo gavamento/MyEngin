@@ -5,6 +5,14 @@
 - 往復: 0
 - 書き込みの深さ: **骨子** (spec §6.1)。Phase 4 はこの 1 本。
 
+## `--selftest-full` の扱い (2026-11-15、sub-25 の VERDICT で追記。spec §2 D38)
+
+- **Debug の `Editor.exe --selftest-full` は、`physics` スイートの開始直後にスタックオーバーフロー (終了コード -1073741571) で落ちる。** planner が `MYE_SELFTEST_ONLY=physics` の Debug でも再現した (`==== Physics self test ====` の直後)。M104 は physics も `src\Engine` のコードも変えていない (基点 `ca6a3991` からの `src\Engine` の差分は `LocalizationTable.inl` だけ。`build\Editor.vcxproj` のスタックの設定も変えていない) ので、M104 より前からのものと見ている。ただし基点のビルドでの再現は確かめていない (未確定)。
+- **M104 では直さない** (別件。ユーザーへ報告済みの扱い)。A20 の「`--selftest-full` が通る」は、次の形で確かめる:
+  - Release: `bin\x64\Release\Editor.exe --selftest-full` を全部。
+  - Debug: `--selftest-list` で全スイートの名前を取り、`physics` を除いた全部を `MYE_SELFTEST_ONLY=<名前,...>` で回す。`physics` を除いたことを結果に明記する。Release で `physics` が通ることを確かめる (通らなければ報告)。
+  - Debug の `physics` が直った後 (別件の修正の後) は、除外をやめる。
+
 ## やること
 
 要求 §10、db §3.1 (reviews)、ADR-039 決定 11。完了条件は「承認情報が別 Revision へ誤って引き継がれない」。

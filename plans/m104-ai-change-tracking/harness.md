@@ -23,9 +23,9 @@
 | sub-23 (M104k2) Editor の保存をサービスへ知らせる | OK | 0 | 3f14e59d | should: 読み直しの穴を狭める確認は sub-12、nit: ipc-contract.md の制御文字は sub-11。DB スキーマ版 2。未確認: 実 Editor での保存 (条件 6)、スクショの目視 (cache/m104k2_shots)。Notion Q-21〜23 |
 | sub-11 (M104l) シーン構造 diff | OK | 0 | d6619bf0 | DB スキーマ版 3。nit: v1.sql のコメントに BEL (凍結なので直さない)、.meta と本体の観測順の組み合わせ試験は sub-19 の候補。計測は 1 回 (2 万エンティティ 162.9 ms)。Notion Q-24〜27 |
 | sub-12 (M104m) シーンの変更の集約、一覧、Hierarchy のバッジ、選択の同期 | OK | 0 | 235887d9 | nit: 強調の入・切の保存は sub-24、pipe.rs の unused_mut は次に tools/track を触るサブ、cache/m104m_shots の古いログは残置。未確認: 見た目の目視 (cache/m104m_shots の 4 枚)、実 Editor の操作。Notion Q-28〜30 |
-| sub-24 (M104m2) Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | OK | 0 | (このコミット) | should: Debug の changetracking が負荷で落ちる (既存の実時間依存。planner も 5/5 で再現) → sub-25 で直す。Debug での新規試験の通過は sub-25 の後に planner が確かめ直す。nit: 箱の可視判定は原点だけ (sub-19 で見直す)、名前・タグの印なし。未確認: 見た目の目視 (cache/m104m2_shots の 3 枚)。Notion Q-31〜33 |
-| sub-25 (M104m3) 追跡クライアントの試験から実時間への依存を外す | 実装中 | 0 | | 着手可。sub-24 の VERDICT で新設。順序は sub-25 → sub-13 → sub-14 |
-| sub-13 (M104n) 未保存シーンへの外部変更の確認 | 未着手 | | | 骨子。依存 sub-08。着手前にユーザー確認 (未決事項 1) |
+| sub-24 (M104m2) Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | OK | 0 | 98355cb7 | should: Debug の changetracking が負荷で落ちる (既存の実時間依存。planner も 5/5 で再現) → sub-25 で直す。Debug での新規試験の通過は sub-25 の後に planner が確かめ直す。nit: 箱の可視判定は原点だけ (sub-19 で見直す)、名前・タグの印なし。未確認: 見た目の目視 (cache/m104m2_shots の 3 枚)。Notion Q-31〜33 |
+| sub-25 (M104m3) 追跡クライアントの試験から実時間への依存を外す | OK | 0 | (このコミット) | 負荷下の Debug changetracking 20/20 (coder)、planner も 6/6。sub-24 の新規試験の Debug 通過も確認。nit: Poll 1 回の実時間の計測は sub-19、pipe.rs の unused_mut は残り。別件: Debug の physics スイートがスタックオーバーフロー (D38。M104 では直さず、sub-14 の Debug は physics を除く)。Notion Q-34〜35 |
+| sub-13 (M104n) 未保存シーンへの外部変更の確認 | 実装中 | 0 | | 着手可。Engine 層の ReloadHub を触る唯一のサブ。replay_verify を回す |
 | sub-14 (M104o) レビュー | 未着手 | | | 骨子。依存 sub-12, sub-13。Phase 4 の最後 |
 | sub-15 (M104p) ファイルと Hunk の復元、ジャーナル、回復 | 未着手 | | | 骨子。分割の可能性あり |
 | sub-16 (M104q) ライブのシーンの復元 | 未着手 | | | 骨子。Phase 5 の最後 |

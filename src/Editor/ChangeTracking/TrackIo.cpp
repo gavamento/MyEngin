@@ -142,6 +142,12 @@ public:
                    std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
+    int64_t NowMicros() override
+    {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
 private:
     // 書き込み 1 本を進める。壊れていれば false
     bool AdvanceWrite()

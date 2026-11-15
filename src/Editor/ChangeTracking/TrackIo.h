@@ -39,6 +39,8 @@ public:
 
     // 単調な時計 (ミリ秒)。時間切れと再接続の間隔を測る。フレームの時刻は使わない
     virtual int64_t NowMs() = 0;
+    // 単調な時計 (マイクロ秒)。Poll() の時間の上限を測る (NowMs は 2 ms の上限には粗い)
+    virtual int64_t NowMicros() = 0;
 };
 
 // 実物 (Win32 の名前付き pipe と CreateProcess)。exeDir はサービスの exe を探す場所 (Editor の exe の隣)

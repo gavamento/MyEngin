@@ -36,6 +36,8 @@ struct IoCounters {
 struct FakeState {
     IoCounters c;
     int64_t nowMs = 1000;
+    int64_t nowMicros = 0;           // NowMicros の現在値。試験が進める
+    int64_t microsPerRead = 0;       // NowMicros が呼ばれるたびに進む量 (0 = 進まない)
     bool serviceUp = true;                       // false なら OpenPipe は NotFound
     std::deque<TrackIo::OpenResult> openScript;  // 先に積んだ結果を 1 回ずつ返す
     bool tokenOk = true;
@@ -105,6 +107,12 @@ public:
     {
         ++s_->c.now;
         return s_->nowMs;
+    }
+    int64_t NowMicros() override
+    {
+        const int64_t t = s_->nowMicros;
+        s_->nowMicros += s_->microsPerRead;
+        return t;
     }
 
 private:
