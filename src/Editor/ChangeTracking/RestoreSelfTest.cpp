@@ -1301,7 +1301,7 @@ void TestPreviewWindow(const Check& check)
         const RestoreScreen& screen = window.LastRestoreScreen();
         check(screen.open && screen.hasPlan && screen.verdict == RestoreVerdict::Ready && screen.blocks.empty() && screen.ops.size() == 1 && screen.target == "assets/a.txt",
               "preview screen: the target, the verdict and the operation are shown, with no blocking reason");
-        check(!screen.canApply && !screen.applyNote.empty(), "preview screen: the apply button cannot be pressed in this version (with a one-line note)");
+        check(screen.canApply && !screen.applyNote.empty(), "preview screen: with a ready plan and no blocking reason the apply button can be pressed (with a one-line note)");
         check(p.ChangeView().size() == 1 && p.ChangeView()[0].before == "A6\n" && p.ChangeView()[0].after == "a6\n", "preview: the diff shows the hunk reversed");
         check(window.GetDiffViewer().Rows().HunkCount() <= 1, "preview: opening the preview does not disturb the detail's diff");
         // 閉じても何も変わらない
@@ -1514,13 +1514,13 @@ void TestPreviewWindow(const Check& check)
         PutFile(*fake, "assets/a.txt", std::string(kRestoreReadMaxBytes + 1, 'y'));
         fake->readCalls = 0;
         RestorePreview large;
-        large.Open(RestoreScope::File, r.model.Detail(), r.model.Hunks(), {}, kFakeRoot, r.session.Client(), *fake);
+        large.Open(RestoreScope::Hunks, r.model.Detail(), r.model.Hunks(), { 21 }, kFakeRoot, r.session.Client(), *fake);
         r.Settle(2);
         for (int i = 0; i < 5 && large.GetPhase() == RestorePreview::Phase::Preparing; ++i) {
             large.Tick(*fake);
         }
         check(large.GetPhase() == RestorePreview::Phase::Ready && large.Plan().issue == RestoreIssue::NowTooLarge && fake->readCalls == 1,
-              "preview: a file over the 8 MiB limit is not judged, and only its size was looked at (one read)");
+              "preview: a hunk restore of a file over the 8 MiB limit is not judged, and only its size was looked at (one read); the whole-file case is hashed as a stream (RestoreApplySelfTest)");
         fake->failReads = true;
         RestorePreview unreadable;
         unreadable.Open(RestoreScope::File, r.model.Detail(), r.model.Hunks(), {}, kFakeRoot, r.session.Client(), *fake);

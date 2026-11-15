@@ -45,7 +45,8 @@ impl Role {
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
     "hello", "status", "list", "describe", "sessions", "hunks", "scene_diff", "scene_overlay", "document_for_path", "blob_get", "shutdown", "subscribe",
-    "session_begin", "session_end", "op_begin", "op_end", "report", "editor_saved", "review_set",
+    "session_begin", "session_end", "op_begin", "op_end", "report", "editor_saved", "review_set", "restore_record", "restore_expect",
+    "restore_list",
 ];
 
 /// `subscribe` で選べる通知の名前 (ipc-contract.md §4.5)。`resync` は購読に関わらず必ず届くので、ここには入れない。
@@ -71,6 +72,8 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         "editor_saved" => role == Role::Editor,
         // レビューは利用者の判断の記録。AI 側 (MCP・フック) が自分の変更を承認できないように Editor だけ (要求 §12.6)
         "review_set" => role == Role::Editor,
+        // 復元の記録・予告・履歴は Editor だけ (AI 側が自分の変更を「復元」と名乗ったり、復元の履歴を書き換えたりできないように)
+        "restore_record" | "restore_expect" | "restore_list" => role == Role::Editor,
         _ => false,
     }
 }
@@ -298,5 +301,9 @@ mod tests {
         assert!(!role_allows(Role::Mcp, "review_set") && !role_allows(Role::Hook, "review_set"));
         assert!(role_allows(Role::Editor, "editor_saved"));
         assert!(!role_allows(Role::Mcp, "editor_saved") && !role_allows(Role::Hook, "editor_saved"));
+        for op in ["restore_record", "restore_expect", "restore_list"] {
+            assert!(role_allows(Role::Editor, op), "{op}");
+            assert!(!role_allows(Role::Mcp, op) && !role_allows(Role::Hook, op), "{op}");
+        }
     }
 }

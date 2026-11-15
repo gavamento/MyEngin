@@ -60,7 +60,7 @@ struct RestoreScreen {
     std::string superseded;            // 後の変更に置き換わっているときの注記
     std::vector<std::string> ops;      // 書くことになる操作 (Ready のときだけ)
     std::vector<std::string> notes;    // 注記
-    // このサブでは実行できない (M104p2 で押せるようにする)
+    // 実行を押せるか (照合に通った計画があり、止める理由が無い)。押せないときは、その理由の一言を applyNote に
     bool canApply = false;
     std::string applyNote;
 };

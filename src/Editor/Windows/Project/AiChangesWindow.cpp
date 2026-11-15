@@ -303,6 +303,23 @@ void AiChangesWindow::DrawHeader(ChangeTrackingSession& session, const AiChanges
             ImGui::SetTooltip("%s", Tr(StrId::AiChg_EnableNote));
         }
     }
+    // 復元: 回復待ちがあれば知らせ、履歴の画面へ行ける (画面は RestoreRunWindow。この窓を閉じても回復の画面は起動時に出ている)
+    if (host.restoreJournalPending && host.restoreJournalPending()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextUnformatted(Tr(StrId::AiChg_RcNotice));
+        ImGui::PopStyleColor();
+        if (host.openRestoreRecovery) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton(Tr(StrId::AiChg_RcOpen))) {
+                host.openRestoreRecovery();
+            }
+        }
+    }
+    if (host.openRestoreHistory && state != TrackState::Disabled && state != TrackState::NoProject) {
+        if (ImGui::SmallButton(Tr(StrId::AiChg_RhButton))) {
+            host.openRestoreHistory();
+        }
+    }
     if (confirmRequested_) {
         ImGui::OpenPopup(Tr(StrId::AiChg_ConfirmTitle));
         confirmRequested_ = false;
@@ -1441,6 +1458,9 @@ bool AiChangesWindow::OpenRestore(ChangeTrackingSession& session, RestoreScope s
         }
         hunkIds.push_back(selectedHunkId_);
     }
+    restoreDetail_ = d;
+    restoreAllHunks_ = model.Hunks();
+    restoreHunkIds_ = hunkIds;
     restore_.Open(scope, d, model.Hunks(), hunkIds, host.projectRoot, session.Client(), RestoreIo());
     restoreOpenRequested_ = true;
     return true;
@@ -1456,7 +1476,7 @@ void AiChangesWindow::CloseRestore()
     restoreScreen_ = RestoreScreen();
 }
 
-std::vector<RestoreBlock> AiChangesWindow::RestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host) const
+std::vector<RestoreBlock> BuildRestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host, const std::vector<std::string>& targetPaths, bool blobMissing)
 {
     RestoreGateInput in;
     if (host.gateInputs) {
@@ -1465,11 +1485,51 @@ std::vector<RestoreBlock> AiChangesWindow::RestoreBlocks(ChangeTrackingSession& 
     if (host.editedDocuments) {
         in.documents = host.editedDocuments();
     }
-    in.targetPaths = restore_.TargetPaths();
+    in.targetPaths = targetPaths;
     in.trackConnected = session.Client().CanRequest();
     in.journalPending = host.restoreJournalPending && host.restoreJournalPending();
-    in.blobMissing = restore_.BlobMissing();
+    in.blobMissing = blobMissing;
     return EvaluateRestoreGate(in);
+}
+
+std::vector<RestoreBlock> AiChangesWindow::RestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host) const
+{
+    std::vector<RestoreBlock> blocks = BuildRestoreBlocks(session, host, restore_.TargetPaths(), restore_.BlobMissing());
+    // 実行中・回復待ちの復元がある間は、新しい復元を始められない (回復待ちは host の口で、すでに入っている)
+    const bool hostSaysPending = host.restoreJournalPending && host.restoreJournalPending();
+    if (session.Restore().Pending() && !hostSaysPending) {
+        RestoreBlock block;
+        block.kind = RestoreBlockKind::JournalPending;
+        blocks.push_back(block);
+    }
+    return blocks;
+}
+
+bool AiChangesWindow::ApplyRestore(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    if (!restore_.IsOpen() || !restore_.HasPlan() || restore_.GetPhase() != RestorePreview::Phase::Ready) {
+        return false;
+    }
+    const RestorePlan& plan = restore_.Plan();
+    if (plan.verdict != RestoreVerdict::Ready || plan.ops.empty() || !RestoreBlocks(session, host).empty()) {
+        return false;
+    }
+    RestoreRunner::StartRequest request;
+    request.scope = restore_.Scope();
+    request.detail = restoreDetail_;
+    request.allHunks = restoreAllHunks_;
+    request.selectedHunkIds = restoreHunkIds_;
+    request.previewOps = plan.ops;
+    request.targetPaths = restore_.TargetPaths();
+    // 実行の直前に、同じゲートでもう一度判定する。host は 1 フレームだけ有効な値なので写しを持つ
+    request.blocks = [&session, hostCopy = host, paths = restore_.TargetPaths()](bool blobMissing) {
+        return BuildRestoreBlocks(session, hostCopy, paths, blobMissing);
+    };
+    if (!session.Restore().Start(std::move(request))) {
+        return false;
+    }
+    CloseRestore();
+    return true;
 }
 
 RestoreNotes AiChangesWindow::RestoreNotesFor(const AiChangesHost& host) const
@@ -1529,7 +1589,7 @@ void BulletLines(const std::vector<std::string>& lines)
 
 } // namespace
 
-// プレビューの画面。止める理由・照合の結果・書くことになる内容・注記。実行のボタンは押せない (M104p2 で押せるようにする)
+// プレビューの画面。止める理由・照合の結果・書くことになる内容・注記と、実行のボタン
 void AiChangesWindow::DrawRestorePopup(ChangeTrackingSession& session, const AiChangesHost& host)
 {
     if (!restore_.IsOpen()) {
@@ -1615,12 +1675,18 @@ void AiChangesWindow::DrawRestorePopup(ChangeTrackingSession& session, const AiC
     }
 
     ImGui::Separator();
-    // 実行は押せない (このサブは判定とプレビューまで)
+    // 照合に通って、止める理由が無いときだけ押せる。押すと実行の直前にもう一度判定する
     ImGui::BeginDisabled(!screen.canApply);
-    ImGui::Button(Tr(StrId::AiChg_RsApply));
+    const bool apply = ImGui::Button(Tr(StrId::AiChg_RsApply));
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", screen.applyNote.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", screen.applyNote.c_str()); // 長い一言は折り返す (ボタンの右に出すと窓の外へ切れる)
+    ImGui::PopStyleColor();
+    if (apply && ApplyRestore(session, host)) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     if (ImGui::Button(Tr(StrId::Common_Close)) || !keepOpen) {
         ImGui::CloseCurrentPopup();
         CloseRestore();

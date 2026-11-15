@@ -150,8 +150,9 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `editor_snapshot` | `documentId`, `path`, `json` の Blob ハッシュ, `dirty` | Editor Snapshot の登録 (中身は先に `blob_put` で送る) |
 | `blob_put` | `hash`, `offset`, `data` (base64), `last` | Editor から Blob を送る。サービスが受け取った全体のハッシュを確かめてから確定する |
 | `review_set` | `targets[]` (`{ revisionId, scope: { kind, ref? } }`), `state`, `note?` | レビューの記録 (M104o。§4.6)。過去の記録は消さず、追記する |
-| `restore_record` | `restoreId`, `state`, `targets`, `preHashes?`, `postHashes?`, `error?` | 復元の進行を履歴へ記録する。**適用するのは Editor で、サービスは記録だけ** |
-| `restore_expect` | `restoreId`, `paths`, `hashes` | これから Editor が書くファイルと内容。監視が同じ内容を観測したら、行為者を「復元」にする |
+| `restore_record` | `restoreId`, `state`, `targets`, `preHashes?`, `postHashes?`, `error?` | 復元の進行を履歴へ記録する。**適用するのは Editor で、サービスは記録だけ** (M104p2。下) |
+| `restore_expect` | `restoreId`, `paths`, `hashes` | これから Editor が書くファイルと内容。監視が同じ内容を観測したら、行為者を「復元」にする (M104p2。下) |
+| `restore_list` | `limit?` | 復元の履歴 (`restore_operations`)。新しい順、既定 50・最大 200 (M104p2) |
 
 `editor_saved` の取り決め (M104k2。実装は `tools\track\src\ops_record.rs` の `editor_saved` と `attribution.rs` の `apply_editor_saved`):
 
@@ -160,6 +161,14 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 - 知らせは `events` から派生の表 (`attribution_evidence`) を作り直せる (db-schema.md §6。作り直した DB は元と同じ根拠になる)。引く速さのため、スキーマ版 2 で `events(kind, at)` の索引を足した。
 - Editor の保存と AI の `declared_edit_match` が同じ Revision に成り立つのは、内容が同じときだけ。このとき [attribution-rules.md](attribution-rules.md) §3 の表の先頭の行 (`editor_saved`) が勝つ。AI の根拠は消さない。
 - 送らなくても保存は成り立つ (その変更が `unknown` / `inferred` になるだけ)。Editor の側の送り方と経路の一覧は [editor-save-routes.md](editor-save-routes.md)。
+
+`restore_record` / `restore_expect` / `restore_list` の取り決め (M104p2。実装は `tools\track\src\ops_record.rs`・`restore.rs`・`attribution.rs` の `apply_restore_expect`):
+
+- 3 つとも `role = editor` だけ (`mcp` / `hook` は `forbidden`。AI 側が自分の変更を「復元」と名乗ったり、復元の履歴を書き換えたりできないように)。サービスはファイルを書かず、記録するだけ。
+- `restore_record`: `restoreId` (英数字と `-`、64 文字まで)、`state` (`prepared` / `applying` / `committed` / `rolling_back` / `rolled_back` / `recovery_required` / `recovered`。最後の 1 つは起動時の回復の画面で利用者が選んで済ませたもの)、`targets` (1〜64 件の `{ revisionId, scope: file | hunks, hunkIds?, paths? }`。パスはサービスが正規化し、外を指すものは `bad_args`)、`preHashes?` (パス → `null` または `{ hash, size }`。適用前の内容)、`postHashes?` (パス → `null` または 64 桁の 16 進。書いた内容。`null` は削除)、`error?` (1000 文字まで)。同じ `restoreId` の記録は、状態・対象・結果を更新する (開始時刻は最初のまま)。`applying` で `preHashes` を `pre_restore` のスナップショットにし、`committed` で対象の状態を更新する: ファイル全体なら変更と全 Hunk が `restored`、Hunk 単位なら選んだ Hunk が `restored` で、全部戻れば変更も `restored`、残りがあれば `partially_restored`。**レビュー (`reviews`) には触れない** (要求 §10.5)。
+- `restore_expect`: `restoreId`、`paths` と `hashes` (同じ長さの 1〜256 件。`null` は「このパスは消える」)。パスごとに `restore_expect` のイベントを記録する。**書き込みの前に送られる**ので、サービスは何も読まない。**照合**: パスと After の内容が同じ (削除は After が無い) Revision の観測時刻が、予告の時刻の `RESTORE_EXPECT_AFTER_MS` (10 秒) 前から `RESTORE_EXPECT_BEFORE_MS` (120 秒。大きいファイルの書き込みと監視のデバウンスの猶予) 後までなら、`restore_expected` の根拠を付けて行為者を `restore` / `verified` にする。**予告が先でも観測が先でも同じ結果**。`editor_saved` と同じ内容に両方あれば `editor_saved` が勝つ ([attribution-rules.md](attribution-rules.md) §3 の表の順)。
+- どちらも `events` から派生の表を作り直せる (`session::apply_event`。DB を壊して作り直しても `restore_operations`・対象の状態・根拠が元と同じ。`tools\track\tests\session.rs` で確認)。スキーマは変えない (版 3 のまま。`restore_operations` は v1 にある)。
+- **送れなかったとき**: Editor はファイルの書き込みをジャーナルだけで完結させ (サービスが居なくても巻き戻せる)、`restore_record` は残して、つながったら順に送り直す。`restore_expect` は書き込みの前に送れなければ送らない: その書き込みは、サービスから見ると「行為者が分からない変更」として観測される。
 
 ### 4.5 通知
 

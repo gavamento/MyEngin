@@ -480,7 +480,7 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
     let tx = conn.transaction()?;
     // 参照する側から先に消す (外部キー)
     tx.execute_batch(
-        "DELETE FROM reviews; DELETE FROM attribution_evidence; DELETE FROM scene_changes; DELETE FROM change_hunks; DELETE FROM change_revisions;
+        "DELETE FROM restore_operations; DELETE FROM reviews; DELETE FROM attribution_evidence; DELETE FROM scene_changes; DELETE FROM change_hunks; DELETE FROM change_revisions;
          DELETE FROM operations; DELETE FROM sessions; DELETE FROM changes; DELETE FROM documents; DELETE FROM snapshots;",
     )?;
     let mut deriver = Deriver::empty();
@@ -489,7 +489,8 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
         let mut stmt = tx.prepare(
             "SELECT at, kind, payload, journal_pos FROM events
               WHERE kind IN ('baseline', 'observed', 'session_begin', 'session_resumed', 'session_end', 'session_interrupted',
-                             'op_begin', 'op_end', 'op_abandoned', 'reported', 'editor_saved', 'review_set')
+                             'op_begin', 'op_end', 'op_abandoned', 'reported', 'editor_saved', 'review_set',
+                             'restore_expect', 'restore_record')
               ORDER BY event_id",
         )?;
         let mut rows = stmt.query([])?;

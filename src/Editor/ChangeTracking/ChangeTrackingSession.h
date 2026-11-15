@@ -11,6 +11,7 @@
 #include <string>
 
 #include "Editor/ChangeTracking/ChangeModel.h"
+#include "Editor/ChangeTracking/RestoreRunner.h"
 #include "Editor/ChangeTracking/ReviewManager.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/ChangeTracking/TrackClient.h"
@@ -63,6 +64,9 @@ public:
     const ChangeModel& Model() const { return model_; }
     SceneChangeOverlay& Overlay() { return overlay_; }
     const SceneChangeOverlay& Overlay() const { return overlay_; }
+    // 復元の実行と起動時の回復 (M104p2)。窓を閉じても Poll で進む
+    RestoreRunner& Restore() { return restore_; }
+    const RestoreRunner& Restore() const { return restore_; }
 
 private:
     void Wire();
@@ -74,6 +78,8 @@ private:
     ChangeModel model_;
     ReviewManager review_;
     SceneChangeOverlay overlay_;
+    // client_ より後に壊れるように先に宣言する (保留中の要求の失敗のコールバックが restore_ に触る)
+    RestoreRunner restore_;
     TrackClient client_;
     uint32_t seenConnects_ = 0;
     std::wstring projectRoot_;

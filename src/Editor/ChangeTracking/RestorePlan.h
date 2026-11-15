@@ -64,14 +64,15 @@ enum class NowKind : uint8_t {
     Directory,
     Link,       // シンボリックリンク・ジャンクション
     Unreadable, // 読めなかった
-    TooLarge,   // 読み取りの上限 (kRestoreReadMaxBytes) を超える
+    TooLarge,   // 読み取りの上限 (kRestoreReadMaxBytes) を超える (Hunk の照合は内容が要るので判定しない)
 };
 
 struct NowState {
     NowKind kind = NowKind::Missing;
-    std::string bytes; // File のとき (Hunk の照合に使う)
-    std::string hash;  // File のとき bytes の SHA-256
+    std::string bytes; // File のとき (Hunk の照合に使う)。8 MiB を超えるファイルでは空 (bytesOmitted)
+    std::string hash;  // File のとき内容の SHA-256 (大きいファイルはストリームで計算)
     int64_t size = -1;
+    bool bytesOmitted = false; // 8 MiB を超えるファイル全体の復元のため、ハッシュだけを持つ
 };
 
 // 今のファイルの読み取りの上限 (行 diff の上限と同じ 8 MiB)。超えるファイルは判定しない

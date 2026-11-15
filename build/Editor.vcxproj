@@ -61,12 +61,17 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\HunkRestore.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\PathGuard.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\RestoreApplySelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreFileIo.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreFormat.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreGate.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\RestoreJournal.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestorePlan.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestorePreview.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\RestoreRunFormat.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\RestoreRunner.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\RestoreWriteIo.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ReviewManager.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ReviewSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp" />
@@ -161,6 +166,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\RestoreRunWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\FeelAssetInspector.cpp" />
@@ -208,8 +214,12 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreFileIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreFormat.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreGate.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\RestoreJournal.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestorePlan.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestorePreview.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\RestoreRunFormat.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\RestoreRunner.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\RestoreWriteIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ReviewManager.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.h" />
@@ -305,6 +315,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\RestoreRunWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\FeelAssetInspector.h" />

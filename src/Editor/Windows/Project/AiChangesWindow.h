@@ -28,7 +28,7 @@
 namespace mye {
 
 // 窓が EditorApp に頼むこと / EditorApp が窓に渡すこと。窓に EngineContext は渡さない
-// (復元は判定とプレビューまで。作業ツリーを書く口は置かない。書くのは M104p2)
+// (復元の実行は ChangeTrackingSession の RestoreRunner。窓は始めるだけで、ファイルを書く口は置かない)
 struct AiChangesHost {
     // 自動実行の起動 (--selftest / --screenshot / リプレイ) でないか。偽なら切り替えを出さない (出しても効かない)
     bool allowTracking = false;
@@ -52,8 +52,12 @@ struct AiChangesHost {
     std::function<GateInputs()> gateInputs;
     // どの窓がどの文書を編集中か。教えられない窓は known = false にする (その窓の未保存が立っていれば安全側で止まる)
     std::function<EditedDocuments()> editedDocuments;
-    // 進行中・回復待ちの復元があるか (復元ジャーナルは M104p2 で入る。未設定 = 無い)
+    // 回復待ちの復元があるか (起動時に見つけた、applying / rolling_back / recovery_required のジャーナル。未設定 = 無い)。
+    // 進行中の復元 (RestoreRunner::Busy) は窓が自分で見るので、ここには入れない
     std::function<bool()> restoreJournalPending;
+    // 復元の回復の画面・履歴を開く (RestoreRunWindow。未設定 = ボタンを出さない)
+    std::function<void()> openRestoreRecovery;
+    std::function<void()> openRestoreHistory;
     // 既存の Source Control の status モデルだけを読んで、stage 済みか答える (git を起動しない・Index に触らない)。未設定 = 分からない
     std::function<StagedState(const std::string& relPath)> stagedState;
 };
@@ -70,6 +74,10 @@ enum class SceneChangeActivation : uint8_t {
 std::vector<DiffHunkInput> ToDiffHunks(const std::vector<TrackHunk>& hunks);
 // Hunk の見出しに今のレビューの状態を添える (状態の文面と色)。hunks と input は同じ並び
 void ApplyReviewBadges(std::vector<DiffHunkInput>& input, const std::vector<TrackHunk>& hunks);
+
+// 復元を止める理由 (ゲート + 追跡に固有の条件)。窓のプレビューと、実行の直前の判定し直し、回復の巻き戻しが同じ口を通る。
+// targetPaths = 復元が触るパス (相対)。journalPending は host.restoreJournalPending (進行中の復元は含まない)
+std::vector<RestoreBlock> BuildRestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host, const std::vector<std::string>& targetPaths, bool blobMissing);
 
 class AiChangesWindow {
 public:
@@ -128,6 +136,9 @@ public:
     std::vector<RestoreBlock> RestoreBlocks(ChangeTrackingSession& session, const AiChangesHost& host) const;
     // 注記 (削除の確認・stage 済み・作り直しの見込み)
     RestoreNotes RestoreNotesFor(const AiChangesHost& host) const;
+    // 開いているプレビューの復元を実行する (「復元する」ボタンと試験が同じ口を通る)。ゲート・照合に通っていなければ何もしない (false)。
+    // 実行は ChangeTrackingSession の RestoreRunner が毎フレーム進める。始められたらプレビューを閉じる
+    bool ApplyRestore(ChangeTrackingSession& session, const AiChangesHost& host);
     // 試験用: 今のファイルの読み取り口を差し替える (既定は本物の読み取り専用の実装)
     void SetRestoreFileIo(std::unique_ptr<RestoreFileIo> io) { restoreIo_ = std::move(io); }
     const RestorePreview& Restore() const { return restore_; }
@@ -201,6 +212,10 @@ private:
     ReviewAction bulkAction_ = ReviewAction::Approve;
     // 復元のプレビュー
     RestorePreview restore_;
+    // プレビューを開いた時点の入力 (実行の直前の判定し直しが同じ入力で計画を作り直す)
+    nlohmann::json restoreDetail_;
+    std::vector<TrackHunk> restoreAllHunks_;
+    std::vector<int64_t> restoreHunkIds_;
     RestoreScreen restoreScreen_;
     std::unique_ptr<RestoreFileIo> restoreIo_;
     DiffViewer restoreDiff_;

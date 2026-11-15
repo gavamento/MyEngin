@@ -266,6 +266,28 @@ void EditorApp::OnStart(EngineContext& ctx)
     // 既定は無効。有効なプロジェクトの対話起動でだけ、サービスへ接続 (居なければ起動) する
     changeTracking_.Start(GetExecutableDir(), ctx.projectRoot,
                           allowChangeTracking && settings_.changeTrackingEnabled);
+    // 復元 (M104p2): 書く前後は ReloadHub の一括適用で囲む (git の一括適用と同じ口。EndBatch は RestoreRunner がどの経路でも 1 回呼ぶ)。
+    // 起動時の回復は対話起動のときだけ見る (自動実行の起動では何も読まず、何も書かない)。追跡が無効でも、ジャーナルは利用者のファイルの安全のものなので見る
+    {
+        RestoreRunHooks hooks;
+        hooks.beginBatch = [&ctx]() {
+            if (ctx.reloadHub != nullptr) {
+                ctx.reloadHub->BeginBatch();
+            }
+        };
+        hooks.endBatch = [&ctx](const std::vector<BatchChange>& changes) {
+            if (ctx.reloadHub != nullptr) {
+                ctx.reloadHub->EndBatch(changes);
+            }
+        };
+        changeTracking_.Restore().SetHooks(std::move(hooks));
+        if (allowChangeTracking) {
+            changeTracking_.Restore().ScanRecovery();
+            if (changeTracking_.Restore().RecoveryPending()) {
+                restoreRun_.OpenRecovery();
+            }
+        }
+    }
     // 「ここまで確認済みにする」の印は表示だけのもの。エディタの設定に残し、記録にもサービスにも書かない (M104m)
     changeTracking_.Overlay().LoadAcks(settings_.aiChangeAcks);
     changeTracking_.Overlay().SetAckSink([this](const std::map<std::string, int64_t>& acks) {
@@ -556,6 +578,7 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     // ★プロセス終了任せにすると、走行中の worker のコードごとアンロードされうる
     scm_.Shutdown();
     // 接続を閉じるだけ。サービスは止めない (Editor を閉じても記録が続く)
+    changeTracking_.Restore().Shutdown(); // 書き込みの途中で終了するなら、ReloadHub が生きているうちに EndBatch を通す
     changeTracking_.Shutdown();
 }
 
@@ -1096,8 +1119,10 @@ void EditorApp::OnImGui(EngineContext& ctx)
             // 編集中の文書のパスを外へ出していない。known = false のまま = その窓の未保存が立っていれば、対象に関係なく止める (安全側)
             return docs;
         };
-        // 復元ジャーナルは M104p2 で入る。それまでは回復待ちが無い
-        host.restoreJournalPending = []() { return false; };
+        // 起動時に見つけた回復待ちのジャーナル (進行中の復元は窓が RestoreRunner から直接見る)
+        host.restoreJournalPending = [this]() { return changeTracking_.Restore().RecoveryPending(); };
+        host.openRestoreRecovery = [this]() { restoreRun_.OpenRecovery(); };
+        host.openRestoreHistory = [this]() { restoreRun_.OpenHistory(changeTracking_); };
         host.stagedState = [this](const std::string& rel) {
             // Source Control の status モデルの読み取りだけ (git を起動しない・Index に触れない)。使えなければ「分からない」
             if (scm_.State() != Unavailable::None || !scm_.Model().valid) {
@@ -1108,6 +1133,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
             return staged ? StagedState::Staged : StagedState::NotStaged;
         };
         aiChanges_.OnImGui(changeTracking_, host);
+        restoreRun_.OnImGui(changeTracking_, host);
     }
     if (sourceControl_.TakeAdoptCanonicalRoot()) {
         const bool adopted = scm_.AdoptCanonicalRoot();
@@ -1828,7 +1854,7 @@ void EditorApp::HandleShortcuts(EngineContext& ctx)
     // M66d: 書き込みトランザクション中 (確認モーダル / git 実行中) は
     // Save も Undo も通さない。**モーダルは ImGui の入力しか止めない** —
     // ショートカットはエンジンのキー状態を直接見ているので別に塞ぐ必要がある
-    if (gitTx_.Busy()) {
+    if (gitTx_.Busy() || changeTracking_.Restore().Busy()) {
         return;
     }
     if (shortcuts_.Pressed(Shortcut::Save)) {
@@ -2137,7 +2163,8 @@ GateInputs EditorApp::BuildGateInputs(EngineContext& ctx)
     // ★Asset Browser の [Rebuild Scripts] も OR で入れる (M66e)。入れないとその間だけ
     //   ゲートに穴が開く (checkout が src\GameLogic\Scripts\ を入れ替えている最中にビルドが走る)
     in.scriptBuildRunning = buildSettings_.IsScriptBuildRunning() || scriptBuildProc_ != nullptr;
-    in.opInFlight = scm_.WriteInFlight();
+    // 復元の書き込み (BeginBatch 〜 EndBatch) の間も、git の書き込みと同じように、ほかの書き込み系の操作を始められない
+    in.opInFlight = scm_.WriteInFlight() || changeTracking_.Restore().WriteSectionActive();
     in.mergeInProgress = scm_.MergeInProgress() || scm_.RebaseInProgress();
     in.serviceUnavailable = scm_.State() != Unavailable::None;
     // ---- 高い判定 (4 窓の直列化)。500 ms キャッシュ ----
@@ -2475,8 +2502,8 @@ void EditorApp::ProcessPendingFileDrops(EngineContext& ctx)
     if (pendingFileDrops_.empty()) {
         return;
     }
-    if (gitTx_.Busy()) {
-        // M66d: git が working tree を書き換えている / その確認中。
+    if (gitTx_.Busy() || changeTracking_.Restore().WriteSectionActive()) {
+        // M66d: git が working tree を書き換えている / その確認中 (M104p2: 復元の書き込み中も同じ)。
         // ★捨てずに**保留する** (return するだけで pendingFileDrops_ は残る)。
         //   ここでインポートすると、git が同じディレクトリを書いている最中に
         //   ファイルを増やすことになる

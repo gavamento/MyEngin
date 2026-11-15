@@ -6,6 +6,7 @@
 #include "Editor/ChangeTracking/RestorePreview.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "Editor/ChangeTracking/TrackClient.h"
 #include "Editor/ChangeTracking/TrackProtocol.h"
@@ -31,8 +32,18 @@ std::string ErrorField(const nlohmann::json& response, const char* key)
 
 } // namespace
 
+void RestorePreview::CancelHashes()
+{
+    for (ReadJob& job : jobs_) {
+        if (job.cancel) {
+            job.cancel->store(true);
+        }
+    }
+}
+
 void RestorePreview::Close()
 {
+    CancelHashes();
     ++generation_;
     phase_ = Phase::Closed;
     revision_ = RestoreRevision();
@@ -192,8 +203,18 @@ void RestorePreview::AdvanceRead(ReadJob& job, RestoreFileIo& io)
     }
     if (total > kRestoreReadMaxBytes) {
         target = NowState();
-        target.kind = NowKind::TooLarge;
         target.size = static_cast<int64_t>(total);
+        if (scope_ == RestoreScope::File) {
+            // ファイル全体の復元はハッシュだけで判定できる。メモリに載せず、別のスレッドでストリームのハッシュを取る
+            job.totalSize = total;
+            job.cancel = std::make_shared<std::atomic<bool>>(false);
+            job.hashing = std::async(std::launch::async, [abs = job.abs, cancel = job.cancel]() {
+                std::string hex;
+                return Sha256FileHex(abs, hex, cancel.get()) ? hex : std::string();
+            });
+            return;
+        }
+        target.kind = NowKind::TooLarge; // Hunk の照合は内容が要る
         job.done = true;
         return;
     }
@@ -207,15 +228,34 @@ void RestorePreview::AdvanceRead(ReadJob& job, RestoreFileIo& io)
     }
 }
 
+void RestorePreview::PollHash(ReadJob& job)
+{
+    if (job.hashing.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return;
+    }
+    NowState& target = TargetOf(job);
+    const std::string hex = job.hashing.get();
+    target = NowState();
+    target.size = static_cast<int64_t>(job.totalSize);
+    target.hash = hex;
+    target.bytesOmitted = true;
+    target.kind = hex.empty() ? NowKind::Unreadable : NowKind::File;
+    job.done = true;
+}
+
 void RestorePreview::Tick(RestoreFileIo& io)
 {
     if (phase_ != Phase::Preparing || jobs_.empty()) {
         return;
     }
-    // 1 フレームに読むのは 1 つの塊だけ
+    // 1 フレームに読むのは 1 つの塊だけ (大きいファイルのハッシュは別のスレッドの完了を見るだけ)
     for (ReadJob& job : jobs_) {
         if (!job.done) {
-            AdvanceRead(job, io);
+            if (job.hashing.valid()) {
+                PollHash(job);
+            } else {
+                AdvanceRead(job, io);
+            }
             break;
         }
     }

@@ -20,6 +20,10 @@ pub const REPORT_BACKLOG_MS: i64 = 10 * 60 * 1000;
 /// `editor_saved` の知らせと、Revision の観測時刻の許容差 (前後とも)。知らせが先に届いても、観測が先でも成り立つ。
 /// 監視のデバウンスと pipe の遅れより十分に長く、別の変更を巻き込むほどは長くしない。
 pub const EDITOR_SAVED_WINDOW_MS: i64 = 10_000;
+/// `restore_expect` の予告は、書き込みの前に届く。書き終わって観測されるまでの猶予 (大きいファイルの書き込みと監視のデバウンス) と、
+/// 観測が予告より少し先になりうる幅。内容とパスが同じ変更だけに効くので、`editor_saved` より長くてよい。
+pub const RESTORE_EXPECT_BEFORE_MS: i64 = 120_000;
+pub const RESTORE_EXPECT_AFTER_MS: i64 = 10_000;
 
 /// 帰属の計算の設定。試験が短くできる。
 #[derive(Clone, Debug)]
@@ -451,6 +455,10 @@ fn evaluate(
         if let Some(notice_at) = editor_saved_notice(conn, &rev, events_through.unwrap_or(i64::MAX))? {
             sink.add(Kind::EditorSaved, None, None, editor_saved_detail(&rev, notice_at))?;
         }
+        // 復元の予告 (restore_expect)。Editor が書く前に知らせてくる
+        if let Some(notice_at) = restore_expect_notice(conn, &rev, events_through.unwrap_or(i64::MAX))? {
+            sink.add(Kind::RestoreExpected, None, None, restore_expect_detail(&rev, notice_at))?;
+        }
     }
     if rev.completeness == "gap" && !verify_gap {
         // 止まっていた間 (起動時の再走査)・監視のあふれの変更は、その間にセッションが動いていても見ていない (§4)
@@ -460,7 +468,7 @@ fn evaluate(
         // 書かれた時刻ではないので、時刻による根拠を作らず、内容による根拠だけを数える (spec D35)
         session_evidence(conn, cfg, &rev, managed_begin, verify_gap, &mut sink)?;
     }
-    if no_sessions && rev.completeness != "gap" && !sink.has_any(&[Kind::EditorSaved]) {
+    if no_sessions && rev.completeness != "gap" && !sink.has_any(&[Kind::EditorSaved, Kind::RestoreExpected]) {
         return Ok(());
     }
     recompute_conclusion(conn, revision_id)
@@ -520,6 +528,58 @@ pub fn apply_editor_saved(conn: &Connection, at: i64, path: &str, hash: &str) ->
         conn.execute(
             "INSERT INTO attribution_evidence (revision_id, session_id, operation_id, kind, detail, recorded_at)
              VALUES (?1, NULL, NULL, 'editor_saved', ?2, ?3)",
+            params![id, json!({ "path": path, "hash": hash, "noticeAt": at }).to_string(), at],
+        )?;
+        recompute_conclusion(conn, id)?;
+    }
+    Ok(())
+}
+
+fn restore_expect_detail(rev: &RevisionRow, notice_at: i64) -> Value {
+    json!({ "path": rev.path, "hash": hash_json(&rev.after), "noticeAt": notice_at })
+}
+
+/// この Revision の After (無ければ削除) と同じ内容の `restore_expect` の予告 (event_id が `through` 以下)。あればその時刻。
+/// 予告は書き込みの前に届くので、観測時刻より最大 `RESTORE_EXPECT_BEFORE_MS` 前までを数える。`gap` の Revision は対象外。
+fn restore_expect_notice(conn: &Connection, rev: &RevisionRow, through: i64) -> rusqlite::Result<Option<i64>> {
+    if rev.completeness == "gap" {
+        return Ok(None);
+    }
+    let (lo, hi) = (rev.observed_at - RESTORE_EXPECT_BEFORE_MS, rev.observed_at + RESTORE_EXPECT_AFTER_MS);
+    let sql = "SELECT at FROM events
+                WHERE kind = 'restore_expect' AND at BETWEEN ?1 AND ?2 AND event_id <= ?3
+                  AND json_extract(payload, '$.path') = ?4 COLLATE NOCASE
+                  AND json_extract(payload, '$.hash') IS ?5
+                ORDER BY event_id LIMIT 1";
+    let hash: Option<&str> = match &rev.after {
+        HashState::Hash(h) => Some(h.as_str()),
+        HashState::Absent => None,
+        HashState::Unknown => return Ok(None),
+    };
+    conn.query_row(sql, params![lo, hi, through, rev.path, hash], |r| r.get(0)).optional()
+}
+
+/// `restore_expect` のイベントを派生の表へ反映する: 予告のあとに観測された (観測が先に届いていた) Revision に根拠を足す。
+/// `hash` が None の予告は「このパスは消える」。予告が後から届いても、先に届いても同じ結果になる。
+pub fn apply_restore_expect(conn: &Connection, at: i64, path: &str, hash: Option<&str>) -> rusqlite::Result<()> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn.prepare_cached(
+            "SELECT r.revision_id FROM change_revisions r
+               JOIN changes c ON c.change_id = r.change_id
+               LEFT JOIN snapshots s ON s.snapshot_id = r.after_snapshot
+              WHERE r.observed_at BETWEEN ?1 AND ?2 AND c.path = ?3 COLLATE NOCASE
+                AND ((?4 IS NULL AND r.after_snapshot IS NULL) OR (?4 IS NOT NULL AND s.blob_hash = ?4))
+                AND r.completeness <> 'gap'
+                AND NOT EXISTS (SELECT 1 FROM attribution_evidence e WHERE e.revision_id = r.revision_id AND e.kind = 'restore_expected')
+              ORDER BY r.revision_id",
+        )?;
+        let rows = stmt.query_map(params![at - RESTORE_EXPECT_AFTER_MS, at + RESTORE_EXPECT_BEFORE_MS, path, hash], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for id in ids {
+        conn.execute(
+            "INSERT INTO attribution_evidence (revision_id, session_id, operation_id, kind, detail, recorded_at)
+             VALUES (?1, NULL, NULL, 'restore_expected', ?2, ?3)",
             params![id, json!({ "path": path, "hash": hash, "noticeAt": at }).to_string(), at],
         )?;
         recompute_conclusion(conn, id)?;

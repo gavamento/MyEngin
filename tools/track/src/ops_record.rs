@@ -23,6 +23,7 @@ use crate::operation::{self, OPERATION_TYPES};
 use crate::ops::open_reader;
 use crate::process::process_start_ms;
 use crate::protocol::{code, Args, OpError, Role};
+use crate::restore;
 use crate::random::uuid_v4;
 use crate::review;
 use crate::session::{self, find_session, record_and_apply, SessionKey, SessionRow};
@@ -587,6 +588,152 @@ pub fn editor_saved(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result
     run_in_writer(env, move |store| {
         record_and_apply(store, at, "editor_saved", json!({ "path": rel, "hash": hash })).map_err(store_err)?;
         Ok(json!({ "path": rel, "pending": pending }))
+    })
+}
+
+// ---- restore_record / restore_expect (M104p2) ----------------------------------------------------
+
+/// 復元の対象 (`targets`) を検査して、記録する形 (snake_case) にする。パスはサービス側で正規化する。
+fn parse_restore_targets(env: &RecordEnv, value: Value) -> Result<Vec<Value>, OpError> {
+    let Value::Array(items) = value else { return Err(OpError::bad_args("targets は配列でなければならない")) };
+    if items.is_empty() || items.len() > restore::MAX_TARGETS {
+        return Err(OpError::bad_args(format!("targets は 1〜{} 件", restore::MAX_TARGETS)));
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Object(map) = item else { return Err(OpError::bad_args("targets の要素はオブジェクトでなければならない")) };
+        if let Some(extra) = map.keys().find(|k| !matches!(k.as_str(), "revisionId" | "scope" | "hunkIds" | "paths")) {
+            return Err(OpError::bad_args(format!("targets の知らない項目: {}", crate::protocol::clip(extra))));
+        }
+        let revision_id = map
+            .get("revisionId")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| OpError::bad_args("targets[].revisionId は整数でなければならない"))?;
+        let scope = map.get("scope").and_then(Value::as_str).filter(|s| matches!(*s, "file" | "hunks"));
+        let Some(scope) = scope else { return Err(OpError::bad_args("targets[].scope は file / hunks のどちらか")) };
+        let hunk_ids: Vec<i64> = match map.get("hunkIds") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(ids)) => ids
+                .iter()
+                .map(|v| v.as_i64().ok_or_else(|| OpError::bad_args("targets[].hunkIds は整数の配列")))
+                .collect::<Result<_, _>>()?,
+            Some(_) => return Err(OpError::bad_args("targets[].hunkIds は整数の配列")),
+        };
+        let mut paths: Vec<String> = Vec::new();
+        match map.get("paths") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(list)) if list.len() <= restore::MAX_PATHS => {
+                for p in list {
+                    let text = p.as_str().ok_or_else(|| OpError::bad_args("targets[].paths は文字列の配列"))?;
+                    paths.push(normalize_path(&env.root, text, false)?);
+                }
+            }
+            Some(_) => return Err(OpError::bad_args("targets[].paths は文字列の配列 (上限あり)")),
+        }
+        out.push(json!({ "revision_id": revision_id, "scope": scope, "hunk_ids": hunk_ids, "paths": paths }));
+    }
+    Ok(out)
+}
+
+/// `{ パス: null | { hash, size } }` (適用前) または `{ パス: null | hash }` (適用後) を、パスを正規化した形にする。
+fn parse_restore_hashes(env: &RecordEnv, key: &str, value: Option<Value>, with_size: bool) -> Result<Option<Value>, OpError> {
+    let Some(value) = value else { return Ok(None) };
+    let Value::Object(map) = value else { return Err(OpError::bad_args(format!("{key} はオブジェクトでなければならない"))) };
+    if map.len() > restore::MAX_PATHS {
+        return Err(OpError::bad_args(format!("{key} が多すぎる")));
+    }
+    let bad = || OpError::bad_args(format!("{key} の値は null か {}", if with_size { "{ hash, size }" } else { "64 桁の 16 進のハッシュ" }));
+    let mut out = Map::new();
+    for (path, entry) in map {
+        let rel = normalize_path(&env.root, &path, false)?;
+        let normalized = match entry {
+            Value::Null => Value::Null,
+            Value::String(hash) if !with_size => {
+                if !restore::is_blob_hash(&hash.to_ascii_lowercase()) {
+                    return Err(bad());
+                }
+                Value::String(hash.to_ascii_lowercase())
+            }
+            Value::Object(o) if with_size => {
+                let hash = o.get("hash").and_then(Value::as_str).map(str::to_ascii_lowercase).filter(|h| restore::is_blob_hash(h)).ok_or_else(bad)?;
+                let size = o.get("size").and_then(Value::as_i64).filter(|n| *n >= 0).ok_or_else(bad)?;
+                json!({ "hash": hash, "size": size })
+            }
+            _ => return Err(bad()),
+        };
+        out.insert(rel, normalized);
+    }
+    Ok(Some(Value::Object(out)))
+}
+
+/// 復元の進行を履歴へ記録する。**記録するだけ**でファイルは書かない。`committed` のとき対象の状態を `restored` / `partially_restored` にする
+/// (レビューの記録には触れない)。同じ `restoreId` の記録は、状態・結果を更新する。
+pub fn restore_record(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<Value, OpError> {
+    let restore_id = args.required_string("restoreId")?;
+    let state = args.choice("state", restore::STATES)?.ok_or_else(|| OpError::bad_args("state が要る"))?;
+    let targets = args.value("targets").ok_or_else(|| OpError::bad_args("targets が要る"))?;
+    let pre = args.value("preHashes");
+    let post = args.value("postHashes");
+    let error = args.string("error")?;
+    args.finish()?;
+    if !restore::is_restore_id(&restore_id) {
+        return Err(OpError::bad_args("restoreId は英数字と - の 64 文字まで"));
+    }
+    if error.as_ref().is_some_and(|e| e.chars().count() > restore::MAX_ERROR_CHARS) {
+        return Err(OpError::bad_args(format!("error は {} 文字まで", restore::MAX_ERROR_CHARS)));
+    }
+    let targets = parse_restore_targets(env, targets)?;
+    let pre = parse_restore_hashes(env, "preHashes", pre, true)?;
+    let post = parse_restore_hashes(env, "postHashes", post, false)?;
+    let at = now_ms();
+    run_in_writer(env, move |store| {
+        let payload = json!({
+            "restore_id": restore_id,
+            "state": state,
+            "targets": targets,
+            "pre_hashes": pre,
+            "post_hashes": post,
+            "error": error,
+        });
+        record_and_apply(store, at, "restore_record", payload).map_err(store_err)?;
+        Ok(json!({ "restoreId": restore_id, "state": state }))
+    })
+}
+
+/// これから Editor が書く内容の予告。パスごとに `restore_expect` のイベントを記録する。内容 (ハッシュ。`null` は削除) とパスが同じ
+/// 変更が観測されたら、その Revision の行為者が `restore` になる (観測が予告より先でも後でも同じ。照合は
+/// `attribution::apply_restore_expect` と新しい Revision の評価)。予告は書き込みの前に届くので、ここでは何も読まない。
+pub fn restore_expect(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<Value, OpError> {
+    let restore_id = args.required_string("restoreId")?;
+    let paths = args.value("paths").ok_or_else(|| OpError::bad_args("paths が要る"))?;
+    let hashes = args.value("hashes").ok_or_else(|| OpError::bad_args("hashes が要る"))?;
+    args.finish()?;
+    if !restore::is_restore_id(&restore_id) {
+        return Err(OpError::bad_args("restoreId は英数字と - の 64 文字まで"));
+    }
+    let (Value::Array(paths), Value::Array(hashes)) = (paths, hashes) else {
+        return Err(OpError::bad_args("paths と hashes は配列でなければならない"));
+    };
+    if paths.is_empty() || paths.len() > restore::MAX_PATHS || paths.len() != hashes.len() {
+        return Err(OpError::bad_args(format!("paths と hashes は同じ長さで 1〜{} 件", restore::MAX_PATHS)));
+    }
+    let mut entries: Vec<(String, Option<String>)> = Vec::with_capacity(paths.len());
+    for (path, hash) in paths.iter().zip(hashes.iter()) {
+        let text = path.as_str().ok_or_else(|| OpError::bad_args("paths の要素は文字列でなければならない"))?;
+        let rel = normalize_path(&env.root, text, false)?;
+        let hash = match hash {
+            Value::Null => None,
+            Value::String(h) if restore::is_blob_hash(&h.to_ascii_lowercase()) => Some(h.to_ascii_lowercase()),
+            _ => return Err(OpError::bad_args("hashes の要素は null か 64 桁の 16 進のハッシュ")),
+        };
+        entries.push((rel, hash));
+    }
+    let at = now_ms();
+    run_in_writer(env, move |store| {
+        for (path, hash) in &entries {
+            record_and_apply(store, at, "restore_expect", json!({ "restore_id": restore_id, "path": path, "hash": hash })).map_err(store_err)?;
+        }
+        Ok(json!({ "restoreId": restore_id, "paths": entries.len() }))
     })
 }
 

@@ -4,7 +4,10 @@
 //                                          復元のプレビューの準備 (内容を集めて計画を作る。書かない、宣言)
 //====================================================================================
 #pragma once
+#include <atomic>
 #include <cstdint>
+#include <future>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -52,6 +55,7 @@ public:
     // 戻す対象の Hunk (Hunk 単位) / 見せる Hunk (ファイル全体)
     const std::vector<TrackHunk>& Hunks() const { return hunks_; }
     const NowState& Now() const { return now_; }
+    const NowState& NowOld() const { return nowOld_; }
     // 復元が触るパス (ゲートの対象)
     const std::vector<std::string>& TargetPaths() const { return targetPaths_; }
     // Before の Blob が欠けている (blob_get が blob_missing を返した、または describe が欠けていると言っている)
@@ -73,13 +77,19 @@ private:
         bool oldPath = false; // 真なら nowOld_、偽なら now_ へ読む
         uint64_t offset = 0;
         bool done = false;
+        // 8 MiB を超えるファイル全体の復元だけ: ハッシュを別のスレッドで計算して待つ (フレームを止めない)
+        std::future<std::string> hashing;
+        std::shared_ptr<std::atomic<bool>> cancel;
+        uint64_t totalSize = 0;
     };
 
     NowState& TargetOf(const ReadJob& job) { return job.oldPath ? nowOld_ : now_; }
+    void CancelHashes();
 
     void Finish();
     void StartReads(RestoreFileIo& io);
     void AdvanceRead(ReadJob& job, RestoreFileIo& io);
+    void PollHash(ReadJob& job);
     void FailWith(const std::string& code, const std::string& detail);
 
     Phase phase_ = Phase::Closed;

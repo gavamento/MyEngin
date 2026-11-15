@@ -337,6 +337,45 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             window.CloseRestore();
             check(readProbeFile() == probeBefore && !fs::exists(root / L".mye" / L"ai_changes" / L"recovery", ec), "probe: the previews wrote nothing (the file is as it was, no recovery journal)");
 
+            // 復元の実行 (M104p2。実サービス + 本物のファイル): 追記された 1 行の Hunk を戻す → ファイルが戻る → 履歴に行為者 restore、変更は restored
+            {
+                int beginCalls = 0;
+                int endCalls = 0;
+                RestoreRunHooks hooks;
+                hooks.beginBatch = [&]() { ++beginCalls; };
+                hooks.endBatch = [&](const std::vector<BatchChange>&) { ++endCalls; };
+                session.Restore().SetHooks(std::move(hooks));
+                window.SelectHunkIndex(session.Model(), 0);
+                const bool opened = window.OpenRestore(session, RestoreScope::Hunks, host) && previewDone();
+                check(opened, "probe: the preview of the live hunk is ready before applying");
+                const bool applied = opened && window.ApplyRestore(session, host);
+                check(applied, "probe: the hunk restore starts (the gate and the plan passed)");
+                const bool finished = applied && pump(session, [&] { return !session.Restore().Busy(); }, 60000);
+                check(finished && session.Restore().HasResult() && session.Restore().Result().outcome == RestoreOutcome::Committed, "probe: the hunk restore committed (live service: blob/record round trips)");
+                check(readProbeFile() == "one\n" && beginCalls == 1 && endCalls == 1, "probe: the file went back to the Before content and the batch was opened and closed once");
+                const bool restoreSeen = pump(session, [&] {
+                    const auto& rows = session.Model().Changes();
+                    return std::any_of(rows.begin(), rows.end(), [](const TrackChangeRow& r) { return r.path == "probe.txt" && r.actor == "restore"; });
+                }, 30000);
+                check(restoreSeen, "probe: the change the restore made appears in the history with the actor restore (live service: restore_expect matched)");
+                session.Restore().RequestHistory();
+                const bool historyKnown = pump(session, [&] { return !session.Restore().History().empty(); }, 15000);
+                check(historyKnown && session.Restore().History()[0].value("state", std::string()) == "committed" && session.Restore().PendingRecordCount() == 0,
+                      "probe: restore_operations has the committed restore and no record is left unsent (live service)");
+                session.Model().Refresh();
+                const bool restoredState = pump(session, [&] {
+                    for (const TrackChangeRow& r : session.Model().Changes()) {
+                        if (r.path == "probe.txt" && r.changeType == "modified" && (r.changeState == "restored" || r.changeState == "partially_restored")) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }, 15000);
+                check(restoredState, "probe: the restored change carries the restored state after the model refetched (live service)");
+                session.Restore().AcknowledgeResult();
+                session.Restore().SetHooks(RestoreRunHooks());
+            }
+
             // Editor の保存の知らせ (実サービス): 保存した内容のハッシュを送ると、その変更の行為者が Editor の利用者になる。
             // 外から書いたファイルは、そのまま「不明」のまま
             const std::wstring savedPath = (root / L"saved_in_editor.txt").wstring();
@@ -1513,6 +1552,7 @@ bool RunChangeTrackingSelfTest()
 
     // ---- (p) 復元の判定 (M104p) ----
     RunRestoreSelfTests(check);
+    RunRestoreApplySelfTests(check);
 
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {

@@ -32,6 +32,10 @@ inline constexpr const char* kShutdown = "shutdown";
 inline constexpr const char* kEditorSaved = "editor_saved";
 // 承認・却下・要確認・再開を記録する (role = editor だけ)。何も実行しない (git・ファイル・復元の状態に触れない)
 inline constexpr const char* kReviewSet = "review_set";
+// 復元の進行の記録 / これから Editor が書く内容の予告 / 復元の履歴 (role = editor だけ)。サービスは記録するだけで、ファイルを書かない
+inline constexpr const char* kRestoreRecord = "restore_record";
+inline constexpr const char* kRestoreExpect = "restore_expect";
+inline constexpr const char* kRestoreList = "restore_list";
 } // namespace trackop
 
 namespace trackevent {

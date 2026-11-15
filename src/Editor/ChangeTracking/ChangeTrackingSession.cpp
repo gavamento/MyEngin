@@ -44,6 +44,7 @@ void ChangeTrackingSession::StartWithIo(std::unique_ptr<TrackIo> io, const std::
     seenConnects_ = 0;
     projectRoot_ = projectRoot;
     pendingSaved_.clear();
+    restore_.Configure(projectRoot, &client_);
     Wire();
     if (!enabled) {
         client_.SetIdle(TrackState::Disabled);
@@ -93,6 +94,7 @@ void ChangeTrackingSession::Wire()
 void ChangeTrackingSession::Poll()
 {
     client_.Poll();
+    restore_.Poll();
     model_.Tick();
     overlay_.Tick();
     DrainSaved();

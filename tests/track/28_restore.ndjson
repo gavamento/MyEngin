@@ -1,0 +1,34 @@
+# restore_expect / restore_record / restore_list: editor だけ (mcp / hook は forbidden)。引数の検査 (bad_args)。復元の記録は同じ restoreId を更新し、committed で対象の状態 (changeState) が変わる
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.txt a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n
+# wait-recorded 1
+# write a.txt A\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n
+# wait-recorded 2
+{"id":2,"op":"restore_list"}
+{"id":3,"op":"restore_expect","args":{"restoreId":"r-1","paths":["a.txt"],"hashes":["4f35eae954ebb95ea8c713545a3dcb781d3bcea30eef35c8cc62eba32049119c"]}}
+{"id":4,"op":"restore_record","args":{"restoreId":"r-1","state":"applying","targets":[{"revisionId":2,"scope":"hunks","hunkIds":[3],"paths":["a.txt"]}],"preHashes":{"a.txt":{"hash":"4f35eae954ebb95ea8c713545a3dcb781d3bcea30eef35c8cc62eba32049119c","size":20}}}}
+{"id":5,"op":"list","args":{"path":"a.txt"}}
+{"id":6,"op":"restore_record","args":{"restoreId":"r-1","state":"committed","targets":[{"revisionId":2,"scope":"hunks","hunkIds":[3],"paths":["a.txt"]}],"postHashes":{"a.txt":"5af306b9538f2bf03cef3ab056bdf784781be7495ad6b0aa753035e473ce245e"}}}
+{"id":7,"op":"list","args":{"path":"a.txt"}}
+{"id":8,"op":"restore_record","args":{"restoreId":"r-2","state":"rolled_back","error":"書き込みに失敗","targets":[{"revisionId":2,"scope":"file","paths":["a.txt"]}]}}
+{"id":9,"op":"restore_list"}
+{"id":10,"op":"restore_list","args":{"limit":1}}
+{"id":11,"op":"restore_list","args":{"limit":0}}
+{"id":12,"op":"restore_record","args":{"restoreId":"r-3","state":"weird","targets":[{"revisionId":2,"scope":"file"}]}}
+{"id":13,"op":"restore_record","args":{"restoreId":"a/b","state":"applying","targets":[{"revisionId":2,"scope":"file"}]}}
+{"id":14,"op":"restore_record","args":{"restoreId":"r-3","state":"applying","targets":[]}}
+{"id":15,"op":"restore_record","args":{"restoreId":"r-3","state":"applying","targets":[{"revisionId":2,"scope":"file","paths":["../outside.txt"]}]}}
+{"id":16,"op":"restore_expect","args":{"restoreId":"r-3","paths":["a.txt"],"hashes":["abc"]}}
+{"id":17,"op":"restore_expect","args":{"restoreId":"r-3","paths":["a.txt","b.txt"],"hashes":[null]}}
+{"id":18,"op":"restore_expect","args":{"restoreId":"r-3","paths":["../outside.txt"],"hashes":[null]}}
+{"id":19,"op":"restore_expect","args":{"restoreId":"r-3","paths":["a.txt"],"hashes":[null],"extra":1}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"restore_record","args":{"restoreId":"r-9","state":"committed","targets":[{"revisionId":2,"scope":"file"}]}}
+{"id":3,"op":"restore_expect","args":{"restoreId":"r-9","paths":["a.txt"],"hashes":[null]}}
+{"id":4,"op":"restore_list"}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"restore_record","args":{"restoreId":"r-9","state":"committed","targets":[{"revisionId":2,"scope":"file"}]}}
+{"id":3,"op":"restore_expect","args":{"restoreId":"r-9","paths":["a.txt"],"hashes":[null]}}
+{"id":4,"op":"restore_list"}

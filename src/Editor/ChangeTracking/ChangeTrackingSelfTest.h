@@ -32,6 +32,11 @@ void RunReviewSelfTests(const std::function<void(bool, const char*)>& check);
 // 一時プロジェクトの全ファイルが変わらないこと / 操作全体のレビュー・集約・大きいファイルの先頭。RunChangeTrackingSelfTest の末尾から呼ぶ
 void RunRestoreSelfTests(const std::function<void(bool, const char*)>& check);
 
+// 復元の実行 (M104p2。利用者のファイルを書く) の回帰テスト (RestoreApplySelfTest.cpp)。**必ず一時プロジェクトで**行う。適用 (ファイル全体・Hunk・追加の取り消し・
+// 削除の取り消し・名前の戻し) / 書く前に止まる (競合・ゲート・パスの差し替え) / 失敗 → 巻き戻し・他者の書き込みの保護 / 起動時の回復 / 内容の取得の失敗 /
+// .git\index が変わらず git を起動しない / 8 MiB 超 / 記録の送り直し / 窓。RunChangeTrackingSelfTest の末尾から呼ぶ
+void RunRestoreApplySelfTests(const std::function<void(bool, const char*)>& check);
+
 // 描画バックエンドの無い ImGui の文脈を 1 つ作り、フレームを 1 つ回して捨てる (frame の中で窓を描く試験用)。
 // 既にある文脈 (Editor 本体) には触らず、終わったら元へ戻す
 void WithHeadlessImGuiFrame(const std::function<void()>& frame);

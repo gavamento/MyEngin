@@ -28,9 +28,9 @@
 | sub-13 (M104n) 未保存シーンへの外部変更の確認 | OK | 0 | 42a1b552 | replay_verify PASS、Release --selftest-full 125 スイート、Debug は physics を除く 124 (いずれも coder)。should: 自分の保存で確認が出る件は sub-14。nit: Debug の Editor.exe のビルドし直しと ADR-039 の文面は sub-14。未確認: 実 Editor の操作、モーダルの目視 (cache/m104n_shots)。Notion Q-36〜38 |
 | sub-14 (M104o) レビュー | OK | 0 | c9b14f4c | round 1 で OK。操作全体の一括の導線と、ファイル単位の集約表示は sub-15 へ。Rust 側の時間依存の試験の揺れは sub-26 へ |
 | sub-26 (M104o2) サービス側の時間に依存する試験を、機械の負荷に強くする | OK | 0 | a53053db | round 1 で OK。負荷で結果が変わる 4 試験は `--test watch -- --ignored` へ。pipe.rs:811 はクライアントの不具合 (実走の記録なし) |
-| sub-15 (M104p) 復元の判定 — ゲート、競合の検証、パスの検査、プレビュー | OK | 0 | (このコミット) | round 1 で OK。ファイルを書かない (planner が grep で確認)。「復元する」は常に押せない。list に operationId を追加 |
-| sub-27 (M104p2) ファイルと Hunk の適用、復元ジャーナル、巻き戻し、起動時の回復 | 実装中 | 0 | | 着手可 (sub-15 の VERDICT で詳細化)。初めて利用者のファイルを書くサブ。試験は一時プロジェクトだけ |
-| sub-16 (M104q) ライブのシーンの復元 | 未着手 | | | 骨子。Phase 5 の最後 |
+| sub-15 (M104p) 復元の判定 — ゲート、競合の検証、パスの検査、プレビュー | OK | 0 | dca6fee0 | round 1 で OK。ファイルを書かない (planner が grep で確認)。「復元する」は常に押せない。list に operationId を追加 |
+| sub-27 (M104p2) ファイルと Hunk の適用、復元ジャーナル、巻き戻し、起動時の回復 | OK | 0 | (このコミット) | round 1 で OK。書き込みの口は RestoreWriteIo 1 か所 (planner が grep で確認)。削除の後のアセット登録の残りは sub-16 へ |
+| sub-16 (M104q) ライブのシーンの復元 | 実装中 | 0 | | 着手可 (sub-27 の VERDICT で詳細化)。Phase 5 の最後。横断の検証 (A20) と replay_verify を必ず回す |
 | sub-17 (M104r) 削除エンティティのゴースト、Overlay | 未着手 | | | 骨子。着手前に Phase 6 へ進むかユーザー確認 |
 | sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | 未着手 | | | 骨子 |
 | sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | 未着手 | | | 骨子。Phase 6 の最後 |

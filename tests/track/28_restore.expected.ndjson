@@ -1,0 +1,27 @@
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"editor","serviceStartedAt":<N>}}
+{"id":2,"ok":true,"result":{"items":[]}}
+{"id":3,"ok":true,"result":{"paths":1,"restoreId":"r-1"}}
+{"id":4,"ok":true,"result":{"restoreId":"r-1","state":"applying"}}
+{"id":5,"ok":true,"result":{"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"items":[{"actor":"restore","afterSize":20,"attribution":"verified","beforeSize":20,"changeId":1,"changeState":"active","changeType":"modified","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":2,"observedAt":<N>,"oldPath":null,"operationId":null,"path":"a.txt","review":null,"revisionId":2,"seq":2},{"actor":"unknown","afterSize":20,"attribution":"unknown","beforeSize":null,"changeId":1,"changeState":"active","changeType":"added","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":null,"path":"a.txt","review":"pending","revisionId":1,"seq":1}],"limit":50,"nextCursor":null}}
+{"id":6,"ok":true,"result":{"restoreId":"r-1","state":"committed"}}
+{"id":7,"ok":true,"result":{"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"items":[{"actor":"restore","afterSize":20,"attribution":"verified","beforeSize":20,"changeId":1,"changeState":"partially_restored","changeType":"modified","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":2,"observedAt":<N>,"oldPath":null,"operationId":null,"path":"a.txt","review":null,"revisionId":2,"seq":2},{"actor":"unknown","afterSize":20,"attribution":"unknown","beforeSize":null,"changeId":1,"changeState":"partially_restored","changeType":"added","completeness":"complete","contentKind":"text","diffMode":"lines","hunkCount":1,"observedAt":<N>,"oldPath":null,"operationId":null,"path":"a.txt","review":"pending","revisionId":1,"seq":1}],"limit":50,"nextCursor":null}}
+{"id":8,"ok":true,"result":{"restoreId":"r-2","state":"rolled_back"}}
+{"id":9,"ok":true,"result":{"items":[{"error":"書き込みに失敗","finishedAt":<N>,"postHashes":null,"preHashes":null,"restoreId":"r-2","startedAt":<N>,"state":"rolled_back","targets":[{"hunkIds":[],"paths":["a.txt"],"revisionId":2,"scope":"file"}]},{"error":null,"finishedAt":<N>,"postHashes":{"a.txt":"5af306b9538f2bf03cef3ab056bdf784781be7495ad6b0aa753035e473ce245e"},"preHashes":{"a.txt":{"hash":"4f35eae954ebb95ea8c713545a3dcb781d3bcea30eef35c8cc62eba32049119c","size":20}},"restoreId":"r-1","startedAt":<N>,"state":"committed","targets":[{"hunkIds":[3],"paths":["a.txt"],"revisionId":2,"scope":"hunks"}]}]}}
+{"id":10,"ok":true,"result":{"items":[{"error":"書き込みに失敗","finishedAt":<N>,"postHashes":null,"preHashes":null,"restoreId":"r-2","startedAt":<N>,"state":"rolled_back","targets":[{"hunkIds":[],"paths":["a.txt"],"revisionId":2,"scope":"file"}]}]}}
+{"error":{"code":"bad_args","detail":"limit は 1 以上"},"id":11,"ok":false}
+{"error":{"code":"bad_args","detail":"state は prepared / applying / committed / rolling_back / rolled_back / recovery_required / recovered のどれか"},"id":12,"ok":false}
+{"error":{"code":"bad_args","detail":"restoreId は英数字と - の 64 文字まで"},"id":13,"ok":false}
+{"error":{"code":"bad_args","detail":"targets は 1〜64 件"},"id":14,"ok":false}
+{"error":{"code":"bad_args","detail":"パスがプロジェクトの外を指している: ../outside.txt"},"id":15,"ok":false}
+{"error":{"code":"bad_args","detail":"hashes の要素は null か 64 桁の 16 進のハッシュ"},"id":16,"ok":false}
+{"error":{"code":"bad_args","detail":"paths と hashes は同じ長さで 1〜256 件"},"id":17,"ok":false}
+{"error":{"code":"bad_args","detail":"パスがプロジェクトの外を指している: ../outside.txt"},"id":18,"ok":false}
+{"error":{"code":"bad_args","detail":"知らない引数: extra"},"id":19,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"mcp","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 mcp は restore_record を呼べない"},"id":2,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 mcp は restore_expect を呼べない"},"id":3,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 mcp は restore_list を呼べない"},"id":4,"ok":false}
+{"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"hook","serviceStartedAt":<N>}}
+{"error":{"code":"forbidden","detail":"役割 hook は restore_record を呼べない"},"id":2,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 hook は restore_expect を呼べない"},"id":3,"ok":false}
+{"error":{"code":"forbidden","detail":"役割 hook は restore_list を呼べない"},"id":4,"ok":false}

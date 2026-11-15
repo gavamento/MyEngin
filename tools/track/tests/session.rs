@@ -146,6 +146,9 @@ impl Fx {
             "op_end" => ops_record::op_end(env, &caller, args(a)),
             "report" => ops_record::report(env, &caller, args(a)),
             "editor_saved" => ops_record::editor_saved(env, &caller, args(a)),
+            "restore_record" => ops_record::restore_record(env, &caller, args(a)),
+            "restore_expect" => ops_record::restore_expect(env, &caller, args(a)),
+            "review_set" => ops_record::review_set(env, &caller, args(a)),
             other => panic!("知らない op {other}"),
         }
     }
@@ -1352,4 +1355,246 @@ fn the_service_does_not_idle_out_while_a_session_is_running() {
         assert!(Instant::now() < deadline, "セッションが無くなったのに終わらない");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+
+// ---- 復元の記録 (M104p2): restore_expect / restore_record -------------------------------------------------------
+
+fn expect(fx: &Fx, id: &str, path: &str, bytes: Option<&[u8]>) -> Value {
+    let hash = bytes.map(sha256_hex);
+    fx.ok("restore_expect", EDITOR, json!({ "restoreId": id, "paths": [path], "hashes": [hash] }))
+}
+
+fn restore_state(conn: &Connection, id: &str) -> (String, Option<i64>) {
+    conn.query_row("SELECT state, finished_at FROM restore_operations WHERE restore_id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+}
+
+fn change_state(conn: &Connection, path: &str) -> Vec<String> {
+    let mut stmt = conn.prepare("SELECT state FROM changes WHERE path = ?1 ORDER BY change_id").unwrap();
+    let rows = stmt.query_map([path], |r| r.get::<_, String>(0)).unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+#[test]
+fn an_expected_restore_makes_the_change_the_restores_whether_it_is_observed_first_or_second() {
+    let mut fx = Fx::new("restore_expect");
+    fx.write("before.txt", b"b0\n");
+    fx.write("after.txt", b"a0\n");
+    fx.write("gone.txt", b"g0\n");
+    fx.start(cfg(2000));
+    // 予告が先 (書く前に届く。Editor の実際の順序)
+    expect(&fx, "r1", "before.txt", Some(b"b1\n"));
+    fx.write("before.txt", b"b1\n");
+    wait_until("before.txt", || fx.revision_count("before.txt") == 1);
+    let rev = fx.last("before.txt");
+    assert_eq!(verdict(&rev), ("restore", "verified"), "{:?}", fx.evidence(rev.id));
+    assert_eq!(fx.evidence(rev.id), ["observed", "restore_expected"]);
+    // 観測が先
+    fx.write("after.txt", b"a1\n");
+    wait_until("after.txt", || fx.revision_count("after.txt") == 1);
+    assert_eq!(verdict(&fx.last("after.txt")), ("unknown", "unknown"));
+    expect(&fx, "r2", "after.txt", Some(b"a1\n"));
+    assert_eq!(verdict(&fx.last("after.txt")), ("restore", "verified"), "{:?}", fx.evidence(fx.last("after.txt").id));
+    // 削除の予告 (内容は null)
+    expect(&fx, "r3", "gone.txt", None);
+    fs::remove_file(fx.root.join("gone.txt")).unwrap();
+    fx.model.remove("gone.txt");
+    wait_until("gone.txt", || fx.revision_count("gone.txt") == 1);
+    assert_eq!(verdict(&fx.last("gone.txt")), ("restore", "verified"));
+}
+
+#[test]
+fn an_expected_restore_with_another_content_or_path_does_not_match_and_the_editor_save_keeps_priority() {
+    let mut fx = Fx::new("restore_expect_miss");
+    fx.write("a.txt", b"a0\n");
+    fx.write("b.txt", b"b0\n");
+    fx.write("c.txt", b"c0\n");
+    fx.start(cfg(2000));
+    expect(&fx, "r1", "a.txt", Some(b"something else\n"));
+    expect(&fx, "r1", "b.txt", Some(b"b1\n")); // 別のパスの予告
+    fx.write("a.txt", b"a1\n");
+    wait_until("a.txt", || fx.revision_count("a.txt") == 1);
+    assert_eq!(verdict(&fx.last("a.txt")), ("unknown", "unknown"), "内容が違う予告で restore にした");
+    fx.write("b.txt", b"b2 by someone\n");
+    wait_until("b.txt", || fx.revision_count("b.txt") == 1);
+    assert_eq!(verdict(&fx.last("b.txt")), ("unknown", "unknown"));
+    // 同じ内容に editor_saved と restore_expect の両方: attr §3 の表の先頭 (editor_saved) が勝つ
+    expect(&fx, "r2", "c.txt", Some(b"c1\n"));
+    saved(&fx, "c.txt", b"c1\n");
+    fx.write("c.txt", b"c1\n");
+    wait_until("c.txt", || fx.revision_count("c.txt") == 1);
+    let rev = fx.last("c.txt");
+    assert_eq!(verdict(&rev), ("editor_user", "verified"), "{:?}", fx.evidence(rev.id));
+}
+
+#[test]
+fn a_committed_restore_marks_the_targets_and_leaves_the_review_alone() {
+    let mut fx = Fx::new("restore_record");
+    let lines = |a: &str, b: &str| -> Vec<u8> {
+        let mut text = String::new();
+        for i in 1..=24 {
+            text.push_str(&match i {
+                2 => format!("{a}\n"),
+                22 => format!("{b}\n"),
+                _ => format!("line{i}\n"),
+            });
+        }
+        text.into_bytes()
+    };
+    fx.write("r.txt", &lines("line2", "line22"));
+    fx.start(cfg(2000));
+    fx.write("r.txt", &lines("AI2", "AI22"));
+    wait_until("r.txt", || fx.revision_count("r.txt") == 1);
+    let rev = fx.last("r.txt");
+    let conn = fx.db();
+    let hunks: Vec<i64> = {
+        let mut stmt = conn.prepare("SELECT hunk_id FROM change_hunks WHERE revision_id = ?1 ORDER BY ordinal").unwrap();
+        let rows = stmt.query_map([rev.id], |r| r.get(0)).unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    assert_eq!(hunks.len(), 2, "前提: Hunk が 2 つ");
+    fx.ok("review_set", EDITOR, json!({ "targets": [{ "revisionId": rev.id, "scope": { "kind": "revision" } }], "state": "approved" }));
+    let reviews_before = dump(&conn, "SELECT * FROM reviews ORDER BY review_id");
+    let pre_hash = sha256_hex(&lines("AI2", "AI22"));
+    let record = |state: &str, targets: Value| {
+        let mut a = json!({
+            "restoreId": "rr-1", "state": state, "targets": targets,
+            "preHashes": { "r.txt": { "hash": pre_hash, "size": 10 } },
+        });
+        if state == "committed" {
+            a["postHashes"] = json!({ "r.txt": sha256_hex(&lines("line2", "AI22")) });
+        }
+        fx.ok("restore_record", EDITOR, a)
+    };
+    let hunk_one = json!([{ "revisionId": rev.id, "scope": "hunks", "hunkIds": [hunks[0]], "paths": ["r.txt"] }]);
+    record("applying", hunk_one.clone());
+    assert_eq!(restore_state(&fx.db(), "rr-1"), ("applying".to_string(), None));
+    let snaps = dump(&fx.db(), "SELECT blob_hash, path, kind, blob_state FROM snapshots WHERE kind = 'pre_restore'");
+    assert_eq!(snaps.len(), 1, "applying で適用前の内容を pre_restore のスナップショットにする: {snaps:?}");
+    assert!(snaps[0].contains("present"), "{snaps:?}"); // 観測された内容なので Blob は既にある
+    assert_eq!(change_state(&fx.db(), "r.txt"), ["active"], "committed までは状態を変えない");
+    record("committed", hunk_one);
+    let (state, finished) = restore_state(&fx.db(), "rr-1");
+    assert_eq!(state, "committed");
+    assert!(finished.is_some());
+    assert_eq!(change_state(&fx.db(), "r.txt"), ["partially_restored"]);
+    let hunk_states: Vec<String> = {
+        let db = fx.db();
+        let mut stmt = db.prepare("SELECT state FROM change_hunks WHERE revision_id = ?1 ORDER BY ordinal").unwrap();
+        let rows = stmt.query_map([rev.id], |r| r.get(0)).unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    assert_eq!(hunk_states, ["restored", "active"]);
+    // 残りの Hunk も戻れば、変更全体が restored
+    let hunk_two = json!([{ "revisionId": rev.id, "scope": "hunks", "hunkIds": [hunks[1]], "paths": ["r.txt"] }]);
+    fx.ok("restore_record", EDITOR, json!({ "restoreId": "rr-2", "state": "committed", "targets": hunk_two }));
+    assert_eq!(change_state(&fx.db(), "r.txt"), ["restored"]);
+    // 巻き戻した復元は対象の状態を変えない
+    fx.ok(
+        "restore_record",
+        EDITOR,
+        json!({ "restoreId": "rr-3", "state": "rolled_back", "error": "x", "targets": [{ "revisionId": rev.id, "scope": "file", "paths": ["r.txt"] }] }),
+    );
+    assert_eq!(restore_state(&fx.db(), "rr-3").0, "rolled_back");
+    // レビューの記録は 1 行も変わらない (要求 §10.5)
+    assert_eq!(dump(&fx.db(), "SELECT * FROM reviews ORDER BY review_id"), reviews_before);
+    // 履歴の op
+    let reader = ops::open_reader(&Paths::for_project(&fx.root).db).unwrap();
+    let list = ops::restore_list(&reader, args(json!({}))).unwrap();
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3, "{list}");
+    assert_eq!(items.iter().filter(|i| i["state"] == "committed").count(), 2);
+    assert_eq!(ops::restore_list(&reader, args(json!({ "limit": 0 }))).unwrap_err().code, code::BAD_ARGS);
+}
+
+#[test]
+fn restore_ops_reject_bad_arguments_and_only_the_editor_may_call_them() {
+    let mut fx = Fx::new("restore_args");
+    fx.write("a.txt", b"a\n");
+    fx.start(cfg(2000));
+    let good = sha256_hex(b"a\n");
+    let target = json!([{ "revisionId": 1, "scope": "file", "paths": ["a.txt"] }]);
+    for (name, a) in [
+        ("state が知らない値", json!({ "restoreId": "x", "state": "weird", "targets": target })),
+        ("restoreId が不正", json!({ "restoreId": "a/b", "state": "applying", "targets": target })),
+        ("targets が空", json!({ "restoreId": "x", "state": "applying", "targets": [] })),
+        ("scope が不正", json!({ "restoreId": "x", "state": "applying", "targets": [{ "revisionId": 1, "scope": "all" }] })),
+        ("外のパス", json!({ "restoreId": "x", "state": "applying", "targets": [{ "revisionId": 1, "scope": "file", "paths": ["../o.txt"] }] })),
+        ("preHashes の値が不正", json!({ "restoreId": "x", "state": "applying", "targets": target, "preHashes": { "a.txt": "zz" } })),
+        ("知らない引数", json!({ "restoreId": "x", "state": "applying", "targets": target, "extra": 1 })),
+    ] {
+        let e = fx.call("restore_record", EDITOR, a).unwrap_err();
+        assert_eq!(e.code, code::BAD_ARGS, "{name}: {}", e.detail);
+    }
+    for (name, a) in [
+        ("hash が短い", json!({ "restoreId": "x", "paths": ["a.txt"], "hashes": ["abc"] })),
+        ("長さが違う", json!({ "restoreId": "x", "paths": ["a.txt"], "hashes": [] })),
+        ("外のパス", json!({ "restoreId": "x", "paths": ["../o.txt"], "hashes": [good] })),
+        ("paths が無い", json!({ "restoreId": "x", "hashes": [good] })),
+    ] {
+        let e = fx.call("restore_expect", EDITOR, a).unwrap_err();
+        assert_eq!(e.code, code::BAD_ARGS, "{name}: {}", e.detail);
+    }
+    for role in [Role::Mcp, Role::Hook] {
+        for op in ["restore_record", "restore_expect", "restore_list"] {
+            assert!(!role_allows(role, op), "{role:?} が {op} を呼べる");
+        }
+    }
+    assert!(fx.call("restore_expect", EDITOR, json!({ "restoreId": "x", "paths": ["a.txt"], "hashes": [good.to_ascii_uppercase()] })).is_ok());
+}
+
+#[test]
+fn a_broken_db_is_rebuilt_with_the_restore_records_and_expectations() {
+    let mut fx = Fx::new("restore_rebuild");
+    fx.write("a.txt", b"a0\n");
+    fx.write("b.txt", b"b0\n");
+    fx.start(cfg(2000));
+    // 予告が先 / 観測が先、の両方と、committed までの記録
+    expect(&fx, "rb1", "a.txt", Some(b"a1\n"));
+    fx.write("a.txt", b"a1\n");
+    wait_until("a.txt", || fx.revision_count("a.txt") == 1);
+    fx.write("b.txt", b"b1\n");
+    wait_until("b.txt", || fx.revision_count("b.txt") == 1);
+    expect(&fx, "rb2", "b.txt", Some(b"b1\n"));
+    let rev = fx.last("a.txt");
+    let targets = json!([{ "revisionId": rev.id, "scope": "file", "paths": ["a.txt"] }]);
+    fx.ok(
+        "restore_record",
+        EDITOR,
+        json!({ "restoreId": "rb1", "state": "applying", "targets": targets, "preHashes": { "a.txt": { "hash": sha256_hex(b"a1\n"), "size": 3 } } }),
+    );
+    fx.ok(
+        "restore_record",
+        EDITOR,
+        json!({ "restoreId": "rb1", "state": "committed", "targets": targets, "postHashes": { "a.txt": sha256_hex(b"a0\n") } }),
+    );
+    for p in ["a.txt", "b.txt"] {
+        assert_eq!(verdict(&fx.last(p)), ("restore", "verified"), "{p}: 前提");
+    }
+    fx.stop();
+
+    drop(open_project(&fx.root, now_ms()).0);
+    let snapshot = |conn: &Connection| {
+        let mut t = attribution_tables(conn);
+        t.insert("restore_operations", dump(conn, "SELECT * FROM restore_operations ORDER BY restore_id"));
+        t.insert("changes", dump(conn, "SELECT path, state FROM changes ORDER BY change_id"));
+        t.insert("change_hunks", dump(conn, "SELECT revision_id, ordinal, state FROM change_hunks ORDER BY hunk_id"));
+        t
+    };
+    let before = snapshot(&fx.db());
+    assert_eq!(before["restore_operations"].len(), 1, "{before:#?}");
+    let paths = Paths::for_project(&fx.root);
+    fs::write(&paths.db, b"this is not a sqlite database").unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", paths.db.display()));
+    }
+    let (store, report) = open_project(&fx.root, now_ms());
+    assert!(report.broken_db.is_some() && report.rebuilt.is_some(), "{report:?}");
+    assert!(report.failed_steps.is_empty(), "{:?}", report.failed_steps);
+    drop(store);
+    let after = snapshot(&fx.db());
+    for (table, rows) in &before {
+        assert_eq!(rows, &after[table], "{table} が壊す前と違う");
+    }
+    assert_eq!(count_evidence(&fx.db(), "restore_expected"), 2);
 }

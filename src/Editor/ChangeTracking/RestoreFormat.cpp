@@ -246,6 +246,9 @@ RestoreScreen BuildRestoreScreen(const RestorePreview& preview, const std::vecto
         screen.ops.push_back(RestoreOpText(op, plan.scope == RestoreScope::Hunks));
     }
     screen.notes = RestoreNoteLines(notes);
+    // 押せるのは、照合に通った (Ready) 計画があり、止める理由が 1 つも無いときだけ
+    screen.canApply = plan.verdict == RestoreVerdict::Ready && !plan.ops.empty() && blocks.empty();
+    screen.applyNote = Tr(screen.canApply ? StrId::AiChg_RsWillApply : StrId::AiChg_RsNoWrite);
     return screen;
 }
 

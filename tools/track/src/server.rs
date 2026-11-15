@@ -472,9 +472,11 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
             with_reader(ctx, conn, |db| scene_overlay::document_for_path(db, &ctx.record.root, args))
         }
         "blob_get" => ops::blob_get(&ctx.blobs_dir, args),
+        "restore_list" => with_reader(ctx, conn, |db| ops::restore_list(db, args)),
         "shutdown" => args.finish().map(|()| json!({})),
         "subscribe" => subscribe(ctx, conn, args),
-        "session_begin" | "session_end" | "op_begin" | "op_end" | "report" | "editor_saved" | "review_set" => {
+        "session_begin" | "session_end" | "op_begin" | "op_end" | "report" | "editor_saved" | "review_set" | "restore_record"
+        | "restore_expect" => {
             record_op(ctx, conn, role, &request.op, args)
         }
         other => Err(OpError::new(code::INTERNAL, format!("op の配線が無い: {other}"))),
@@ -502,6 +504,8 @@ fn record_op(ctx: &Context, conn: &ConnState, role: Role, op: &str, args: Args) 
         "op_end" => ops_record::op_end(env, &caller, args),
         "editor_saved" => ops_record::editor_saved(env, &caller, args),
         "review_set" => ops_record::review_set(env, &caller, args),
+        "restore_record" => ops_record::restore_record(env, &caller, args),
+        "restore_expect" => ops_record::restore_expect(env, &caller, args),
         _ => ops_record::report(env, &caller, args),
     }
 }

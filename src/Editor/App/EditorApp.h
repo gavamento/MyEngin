@@ -39,6 +39,7 @@
 #include "Editor/Windows/Project/ProjectSettingsWindow.h"
 #include "Editor/Windows/Scene/SceneViewWindow.h"
 #include "Editor/Windows/Project/AiChangesWindow.h"
+#include "Editor/Windows/Project/RestoreRunWindow.h"
 #include "Editor/Windows/Project/SourceControlWindow.h"
 #include "Editor/Windows/Asset/SearchWindow.h"
 #include "Editor/Windows/Audio/AudioMixerWindow.h"
@@ -204,6 +205,7 @@ private:
     // 自分の保存の直後のファイルの印 (保存の直後に編集を続けたとき、自分の保存の監視イベントを外部変更として確認しない)
     OwnSaveRecord ownSave_;
     AiChangesWindow aiChanges_; // M104k (既定は閉じている)
+    RestoreRunWindow restoreRun_; // M104p2: 復元の進行・結果・起動時の回復・履歴 (AI Changes 窓が閉じていても出る)
     // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
     GitTransaction gitTx_;
     // M66e: Asset Browser の [Rebuild Scripts] で起動した子プロセス (void* = HANDLE)。

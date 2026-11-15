@@ -168,7 +168,7 @@ CREATE TABLE reviews (
 
 CREATE TABLE restore_operations (
   restore_id   TEXT PRIMARY KEY,                -- UUID。recovery\<restoreId>\ と同じ
-  state        TEXT NOT NULL,                   -- prepared / applying / committed / rolling_back / recovery_required / rolled_back
+  state        TEXT NOT NULL,                   -- prepared / applying / committed / rolling_back / recovery_required / rolled_back / recovered (M104p2)
   targets      TEXT NOT NULL,                   -- JSON: 対象 (revision、hunk、entity、field)
   pre_hashes   TEXT,                            -- JSON: 適用前の内容ハッシュ
   post_hashes  TEXT,                            -- JSON: 適用後の内容ハッシュ

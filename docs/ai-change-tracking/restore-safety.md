@@ -220,6 +220,22 @@ prepared ──► applying ──► committed
 - **注記**: 削除になるときは「参照しているコードやアセットがあるかは確かめていません」を必ず出す。stage 済みかは `SourceControlSession` の status モデルの読み取りだけで答え (Index を読みも書きもしない、git を起動しない)、使えなければ「分からない」と出す。再コンパイル・再読み込み・再起動の見込みは `StageClassifier` の分類 (A / B / C)。`.meta` を書くときは guid が変わるかを確かめていないと出す。
 - **読み取りの上限**: 今のファイルは 8 MiB まで (行 diff と同じ)。1 フレームに 1 MiB ずつ読み、読んでいる間は「準備中」。上限を超えるファイルは判定しない (ハッシュだけで足りるバイナリも同じ。M104p2 で見直す)。
 
+## 8.2 適用・ジャーナル・巻き戻し・回復で決めた細部 (M104p2)
+
+作業ツリーを書くのはここだけ (`src\Editor\ChangeTracking\RestoreRunner.*`、`RestoreJournal.*`、`RestoreWriteIo.*`)。**書く・消す・名前を変える・ディレクトリを作る API は `RestoreWriteIo.cpp` の 1 か所**で、ほかのファイルは持たない (試験が grep で確かめる)。読み取りは `RestoreFileIo` (別の口)。
+
+- **書くのは計画 (`RestorePlan.ops`) にあるものだけ**。実行の直前に、プレビューと同じ入力 (describe・Hunk・選んだ Hunk) から計画を作り直す (パスの検査 (2 回目)・今のファイルの読み直し・Before の Blob の有無を含む) と、書く内容のハッシュを含めて**プレビューの計画と同じ**ことを確かめる。違えば書かずに止める (`PlanChanged`)。ゲートも同じ入力で判定し直し (`Gate`)、書く直前にもう一度 (ジャーナルへ保存し終えたあと) 判定する。パスの検査は操作ごとにも行う。
+- **流れ**: 判定し直し → Before の内容を `blob_get` (512 KiB ずつ) で取る → ジャーナル (`prepared`) へ適用前の内容を全部保存 → ゲートとパスと内容の最後の確認 → `applying` へ → `restore_expect` と `restore_record` を送る → `ReloadHub::BeginBatch` → 操作を 1 フレームに 1 つずつ → 書いたものを読み直してハッシュを確かめる → `committed` → `EndBatch` → `restore_record`。どこで止まっても (例外を含む) `BeginBatch` の対になる `EndBatch` を 1 回通す。Editor の終了時も `RestoreRunner::Shutdown` が通す。
+- **取った内容のハッシュを Editor でも確かめてから書く**: `blob_get` で取った内容の SHA-256 が Revision の Before のハッシュと違えば書かない (`BlobMismatch`)。取っている間に切断・時間切れ・欠けがあれば、何も書かずにやめる (ジャーナルは捨てる)。
+- **軌跡 (`JournalFile.states`)**: ジャーナルは、触るパスごとに「適用前 → 各操作のあと」の内容のハッシュ (空 = ファイルが無い) を持つ。**巻き戻しと起動時の回復は、今の内容が軌跡のどれかに合うファイルだけを適用前へ戻し、どれにも合わない (他者が書いた) ファイルは触らない** (`recovery_required`)。書いたあとの読み直しが合わないときも同じで、他者の内容を上書きしない。ディレクトリを作る操作 (削除の取り消し・名前の変更の取り消し) の巻き戻しは、ファイルだけを戻す (作ったディレクトリは残す)。
+- **ジャーナル**: `manifest.json` (状態・操作・軌跡・進んだ操作の数。更新は `WriteFileReplacing`)、`pre\0001.bin ...` (適用前の内容)、大きい内容の取得の途中は `new\0001.bin`。`applying` にするのは、適用前の内容を全部保存して読み直したあと。状態は §6 の 6 つに `recovered` を足した: 起動時の回復の画面で利用者が選んだ結果 (`resolution` = `restored_pre` / `kept_current` / `dismissed`)。`prepared` は起動時に捨て、`committed` / `rolled_back` / `recovered` は 7 日後に自分で消す。`manifest.json` が壊れた・無いジャーナルは、落ちずに回復待ちとして扱い、「無視する」では中身を消さずに印 (`dismissed.txt`) だけを付ける。
+- **起動時の回復** (対話起動のときだけ。追跡が無効でも見る): `applying` / `rolling_back` / `recovery_required` のジャーナルと壊れたジャーナルがあれば、回復の画面 (`RestoreRunWindow`) を出す。ファイルごとに「復元の前」「書こうとした内容」「今」のハッシュと、今がどれに当たるかを出し、選択は 2 つ: 適用前へ戻す (軌跡に合うファイルだけ。実行の直前にゲートを判定し直す。サービスに繋がっていなくてもよい)、今のままにする。**選ぶまで何も書かない**。回復待ちの間と復元の実行中は新しい復元を始められない (`restoreJournalPending` は回復待ちの有無で、実行中は `RestoreRunner::Busy`)。画面を閉じても Editor は普通に使える。
+- **ほかの操作との排他**: `BeginBatch` 〜 `EndBatch` の間 (`RestoreRunner::WriteSectionActive`) は、`EditorApp::BuildGateInputs` の `opInFlight` に入れて git の書き込みと別の復元を止め、保存・Undo のショートカットとファイルのドロップを受けない。実行の画面は閉じられないモーダルで、取り消せるのは最初のファイルを書くまで。
+- **大きいファイル (8 MiB 超)**: ファイル全体の復元だけ判定・適用できる。今のファイルは別のスレッドで `Sha256FileHex` (ストリーム)、`pre\` への保存は `CopyFileW` (別のスレッド)、Before の内容は `new\` へ塊ごとに積んでハッシュを確かめ、所定の位置へは名前の付け替えで置く。メモリには載せず、フレームを止めない。Hunk 単位は対象外のまま。
+- **サービス側の記録**: `restore_expect` (書く前) と `restore_record` (`applying` / `committed` / `rolling_back` / `rolled_back` / `recovery_required` / `recovered`)。送れなかった `restore_record` は残して送り直し、結果の画面に「履歴をまだ送れていない」と出す。`restore_expect` が届いていない書き込みは「行為者が分からない変更」になる (制限)。
+- **削除の取り消し・追加の取り消し**: `EndBatch` の変更集合に `Added` / `Deleted` を載せる。`ReloadHub` は `Deleted` を扱わない (既存の仕様) ので、削除したアセットの登録は残る。段階 B / C (スクリプトの再コンパイル・再起動) の自動の作り直しはしない: プレビューの注記が出した見込みのとおり、利用者がする。
+- **未検証**: 実 Editor の GUI 操作 (押す・取り消す・回復の選択・見た目)、`ReloadHub` が実際に開いているシーンへ差分を当てる経路 (`EndBatch` が `Modified` を流すところまで)、stage 済みの判定の実走、複数ファイルの計画 (計画の作り手が 2 ファイルまでなので、3 ファイルはジャーナルの手組みで巻き戻しだけを確かめた)。
+
 ## 9. 受け入れ条件との対応
 
 | 仕様書 §16.4 / §16.5 の項目 | この文書の規則 |

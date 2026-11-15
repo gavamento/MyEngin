@@ -605,6 +605,16 @@ fn is_blob_hash(text: &str) -> bool {
     text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// `restore_list`: 復元の履歴 (`restore_operations`)。新しい順。`limit` は既定 50、最大 200。
+pub fn restore_list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
+    let limit = args.int("limit")?.unwrap_or(crate::restore::LIST_DEFAULT);
+    args.finish()?;
+    if limit < 1 {
+        return Err(OpError::bad_args("limit は 1 以上"));
+    }
+    crate::restore::list(conn, limit.min(crate::restore::LIST_MAX))
+}
+
 /// Blob の中身の一部。`hash` は 64 桁の 16 進 (小文字) だけ。`length` は最大 512 KiB。結果は base64 の `data` と総サイズ。
 /// 範囲読みなので中身とハッシュの照合はしない (書き込み時の検証と起動時の確認で済んでいる)。
 pub fn blob_get(blobs_dir: &Path, mut args: Args) -> Result<Value, OpError> {

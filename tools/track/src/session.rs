@@ -80,6 +80,11 @@ pub fn apply_event(
             (Some(path), Some(hash)) => attribution::apply_editor_saved(conn, at, path, hash),
             _ => Ok(()),
         },
+        "restore_expect" => match payload["path"].as_str() {
+            Some(path) => attribution::apply_restore_expect(conn, at, path, payload["hash"].as_str()),
+            None => Ok(()),
+        },
+        "restore_record" => crate::restore::apply_record(conn, blobs, at, payload),
         _ => operation::apply(conn, blobs, cfg, kind, at, payload).map(|_| ()),
     }
 }
@@ -98,6 +103,8 @@ pub fn is_session_event(kind: &str) -> bool {
             | "reported"
             | "editor_saved"
             | "review_set"
+            | "restore_expect"
+            | "restore_record"
     )
 }
 

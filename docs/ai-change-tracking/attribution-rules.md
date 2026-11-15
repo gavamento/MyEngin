@@ -32,7 +32,7 @@
 | `worktree` | 変更が、そのセッション専用の作業ツリーの中で起きた | セッションの登録情報 |
 | `time_near` | 変更の時刻が、稼働中のセッションの活動時刻に近い | サービス自身 |
 | `editor_saved` | Editor が「この内容で保存した」と通知し、観測した After と一致 | Editor |
-| `restore_expected` | Editor が「復元でこの内容を書く」と予告し、観測した After と一致 | Editor |
+| `restore_expected` | Editor が「復元でこの内容を書く」と予告し (`restore_expect`。書き込みの前に届く)、観測した After と一致 (予告の時刻の 10 秒前から 120 秒後までの観測) | Editor |
 | `overlap` | 同じパスに、別のセッションの操作の窓が重なっている | サービス自身 |
 | `preexisting` | この変更はセッションの開始より前から作業ツリーにあった | サービス自身 (ベースライン) |
 
