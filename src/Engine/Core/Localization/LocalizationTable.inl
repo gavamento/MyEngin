@@ -1307,6 +1307,20 @@ MYE_STR(Confirm_UnsavedBody,  "The scene has unsaved changes. Save them?",
                               "シーンに未保存の変更があります。保存しますか？")
 MYE_STR(Confirm_Save,         "Save",       "保存する")
 MYE_STR(Confirm_DontSave,     "Don't Save", "保存しない")
+MYE_STR(Popup_ExternalSceneChange, "Scene Changed Outside the Editor###ExternalSceneChange",
+                              "エディタの外でシーンが変更されました###ExternalSceneChange")
+MYE_STR(ExtScene_Body,        "This scene file was changed outside the editor, and you have unsaved changes.",
+                              "このシーンのファイルがエディタの外で変更されました。こちらにも未保存の変更があります。")
+MYE_STR(ExtScene_Note,        "Load: apply the file's content to the open scene. Objects you added and have not saved are kept.\nKeep my edits: ignore the file's change. Your next save will overwrite the file.",
+                              "読み込む: ファイルの内容を開いているシーンへ反映します。まだ保存していない追加分は残ります。\n自分の編集を保つ: ファイルの変更は反映しません。次に保存するとファイルを上書きします。")
+MYE_STR(ExtScene_Load,        "Load the file",     "読み込む")
+MYE_STR(ExtScene_Keep,        "Keep my edits",     "自分の編集を保つ")
+MYE_STR(ExtScene_Gone,        "The scene file was deleted outside the editor, so the change was dropped.",
+                              "シーンのファイルがエディタの外で削除されたため、変更の反映を取りやめました。")
+MYE_STR(ExtScene_Failed,      "Could not read the changed scene file, so it was not applied.",
+                              "変更されたシーンのファイルを読めなかったため、反映しませんでした。")
+MYE_STR(AiChg_PendingExternal, "The open scene differs from the file on disk: an outside change is waiting for your decision (play mode, unsaved edits).",
+                              "開いているシーンはディスクのファイルと食い違っています: 外部の変更が判断待ちです (再生中・未保存の編集)。")
 // ★再生中の ctx.scene は文書ではなく動いている世界 (LoadScene で別シーンにもなる)。保存を止める
 MYE_STR(Save_BlockedPlaying,  "Cannot save while playing. Stop first, then save.",
                               "再生中は保存できません。停止してから保存してください。")

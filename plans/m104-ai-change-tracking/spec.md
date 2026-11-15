@@ -223,6 +223,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-13 の VERDICT round 1): sub-14 を詳細に書き直した (`review_set`、今の状態の決め方 = いちばん新しい行、集約の表、承認済みを強調から外す、Editor の操作、持ち越しの直し 3 件、Phase 3〜4 の横断、受け入れ条件 15 件)。Engine 層の差分は `ReloadHub` の口 1 つ + 保留の操作になった (ADR-039 の文面は sub-14 で直す)。
 - 2026-11-15 (planner、sub-25 の VERDICT round 1): D38 を追加 (Debug の `--selftest-full` が `physics` で落ちる件は M104 の外の別件として扱い、A20 の Debug の横断は `physics` を除いて回す)。sub-14 に書いた。sub-13 は変更なし。
 - 2026-11-15 (planner、sub-24 の VERDICT round 1): D37 を追加。sub-24 と sub-13 の間に **sub-25 (M104m3)** を足した (Debug の `changetracking` スイートが負荷の下で落ちるのを、planner が 5 回中 5 回再現した)。sub-13 を着手可にし (確認済みの事実と追加の取り決めを書いた)、依存を sub-25 にした。
 - 2026-11-15 (planner、sub-12 の VERDICT round 1): sub-24 を着手可にした (sub-12 の結果、強調の入・切の保存を色と一緒に入れること、Scene View の試験の分け方を追記)。

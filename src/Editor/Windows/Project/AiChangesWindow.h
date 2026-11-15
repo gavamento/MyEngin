@@ -34,6 +34,8 @@ struct AiChangesHost {
     std::function<void(const std::wstring& absPath)> showInExplorer;
     // 開いているシーンのエンティティを選ぶ (Hierarchy と Inspector が追従する)。ライブのシーンに居なければ false
     std::function<bool(uint64_t fileId)> selectEntity;
+    // 開いているシーンへの外部の変更が保留中 (ライブのシーンとディスクが食い違っている)。EditorApp が ReloadHub から読んで渡す
+    bool externalChangePending = false;
 };
 
 // シーンの変更の行をクリックした結果
@@ -83,7 +85,7 @@ private:
     void DrawSessions(ChangeModel& model);
     void DrawChanges(ChangeModel& model);
     void DrawDetail(ChangeTrackingSession& session, const AiChangesHost& host);
-    void DrawSceneBand(ChangeTrackingSession& session);
+    void DrawSceneBand(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawColorSettings(SceneChangeOverlay& overlay);
     void DrawSceneChanges(ChangeTrackingSession& session, const AiChangesHost& host);
     void ApplyFilter(ChangeModel& model);

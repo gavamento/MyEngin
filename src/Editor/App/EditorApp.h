@@ -122,6 +122,8 @@ private:
     void RequestGuardedAction(EngineContext& ctx, PendingAction action);
     void ExecuteAction(EngineContext& ctx, PendingAction action);
     void DrawSaveConfirmModal(EngineContext& ctx);
+    // 開いているシーンへの外部変更の保留 (M104n)。未保存なら確認を出し、未保存でなければ自動で適用する
+    void DrawExternalSceneChangeModal(EngineContext& ctx);
     void DrawProbePreview(); // M56e: 焼いた 6 面のサムネイル (専用の小窓)
     void UpdateWindowTitle(EngineContext& ctx);
     void PollReloadToasts(EngineContext& ctx);
@@ -272,6 +274,7 @@ private:
     PendingAction pendingAction_ = PendingAction::None;
     std::wstring pendingOpenScenePath_;    // OpenSceneAsset の対象 (AssetBrowser ダブルクリック)
     bool openSaveConfirm_ = false;         // 確認モーダルを開くリクエスト
+    bool externalChangeConfirmShown_ = false; // 外部変更の確認を、保留 1 件につき 1 回だけ開くための印
     bool closeRequested_ = false;          // ウィンドウ × ボタン (WM_CLOSE を横取り)
     std::wstring baseTitle_;               // タイトルバー原文 (dirty で " *" を付ける)
     bool titleDirtyShown_ = false;

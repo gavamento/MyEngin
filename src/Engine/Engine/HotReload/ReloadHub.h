@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -103,8 +104,34 @@ public:
     // どちらも null 可 (null なら GPU 側のシェーダ再コンパイルだけ)
     void SetKernelHooks(compute::ComputeService* compute, ManagedHost* managed);
 
-    // 現在編集中のシーンファイル (このファイルの外部編集だけ差分適用する)
+    // 現在編集中のシーンファイル (このファイルの外部編集だけ差分適用する)。
+    // 保留中の外部変更 (下) は、シーンの切り替え・閉じる・保存し直しで意味を失うので捨てる
     void SetActiveScenePath(const std::wstring& path);
+
+    // ---- 開いているシーンへの外部変更の保留 (M104n) ----
+    // 開いているシーンの外部変更を「今適用してよいか」を呼び手に問う口。真 = 適用、偽 = 保留。
+    // 引数は NormalizePathKey 済みのシーンのパス。呼ばれるのは Update() (フェーズ 2 のセーフポイント) の中だけで、
+    // sim の Tick の中ではない。★未設定なら今までどおり常に適用する (Runtime / Server は設定しない)。
+    // 一括適用 (BeginBatch 〜 EndBatch) の経路では呼ばない (呼び手が未保存のシーンを先に止めている)
+    using SceneApplyGate = std::function<bool(const std::wstring& normPath)>;
+    void SetSceneApplyGate(SceneApplyGate gate);
+
+    // 口が偽を返して保留にしたシーンのパス。空 = 保留なし。1 つのシーンにつき 1 件で、
+    // 保留中に同じパスがもう一度変わっても増えない (適用は適用時点のディスクの内容を読む)
+    const std::wstring& PendingScenePath() const { return pendingScenePath_; }
+    bool HasPendingScene() const { return !pendingScenePath_.empty(); }
+    // 保留を適用する要求。実際の ApplyDiff は次の Update (フェーズ 2) で行う。結果は TakePendingSceneResult で受け取る
+    void RequestApplyPendingScene();
+    // 保留を捨てる (ライブのシーンを保つ)。ディスクの変更は適用しない
+    void DiscardPendingScene();
+    enum class PendingSceneResult : uint8_t {
+        None,    // 知らせることが無い
+        Applied, // 適用した
+        Gone,    // ファイルが消えていた。保留は捨てた
+        Failed,  // 読めない・壊れた JSON。保留は捨てた
+    };
+    // RequestApplyPendingScene の結果を 1 回だけ返す (読むと None に戻る)
+    PendingSceneResult TakePendingSceneResult();
 
     void Update(); // フェーズ 2 で毎フレーム呼ぶ
 
@@ -157,6 +184,9 @@ private:
     ReloadResult ReloadModalNet(const std::wstring& path);
     ReloadResult ReloadCompose(const std::wstring& path);
     ReloadResult ReloadActiveScene(const std::wstring& path);
+    // 口を通さずにファイルを読んで ApplyDiff する。成功したら保留も消す
+    ReloadResult ApplySceneFile(const std::wstring& path);
+    void ApplyPendingScene();
     // リトライ列へ積む (同じパスが積まれていれば何もしない)
     void QueueRetry(const std::wstring& path, int attempts);
     // watcher の溜まりを捨てる (バッチ中と EndBatch 直後)
@@ -188,6 +218,15 @@ private:
     };
     std::vector<Retry> retries_;
     bool batching_ = false; // BeginBatch 〜 EndBatch の間だけ true
+
+    SceneApplyGate sceneApplyGate_;
+    std::wstring pendingScenePath_;
+    bool applyPendingRequested_ = false;
+    int applyPendingAttempts_ = 0;
+    bool applyingBatch_ = false; // EndBatch の適用中だけ true (口を呼ばない)
+    PendingSceneResult pendingSceneResult_ = PendingSceneResult::None;
+
+    friend struct ReloadHubTestAccess; // 試験が Init を通さずに状態を組むため
 };
 
 } // namespace mye

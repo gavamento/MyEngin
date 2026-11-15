@@ -1,7 +1,7 @@
 # sub-13: 未保存シーンへの外部変更の確認 (M104n)
 
 - 依存: sub-25 (順序は sub-24 → sub-25 → sub-13 → sub-14。コード上の依存は sub-08 だけ) (Phase 2 の完了。sub-09〜12 とコード上の依存は無いが、Phase 3 の中で行う。spec §2 D13)
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **着手可** (2026-11-15、sub-24 の VERDICT で planner が事実を書き足した)
 
@@ -80,4 +80,51 @@ arch §8。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-13 (round 1)
+実装:
+  - src\Engine\Engine\HotReload\ReloadHub.h/.cpp: SetSceneApplyGate (std::function<bool(const std::wstring&)>。未設定なら従来どおり適用)、保留 (pendingScenePath_。1 件)、HasPendingScene / PendingScenePath / RequestApplyPendingScene / DiscardPendingScene / TakePendingSceneResult (None / Applied / Gone / Failed)。ReloadActiveScene を「口 → ApplySceneFile」に分割。適用の要求は次の Update (フェーズ 2) で処理する。EndBatch の適用中は applyingBatch_ で口を通さない。SetActiveScenePath で保留を捨てる。Update の shaders_ を null 許容に (試験が Init を通さないため)
+  - src\Editor\App\EditorApp.h/.cpp: OnStart で口を設定 (Play 中・ミニシーン編集中・未保存なら保留)、OnShutdown で外す。DrawExternalSceneChangeModal (未保存なら モーダル「読み込む / 自分の編集を保つ」、未保存でなければ自動で適用要求、Gone / Failed はトースト)。SaveCurrentScene の成功時に保留を捨てる。AiChangesHost.externalChangePending を渡す
+  - src\Editor\Windows\Project\AiChangesWindow.h/.cpp: AiChangesHost::externalChangePending、DrawSceneBand に host を渡して帯に 1 行出す
+  - src\Engine\Core\Localization\LocalizationTable.inl: Popup_ExternalSceneChange / ExtScene_* / AiChg_PendingExternal (英日)
+  - src\Engine\Engine\HotReload\ReloadHubSelfTest.cpp: ReloadHubTestAccess (friend) と 8 ケースの回帰試験
+  - engine_spec.md §8.3、docs\test_checklists.md (M104n)
+仕様との差分:
+  - [追加] ミニシーン編集中 (actorEdit_) も Play 中と同じく保留にする — ctx.scene がアセット側に差し替わっており、本シーンへ向けた ApplyDiff を当てる経路が元から怪しいため。sub の文面は Play 中だけ
+  - [追加] 保存 (SaveCurrentScene 成功) で保留を捨てる — 「保つ」の続きの「次の保存でディスクを上書き」を、確認を経ない保存でも成り立たせるため
+  - [追加] ReloadHub の公開が口 1 つではなく 7 関数 — 保留を ReloadHub が持つ取り決め (8) のため。ADR-039 の影響の節の「口 1 つ」は文面を直さず、概念上 1 つの口 + 保留の操作とみなした (直すなら planner)
+  - [追加] 試験用に ReloadHub へ `friend struct ReloadHubTestAccess`、Update の shaders_ の null 判定
+  - [未実装] 「読み込む」後も dirty (タイトルの *) は残す — ApplyDiff は fileId の無い未保存のエンティティを残すので、clean 扱いにできない
+検証:
+  - Debug ビルド / Release ビルド (MyEngine.sln) → 成功
+  - MYE_SELFTEST_ONLY=reloadhub (Debug) → PASS (新規 11 チェック含む)。Release でも reloadhub / changetracking / localization PASS
+  - Debug: --selftest-list の 125 スイートから physics を除いた 124 本を MYE_SELFTEST_ONLY で → 124 PASS、0 failed (physics は D38 のため除外。調べていない)。最初に別名 (m94 等) を混ぜて physics が走り exit -1073741571 で落ちたのは、名前の取り方の誤り (D38 と同じ症状)
+  - Release: --selftest-full → 125 suites 0 failed
+  - tools\check_rules.ps1 → 0 error (66 warning は既存)
+  - tools\replay_verify.bat → PASS (24 ジョブ、17 シーン、Debug/Release 一致)
+  - スクショ: cache\m104n_shots\1_modal_ja.png / 1_modal_en.png (一時の probe で保留・未保存を強制して撮った。probe は戻した。見た目の合否は目視未確認)
+  - grep: SetSceneApplyGate の呼び出しは EditorApp.cpp のみ (Runtime / Server は設定しない)
+自己採点 (1-5):
+  仕様適合: 4 — 条件 1〜9 を試験・実行で確認。Editor の経路 (口の実体・自動適用・モーダル・Play 後の持ち越し) は ReloadHub 単体の試験と目視用スクショまでで、実 Editor での操作は未実施
+  正しさ: 4 — 8 ケースの試験と replay_verify が通る。Editor 側の分岐は読んだだけで実操作は未確認
+  コード品質: 4 — 責務は ReloadHub (保留) / EditorApp (判断・UI)。公開関数が増えた点は差分に記載
+  テスト: 4 — ReloadHub 側は網羅。Editor 側 (モーダル・Stop 後の挙動・AI Changes 帯) は自動試験なし
+不安・質問:
+  - Play 中に保留 → Stop 後に未保存なら確認、未保存でなければ自動適用、の実機確認はユーザーの目視が必要 (チェックリストに追加)
+  - EndBatch の後、150 ms 以内にもう一度来る通常経路のイベントは口を通る。その間に利用者が編集すると確認が出る (今までは ApplyDiff が編集を戻していた)。許容でよいか
+  - 保存の直後 150 ms 以内にまた編集すると、自分の保存の監視イベントで確認が出うる
+触ったファイル:
+  - C:\HAL\MyEngin\src\Engine\Engine\HotReload\ReloadHub.h / ReloadHub.cpp / ReloadHubSelfTest.cpp
+  - C:\HAL\MyEngin\src\Editor\App\EditorApp.h / EditorApp.cpp
+  - C:\HAL\MyEngin\src\Editor\Windows\Project\AiChangesWindow.h / AiChangesWindow.cpp
+  - C:\HAL\MyEngin\src\Engine\Core\Localization\LocalizationTable.inl
+  - C:\HAL\MyEngin\engine_spec.md、C:\HAL\MyEngin\docs\test_checklists.md、本ファイル
+  (生成物: cache\m104n_shots\ の画像とログ、%TEMP%\m104n_*.txt は自分の一時物。消していない)
+申し送り:
+  - AI Changes 窓の帯の 1 行は、窓にデータがあるとき (hasData) だけ出る。追跡が無効だと出ない (モーダル自体は追跡と無関係に出る)
+  - 消したもの・止めたものは無し
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `Editor` の残存プロセスなし。`src\Engine` の差分は `HotReload\ReloadHub.h` / `.cpp` / `ReloadHubSelfTest.cpp` と `LocalizationTable.inl` だけ。Runtime / Server / GameLogic / Shared / Scripting / tools に差分なし。`SetSceneApplyGate` の呼び手は `EditorApp.cpp` の 2 か所 (設定と解除) と試験だけ。`ReloadHub` は Editor のヘッダを include していない。スクショ用のプローブの残りなし。planner の実走: Debug の `MYE_SELFTEST_ONLY=reloadhub,changetracking,localization` が 3 スイート 0 失敗、Release の `--selftest` 全体が 112 スイート 0 失敗、`tools\check_rules.ps1` 0 error。スクショ `cache\m104n_shots\1_modal_ja.png` を開いて見た: 確認の文面 (「読み込む」「自分の編集を保つ」の説明つき) が切れずに出ている。**見た目の合否と、実 Editor での操作はユーザーの確認 (未確認)。** `tools\replay_verify.bat` と Release の `--selftest-full`、Debug の physics を除いた 124 スイートは coder の結果による (planner は再実行していない)。
+  - 追加の判定: ミニシーンの編集中も保留にする、保存の成功で保留を捨てる、`ReloadHub` の公開関数が 6〜7 個になった (口 1 つ + 保留の操作)、試験用の friend と `shaders_` の null 許容、は全部採る。「読み込む」の後も dirty を残すのも妥当。
+  - 質問への回答: (1) Play 中の保留 → Stop の後の動きは、ユーザーの手動確認として残す。(2) `EndBatch` の後の 150 ms 以内のイベントが口を通り、その間に編集していると確認が出るのは許容 (今までは編集が黙って戻されていた)。(3) 保存の直後に編集を続けると自分の保存で確認が出うる件は、sub-14 で直す (保存の直後に控えた大きさと更新時刻が同じなら、確認を出さずに保留を捨てる)。
+  - nit: Debug の `Editor.exe` (13:58) が、最後に変わったソース `EditorApp.cpp` (14:46、プローブを外した時刻) より古い。Release は外した後にビルドし直されている。内容はプローブを入れる前に戻っているはずだが、Debug を最終のソースからビルドし直すのは sub-14 で。ADR-039 の「口 1 つ」の文面も sub-14 で直す。

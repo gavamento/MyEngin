@@ -142,7 +142,12 @@ void EditorApp::OnStart(EngineContext& ctx)
         }
     }
     ctx.reloadHub->SetActiveScenePath(scenePath_);
-    rebuildDockLayout_ = !std::filesystem::exists(ctx.imguiIniPath);
+    // 未保存・再生中・ミニシーン編集中に開いているシーンへ来た外部変更は保留にする。
+    // 保存直後の自分の保存による監視イベントは clean なので、今までどおり適用される
+    ctx.reloadHub->SetSceneApplyGate([this](const std::wstring&) {
+        return !playMode_.InPlayMode() && actorEdit_ == nullptr && !IsSceneDirty();
+    });
+    rebuildDockLayout_ =!std::filesystem::exists(ctx.imguiIniPath);
 
     // リソース (メッシュ/マテリアル/モデル) は毎回登録する。
     // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務
@@ -546,6 +551,7 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     // 死んだセッションへヒントが飛ぶ (HintSaved は Ready() でない間 no-op だが、
     // 経路そのものを残さない)
     scmhint::SetSink(nullptr, nullptr);
+    ctx.reloadHub->SetSceneApplyGate({}); // this を捕まえた口を残さない
     // M66b: destroy (worker を join) -> FreeLibrary。デバイス解放とは無関係だが、
     // ★プロセス終了任せにすると、走行中の worker のコードごとアンロードされうる
     scm_.Shutdown();
@@ -1059,6 +1065,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
         host.allowTracking = allowChangeTracking;
         host.enabled = settings_.changeTrackingEnabled;
         host.projectRoot = ctx.projectRoot;
+        host.externalChangePending = ctx.reloadHub->HasPendingScene();
         host.setEnabled = [this, &ctx](bool enabled) {
             settings_.changeTrackingEnabled = enabled;
             settings_.Save();
@@ -1237,6 +1244,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
         RequestGuardedAction(ctx, PendingAction::UpdateAndRestart); // 未保存なら先に保存の確認
     }
     DrawSaveConfirmModal(ctx);
+    DrawExternalSceneChangeModal(ctx);
     PollReloadToasts(ctx);
     UpdateWindowTitle(ctx);
     toasts_.OnImGui(toastAnchorRight_, toastAnchorBottom_);
@@ -1870,6 +1878,7 @@ void EditorApp::SaveCurrentScene(EngineContext& ctx)
         settings_.lastScenePath = WideToUtf8(scenePath_);
         settings_.Save();
         savedStateSerial_ = undo_.StateSerial(); // この状態が保存済み基準になる (M27b)
+        ctx.reloadHub->DiscardPendingScene(); // 保留中の外部変更は、この保存でディスク側を上書きして捨てる
         // 監視 (300 ms デバウンス) を待たずに status を取り直す (M66i)。
         // ★EditorApp はセッションを持っているので中継 (scmhint) を通さず、通知の集まる場所へ直接渡す
         NoteFileSaved(scenePath_);
@@ -2359,6 +2368,61 @@ void EditorApp::DrawSaveConfirmModal(EngineContext& ctx)
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Common_Cancel), ImVec2(110, 0))) {
         pendingAction_ = PendingAction::None;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void EditorApp::DrawExternalSceneChangeModal(EngineContext& ctx)
+{
+    switch (ctx.reloadHub->TakePendingSceneResult()) {
+    case ReloadHub::PendingSceneResult::Gone:
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::ExtScene_Gone));
+        break;
+    case ReloadHub::PendingSceneResult::Failed:
+        toasts_.Notify(LogLevel::Warn, Tr(StrId::ExtScene_Failed));
+        break;
+    default: // Applied は PollReloadToasts の「ホットリロードしました」が知らせる
+        break;
+    }
+
+    const bool pending = ctx.reloadHub->HasPendingScene();
+    const bool canResolve = !playMode_.InPlayMode() && actorEdit_ == nullptr;
+    if (pending && canResolve && !IsSceneDirty()) {
+        // 保留している間に保存や Undo で clean になった / Play を止めて未保存でなかった → 確認なしで今までどおり適用
+        ctx.reloadHub->RequestApplyPendingScene();
+    }
+    if (!pending) {
+        externalChangeConfirmShown_ = false;
+    } else if (canResolve && IsSceneDirty() && !externalChangeConfirmShown_ && pendingAction_ == PendingAction::None) {
+        externalChangeConfirmShown_ = true;
+        ImGui::OpenPopup(Tr(StrId::Popup_ExternalSceneChange));
+    }
+
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                   vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal(Tr(StrId::Popup_ExternalSceneChange), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    if (!pending) {
+        ImGui::CloseCurrentPopup(); // 開いている間に保存された (保留が消えた)
+        ImGui::EndPopup();
+        return;
+    }
+    ImGui::TextUnformatted(Tr(StrId::ExtScene_Body));
+    ImGui::TextDisabled("%s", WideToUtf8(scenePath_).c_str());
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", Tr(StrId::ExtScene_Note));
+    ImGui::Spacing();
+    if (ImGui::Button(Tr(StrId::ExtScene_Load), ImVec2(160, 0))) {
+        ctx.reloadHub->RequestApplyPendingScene(); // 次のフレームのフェーズ 2 で、そのときのディスクの内容を当てる
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::ExtScene_Keep), ImVec2(160, 0))) {
+        ctx.reloadHub->DiscardPendingScene();
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();

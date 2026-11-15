@@ -189,6 +189,61 @@ void ReloadHub::SetKernelHooks(compute::ComputeService* compute, ManagedHost* ma
 void ReloadHub::SetActiveScenePath(const std::wstring& path)
 {
     activeSceneNorm_ = NormalizePathKey(path);
+    DiscardPendingScene();
+    pendingSceneResult_ = PendingSceneResult::None;
+}
+
+void ReloadHub::SetSceneApplyGate(SceneApplyGate gate)
+{
+    sceneApplyGate_ = std::move(gate);
+}
+
+void ReloadHub::RequestApplyPendingScene()
+{
+    if (HasPendingScene() && !applyPendingRequested_) { // 毎フレーム呼ばれても試行回数を巻き戻さない
+        applyPendingRequested_ = true;
+        applyPendingAttempts_ = 0;
+    }
+}
+
+void ReloadHub::DiscardPendingScene()
+{
+    pendingScenePath_.clear();
+    applyPendingRequested_ = false;
+}
+
+ReloadHub::PendingSceneResult ReloadHub::TakePendingSceneResult()
+{
+    const PendingSceneResult result = pendingSceneResult_;
+    pendingSceneResult_ = PendingSceneResult::None;
+    return result;
+}
+
+void ReloadHub::ApplyPendingScene()
+{
+    if (!HasPendingScene()) {
+        applyPendingRequested_ = false;
+        return;
+    }
+    const std::wstring path = pendingScenePath_;
+    std::error_code ec;
+    if (!std::filesystem::exists(std::filesystem::path(path), ec)) {
+        DiscardPendingScene();
+        pendingSceneResult_ = PendingSceneResult::Gone;
+        return;
+    }
+    const ReloadResult result = ApplySceneFile(path);
+    if (result == ReloadResult::Reloaded) {
+        ++reloadCount_;
+        applyPendingRequested_ = false;
+        pendingSceneResult_ = PendingSceneResult::Applied;
+    } else if (result == ReloadResult::Retry && applyPendingAttempts_++ < kReloadRetryMax) {
+        // 書き込み途中 (共有違反)。要求を残して次のフレームでもう一度読む
+        return;
+    } else {
+        DiscardPendingScene();
+        pendingSceneResult_ = PendingSceneResult::Failed;
+    }
 }
 
 void ReloadHub::DiscardPendingChanges()
@@ -222,9 +277,12 @@ void ReloadHub::EndBatch(const std::vector<BatchChange>& changes)
     //   高くつくので、v1 は二度読みを許す
     DiscardPendingChanges();
     const std::vector<std::wstring> ordered = OrderBatch(changes);
+    // 一括適用は口を通さない。呼び手 (GitTransaction のゲート) が、未保存のシーン・Play 中・ミニシーン編集中を先に止めている
+    applyingBatch_ = true;
     for (const std::wstring& path : ordered) {
         HandleChange(path);
     }
+    applyingBatch_ = false;
     if (!ordered.empty()) {
         MYE_LOG_INFO("[reload] batch applied: %zu change(s)", ordered.size());
     }
@@ -233,7 +291,9 @@ void ReloadHub::EndBatch(const std::vector<BatchChange>& changes)
 void ReloadHub::Update()
 {
     // フェーズ 2 = セーフポイント (spec 5.3)。ここ以外でリロードを適用しない
-    shaders_->PollAsyncCompiles();
+    if (shaders_ != nullptr) {
+        shaders_->PollAsyncCompiles();
+    }
 
     if (batching_) {
         // 一括適用の最中。**溜まりは捨てるだけ**で 1 件も適用しない (M66d)。
@@ -241,6 +301,10 @@ void ReloadHub::Update()
         // 適用済みのものをもう一度読み直す
         DiscardPendingChanges();
         return;
+    }
+
+    if (applyPendingRequested_) {
+        ApplyPendingScene();
     }
 
     for (const std::wstring& path : watcher_.DrainChanges()) {
@@ -713,6 +777,16 @@ ReloadHub::ReloadResult ReloadHub::ReloadActiveScene(const std::wstring& path)
     if (activeSceneNorm_.empty() || path != activeSceneNorm_) {
         return ReloadResult::Skipped;
     }
+    // 口を呼ぶのは Update (フェーズ 2) から来たときだけ = sim の Tick の外。EndBatch は上のとおり通さない
+    if (sceneApplyGate_ && !applyingBatch_ && !sceneApplyGate_(path)) {
+        pendingScenePath_ = path; // 保留は 1 件。適用するときにディスクをもう一度読む
+        return ReloadResult::Skipped;
+    }
+    return ApplySceneFile(path);
+}
+
+ReloadHub::ReloadResult ReloadHub::ApplySceneFile(const std::wstring& path)
+{
     std::ifstream f(std::filesystem::path(path), std::ios::binary);
     if (!f) {
         return ReloadResult::Retry;
@@ -727,6 +801,7 @@ ReloadHub::ReloadResult ReloadHub::ReloadActiveScene(const std::wstring& path)
         return ReloadResult::Skipped;
     }
     SceneSerializer::ApplyDiff(*scene_, root);
+    DiscardPendingScene(); // 最新のディスクの内容を当てたので、保留は意味を失う
     return ReloadResult::Reloaded;
 }
 

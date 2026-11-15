@@ -178,7 +178,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     const TrackState state = session.State();
     const bool hasData = model.Status().valid && (state == TrackState::Ready || state == TrackState::DbDegraded || state == TrackState::Disconnected);
     if (hasData) {
-        DrawSceneBand(session);
+        DrawSceneBand(session, host);
         ImGui::Separator();
         const float height = (std::max)(ImGui::GetContentRegionAvail().y, 120.0f);
         if (ImGui::BeginTable("##aichg", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp,
@@ -620,10 +620,15 @@ SceneChangeActivation AiChangesWindow::ActivateSceneChange(const TrackSceneChang
 }
 
 // 開いているシーンについての帯: 強調の切り替え・件数・「ここまで確認済みにする」・不完全の注記
-void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session)
+void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session, const AiChangesHost& host)
 {
     SceneChangeOverlay& overlay = session.Overlay();
     ImGui::Separator();
+    if (host.externalChangePending) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_PendingExternal));
+        ImGui::PopStyleColor();
+    }
     ImGui::TextUnformatted(Tr(StrId::AiChg_SceneBand));
     ImGui::SameLine();
     if (overlay.DocumentPath().empty()) {
