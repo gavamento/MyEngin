@@ -66,9 +66,15 @@ pub fn apply_event(
                     params![at, id],
                 )?;
                 touch(conn, id, at)?;
+                // 終わったセッションの開いた操作の窓を残さない (spec D46)
+                operation::close_open_ops(conn, cfg, at, id)?;
             }
             Ok(())
         }
+        "session_turn_end" => match payload["session_id"].as_str() {
+            Some(id) => operation::close_open_ops(conn, cfg, at, id).map(|_| ()),
+            None => Ok(()),
+        },
         "session_interrupted" => {
             if let Some(id) = payload["session_id"].as_str() {
                 conn.execute("UPDATE sessions SET status = 'interrupted' WHERE session_id = ?1 AND status = 'running'", [id])?;
@@ -96,6 +102,7 @@ pub fn is_session_event(kind: &str) -> bool {
         "session_begin"
             | "session_resumed"
             | "session_end"
+            | "session_turn_end"
             | "session_interrupted"
             | "op_begin"
             | "op_end"
@@ -183,12 +190,16 @@ pub fn record_and_apply(store: &mut Store, at: i64, kind: &str, payload: Value) 
 /// そのセッションが候補に入っている Revision を選ぶ条件 (`change_revisions r` に対して、`?{n}` がセッション ID)。
 /// 結論が 1 つの操作に絞れていればその操作で、複数候補・操作なし (申告・時刻・作業ツリー) は根拠のセッションで見る。
 /// Editor の保存・復元と結論が出た変更は、AI のセッションの変更に入れない (根拠が残っていても)。
+/// 窓の根拠は、操作が ok で閉じたものだけを数える (結論と同じ条件。spec D46)。
 pub fn session_candidate_sql(n: usize) -> String {
+    let window = attribution::WINDOW_KINDS_SQL;
     format!(
         "(r.operation_id IN (SELECT operation_id FROM operations WHERE session_id = ?{n})
           OR (r.operation_id IS NULL AND r.actor NOT IN ('editor_user', 'restore') AND EXISTS (SELECT 1 FROM attribution_evidence e
                WHERE e.revision_id = r.revision_id AND e.session_id = ?{n}
-                 AND e.kind NOT IN ('preexisting', 'observed', 'overlap'))))"
+                 AND e.kind NOT IN ('preexisting', 'observed', 'overlap')
+                 AND (e.kind NOT IN ({window})
+                      OR EXISTS (SELECT 1 FROM operations o WHERE o.operation_id = e.operation_id AND o.result = 'ok')))))"
     )
 }
 

@@ -325,6 +325,22 @@ pub fn session_end(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<
     })
 }
 
+/// 応答 (ターン) の終わり。そのセッションの開いている操作を閉じる。拒否された操作には終わりの知らせが来ないので、
+/// 開いたままの窓を残さないための契機 (spec D46)。開いている操作が無ければ何も記録しない。
+pub fn session_turn_end(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<Value, OpError> {
+    let key = SessionArg::take(&mut args)?;
+    args.finish()?;
+    let at = now_ms();
+    run_in_writer(env, move |store| {
+        let row = key.resolve(conn_of(store)?)?;
+        let open = if row.status == "finished" { 0 } else { operation::open_op_ids(conn_of(store)?, &row.session_id).map_err(db_err)?.len() };
+        if open > 0 {
+            record_and_apply(store, at, "session_turn_end", json!({ "session_id": row.session_id })).map_err(store_err)?;
+        }
+        Ok(json!({ "sessionId": row.session_id, "closed": open }))
+    })
+}
+
 // ---- op_begin / op_end ------------------------------------------------------------------------
 
 pub fn op_begin(env: &RecordEnv, caller: &Caller, mut args: Args) -> Result<Value, OpError> {
@@ -456,7 +472,7 @@ pub fn op_end(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<Value
     let operation_id = args.string("operationId")?;
     let client_session = args.string("clientSessionId")?;
     let client_op = args.string("clientOpId")?;
-    let result = args.choice("result", &["ok", "failed"])?.ok_or_else(|| OpError::bad_args("result が要る"))?;
+    let result = args.choice("result", &["ok", "failed", "denied"])?.ok_or_else(|| OpError::bad_args("result が要る"))?;
     args.finish()?;
     let found = {
         let reader = open_reader(&env.db_path).map_err(|e| OpError::new(code::DB_DEGRADED, format!("DB を読み取りで開けない: {e}")))?;

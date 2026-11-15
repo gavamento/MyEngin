@@ -108,7 +108,7 @@ tools\track\target\release\mye_track.exe bench changes --project %TEMP%\mye_benc
 手順 (リポジトリの `.mye` を汚さないため、作業ツリーのコピーで測った):
 
 ```
-robocopy C:\HAL\MyEngin %TEMP%\mye_vscan /E /XD .git bin obj .mye cache target .vs
+robocopy <リポジトリのルート> %TEMP%\mye_vscan /E /XD .git bin obj .mye cache target .vs
 mye_track.exe serve --project %TEMP%\mye_vscan          # phase = watching まで待つ
 # 小さいファイルを 1100 本作る (検証の走査の起動条件 = 前回の走査の後に 1000 件のイベントが溜まる + 3 秒の静けさ)
 mye_track.exe client --project %TEMP%\mye_vscan          # hello + status を流す (tools\track_verify.ps1 の Invoke-Raw が見本)

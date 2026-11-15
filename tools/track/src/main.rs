@@ -3,7 +3,7 @@
 //!   mye_track.exe --version
 //!   mye_track.exe serve --project <root> [--idle-timeout-ms <n>] [--notify-queue <n>]
 //!   mye_track.exe client --project <root> | --pipe <name> [--wait-ms <n>]
-//!   mye_track.exe hook <pre|post|session-start|session-end> [--project <root>]   (Claude Code のフック。常に終了コード 0)
+//!   mye_track.exe hook <pre|post|post-failure|denied|turn-end|session-start|session-end> [--project <root>]   (Claude Code のフック。常に終了コード 0)
 //!   mye_track.exe bench ...   (計測用。docs/ai-change-tracking/performance.md)
 //!
 //! `serve` は pipe を張って常駐する (mye_track::server)。終了の合図は pipe の `shutdown`、
@@ -91,6 +91,11 @@ fn serve(args: &[String]) -> ExitCode {
         eprintln!("serve: --project <root> が要る");
         return ExitCode::from(2);
     };
+    // 存在しないパスに .mye\ai_changes\ を作って動き続けない (入力の誤りは何も作らずに終わる)
+    if !root.is_dir() {
+        eprintln!("serve: --project がディレクトリではない: {}", root.display());
+        return ExitCode::from(2);
+    }
 
     let (stop_tx, stop_rx) = channel::<&'static str>();
     let _ = STOP_SIGNAL.set(stop_tx.clone());

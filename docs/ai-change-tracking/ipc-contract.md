@@ -109,9 +109,10 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | op | 役割 | 引数 | 結果 |
 |---|---|---|---|
 | `session_begin` | mcp, hook | `provider` (`claude` / `codex` / `gemini` / `other`), `workspace`, `source` (`terminal` / `mcp` / `external`), `clientSessionId?`, `isolated?` | `sessionId`, `status`, `resumed`, `trackingCapabilities`, `baseCommit` |
-| `session_end` | mcp, hook | `sessionId` または `clientSessionId` | `status`, `changeCount` |
+| `session_end` | mcp, hook | `sessionId` または `clientSessionId`。そのセッションの開いている操作を `abandoned` で閉じる | `status`, `changeCount` |
+| `session_turn_end` | mcp, hook | `sessionId` または `clientSessionId`。応答 (ターン) の終わり。そのセッションの開いている操作を `abandoned` で閉じる (別のセッションには触れない。開いている操作が無ければ何も記録しない) | `sessionId`, `closed` (閉じた数) |
 | `op_begin` | mcp, hook | `sessionId` または `clientSessionId`, `operationType` (`edit` / `write` / `delete` / `rename` / `report` / `other`), `targets`: パスの配列, `declaredEdit?`, `clientOpId?` | `operationId`, 各パスの現在のハッシュ (無ければ null) |
-| `op_end` | mcp, hook | `operationId`、または `clientSessionId` + `clientOpId`。`result` (`ok` / `failed`) | 結び付いた Revision の ID と帰属 (`revisions`)、`pending` |
+| `op_end` | mcp, hook | `operationId`、または `clientSessionId` + `clientOpId`。`result` (`ok` / `failed` / `denied`。結論に窓の根拠を数えるのは `ok` で閉じたときだけ。[attribution-rules.md](attribution-rules.md) §2.2) | 結び付いた Revision の ID と帰属 (`revisions`)、`pending` |
 | `report` | mcp | `sessionId` または `clientSessionId`, `operationId?`, `paths`, `beforeHashes?`, `afterHashes?` | パスごとの照合結果 (`matched` / `mismatch` / `not_observed`) と帰属、`pending` |
 
 - `baseCommit` はサービスが自分で `git rev-parse HEAD` 相当を読んで決める (`.git\HEAD` と参照ファイルを読むだけで、git を起動しない)。git のリポジトリでなければ空。
@@ -274,7 +275,7 @@ MCP のツールは引数を検査して pipe へ渡し、結果を既存の `wr
 - 空行は無視する。行末の CR は取る。JSON として読めない・`id` が正の整数でない・知らない項目がある行は `bad_args` (`id` が読めればそれを返し、読めなければ `null`)。`hello` の前でも同じ (形が読めないので `need_hello` にはならない)。
 - `hello` の検査の順: 形 (`proto` / `role` / `token` / `projectRoot` が要り、`pid` は任意、他は `bad_args`) → 版 (`proto_mismatch`。detail にサービスの版) → 役割 (知らない値は `bad_args`) → トークン (`bad_token`) → プロジェクト (`wrong_project`。`projectId` が合うかだけを見て、DB は開き直さない)。失敗したら応答のあと切る。`hello` より前の要求 (知らない op を含む) は `need_hello` で切る。2 回目の `hello` は `bad_args` (接続は残る)。
 - 成功した `hello` は証跡を `events` に残す (`client_hello`。db-schema.md §5.1)。申告した `pid` と違えば、パイプから得た値を採る。Writer のキューが上限 (1024 件) を超えていたら `busy` で `hello` を断る。
-- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`hunks`、`scene_diff`、`scene_overlay`、`document_for_path`、`blob_get`、`shutdown`、`subscribe`、`session_begin`、`session_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
+- op の判定: 実装している op (`hello`、`status`、`list`、`describe`、`sessions`、`hunks`、`scene_diff`、`scene_overlay`、`document_for_path`、`blob_get`、`shutdown`、`subscribe`、`session_begin`、`session_end`、`session_turn_end`、`op_begin`、`op_end`、`report`) 以外は `unknown_op` (未実装の op を含む。detail の名前は 64 文字に切る)。役割の外は `forbidden`。知らない引数は `bad_args`。
 - 取得の op は読み取り専用の SQLite 接続で引く (WAL なので書き手を止めない。接続ごとに 1 本、最初に必要になったとき開く)。ベースラインの最中も答える。DB へ書けない状態 (`db_degraded`) では `list` / `describe` / `sessions` が `db_degraded` を返し、`status` は答える。
 
 ### 9.4 op の引数と結果 (JSON は camelCase、時刻は UTC ミリ秒)
@@ -313,11 +314,11 @@ Rust の `Command` は継承可能なハンドルを子へ複製するため、�
 |---|---|---|
 | `mcp` のセッション | 持っている PID + 開始時刻のプロセスが居なくなったら `interrupted` (1 秒ごとの確認)。接続が切れただけでは変えない (MCP は要求ごとに接続する) | — |
 | `hook` のセッション | 最後の活動から無活動で `interrupted`。同じ `clientSessionId` の `session_begin` / `op_begin` / `report` が来たら running に戻る | 30 分 |
-| 操作 | `op_end` が来ないまま打ち切りで `abandoned`。その間に窓へ入った Revision の根拠は残る | 10 分 |
+| 操作 | `op_end` が来ないまま打ち切りで `abandoned` (最後の守り)。`session_end` と `session_turn_end` も、そのセッションの開いている操作を `abandoned` で閉じる。閉じるまでの窓の根拠の行は残るが、`ok` 以外で閉じた操作の窓の根拠は結論に数えない (attribution-rules.md §2.2) | 10 分 |
 | 起動時の整理 | 前の起動から残った running のセッション (プロセスの居ないもの、プロセスを持たないもの) を `interrupted`、終わっていない操作を `abandoned` | db-schema.md §6 の 5、6 |
 | サービス | 接続が 0 でも、ベースライン・再走査の最中と、running のセッションがある間は無接続の時間切れで終わらない | — |
 
-どの変化も `events` に残り (`session_interrupted` / `op_abandoned`)、作り直しで同じ状態になる (db-schema.md §5.1)。定数は `tools\track\src\session.rs` の `LifecycleConfig`、窓の猶予と `time_near` の幅は `attribution.rs`。
+どの変化も `events` に残り (`session_interrupted` / `op_abandoned` / `session_turn_end`。`session_end` による閉じ方は `session_end` のイベントの反映の中)、作り直しで同じ状態になる (db-schema.md §5.1)。定数は `tools\track\src\session.rs` の `LifecycleConfig`、窓の猶予と `time_near` の幅は `attribution.rs`。
 
 ### 9.8 通知 (M104j)
 

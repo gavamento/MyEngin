@@ -475,8 +475,8 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         "restore_list" => with_reader(ctx, conn, |db| ops::restore_list(db, args)),
         "shutdown" => args.finish().map(|()| json!({})),
         "subscribe" => subscribe(ctx, conn, args),
-        "session_begin" | "session_end" | "op_begin" | "op_end" | "report" | "editor_saved" | "review_set" | "restore_record"
-        | "restore_expect" => {
+        "session_begin" | "session_end" | "session_turn_end" | "op_begin" | "op_end" | "report" | "editor_saved" | "review_set"
+        | "restore_record" | "restore_expect" => {
             record_op(ctx, conn, role, &request.op, args)
         }
         other => Err(OpError::new(code::INTERNAL, format!("op の配線が無い: {other}"))),
@@ -500,6 +500,7 @@ fn record_op(ctx: &Context, conn: &ConnState, role: Role, op: &str, args: Args) 
     match op {
         "session_begin" => ops_record::session_begin(env, &caller, args),
         "session_end" => ops_record::session_end(env, &caller, args),
+        "session_turn_end" => ops_record::session_turn_end(env, &caller, args),
         "op_begin" => ops_record::op_begin(env, &caller, args),
         "op_end" => ops_record::op_end(env, &caller, args),
         "editor_saved" => ops_record::editor_saved(env, &caller, args),

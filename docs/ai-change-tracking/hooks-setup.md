@@ -44,6 +44,50 @@
 }
 ```
 
+**失敗・拒否・応答の終わりも登録する** (推奨。操作の窓を閉じる契機。§3 の「終わりの来ない操作」)。上の `hooks` に次を足す。`PostToolUseFailure` と `PermissionDenied` は `matcher` を `Edit|Write` にし、`Stop` は `matcher` を持たない。
+
+```json
+{
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<MyEngine のルート>/bin/x64/Release/mye_track.exe hook post-failure --project <プロジェクトのルート>",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<MyEngine のルート>/bin/x64/Release/mye_track.exe hook denied --project <プロジェクトのルート>",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<MyEngine のルート>/bin/x64/Release/mye_track.exe hook turn-end --project <プロジェクトのルート>",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 任意で、セッションの開始と終了も知らせられる (`pre` が最初の編集でセッションを自動で作るので、無くても動く)。上の `hooks` に次を足す。
 
 ```json
@@ -82,7 +126,10 @@
 | サブコマンド | 標準入力 (Claude Code の JSON) | サービスへ送るもの |
 |---|---|---|
 | `pre` | `session_id`、`cwd`、`tool_name`、`tool_input`、`tool_use_id` | `session_begin` (`clientSessionId` = `session_id`、`provider = claude`、`source = terminal`。既にあればそれが返る) → `op_begin` (`clientOpId` = `tool_use_id`、`declaredEdit`) |
-| `post` | 同上 + `tool_response` | `op_end` (`clientSessionId` + `clientOpId`、`result`) |
+| `post` | 同上 + `tool_response` (`PostToolUse`。成功の後だけ来る) | `op_end` (`clientSessionId` + `clientOpId`、`result`)。`hook_event_name` が `PostToolUseFailure` なら (設定の誤り) 失敗として扱う |
+| `post-failure` | `PostToolUseFailure`。`tool_name`、`tool_use_id`、`error` など | `op_end` (`result = failed`) |
+| `denied` | `PermissionDenied` (自動のモードの拒否)。`tool_name`、`tool_use_id`、`reason` (`tool_input` が無くても閉じる) | `op_end` (`result = denied`) |
+| `turn-end` | `Stop` (応答の終わり)。`session_id` | `session_turn_end` (そのセッションの開いている操作を `abandoned` で閉じる。別のセッションには触れない) |
 | `session-start` | `session_id`、`cwd` | `session_begin` |
 | `session-end` | `session_id` | `session_end` |
 
@@ -90,6 +137,14 @@
 - `declaredEdit` が編集の宣言。サービスが `op_begin` で対象を読み、宣言を Before に当てた結果のハッシュと、`op_end` の後に観測した After のハッシュが一致すれば Verified になる。`pre` と `post` の間に人が同じファイルを変えた、`old_string` が実際の内容に無い、といったときは一致せず Claimed 止まり。
 - 1 行が 1 MiB を超える要求 (巨大な `content`) は、`declaredEdit` を付けずに記録する (Claimed 止まり。記録は欠落しない)。
 - 失敗の説明は標準エラーへ 1 行だけ。
+
+### 終わりの来ない操作 (spec D46)
+
+Claude Code は、**既定の権限のモードで利用者が許可の確認を手で拒否したとき、`PreToolUse` だけが来て、終わりのイベントが何も来ない** (`PostToolUse` も `PostToolUseFailure` も `PermissionDenied` も来ない。`PermissionDenied` は自動のモードの拒否だけ。公式文書 <https://code.claude.com/docs/en/hooks>、2026-11-16 に確認)。道具が失敗したときは `PostToolUse` ではなく `PostToolUseFailure` が来る。
+
+- サービスは、**操作が `op_end` の `ok` で閉じたときだけ**、その窓の根拠を結論に数える ([attribution-rules.md](attribution-rules.md) §2.2)。終わりが来ない操作の間に人がそのファイルを変えても、AI のものにならない (`unknown`、近い時刻なら `inferred`)。この規則は、上の追加の設定が無くても働く。
+- 追加の設定 (`PostToolUseFailure` / `PermissionDenied` / `Stop`) は、開いたままの窓を早く閉じるためのもの。`Stop` (`turn-end`) か `SessionEnd` (`session-end`) で、拒否された操作も閉じる。どれも無ければ 10 分の打ち切りで閉じる。
+- 「同じセッションの次の `pre` で前の操作を閉じる」ことはしない (Claude は 1 つの応答の中で道具を並べて呼ぶことがあり、`pre` が 2 つ続いてから `post` が来うる)。
 
 ### 守っていること
 
@@ -100,7 +155,7 @@
 
 ## 4. どのプロジェクトのサービスへ繋ぐか
 
-1. `--project <root>` があればそれ。サービスが居なければ、`pre` と `session-start` のときだけ起動する (`post` と `session-end` は、終える相手の記録が無いので起動しない)。
+1. `--project <root>` があればそれ。サービスが居なければ、`pre` と `session-start` のときだけ起動する (`post` / `post-failure` / `denied` / `turn-end` / `session-end` は、終える相手の記録が無いので起動しない)。
 2. 無ければ、対象のファイル (`tool_input.file_path`。無ければ `cwd`) から親へたどり、`.mye\ai_changes\service.json` がある最初のディレクトリ (= サービスが動いたことのあるプロジェクト)。そのサービスが動いていれば繋ぎ、動いていなければ何もしない。**この場合サービスは起動しない。**
 3. どちらも無ければ何もしない。
 
@@ -124,6 +179,7 @@
 | 項目 | 状態 |
 |---|---|
 | 入力の項目名 (`session_id` / `cwd` / `tool_name` / `tool_input` / `tool_use_id` / `tool_response`、Write と Edit の `tool_input`) | **確認済み** (公式文書 <https://code.claude.com/docs/en/hooks> を 2026-11-14 に取得。試作 5) |
+| `PostToolUseFailure` / `PermissionDenied` / `Stop` の入力の項目名と、手で拒否したときに終わりのイベントが来ないこと | **公式文書の記述で確認** (<https://code.claude.com/docs/en/hooks>、2026-11-16)。**本物の Claude Code で拒否したときの実機の観測は未確認** (手作業) |
 | 合成した入力でのフックの動作 (宣言との一致、失敗時の終了コード 0、標準出力が空、5 秒以内、サービスの起動、標準入出力を掴ませないこと) | **確認済み** (`cargo test --manifest-path tools\track\Cargo.toml` の `tests\hook.rs` と `tools\track_verify.bat` の `# hook`) |
 | **本物の Claude Code でフックを 1 回動かした入力** | **未確認** (ユーザーの手作業。手順は `docs\test_checklists.md` の M104i) |
 | `tool_response` の形 (失敗をどう表すか) | **未確認**。D14 では Write の例が `{"filePath":..,"type":"create"}`。`success: false` / `is_error: true` / 空でない `error` の印があれば `failed`、判定できないものは `ok` にしている |

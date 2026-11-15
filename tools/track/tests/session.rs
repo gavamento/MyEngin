@@ -142,6 +142,7 @@ impl Fx {
         match op {
             "session_begin" => ops_record::session_begin(env, &caller, args(a)),
             "session_end" => ops_record::session_end(env, &caller, args(a)),
+            "session_turn_end" => ops_record::session_turn_end(env, &caller, args(a)),
             "op_begin" => ops_record::op_begin(env, &caller, args(a)),
             "op_end" => ops_record::op_end(env, &caller, args(a)),
             "report" => ops_record::report(env, &caller, args(a)),
@@ -422,6 +423,168 @@ fn a_human_change_after_the_edit_but_before_op_end_breaks_verification() {
     assert_eq!(verdict(&rev), ("ai", "claimed"));
 }
 
+// ---- spec D46 (sub-28): op_end の ok で閉じない操作の窓は結論に数えない ----------------------------------
+
+fn op_result(fx: &Fx, operation_id: &str) -> Option<String> {
+    fx.db().query_row("SELECT result FROM operations WHERE operation_id = ?1", [operation_id], |r| r.get(0)).unwrap()
+}
+
+/// 窓の根拠の行が (監査のために) 残っていて、結論には数えられていないこと。
+fn assert_audited_but_not_counted(fx: &Fx, rev: &Rev) {
+    let kinds = fx.evidence(rev.id);
+    assert!(kinds.contains(&"op_window".to_string()) && kinds.contains(&"before_match".to_string()), "{kinds:?}");
+    assert_ne!(rev.actor, "ai", "閉じられない操作の窓で人の編集が AI のものになった: {rev:?}");
+    assert_eq!(rev.operation_id, None);
+}
+
+#[test]
+fn a_human_edit_in_the_window_of_an_operation_that_never_ends_is_not_the_ais() {
+    let mut fx = Fx::new("d46_a");
+    fx.write("h.txt", b"h0\n");
+    fx.start(cfg(50));
+    let session = fx.begin_hook("c-46a");
+    let op = begin_op(&fx, HOOK, "c-46a", "h.txt", Some(replace_edit("h0", "AI")), "t");
+    fx.write("h.txt", b"written by a human\n");
+    wait_until("h.txt", || fx.revision_count("h.txt") == 1);
+    let rev = fx.last("h.txt");
+    assert_audited_but_not_counted(&fx, &rev);
+    assert!(fx.list_for_session(&session).is_empty(), "セッションの一覧に入った");
+    let end = fx.ok("session_end", HOOK, json!({ "sessionId": session }));
+    assert_eq!(end["changeCount"], 0);
+    // session_end が開いていた操作を閉じ、閉じた後も数えない
+    assert_eq!(op_result(&fx, op["operationId"].as_str().unwrap()).as_deref(), Some("abandoned"));
+    assert_audited_but_not_counted(&fx, &fx.last("h.txt"));
+}
+
+#[test]
+fn a_human_edit_after_session_end_is_not_the_ais_even_when_another_operation_finished_ok() {
+    let mut fx = Fx::new("d46_b");
+    fx.write("h.txt", b"h0\n");
+    fx.write("o.txt", b"o0\n");
+    fx.start(cfg(2000));
+    let session = fx.begin_hook("c-46b");
+    begin_op(&fx, HOOK, "c-46b", "h.txt", Some(replace_edit("h0", "AI")), "t1");
+    begin_op(&fx, HOOK, "c-46b", "o.txt", Some(replace_edit("o0", "O1")), "t2");
+    fx.write("o.txt", b"O1\n");
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-46b", "clientOpId": "t2", "result": "ok" }));
+    assert_eq!(verdict(&fx.last("o.txt")), ("ai", "verified"));
+    let end = fx.ok("session_end", HOOK, json!({ "sessionId": session }));
+    assert_eq!(end["changeCount"], 1, "o.txt だけ");
+    fx.write("h.txt", b"written by a human after the session\n");
+    wait_until("h.txt", || fx.revision_count("h.txt") == 1);
+    let rev = fx.last("h.txt");
+    assert_audited_but_not_counted(&fx, &rev);
+    let again = fx.ok("session_end", HOOK, json!({ "sessionId": session }));
+    assert_eq!(again["changeCount"], 1, "終わったセッションの changeCount に人の編集が入った");
+
+    // 壊した DB を作り直しても、同じ結論・同じ根拠
+    fx.stop();
+    let before = attribution_tables(&fx.db());
+    let paths = Paths::for_project(&fx.root);
+    fs::write(&paths.db, b"this is not a sqlite database").unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", paths.db.display()));
+    }
+    let (store, report) = open_project(&fx.root, now_ms());
+    assert!(report.rebuilt.is_some() && report.failed_steps.is_empty(), "{report:?}");
+    drop(store);
+    let after = attribution_tables(&fx.db());
+    for (table, rows) in &before {
+        assert_eq!(rows, &after[table], "{table} が壊す前と違う");
+    }
+}
+
+#[test]
+fn an_op_end_that_arrives_after_the_observation_raises_the_change_and_notifies() {
+    let mut fx = Fx::new("d46_late");
+    fx.write("x.txt", b"alpha\nbeta\n");
+    fx.start(cfg(50));
+    fx.begin_hook("c-late");
+    let op = begin_op(&fx, HOOK, "c-late", "x.txt", Some(replace_edit("beta", "BETA")), "t");
+    fx.write("x.txt", b"alpha\nBETA\n");
+    wait_until("x.txt", || fx.revision_count("x.txt") == 1);
+    // post の前は数えない (宣言どおりでも)
+    assert_ne!(fx.last("x.txt").actor, "ai");
+    let reader = ops::open_reader(&Paths::for_project(&fx.root).db).unwrap();
+    let mut cursors = mye_track::notify::Cursors::capture(&reader).unwrap();
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-late", "clientOpId": "t", "result": "ok" }));
+    let rev = fx.last("x.txt");
+    assert_eq!(verdict(&rev), ("ai", "verified"));
+    assert_eq!(rev.operation_id.as_deref(), op["operationId"].as_str());
+    let events = mye_track::notify::poll_once(&reader, &mut cursors).unwrap();
+    let updated: Vec<&Value> = events.iter().filter(|e| e["event"] == "attribution_updated").collect();
+    assert_eq!(updated.len(), 1, "{events:?}");
+    assert_eq!((updated[0]["actor"].as_str(), updated[0]["attribution"].as_str()), (Some("ai"), Some("verified")));
+}
+
+#[test]
+fn parallel_operations_are_both_verified_when_their_ends_arrive_in_order() {
+    let mut fx = Fx::new("d46_par");
+    fx.write("a.txt", b"a0\n");
+    fx.write("b.txt", b"b0\n");
+    fx.start(slow_watch_cfg());
+    fx.begin_hook("c-par");
+    begin_op(&fx, HOOK, "c-par", "a.txt", Some(replace_edit("a0", "A1")), "A");
+    begin_op(&fx, HOOK, "c-par", "b.txt", Some(replace_edit("b0", "B1")), "B");
+    fx.write("a.txt", b"A1\n");
+    fx.write("b.txt", b"B1\n");
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-par", "clientOpId": "A", "result": "ok" }));
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-par", "clientOpId": "B", "result": "ok" }));
+    assert_eq!(verdict(&fx.last("a.txt")), ("ai", "verified"));
+    assert_eq!(verdict(&fx.last("b.txt")), ("ai", "verified"));
+}
+
+#[test]
+fn a_failed_or_denied_end_and_a_turn_end_close_the_window_without_counting_it() {
+    let mut fx = Fx::new("d46_close");
+    for name in ["f.txt", "d.txt", "t.txt", "o.txt"] {
+        fx.write(name, b"0\n");
+    }
+    fx.start(cfg(50));
+    fx.begin_hook("c-close");
+    fx.begin_hook("c-other");
+    let failed = begin_op(&fx, HOOK, "c-close", "f.txt", Some(replace_edit("0", "X")), "f");
+    let denied = begin_op(&fx, HOOK, "c-close", "d.txt", Some(replace_edit("0", "X")), "d");
+    let turn = begin_op(&fx, HOOK, "c-close", "t.txt", Some(replace_edit("0", "X")), "t");
+    let other = begin_op(&fx, HOOK, "c-other", "o.txt", None, "o");
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-close", "clientOpId": "f", "result": "failed" }));
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-close", "clientOpId": "d", "result": "denied" }));
+    // 別のセッションのターンの終わりでは閉じない。自分のセッションのものだけ閉じる
+    let closed = fx.ok("session_turn_end", HOOK, json!({ "clientSessionId": "c-close" }));
+    assert_eq!(closed["closed"], 1);
+    let none = fx.ok("session_turn_end", HOOK, json!({ "clientSessionId": "c-close" }));
+    assert_eq!(none["closed"], 0, "開いている操作が無ければ何もしない");
+    let id = |v: &Value| v["operationId"].as_str().unwrap().to_string();
+    assert_eq!(op_result(&fx, &id(&failed)).as_deref(), Some("failed"));
+    assert_eq!(op_result(&fx, &id(&denied)).as_deref(), Some("denied"));
+    assert_eq!(op_result(&fx, &id(&turn)).as_deref(), Some("abandoned"));
+    assert_eq!(op_result(&fx, &id(&other)), None, "別のセッションの操作に触れた");
+
+    for name in ["f.txt", "d.txt", "t.txt"] {
+        fx.write(name, b"X\n");
+        wait_until(name, || fx.revision_count(name) == 1);
+        let rev = fx.last(name);
+        assert_audited_but_not_counted(&fx, &rev);
+    }
+    // 別のセッションの開いた操作も、ok で閉じるまでは数えない
+    fx.write("o.txt", b"human\n");
+    wait_until("o.txt", || fx.revision_count("o.txt") == 1);
+    assert_ne!(fx.last("o.txt").actor, "ai");
+}
+
+#[test]
+fn op_end_rejects_unknown_results_and_the_new_op_is_for_ai_side_roles_only() {
+    let mut fx = Fx::new("d46_args");
+    fx.write("a.txt", b"a\n");
+    fx.start(cfg(50));
+    fx.begin_hook("c-args");
+    begin_op(&fx, HOOK, "c-args", "a.txt", None, "t");
+    let bad = fx.call("op_end", HOOK, json!({ "clientSessionId": "c-args", "clientOpId": "t", "result": "refused" }));
+    assert_eq!(bad.unwrap_err().code, code::BAD_ARGS);
+    assert!(role_allows(Role::Hook, "session_turn_end") && role_allows(Role::Mcp, "session_turn_end"));
+    assert!(!role_allows(Role::Editor, "session_turn_end"));
+}
+
 // ---- 受け入れ条件 5: 窓の重なり -----------------------------------------------------------------
 
 #[test]
@@ -452,6 +615,9 @@ fn overlapping_operations_on_one_path_are_never_verified() {
     begin_op(&fx, HOOK, "c-2", "w.txt", Some(replace_edit("b", "B2")), "u2");
     fx.write("w.txt", b"a\nNEITHER\nc\n");
     fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-2", "clientOpId": "u2", "result": "ok" }));
+    // 開いたままの u1 は数えない (D46)。ok で閉じると両方が候補になる
+    assert_eq!(fx.describe(fx.last("w.txt").id)["candidateSessions"], json!([s2]));
+    fx.ok("op_end", HOOK, json!({ "clientSessionId": "c-1", "clientOpId": "u1", "result": "ok" }));
     let rev = fx.last("w.txt");
     assert_eq!(verdict(&rev), ("ai", "unknown"));
     let mut expected = vec![s1.clone(), s2.clone()];

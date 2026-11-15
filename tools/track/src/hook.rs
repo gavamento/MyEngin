@@ -1,7 +1,8 @@
-//! `mye_track.exe hook <pre|post|session-start|session-end> [--project <root>]` (M104i、attribution-rules.md §6.1)。
+//! `mye_track.exe hook <pre|post|post-failure|denied|turn-end|session-start|session-end> [--project <root>]`
+//! (M104i、attribution-rules.md §6.1)。
 //!
 //! Claude Code のフックとして呼ばれ、標準入力の JSON を追跡サービスの op (session_begin / op_begin / op_end /
-//! session_end) へ変換する。入力の形は docs\ai-change-tracking\hooks-setup.md。
+//! session_turn_end / session_end) へ変換する。入力の形は docs\ai-change-tracking\hooks-setup.md。
 //!
 //! 守ること (AI の作業を止めない):
 //! - 終了コードは常に 0。`run` は値を返さず、`main` が `ExitCode::SUCCESS` を返す (0 以外を作る経路が型に無い)。
@@ -47,6 +48,12 @@ const TOKEN_REFRESH_WAIT: Duration = Duration::from_millis(1000);
 enum Sub {
     Pre,
     Post,
+    /// PostToolUseFailure。道具が失敗した
+    PostFailure,
+    /// PermissionDenied (自動のモードの拒否)。手で拒否したときは来ない
+    Denied,
+    /// Stop。応答の終わり
+    TurnEnd,
     SessionStart,
     SessionEnd,
 }
@@ -56,10 +63,18 @@ impl Sub {
         match text {
             "pre" => Some(Sub::Pre),
             "post" => Some(Sub::Post),
+            "post-failure" => Some(Sub::PostFailure),
+            "denied" => Some(Sub::Denied),
+            "turn-end" => Some(Sub::TurnEnd),
             "session-start" => Some(Sub::SessionStart),
             "session-end" => Some(Sub::SessionEnd),
             _ => None,
         }
+    }
+
+    /// 道具 (tool_use_id) に結び付く入力か。
+    fn is_tool_event(self) -> bool {
+        matches!(self, Sub::Pre | Sub::Post | Sub::PostFailure | Sub::Denied)
     }
 
     /// 入力にサービスの無い状態で、サービスを起動してよいか。pre と session-start だけ
@@ -112,7 +127,10 @@ struct Command {
 
 fn parse_command(args: &[String]) -> Result<Command, String> {
     let mut iter = args.iter();
-    let sub = iter.next().and_then(|text| Sub::parse(text)).ok_or("hook の次は pre / post / session-start / session-end")?;
+    let sub = iter
+        .next()
+        .and_then(|text| Sub::parse(text))
+        .ok_or("hook の次は pre / post / post-failure / denied / turn-end / session-start / session-end")?;
     let mut project = None;
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -149,6 +167,7 @@ fn dump_input(raw: &[u8]) {
 ///
 /// 公式の入力は項目が増えうるので、サービスの pipe (`bad_args`) と違って知らないキーを拒否しない。
 struct Input {
+    hook_event_name: Option<String>,
     session_id: Option<String>,
     cwd: Option<String>,
     tool_name: Option<String>,
@@ -165,6 +184,7 @@ fn parse_input(raw: &[u8]) -> Option<Input> {
     let value: Value = serde_json::from_slice(raw).ok()?;
     value.as_object()?;
     Some(Input {
+        hook_event_name: text_of(&value, "hook_event_name"),
         session_id: text_of(&value, "session_id"),
         cwd: text_of(&value, "cwd"),
         tool_name: text_of(&value, "tool_name"),
@@ -227,6 +247,16 @@ fn result_of(response: &Value) -> &'static str {
     }
 }
 
+/// `op_end` に送る結果。`post` に PostToolUseFailure の入力が来た場合 (設定の誤り) も失敗として扱う。
+fn end_result(sub: Sub, input: &Input) -> &'static str {
+    match sub {
+        Sub::Denied => "denied",
+        Sub::PostFailure => "failed",
+        _ if input.hook_event_name.as_deref() == Some("PostToolUseFailure") => "failed",
+        _ => result_of(&input.tool_response),
+    }
+}
+
 /// プロジェクトのルートと、サービスを起動してよいか。
 ///
 /// 1. `--project` があればそれ (起動してよい)。
@@ -263,15 +293,19 @@ fn execute(args: &[String], deadline: Instant) {
     dump_input(&raw);
     let Some(input) = parse_input(&raw) else { return note("標準入力が JSON のオブジェクトではない") };
 
-    let edit = matches!(command.sub, Sub::Pre | Sub::Post);
+    let edit = command.sub.is_tool_event();
     let mut tool = None;
     let mut file = None;
     if edit {
         // 対応しない道具は静かに終わる (matcher で絞っていない設定でも動く)
         let Some(parsed) = input.tool_name.as_deref().and_then(Tool::parse) else { return };
         tool = Some(parsed);
-        let Some(path) = text_of(&input.tool_input, "file_path") else { return note("tool_input.file_path が無い") };
-        file = Some(absolute_file(&path, input.cwd.as_deref()));
+        // 操作は tool_use_id で引くので、終わりの知らせはパスが無くても働く (プロジェクトは cwd から決める)
+        match text_of(&input.tool_input, "file_path") {
+            Some(path) => file = Some(absolute_file(&path, input.cwd.as_deref())),
+            None if matches!(command.sub, Sub::Pre | Sub::Post) => return note("tool_input.file_path が無い"),
+            None => {}
+        }
     }
     let Some(session_id) = input.session_id.clone() else { return note("session_id が無い") };
     let tool_use_id = input.tool_use_id.clone();
@@ -303,11 +337,12 @@ fn execute(args: &[String], deadline: Instant) {
             let (Some(tool), Some(target), Some(op_id)) = (tool, target, tool_use_id) else { return };
             link.pre(&session_id, &op_id, tool, &target, &input.tool_input)
         }
-        Sub::Post => {
+        Sub::Post | Sub::PostFailure | Sub::Denied => {
             let Some(op_id) = tool_use_id else { return };
-            let args = json!({ "clientSessionId": session_id, "clientOpId": op_id, "result": result_of(&input.tool_response) });
+            let args = json!({ "clientSessionId": session_id, "clientOpId": op_id, "result": end_result(command.sub, &input) });
             link.call("op_end", args).map(|_| ())
         }
+        Sub::TurnEnd => link.call("session_turn_end", json!({ "clientSessionId": session_id })).map(|_| ()),
     };
     if let Err(e) = outcome {
         note(&e);

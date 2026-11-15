@@ -79,8 +79,62 @@ fn op_finish(conn: &Connection, cfg: &AttributionConfig, at: i64, p: &Value, res
     let json: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
     let paths: Vec<String> =
         json["targets"].as_array().into_iter().flatten().filter_map(|t| t["path"].as_str().map(str::to_string)).collect();
+    // ok で閉じると、開いている間は数えなかった窓の根拠が結論に入る。変わった Revision を通知できるよう前後を比べる
+    let before = if result == "ok" { window_conclusions(conn, op_id)? } else { Vec::new() };
     attribution::reevaluate_range(conn, cfg, at, started_at, at + cfg.window_grace_ms, Some(&paths))?;
+    for (revision_id, old) in before {
+        let now = window_conclusions_of(conn, revision_id)?;
+        if now != old {
+            // 根拠の行は増えないので、通知 (attribution_updated は根拠の行の追加から作る) のための印を足す
+            conn.execute(
+                "INSERT INTO attribution_evidence (revision_id, session_id, operation_id, kind, detail, recorded_at)
+                 VALUES (?1, NULL, ?2, 'op_closed', ?3, ?4)",
+                params![revision_id, op_id, json!({ "result": result }).to_string(), at],
+            )?;
+        }
+    }
     refresh_observed_targets(conn, op_id)
+}
+
+type Concluded = (String, String, Option<String>);
+
+fn window_conclusions_of(conn: &Connection, revision_id: i64) -> rusqlite::Result<Concluded> {
+    conn.query_row("SELECT actor, attribution, operation_id FROM change_revisions WHERE revision_id = ?1", [revision_id], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    })
+}
+
+/// この操作の窓の根拠を持つ Revision と、いまの結論。
+fn window_conclusions(conn: &Connection, op_id: &str) -> rusqlite::Result<Vec<(i64, Concluded)>> {
+    let ids: Vec<i64> = {
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT DISTINCT revision_id FROM attribution_evidence WHERE operation_id = ?1 AND kind IN ({}) ORDER BY revision_id",
+            attribution::WINDOW_KINDS_SQL
+        ))?;
+        let rows = stmt.query_map([op_id], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    ids.into_iter().map(|id| Ok((id, window_conclusions_of(conn, id)?))).collect()
+}
+
+/// そのセッションで開いている操作 (`op_end` 待ち) を `abandoned` で閉じる。閉じた数を返す。
+/// セッションの終わりとターンの終わりが使う。拒否された操作は終わりの知らせが来ないので、ここで窓を閉じる。
+pub fn close_open_ops(conn: &Connection, cfg: &AttributionConfig, at: i64, session_id: &str) -> rusqlite::Result<usize> {
+    let open = open_op_ids(conn, session_id)?;
+    for id in &open {
+        op_finish(conn, cfg, at, &json!({ "operation_id": id }), "abandoned")?;
+    }
+    Ok(open.len())
+}
+
+/// そのセッションで開いている操作の ID (開始の順)。
+pub fn open_op_ids(conn: &Connection, session_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT operation_id FROM operations WHERE session_id = ?1 AND finished_at IS NULL AND result IS NULL
+          ORDER BY started_at, operation_id",
+    )?;
+    let rows = stmt.query_map([session_id], |r| r.get(0))?;
+    rows.collect()
 }
 
 /// 操作に結び付いた Revision のパスと After のハッシュを `observed_targets` に写す (派生。イベントからいつでも作り直せる)。

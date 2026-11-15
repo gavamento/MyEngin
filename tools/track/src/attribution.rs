@@ -295,16 +295,19 @@ fn parse_targets(value: &Value) -> Targets {
 struct OpRow {
     id: String,
     session: String,
+    /// `op_end` の ok で閉じた操作か。窓の根拠を数えてよいのはこれだけ (spec D46)
+    counted: bool,
     targets: Targets,
     declared_after: Option<String>,
     declared_path: Option<String>,
 }
 
-fn op_row(id: String, session: String, raw: &str) -> OpRow {
+fn op_row(id: String, session: String, result: Option<String>, raw: &str) -> OpRow {
     let json: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
     OpRow {
         id,
         session,
+        counted: result.as_deref() == Some("ok"),
         targets: parse_targets(&json),
         declared_after: json["declaredAfterHash"].as_str().map(str::to_string),
         declared_path: json["declaredPath"].as_str().map(str::to_string),
@@ -338,10 +341,18 @@ impl Sink<'_> {
     }
 }
 
+/// 操作の窓に基づく根拠の種類。その操作が `op_end` の ok で閉じたときだけ結論に数える (spec D46)。
+pub const WINDOW_KINDS_SQL: &str = "'op_window', 'before_match', 'declared_edit_match'";
+
+/// 結論に数える根拠だけを読む。窓の根拠は、操作が ok で閉じていなければ数えない
+/// (開いたまま・失敗・拒否・打ち切りの操作の窓で起きた人の編集を AI のものにしない)。行そのものは監査のために残る。
 fn load_evidence(conn: &Connection, revision_id: i64) -> rusqlite::Result<Vec<Evidence>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT kind, session_id, operation_id FROM attribution_evidence WHERE revision_id = ?1 ORDER BY evidence_id",
-    )?;
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT e.kind, e.session_id, e.operation_id FROM attribution_evidence e
+           LEFT JOIN operations o ON o.operation_id = e.operation_id
+          WHERE e.revision_id = ?1 AND (e.kind NOT IN ({WINDOW_KINDS_SQL}) OR o.result = 'ok')
+          ORDER BY e.evidence_id"
+    ))?;
     let rows = stmt.query_map([revision_id], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
     })?;
@@ -615,24 +626,26 @@ fn session_evidence(
     // 操作の窓 (report は窓を持たない)
     let ops: Vec<OpRow> = {
         let mut stmt = conn.prepare_cached(
-            "SELECT operation_id, session_id, reported_targets FROM operations
+            "SELECT operation_id, session_id, reported_targets, result FROM operations
               WHERE operation_type <> 'report' AND started_at <= ?1
                 AND (?3 OR finished_at IS NULL OR finished_at + ?2 >= ?1)
                 AND NOT (finished_at IS NULL AND result IS NOT NULL)
               ORDER BY started_at, operation_id",
         )?;
         let rows = stmt.query_map(params![obs, cfg.window_grace_ms, content_only], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, session, raw) = row?;
-            out.push(op_row(id, session, &raw));
+            let (id, session, raw, result) = row?;
+            out.push(op_row(id, session, result, &raw));
         }
         out
     };
     let mut window_sessions: BTreeSet<String> = BTreeSet::new();
+    let mut counted_window = false;
     for op in ops.iter().filter(|o| o.targets.iter().any(|(p, _)| touches(p))) {
+        counted_window |= op.counted;
         if !content_only {
             window_sessions.insert(op.session.clone());
             sink.add(Kind::OpWindow, Some(&op.session), Some(&op.id), json!({ "path": rev.path }))?;
@@ -680,9 +693,8 @@ fn session_evidence(
             sink.add(Kind::Worktree, Some(session), None, json!({ "workspace": workspace }))?;
         }
     }
-    if managed_begin
-        || sink.has_any(&[Kind::OpWindow, Kind::ReportHashMatch, Kind::ReportOnly, Kind::DeclaredEditMatch])
-    {
+    // 結論に数える窓 (ok で閉じた操作) がある変更は、時刻の近さを見ない。開いたまま・失敗した操作の窓は数えないので見る
+    if managed_begin || counted_window || sink.has_any(&[Kind::ReportHashMatch, Kind::ReportOnly]) {
         return Ok(());
     }
     let (lo, hi) = (obs - cfg.time_near_ms, obs + cfg.time_near_ms);

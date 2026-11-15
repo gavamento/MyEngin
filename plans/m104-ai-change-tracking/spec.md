@@ -88,6 +88,8 @@ git の差分では AI 以前の未コミット変更が混ざり、シーンは
 
 | D45 | Launcher で古い版を消すとき、その版の `mye_track.exe` が動いていると失敗し、文面は「close its editor first」で、サービスが原因だと気づきにくい | sub-20 の coder が `UninstallEngine` のコードを読んで確認 (rename が失敗すると、その文面がエラーとして画面に出る)。サービスは接続が 0 になってから 10 分で自分で終わる | 未確認 | M104 では Launcher を変えない (別件)。`docs\ai-change-tracking\hooks-setup.md` §7 に、待てば消せる手順を書いた |
 
+| D46 | フックの `pre` だけが届いて `post` が来ない操作の窓が 10 分開いたままで、その間の人の編集が `ai` / `claimed` になる (セッションを終えた後でも) | 最終レビュー round 1 の指摘 1 (reviewer が実サービスで再現)。Claude Code の公式文書 (https://code.claude.com/docs/en/hooks 、2026-11-16 に planner が取得): `PostToolUse` は成功の後だけ、失敗は `PostToolUseFailure`、**既定の権限のモードで利用者が拒否したときは `PreToolUse` だけが来て、終わりを知らせるイベントは無い** (`PermissionDenied` は自動のモードだけ)。`Stop` は応答の終わり、`SessionEnd` はセッションの終わり | 未確認 (planner の仕様の穴) | 操作の窓の根拠 (`op_window`、`before_match`、`declared_edit_match`) は、その操作が `op_end` の `ok` で閉じたときだけ結論に数える (開いている間は記録だけ。`ok` で閉じたら計算し直して上げる)。加えて、`PostToolUseFailure` / `PermissionDenied` / `Stop` / `session_end` で開いた窓を閉じる。sub-28 (M104v)。却下: (a) イベントで閉じるだけ (拒否はイベントが来ないので塞げない) (b) 同じセッションの次の `op_begin` で前を閉じる (並列の道具の呼び出しと矛盾する) (c) 打ち切りを短くする (短くしても、その間の人の編集は AI になる) |
+
 ## 3. スコープ
 
 - やる: 計画の進捗表 M104b〜M104t (Phase 0 の試作 〜 Phase 6)。順序は要求 §19 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較)。最後に、エンジン配布物へのサービス同梱 (M104u、D5)。
@@ -141,7 +143,7 @@ git の差分では AI 以前の未コミット変更が混ざり、シーンは
 - **A5 (pipe)**: `hello` の 4 つの検査 (版・トークン・プロジェクト・接続元)、二重起動は既存へ接続、`status` / `list` / `describe`、サービスを再起動しても履歴が取れる (要求 Phase 1 の完了条件) → `tools\track_verify.bat` の NDJSON 照合 + `cargo test`。
 - **A6 (帰属)**: attr §3 の表の全行、§4 の `preexisting`、§5 の `overlap` と PID + 開始時刻、中断セッションの `interrupted` が、それぞれ 1 つ以上のテストで確かめられる → `cargo test` (§16.1 の 3 番目、§16.2 の 1、2、4、5 番目)。
 - **A7 (MCP)**: 道具が 10 になり、既存 5 つのシナリオの期待値は `tools_list` 以外変わらない。サービス不在で 5 つの新しい道具は `isError`。規則 15-c / 15-d が通り、許可していない API を `track_client.rs` に仕込むと落ちる。Editor を起動せずに MCP の操作が記録される → `tools\mcp_verify.bat`、`tools\check_rules.ps1`、`tools\track_verify.bat` (§16.2 の 3 番目)。
-- **A8 (フック)**: pre / post の入力 (D14 の形) から `declared_edit_match` が成り立ち Verified になる。人の編集を挟むと Verified にならない。サービス不在でも終了コード 0 で 5 秒以内に返る。設定の手順が文書にある → `cargo test` + `track_verify` のシナリオ。
+- **A8 (フック)** (2026-11-16 追記: `pre` だけで `post` が来ない操作 = 拒否・失敗・打ち切りの窓の中の人の編集が、`ai` / `claimed` / `verified` にならないこと。sub-28): pre / post の入力 (D14 の形) から `declared_edit_match` が成り立ち Verified になる。人の編集を挟むと Verified にならない。サービス不在でも終了コード 0 で 5 秒以内に返る。設定の手順が文書にある → `cargo test` + `track_verify` のシナリオ。
 - **A9 (Editor の土台)**: `changetracking` スイートがサービスなしで通る。規則 19 が通り、違反の一時コピーで落ちる。規則 9 の組に C++ の定数が入る。非対話起動でサービスを起動しない (D11)。サービス不在・`proto_mismatch`・`db_degraded` で Editor が通常動作する → `MYE_SELFTEST_ONLY=changetracking` の `Editor.exe --selftest`、`tools\check_rules.ps1`、`tools\check_rules_selftest.ps1` (§16.5 の 3、4、7 番目)。
 - **A10 (一覧と Diff)**: AI Changes 窓に、セッション別の変更、帰属と根拠、`completeness` が出る。Diff はインラインと左右。Unknown / Inferred は既定で別の節 (attr §8)。文字列は英日そろう → スイート (モデルの整形) + `--screenshot` + 規則 10。
 - **A11 (シーン構造 diff)**: `fileId` で対応付ける。キー順だけの違いは変更にしない。数値は字句で比べる。`version` 違いは「解析不可」。別のシーンの同じ `fileId` を混ぜない。プレハブの 3 種 (Asset / Instance / Override) を区別する → `cargo test` + `track_verify` の `scene_diff` (§16.3 の 1、2、4 番目)。
@@ -191,6 +193,7 @@ harness の sub-NN と計画の M104x は 1 対 1。コミット件名は `M104x
 | sub-19 | M104t | 6 | プレハブ伝播の表示、大きいシーンの計測 | sub-18 | A19、A20 | `M104t: プレハブ伝播の表示と大きいシーンの計測を足す` |
 
 | sub-20 | M104u | 配布 | エンジン配布物へのサービス同梱 | sub-19 | A21 | `M104u: エンジン配布物に追跡サービスを入れる` |
+| sub-28 | M104v | レビュー対応 | 閉じられない操作の窓で人の編集を AI のものにしない (review-1 #1) + minor 2〜4 | sub-20 | A6、A8 | `M104v: 閉じられない操作の窓で人の編集を AI のものにしない` |
 
 ### 6.1 サブ仕様の書き込みの深さ (planner の判断)
 
@@ -240,6 +243,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-16 (planner、REVIEW round 1 への応答): D46 を追加 (review-1 #1 を仕様の穴として認めた)。**sub-28 (M104v)** を新設し、#1 と minor #2〜#4 をここで直す。minor #5 (ゴーストのラベルの重なり、大きいファイル) は台帳の申し送りへ。A6 と A8 に「`op_end` が `ok` で閉じない操作の窓の人の編集は AI に確定しない」を足す。
 - 2026-11-16 (planner、sub-20 の VERDICT round 1): D45 を追加。全サブ (sub-01〜27) が OK になった。最終レビューへ。
 - 2026-11-16 (planner、sub-19 の VERDICT round 1): **D38 が解消した** (Debug の physics のスタックオーバーフローの原因は、`EditorApp` が `wWinMain` のローカル変数だったこと。ヒープに置いて、Debug の physics を含む全スイートが通った。planner も physics の Debug の通過を確かめた)。sub-20 を詳細に書き直した (配布物、`$required`、release.yml、ゲームの配布物への混入の検査、配布物で動くこと、Launcher のアンインストールとの関係、受け入れ条件 8 件)。`tools\replay_verify.bat` がリポジトリ直下の `imgui.ini` を書き換えることと、既定の並列度で `demo` が落ちることがあるのは、bat の既存の性質で M104 の外 (D44)。
 - 2026-11-16 (planner、sub-18 の VERDICT round 1): D43 を追加。sub-19 を詳細に書き直した (最初に Debug のスタックの原因を確かめる、プレハブ伝播、計測と原点だけの判定の見直し、要求 §16 / §18 の対応表、ADR と計画の仕上げ、最後の横断、受け入れ条件 7 件)。

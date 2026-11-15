@@ -42,14 +42,27 @@
 
 | kind | 定義 |
 |---|---|
-| `op_window` | Revision の `observed_at` が、その操作の `op_begin` から `op_end` + 猶予 (既定 2 秒) の間にあり、Revision のパス (リネームなら旧パスも) が操作の `targets` に入っている。`op_end` が来ていない操作は、打ち切り (既定 10 分) まで開いている |
-| `before_match` | Revision の Before のハッシュが、`op_begin` で取ったそのパスのハッシュと同じ (新規ファイル = 無い、同士も一致)。除外パターンのファイルと、Before を見ていない変更 (`no_before`) は照合に使えない |
-| `declared_edit_match` | `op_begin` の `declaredEdit` を、その時点の内容 (`targets` の 1 つ目) に当てた結果のハッシュが、Revision の After と同じ。かつ `before_match` が成り立つ |
+| `op_window` | Revision の `observed_at` が、その操作の `op_begin` から `op_end` + 猶予 (既定 2 秒) の間にあり、Revision のパス (リネームなら旧パスも) が操作の `targets` に入っている。`op_end` が来ていない操作は、打ち切り (既定 10 分) まで開いている。**結論に数えるのは、その操作が `op_end` の `result = ok` で閉じたときだけ** (§2.2)。行は開いている間も記録する (監査のため) |
+| `before_match` | Revision の Before のハッシュが、`op_begin` で取ったそのパスのハッシュと同じ (新規ファイル = 無い、同士も一致)。除外パターンのファイルと、Before を見ていない変更 (`no_before`) は照合に使えない。`op_window` と同じく、操作が ok で閉じたときだけ数える |
+| `declared_edit_match` | `op_begin` の `declaredEdit` を、その時点の内容 (`targets` の 1 つ目) に当てた結果のハッシュが、Revision の After と同じ。かつ `before_match` が成り立つ。`op_window` と同じく、操作が ok で閉じたときだけ数える |
 | `report_hash_match` | `report` が Before / After の**両方**のハッシュを渡し、セッション開始より後のそのパスの Revision のどれかと両方一致 |
 | `report_only` | 上以外 (片方だけ・不一致・ハッシュなし)。申告の時点でそのパスの最後の Revision (と、申告から 10 秒以内に観測された Revision) にだけ付ける。申告が先に届いて Revision が後から来ても、10 秒以内なら付く |
 | `time_near` | 申告も窓も無い Revision の `observed_at` が、running のセッションの活動時刻 (`session_begin` / `op_begin` / `op_end` / `report` を受けた時刻) のどれかから 2 秒以内 (定数、設定可)。操作の直前の読み取り (`op_begin` が先に確定する、人の未記録の変更) には付けない |
 | `overlap` | 同じパスについて、Revision の `observed_at` を含む窓を持つ操作が、別々のセッションに 2 つ以上ある |
 | `preexisting` | (a) セッションの開始より前の Revision に、そのセッションが申告した、または開始のすぐ前 (`time_near` の幅以内) だった。そのセッションに付き、そのセッションの根拠を結論から外す (b) `completeness = gap` の Revision のうち、止まっていた間の再走査 (`startup_gap`) と監視のあふれ (`overflow_gap`) が作ったもの。セッションに属さず、他の根拠より強い (結論は `unknown`)。サービスが動いている間の取りこぼしを検証の走査が拾った Revision (`verify_gap`) は `preexisting` にしない (§4) |
+
+### 2.2 操作の窓の根拠は、`op_end` の ok で閉じたときだけ数える (spec D46)
+
+`op_window` / `before_match` / `declared_edit_match` は、**その操作が `op_end` の `result = ok` で閉じたときだけ**結論に数える。操作が開いている間 (`op_end` 待ち) と、`ok` 以外で閉じた操作 (`failed` / `denied` / `abandoned`) の窓の根拠は、行を記録する (`describe` に出る。監査のため) が結論には使わない。
+
+理由: 終わりの知らせが来ない操作がある。Claude Code は、道具が失敗したときは `PostToolUseFailure`、自動のモードの拒否は `PermissionDenied` だが、**既定のモードで利用者が許可の確認を手で拒否したときは `PreToolUse` だけで終わりのイベントが無い** (公式文書 <https://code.claude.com/docs/en/hooks>、2026-11-16 に確認)。窓が打ち切り (10 分) まで開いたままだと、その間に人がそのファイルを初めて変えたとき、宣言と一致しなくても `op_window` + `before_match` で `ai` / `claimed` になり、AI の操作とセッションに結び付いてしまう。終わりの有無で確定を決めれば、終わりが分からなくても人の編集は AI のものにならない。
+
+- 開いている間に観測された変更は、他の根拠 (`time_near` → `inferred`、無ければ `unknown`) で決まる。操作が `ok` で閉じたら、その窓に入る Revision を計算し直して `verified` / `claimed` に上げ、`attribution_updated` を通知する (根拠の行は増えないので、`kind = op_closed` の印の行を足して通知の元にする。印は結論に使わない)。`ok` 以外で閉じたら、窓の根拠は数えないまま計算し直す。
+- 数えない操作の窓の根拠は、`time_near` を抑えない (結論に数える窓がある Revision だけが `time_near` を作らない)。
+- 窓が重なっているかの判定 (`overlap`) は、開いている操作も含めて数える (確定を弱める側なので残す)。
+- `report` (`report_hash_match` / `report_only`) は操作の窓と別の根拠で、この規則の対象外。
+- セッションの変更の一覧と `changeCount` も同じ条件で数える (数えない窓の根拠だけを持つ Revision は入らない)。
+- 窓を閉じる契機 (§6.1): `op_end` (`ok` / `failed` / `denied`)、そのセッションの `session_turn_end` (応答の終わり。開いている操作を `abandoned`)、`session_end` (同じ)、打ち切り (10 分。最後の守り)。「同じセッションの次の `op_begin` で前を閉じる」は採らない (Claude は 1 つの応答の中で道具を並べて呼ぶことがあり、`pre` が 2 つ続いてから `post` が来うる)。
 
 ## 3. 区分の決め方
 
@@ -60,9 +73,9 @@
 | `editor_saved` がある | `editor_user` | `verified` |
 | `restore_expected` がある | `restore` | `verified` |
 | `preexisting` がある | `unknown` | `unknown` |
-| `declared_edit_match` があり、`overlap` が無い | `ai` | `verified` |
+| `declared_edit_match` があり (操作が ok で閉じたものだけ。§2.2)、`overlap` が無い | `ai` | `verified` |
 | `worktree` があり、その作業ツリーを使うセッションが 1 つだけ | `ai` | `verified` |
-| `report_hash_match` がある、または `op_window` + `before_match` がある | `ai` | `claimed` |
+| `report_hash_match` がある、または `op_window` + `before_match` がある (操作の窓の根拠は、操作が ok で閉じたものだけ。§2.2) | `ai` | `claimed` |
 | `report_only` がある | `ai` | `claimed` (照合できなかったことを根拠に残す) |
 | `time_near` だけがある | `ai` | `inferred` |
 | どれも無い | `unknown` | `unknown` |
@@ -100,7 +113,7 @@ AI の根拠 (`declared_edit_match` など) は消さずに残し、結論だけ
 - セッションの変更として数えるのは、開始より**後に**観測された変更だけ。開始より前の Revision は `preexisting`。ベースライン・起動時の再走査の最中に `session_begin` が来ても待たずに受け付け、走査が作る Revision は `gap` なので `preexisting` で落ちる。
 - git の HEAD との差は使わない。HEAD との差には、セッションより前の未コミットの変更が全部含まれる。`base_commit` は表示のための情報で、判定には使わない。
 - サービスが止まっていた間に起きた変更 (起動時の再走査が作った `gap`) と、監視のあふれの後の再走査が作った `gap` は、その間にセッションが動いていたとしても `unknown` にする。止まっていた間のことは見ていない。
-- **サービスが動いている間の取りこぼし** (`source = verify_gap`。検証の走査が拾った) は別扱いにする (spec D35)。`observed_at` が走査の時刻で、書かれた時刻ではないので、**時刻による根拠 (`op_window`、`time_near`、`worktree`、`report_only`) は作らない**。内容による根拠だけを数える: `before_match` + `declared_edit_match` がそろえば `verified` (内容が宣言と一致していることは、いつ観測したかに依らない)、`report_hash_match` なら `claimed`、どちらも無ければ `unknown`。操作の窓は終わりを問わず (`op_begin` より後なら) 照合する。`op_end` の即時の読み取りが「変更なし」だったときも、窓の中の `verify_gap` の Revision はこの規則で見直される。
+- **サービスが動いている間の取りこぼし** (`source = verify_gap`。検証の走査が拾った) は別扱いにする (spec D35)。`observed_at` が走査の時刻で、書かれた時刻ではないので、**時刻による根拠 (`op_window`、`time_near`、`worktree`、`report_only`) は作らない**。内容による根拠だけを数える: `before_match` + `declared_edit_match` がそろえば `verified` (内容が宣言と一致していることは、いつ観測したかに依らない)、`report_hash_match` なら `claimed`、どちらも無ければ `unknown`。操作の窓は終わりを問わず (`op_begin` より後なら) 照合するが、`before_match` + `declared_edit_match` を結論に数えるのは、操作が ok で閉じたものだけ (§2.2)。`op_end` の即時の読み取りが「変更なし」だったときも、窓の中の `verify_gap` の Revision はこの規則で見直される。
 
 ## 5. 複数のセッション
 
@@ -121,10 +134,11 @@ AI の根拠 (`declared_edit_match` など) は消さずに残し、結論だけ
 
 ### 6.1 CLI フック
 
-`mye_track.exe hook pre` / `hook post` は、フックの入力 (JSON) を標準入力から読み、pipe で `op_begin` / `op_end` を送って終わる使い捨てのコマンド。
+`mye_track.exe hook pre` / `hook post` (と、操作を閉じる `post-failure` / `denied` / `turn-end`) は、フックの入力 (JSON) を標準入力から読み、pipe で `op_begin` / `op_end` / `session_turn_end` を送って終わる使い捨てのコマンド。
 
 - フックは AI の編集を止めない。サービスに届かなくても終了コード 0 で返り、追跡に欠落が残るだけにする (仕様書 §1.3)。時間切れは 5 秒 ([ipc-contract.md](ipc-contract.md) §6)。
 - セッションは、フックの入力に含まれるクライアント側のセッション ID を `clientSessionId` として結び付ける。同じ `clientSessionId` の `session_begin` が無ければ、フックが自分で登録する。同じ `clientSessionId` の running / interrupted のセッションがあれば、新しく作らずそれを返す (interrupted なら running に戻す)。
+- 操作を閉じるフックは 3 つ。`post-failure` (`PostToolUseFailure`) は `op_end` の `result = failed`、`denied` (`PermissionDenied`) は `result = denied`、`turn-end` (`Stop`。応答の終わり) は `session_turn_end` で、そのセッションの開いている操作を `abandoned` にする。`session_end` も開いている操作を閉じる。手で許可を拒否したときは終わりのイベントが無いので、`turn-end` か `session_end` か打ち切りで閉じる。いずれの場合も、閉じるまでの窓の根拠は結論に数えない (§2.2)。
 - フックは pre と post が別のプロセスなので、`op_end` は `operationId` の代わりに `clientOpId` (Claude Code の `tool_use_id`) と `clientSessionId` で操作を引く。`op_begin` が `clientOpId` を覚える。
 - 管理された操作は、監視のデバウンスを待たずにサービスが自分でパスを読む (要求 §5.2)。`op_begin` は対象パスを先に確定する (未記録の人の変更があれば、それを先に独立した Revision にする。その後の内容がこの操作の Before)。`op_end` は対象パスをすぐ確定し、できた Revision をこの操作に結び付ける。`report` も照合の前に申告されたパスを確定する。確定は全体で 2 秒まで。間に合わなければ `pending: true` で返し、帰属は後から付く (AI を待たせない。[ipc-contract.md](ipc-contract.md) §6 の 5 秒の内側)。
 
@@ -140,7 +154,7 @@ AI の根拠 (`declared_edit_match` など) は消さずに残し、結論だけ
 | 項目 | 内容 |
 |---|---|
 | 共通の入力 | `session_id` / `transcript_path` / `cwd` / `hook_event_name` |
-| 道具のイベント (`PreToolUse` / `PostToolUse`) | `tool_name` / `tool_input` / `tool_use_id`。`PostToolUse` はさらに `tool_response` |
+| 道具のイベント (`PreToolUse` / `PostToolUse` / `PostToolUseFailure` / `PermissionDenied`) | `tool_name` / `tool_input` / `tool_use_id`。`PostToolUse` はさらに `tool_response`、`PostToolUseFailure` は `error` (`is_interrupt`、`duration_ms`)、`PermissionDenied` は `reason`。`PostToolUse` は成功の後だけ。手で拒否したときはどちらも来ない |
 | Write の `tool_input` | `file_path` / `content` |
 | Edit の `tool_input` | `file_path` / `old_string` / `new_string` / `replace_all` |
 | 設定 | `.claude\settings.json` などの `hooks.PreToolUse[].matcher` + `hooks[].type = "command"` |

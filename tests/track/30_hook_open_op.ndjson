@@ -1,0 +1,15 @@
+# フック CLI (spec D46): pre だけで post の来ない操作の窓で人が書いても、claimed / verified にならない (ai の操作に結び付かない)。
+# 終わりの来る操作 (w.txt) は今までどおり verified。拒否されたまま終わりの来ない操作 (h.txt) は session-end の後も数えない
+# write h.txt one\ntwo\n
+# write w.txt w0\n
+# start
+# hook pre {"session_id":"s30","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-h","tool_input":{"file_path":"{ROOT}\\h.txt","old_string":"two","new_string":"TWO","replace_all":false}}
+# write h.txt one\nwritten by a human\n
+# wait-recorded 1
+# hook pre {"session_id":"s30","cwd":"{ROOT}","hook_event_name":"PreToolUse","tool_name":"Edit","tool_use_id":"t-w","tool_input":{"file_path":"{ROOT}\\w.txt","old_string":"w0","new_string":"W1","replace_all":false}}
+# write w.txt W1\n
+# hook post {"session_id":"s30","cwd":"{ROOT}","hook_event_name":"PostToolUse","tool_name":"Edit","tool_use_id":"t-w","tool_input":{"file_path":"{ROOT}\\w.txt","old_string":"w0","new_string":"W1","replace_all":false},"tool_response":{"filePath":"x","type":"update"}}
+# hook session-end {"session_id":"s30","cwd":"{ROOT}","hook_event_name":"SessionEnd"}
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"list","args":{"attribution":"claimed"}}
+{"id":3,"op":"list","args":{"attribution":"verified"}}

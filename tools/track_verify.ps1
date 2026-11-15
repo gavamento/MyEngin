@@ -32,7 +32,7 @@
 #   # mcp-nostart <行>            # mcp と同じだが、MYE_TRACK_EXE を存在しないファイルにする (既に動いているサービスへ
 #                               繋がることの確認。起動しようとすると isError になる)
 #   # wait-watching               サービスが phase = watching になるまで待つ (MCP が起動したサービスのベースライン待ち)
-#   # hook <pre|post|session-start|session-end> <JSON>
+#   # hook <pre|post|post-failure|denied|turn-end|session-start|session-end> <JSON>
 #                               mye_track.exe hook <sub> --project <一時プロジェクト> を別プロセスで起動し、JSON を標準入力へ渡す。
 #                               JSON の {ROOT} はプロジェクトのパス (\ を重ねたもの)。終了コード・標準出力のバイト数を
 #                               {"hook":{"exit":..,"stdoutBytes":..}} の 1 行で出力に足す。標準出力が閉じない (サービスが掴んでいる)・
@@ -391,7 +391,7 @@ try {
                         Start-Tracker
                     } elseif ($line -match '^#\swait-watching\s*$') {
                         Wait-Watching
-                    } elseif ($line -cmatch '^#\shook(-noproject)?\s(pre|post|session-start|session-end)\s(.+)$') {
+                    } elseif ($line -cmatch '^#\shook(-noproject)?\s(pre|post|post-failure|denied|turn-end|session-start|session-end)\s(.+)$') {
                         $actual.Add((Normalize (Invoke-Hook $Matches[2] $Matches[3] ($Matches[1] -ne '-noproject'))))
                     } elseif ($line -cmatch '^#\sexists\s(\S+)$') {
                         $present = (Test-Path -LiteralPath (Join-Path $script:proj $Matches[1])).ToString().ToLower()

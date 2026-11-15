@@ -150,7 +150,7 @@ void EditorApp::OnStart(EngineContext& ctx)
     ctx.reloadHub->SetSceneApplyGate([this](const std::wstring&) {
         return !playMode_.InPlayMode() && actorEdit_ == nullptr && !IsSceneDirty();
     });
-    rebuildDockLayout_ =!std::filesystem::exists(ctx.imguiIniPath);
+    rebuildDockLayout_ = !std::filesystem::exists(ctx.imguiIniPath);
 
     // リソース (メッシュ/マテリアル/モデル) は毎回登録する。
     // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務

@@ -305,7 +305,8 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 | `session_end` | `session_id` |
 | `session_interrupted` | `session_id`、`reason` (`process_exited` / `idle` / `startup`) |
 | `op_begin` | `operation_id`、`session_id`、`operation_type`、`targets[]` = `{path, hash}` (`op_begin` で取ったハッシュ。無ければ null)、`client_op_id`、`declared_edit` = `{blob_hash, size}` または null (編集の中身は Blob)、`declared_after_hash`、`declared_path`、`begin_flushed` |
-| `op_end` | `operation_id`、`result` (`ok` / `failed`) |
+| `op_end` | `operation_id`、`result` (`ok` / `failed` / `denied`) |
+| `session_turn_end` | `session_id` (応答の終わり。開いている操作を `abandoned` で閉じる。開いている操作が無いときは記録しない。M104v) |
 | `op_abandoned` | `operation_id`、`reason` (`timeout` / `startup`) |
 | `reported` | `operation_id` (申告そのものの ID。`operation_type = report` の操作になる)、`session_id`、`linked_operation_id`、`paths[]` = `{path, before_hash, after_hash}` |
 

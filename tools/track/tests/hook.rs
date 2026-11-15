@@ -316,6 +316,94 @@ fn a_project_path_with_forward_slashes_reaches_the_same_service() {
     assert_eq!(verdict_of(root, "s.txt"), ("ai".into(), "verified".into()));
 }
 
+// ---- spec D46 (sub-28): 操作を閉じるフック -----------------------------------------------------------------
+
+/// 操作の clientOpId ごとの結果 (開いていれば None)。サービスが動いたまま読み取りで開く。
+fn operation_results(root: &Path) -> std::collections::BTreeMap<String, Option<String>> {
+    let conn = rusqlite::Connection::open_with_flags(Paths::for_project(root).db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    conn.busy_timeout(Duration::from_secs(10)).unwrap();
+    let mut stmt = conn.prepare("SELECT json_extract(reported_targets, '$.clientOpId'), result FROM operations").unwrap();
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))).unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+#[test]
+fn failure_denied_and_turn_end_hooks_close_operations_and_never_hand_a_human_edit_to_the_ai() {
+    let project = temp_root("closers");
+    let root = &project.0;
+    for name in ["f.txt", "d.txt", "x.txt", "t.txt", "s.txt"] {
+        fs::write(root.join(name), "0
+").unwrap();
+    }
+    let _service = ServiceProc::spawn(root);
+    let pre = |name: &str, id: &str| pre_edit(root, root, name, "0", "AI", false, id);
+    let pres = [pre("f.txt", "t-f"), pre("d.txt", "t-d"), pre("x.txt", "t-x"), pre("t.txt", "t-t")];
+    for p in &pres {
+        run_hook("pre", Some(root), &json_bytes(p)).assert_quiet("pre");
+    }
+    let mut other = pre("s.txt", "t-s");
+    other["session_id"] = json!("sess-2");
+    run_hook("pre", Some(root), &json_bytes(&other)).assert_quiet("pre (別のセッション)");
+
+    // PostToolUseFailure
+    let mut failure = pres[0].clone();
+    failure["hook_event_name"] = json!("PostToolUseFailure");
+    failure["error"] = json!("boom");
+    run_hook("post-failure", Some(root), &json_bytes(&failure)).assert_quiet("post-failure");
+    // PermissionDenied (tool_input を持たない入力でも閉じる)
+    let denied = json!({ "session_id": "sess-1", "cwd": root.to_string_lossy(), "hook_event_name": "PermissionDenied",
+                         "tool_name": "Edit", "tool_use_id": "t-d", "reason": "auto mode" });
+    run_hook("denied", Some(root), &json_bytes(&denied)).assert_quiet("denied");
+    // post に PostToolUseFailure の入力が来る設定の誤りも、失敗として閉じる
+    let mut misrouted = post_of(&pres[2], json!({}));
+    misrouted["hook_event_name"] = json!("PostToolUseFailure");
+    run_hook("post", Some(root), &json_bytes(&misrouted)).assert_quiet("post (PostToolUseFailure の入力)");
+    // Stop: そのセッションの開いている操作だけを閉じる
+    let stop = json!({ "session_id": "sess-1", "cwd": root.to_string_lossy(), "hook_event_name": "Stop" });
+    run_hook("turn-end", Some(root), &json_bytes(&stop)).assert_quiet("turn-end");
+
+    let results = operation_results(root);
+    assert_eq!(results["t-f"].as_deref(), Some("failed"));
+    assert_eq!(results["t-d"].as_deref(), Some("denied"));
+    assert_eq!(results["t-x"].as_deref(), Some("failed"));
+    assert_eq!(results["t-t"].as_deref(), Some("abandoned"));
+    assert_eq!(results["t-s"], None, "別のセッションの操作を閉じた");
+
+    // 閉じた窓で人が書いても、AI の確定 (verified / claimed) にならない
+    for name in ["f.txt", "d.txt", "x.txt", "t.txt", "s.txt"] {
+        fs::write(root.join(name), "human
+").unwrap();
+        let (_, attribution) = verdict_of(root, name);
+        assert!(attribution != "verified" && attribution != "claimed", "{name}: {attribution}");
+    }
+    // 開いている操作が無いセッション・知らないセッション・サービス不在でも静か (サービスは起動しない)
+    run_hook("turn-end", Some(root), &json_bytes(&stop)).assert_quiet("turn-end (開いた操作なし)");
+    run_hook("turn-end", Some(root), &json_bytes(&json!({ "session_id": "nobody" }))).assert_quiet("turn-end (サービス不在)");
+}
+
+/// 存在しない・ディレクトリでない --project は、何も作らず 0 以外で終わる (.mye を作って動き続けない)。
+#[test]
+fn serve_with_a_missing_or_non_directory_project_creates_nothing_and_fails() {
+    let base = temp_root("serve_bad");
+    let missing = base.0.join("no_such_dir");
+    let file = base.0.join("a_file.txt");
+    fs::write(&file, "x").unwrap();
+    for target in [&missing, &file] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mye_track"))
+            .args(["serve", "--project"])
+            .arg(target)
+            .stdin(Stdio::null())
+            .output()
+            .expect("mye_track.exe を起動できない");
+        assert!(!output.status.success(), "{}: 0 で終わった", target.display());
+        assert!(!String::from_utf8_lossy(&output.stderr).is_empty(), "エラーの説明が無い");
+    }
+    assert!(!missing.exists(), "存在しないパスを作った");
+    assert!(!file.join(".mye").exists());
+    let entries: Vec<_> = fs::read_dir(&base.0).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(entries.len(), 1, "余計な物ができた: {entries:?}");
+}
+
 // ---- 受け入れ条件 7: 1 MiB を超える content ----------------------------------------------------------------
 
 #[test]

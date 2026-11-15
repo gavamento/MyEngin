@@ -565,7 +565,7 @@ pub fn rebuild_derived(store: &mut Store, limits: &DiffLimits) -> rusqlite::Resu
     {
         let mut stmt = tx.prepare(
             "SELECT at, kind, payload, journal_pos FROM events
-              WHERE kind IN ('baseline', 'observed', 'session_begin', 'session_resumed', 'session_end', 'session_interrupted',
+              WHERE kind IN ('baseline', 'observed', 'session_begin', 'session_resumed', 'session_end', 'session_turn_end', 'session_interrupted',
                              'op_begin', 'op_end', 'op_abandoned', 'reported', 'editor_saved', 'review_set',
                              'restore_expect', 'restore_record')
               ORDER BY event_id",

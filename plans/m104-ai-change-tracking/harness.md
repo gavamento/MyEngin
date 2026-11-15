@@ -35,10 +35,12 @@
 | sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | OK | 0 | 28c87fb9 | round 1 で OK。プレビュー専用のシーンと RT で比較。規則 16 の許可リストに ScenePreviewWindow.cpp。Debug のスタックの件は sub-19 の A (D43) |
 | sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | OK | 0 | ccfeac5e | round 1 で OK。D38 解消 (EditorApp をヒープへ。Debug の physics が通る)。プレハブ伝播。replay_verify は MYE_REPLAY_JOBS=3 で PASS (既定の並列度の demo の失敗と imgui.ini の書き換えは bat の既存の性質、D44) |
 | sub-20 (M104u) エンジン配布物へのサービス同梱 | OK | 0 | 3995eda6 | round 1 で OK。全サブ OK。release.yml の実走と展開先 Editor からの接続は push 後 / 手動 (未確認) |
+| sub-28 (M104v) 閉じられない操作の窓で人の編集を AI のものにしない | OK | 0 | (このコミット) | round 1 で OK。窓の根拠は ok で閉じた操作だけ数える (D46)。post-failure / denied / turn-end を追加。review-1 #1〜#4 を解消 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
+| 1 | FAIL | 3/4/4/4 | major 1 (op_end の来ない窓が 10 分開いたまま → 人の編集が ai/claimed。planner 宛)、minor 4 (coder 宛)。全文は review-1.md |
 
 ## ユーザー判断
 - Notion の質問表: https://app.notion.com/p/41802024a4d481ac9376f3ebae2ee055 (Q-1 セッションの基準、Q-2 worktree の Verified 条件、Q-3 Phase 6 へ進むか。すべて推奨で進行中)
@@ -80,4 +82,6 @@
 - planner (2026-11-15、sub-24 の VERDICT): sub-25 (M104m3) を足した。順序は sub-24 → sub-25 → sub-13 → sub-14。sub-25 が済むまで、Debug の `Editor.exe --selftest` は機械が重いと `changetracking` で落ちる (sub-24 までの検証で Debug が赤く見えても、まず機械の負荷を見ること)。
 - planner (2026-11-15、sub-14 の VERDICT): sub-26 (M104o2) を足した。順序は sub-14 → sub-26 → sub-15。sub-26 が済むまで、`cargo test` (track) の全体は機械が重いと 1 件ずつ落ちることがある (落ちた試験が `tests\watch.rs` / `tests\pipe.rs:811` なら既知)。planner は sub-26 の VERDICT で Phase 5 (sub-15、16) を詳細にする。
 - planner (2026-11-15、sub-26 の VERDICT): Phase 5 を sub-15 (判定とプレビュー。書かない) → sub-27 (適用・ジャーナル・回復) → sub-16 (シーンの復元) の 3 本にした。sub-27 は骨子で、sub-15 の VERDICT で詳細にする。復元の試験は必ず一時プロジェクトで行う。
+- planner (2026-11-16、REVIEW round 1 への応答): sub-28 (M104v) を足した (review-1 #1 = major、#2〜#4 = minor をまとめて直す)。**review-1 #5 (minor、申し送り)**: Scene View のゴーストのラベルが重なる (`cache\m104r_shots\1_scene_ja.png`)。大きいファイル (`AiChangesWindow.cpp` 約 2021 行、`RestoreRunner.cpp` 約 1208 行、`SceneRestorePlan.cpp` 約 984 行) は、次にその機能を触るときに分ける。ほかの既知の nit: 伝播の行に承認・却下のボタンが出る (sub-19)、一覧の削除の行の注記の重なり (sub-17)、アセットの注記の「引けなかった」件数 (sub-18)。
+- planner (2026-11-16、sub-28 の VERDICT): 既知の nit に追加: Editor の根拠の一覧で `op_closed` (操作が成功で閉じて結論が変わった印) が生の文字列で出る (`src\Editor\ChangeTracking\ChangeFormat.cpp` の表に名前が無い)。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

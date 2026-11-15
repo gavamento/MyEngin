@@ -45,7 +45,7 @@ impl Role {
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
     "hello", "status", "list", "describe", "sessions", "hunks", "scene_diff", "scene_overlay", "document_for_path", "blob_get", "shutdown", "subscribe",
-    "session_begin", "session_end", "op_begin", "op_end", "report", "editor_saved", "review_set", "restore_record", "restore_expect",
+    "session_begin", "session_end", "session_turn_end", "op_begin", "op_end", "report", "editor_saved", "review_set", "restore_record", "restore_expect",
     "restore_list",
 ];
 
@@ -65,7 +65,7 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         // 通知は Editor の窓のためのもの。MCP・フックは要求ごとに繋ぐので購読しない
         "subscribe" => role == Role::Editor,
         // 記録を伴う op は AI 側 (MCP・フック) だけ。Editor は自分の保存を editor_saved で知らせる (復元は sub-15)
-        "session_begin" | "session_end" | "op_begin" | "op_end" => matches!(role, Role::Mcp | Role::Hook),
+        "session_begin" | "session_end" | "session_turn_end" | "op_begin" | "op_end" => matches!(role, Role::Mcp | Role::Hook),
         // 申告は MCP の change_report だけ (フックは編集の前後を op_begin / op_end で知らせる)
         "report" => role == Role::Mcp,
         // Editor の保存の知らせは Editor だけ (AI 側が「Editor が書いた」と名乗って帰属を書き換えられないように)
