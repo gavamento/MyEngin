@@ -1240,6 +1240,15 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 参照するシーンが多い・読めない・旧形式のインスタンスがあるとき、一覧に「波及を調べきれなかった範囲: 読めないシーン N、…」の行が出る (黙って欠けない)
 - [ ] 英語・日本語の両方で文面が揃っている
 
+## M104u: エンジン配布物の追跡サービス (手動確認)
+
+機械検証は `make_dist.ps1 -SkipBuild` の後の配布物の中身 (`bin\x64\Release\mye_track.exe`)、展開先の `mye_track.exe` の `--version` / `serve` / `client`、`Editor.exe --package` の出力に `mye_track.exe` と `.mye` が無いこと。**配布物の作成と展開はリポジトリの外で行う。**
+
+- [ ] 配布物 (zip) を、リポジトリの外へ展開する。`bin\x64\Release\` に `Editor.exe` と `mye_track.exe` が並ぶ
+- [ ] 展開先の Editor を、`MYE_TRACK_EXE` を設定せずに、作業ディレクトリを展開先にして `--project <一時プロジェクト>` で開き、Window > AI Changes で追跡を有効にする → 帯が「追跡中です」になり、タスクマネージャーに**展開先の** `mye_track.exe` が出て、一時プロジェクトに `.mye\ai_changes\` ができる
+- [ ] Editor を閉じて 10 分ほど待つと `mye_track.exe` が終わる。その後、Launcher で入れた版なら「削除」が通る (動いている間は「the version is in use」と出て何も消えない)
+- [ ] Build Settings からゲームを書き出した出力に、`mye_track.exe` も `.mye\` も無い
+
 ## M104 通しの確認 (追跡を有効にする → AI が編集 → 窓で見る → レビュー → 復元 → シーンの比較)
 
 **M104 全体を実 Editor で 1 回通す確認。** 受け入れの対応表 (`docs\ai-change-tracking\acceptance.md`) の「手動」の欄の「通し N」はこの番号。細かい確認項目は、各サブの節 (M104h、i、k、k2、m、m2、n、o、p、p2、q、r、s、t) にある。

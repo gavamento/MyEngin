@@ -3,7 +3,7 @@
 - 依頼原文: この間計画作成した差分表示のやつ実装したい
 - 司会が付けた補足 (/harness の引数): M104 AI Change Tracking を M104b から実装する。計画は `plans\m104-ai-change-tracking.md` (進捗表・試作項目・未決事項)、要求の正本は `docs\ai-change-tracking\spec-v1.1.md`、設計は同ディレクトリの 5 本と `docs\adr\ADR-039-ai-change-tracking.md`。M104a (設計文書) は `ca6a3991` で完了済み。サブ分割は計画の進捗表 (M104b〜M104t、Phase 0〜6) を踏襲し、Phase をまたいで先へ進まない。
 - 開始: 2026-11-14 / 基点コミット: ca6a3991ac6ea6bd217d3a3290aab24291b73a4a
-- フェーズ: 実装
+- フェーズ: レビュー
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -33,8 +33,8 @@
 | sub-16 (M104q) ライブのシーンの復元 | OK | 0 | 8ba1c687 | round 1 で OK。Phase 5 完了。Undo の中で書き、ディスクを書かない (planner が grep で確認)。C# のフィールドの復元も実走で成立。横断 (replay_verify / --selftest-full) は coder の結果 |
 | sub-17 (M104r) 削除エンティティのゴースト、Overlay | OK | 0 | 0a21f30e | round 1 で OK。World を書かない (grep で確認)。scene_overlay に before / uncertain を追加。副作用: coder がリポジトリ直下の imgui.ini を書き換えた (控えなし) |
 | sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | OK | 0 | 28c87fb9 | round 1 で OK。プレビュー専用のシーンと RT で比較。規則 16 の許可リストに ScenePreviewWindow.cpp。Debug のスタックの件は sub-19 の A (D43) |
-| sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | OK | 0 | (このコミット) | round 1 で OK。D38 解消 (EditorApp をヒープへ。Debug の physics が通る)。プレハブ伝播。replay_verify は MYE_REPLAY_JOBS=3 で PASS (既定の並列度の demo の失敗と imgui.ini の書き換えは bat の既存の性質、D44) |
-| sub-20 (M104u) エンジン配布物へのサービス同梱 | 実装中 | 0 | | 着手可 (sub-19 の VERDICT で詳細化)。M104 の最後のサブ。配布物の作成・展開はリポジトリの外で |
+| sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | OK | 0 | ccfeac5e | round 1 で OK。D38 解消 (EditorApp をヒープへ。Debug の physics が通る)。プレハブ伝播。replay_verify は MYE_REPLAY_JOBS=3 で PASS (既定の並列度の demo の失敗と imgui.ini の書き換えは bat の既存の性質、D44) |
+| sub-20 (M104u) エンジン配布物へのサービス同梱 | OK | 0 | (このコミット) | round 1 で OK。全サブ OK。release.yml の実走と展開先 Editor からの接続は push 後 / 手動 (未確認) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |

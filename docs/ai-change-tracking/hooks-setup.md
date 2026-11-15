@@ -6,7 +6,7 @@
 
 ## 1. 準備
 
-- `mye_track.exe` の場所: 開発機は `tools\build_track.bat Release` が `bin\x64\Release\mye_track.exe` (と `bin\x64\Debug\`) へ置く。配布物では Editor の隣 (配布物への同梱は M104u で足す)。
+- `mye_track.exe` の場所: 開発機は `tools\build_track.bat Release` が `bin\x64\Release\mye_track.exe` (と `bin\x64\Debug\`) へ置く。配布物 (Releases の `MyEngine-<版>-win64.zip`) では Editor の隣 (`<インストール先>\bin\x64\Release\mye_track.exe`。M104u。§7)。
 - 設定は利用者が `.claude\settings.json` か `.claude\settings.local.json` に書く。**このリポジトリの作業 (AI を含む) は、これらのファイルを書き換えない。**
 
 ## 2. 設定の例
@@ -132,3 +132,14 @@
 | MultiEdit / NotebookEdit | **未確認**。対応しない (何もしない) |
 | コマンドを解釈するシェルと、`/` 区切りのパス | **未確認** (Windows の Claude Code が使うシェルでの実走をしていない) |
 | Codex CLI / Gemini CLI のフック | **未確認**。後回し (`change_report` で Claimed 止まり) |
+
+## 7. 配布物 (エンジンの zip・Launcher) で使うとき (M104u)
+
+- **同梱**: エンジンの配布物 (`tools\make_dist.ps1`、`release.yml`) に `mye_track.exe` が入る。置き場所は `<インストール先>\bin\x64\Release\mye_track.exe` (Editor の隣。Launcher なら `engines\<版>\` の下)。`make_dist.ps1` は `build_track.bat` でビルドし、`mye_track.exe` が無ければ失敗する。`mye_mcp.exe` は入らない。
+- **Editor からは設定不要**: Editor は自分の exe の隣の `mye_track.exe` を探して起動する (`MYE_TRACK_EXE` を設定すればそれだけを使う)。追跡の既定は無効のまま (Window > AI Changes で有効にする)。
+- **フックの設定**: §2 の `command` を `<インストール先>/bin/x64/Release/mye_track.exe hook pre --project <プロジェクトのルート>` の形にする (`--project` の付け方は §2 と同じ)。
+- **ゲームの配布物には入らない**: Editor の Build Settings の書き出し (`--package`) は、`mye_track.exe` も `.mye\` も含めない (`ci.yml` の `package contents` が検査する。要求 §14.2)。
+- **古い版を消すとき** (Launcher の「削除」): 版のフォルダの名前を変えてから消す作りで、その版の `mye_track.exe` が動いていると名前を変えられず、**何も消さずに失敗する**。失敗は Launcher の画面に「the version is in use (close its editor first): …」と出る (`UninstallEngine` → `SetMessage`。原文の「editor」はサービスも指す)。サービスは Editor の接続が 0 になってから 10 分で自分で終わるので、**Editor (とフックを使う Claude Code) を閉じて 10 分ほど待ってから、もう一度削除する**。急ぐなら、タスクマネージャーで該当する `mye_track.exe` (パスがその版のもの) を終了する。Launcher のコードはこのためには変えていない。
+- **新しい版の導入は邪魔されない**: 新しい版は別のフォルダへ展開されるので、古い版のサービスが動いていても導入できる。
+- **古いサービスが動いている間に新しい版の Editor を同じプロジェクトで開いた場合**: 1 プロジェクトに 1 サービスなので、古い版のサービスにつながる。プロトコル版が同じなら動く。違えば Editor は「版が違う」と出す (起動し直しはしない)。直すには上の手順でサービスを終わらせてから Editor を開き直す。
+- **Defender の振る舞い検知**: 配布物には「親から切り離して常駐する exe」が 1 つ増える。開発機で配布物の zip を `Expand-Archive` で展開し、展開先の `mye_track.exe` を `serve` → `client` (hello / status / shutdown) と動かした直後に `Get-MpThreatDetection` を見て、検知は無かった (2026-11-16、リアルタイム保護は有効)。ただし、(1) ダウンロード (MOTW) と Launcher の展開を通した経路ではない、(2) 1 回だけ、(3) 署名の無い exe を使う他の機械の Defender の定義では確かめていない。**公開後の最初のダウンロードの実機は未確認。**

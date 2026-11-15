@@ -97,6 +97,15 @@
 | 6 | Play モード・ネットワークセッションの安全性を維持する | ct:RestoreSelfTest (ゲート `Playing` / `NetActive` は必ず止める)、ct:SceneRestoreSelfTest (実行の直前のゲート) | — | 実際の Play 中・ネットワークセッション中の操作 (ゲートの入力としての試験まで) |
 | 7 | WorldHash と決定論 Replay に影響を与えない | ct:SceneChangeOverlaySelfTest、ct:ScenePreviewSelfTest (`HashWorld` 一致)、`tools\replay_verify.bat`、ABI・SimSnapshot・TypeId の不変 (`git diff ca6a3991 -- src\Shared src\Scripting\Interop.cs` が空) | — | — |
 
+### 配布 (A21、M104u)
+
+| 条件 | 自動 | 手動 | 未確認 |
+|---|---|---|---|
+| エンジンの配布物に `mye_track.exe` が入り、欠けていれば作成が失敗する | `make_dist.ps1 -SkipBuild` の実行 (配布物の `bin\x64\Release\mye_track.exe`)、`mye_track.exe` が無い入力での `missing in …: mye_track.exe` | — | — |
+| `release.yml` がサービスをビルドしてから詰める | 差分の確認 (`track service (Release)` の段が `package` より前) | — | **ワークフローの実走** (push 後) |
+| 展開先の Editor が隣の `mye_track.exe` を起動して接続できる | 展開先で `mye_track.exe --version`、`serve --project`、`client` の hello / status / shutdown | `test_checklists.md` の M104u | **展開先の Editor からの接続** (対話起動が要る) |
+| ゲームの配布物に `mye_track.exe` も `.mye` も入らない | `Editor.exe --package` の出力の確認、`ci.yml` の `$forbidden` | — | CI での実走 |
+
 ### 検証面 (それぞれ独立して自動テストできる)
 
 | 領域 | 独立した試験 |
@@ -118,3 +127,4 @@
 5. 実際のプロセスの強制終了での復元の回復、ディスク障害での復元の巻き戻し。
 6. 実際のプレハブ + 実シーンでの伝播の通し。入れ子のプレハブの連鎖と、プレハブ側のエンティティの追加・削除・親子の変更は伝播の行にしない (限界)。
 7. 変更 2 万件の文書の取り直し (performance.md §10 の「外れるもの」)。
+8. 配布 (M104u): `release.yml` の実走、展開先の Editor からの接続、Launcher 経由の導入・削除の実機、Defender (ダウンロードを通した経路)。

@@ -69,6 +69,11 @@ jobs:
         shell: cmd
         run: tools\build_collab.bat Release
 
+      # 追跡サービス (M104u)。Editor の隣へ置かれ、make_dist.ps1 が配布物へ詰める
+      - name: track service (Release)
+        shell: cmd
+        run: tools\build_track.bat Release
+
       - name: native build (Release)
         shell: pwsh
         run: |

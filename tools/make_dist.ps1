@@ -61,16 +61,17 @@ if (-not $SkipBuild) {
     Write-Host '=== MyEngine.sln (Release|x64) ==='
     & $msbuild (Join-Path $repo 'MyEngine.sln') /p:Configuration=Release /p:Platform=x64 /m /v:minimal /nologo
     if ($LASTEXITCODE -ne 0) { throw "MyEngine.sln Release build failed ($LASTEXITCODE)" }
-    # C# ホストと Collab は sln の外 (それぞれ dotnet / cargo でビルドする)
-    foreach ($bat in 'build_managed.bat', 'build_collab.bat') {
+    # C# ホスト・Collab・追跡サービス (mye_track.exe) は sln の外 (それぞれ dotnet / cargo でビルドする)
+    foreach ($bat in 'build_managed.bat', 'build_collab.bat', 'build_track.bat') {
         & (Join-Path $PSScriptRoot $bat) Release
         if ($LASTEXITCODE -ne 0) { throw "$bat failed ($LASTEXITCODE)" }
     }
 }
 
-# 欠けたまま配ると、受け取った側で「C# だけ動かない」のような原因の分かりにくい縮退になる
+# 欠けたまま配ると、受け取った側で「C# だけ動かない」「追跡だけ動かない」のような原因の分かりにくい縮退になる
 $required = 'Editor.exe', 'Runtime.exe', 'Server.exe', 'GameLogic.dll', 'nethost.dll', 'MyeScripting.dll',
-    'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll'
+    'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'mye_track.exe',
+    'libcrypto-3-x64.dll', 'libssl-3-x64.dll'
 # M93: EOS SDK を入れてビルドしたなら、その DLL が無いと Runtime / Editor が起動しない (import している)
 if (Test-Path -LiteralPath (Join-Path $repo 'external\eos-sdk\Include\eos_sdk.h')) {
     $required += 'EOSSDK-Win64-Shipping.dll'

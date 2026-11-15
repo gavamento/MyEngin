@@ -42,7 +42,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104r | 6 | 完了 (0a21f30e) | 削除エンティティのゴースト (Before の JSON だけから World にエンティティを作らずに描く。親の連鎖でワールド行列を合成し、ライブの `WorldMatrix` と一致することを試験で確認。メッシュは今読み込まれているものを引くだけ)、Before の読み取り専用の表示と復元への導線、未確認 (`unknown` / `inferred`) の印 (Hierarchy・Scene View)、ゴーストの入・切。サービスは `scene_overlay` に `before` / `beforeOversize` / `uncertain` を足した (スキーマは版 3 のまま) |
 | M104s | 6 | 完了 (28c87fb9) | Before / After のプレビュー、左右並べた 3D 比較。比べるのは Revision の Before と After (Blob)、または After の代わりに今のディスクの内容 (エディタの未保存は比べない)。プレビュー専用の `Scene` (最大 2 つ) と専用の RT。本番の Scene・Undo・選択・`ReloadHub`・プロジェクトのファイルに触れない。C# は読み込まない。アセットは今の内容で描き、その旨と Before の後に変わったアセットの件数を出す。`tools	rack` は変えていない |
 | M104t | 6 | 実装済み (判定待ち) | プレハブ伝播 (`tools\track\src\propagation.rs`: override していないインスタンスのメンバへ `PrefabPropagation` を、原因のプレハブの Revision に付けて記録。DB を作り直しても同じ)、Editor の表示 (Hierarchy・Inspector の輪の印、一覧の「原因の変更へ移動」、復元は原因へ案内)、大きいシーンの計測 ([performance.md](../docs/ai-change-tracking/performance.md) §10)、受け入れの対応表 ([acceptance.md](../docs/ai-change-tracking/acceptance.md))、通しの確認 (test_checklists.md)、最後の横断の検証。Debug のスタックオーバーフロー (D38) は `EditorApp` を `wWinMain` のローカルから `std::unique_ptr` へ移して解消 |
-| M104u | 6 | 未着手 | エンジン配布物 (`tools\make_dist.ps1`、`release.yml`) へ `mye_track.exe` を同梱する。ゲームの配布物 (`--package`) には入れない |
+| M104u | 6 | 実装済み (判定待ち) | エンジン配布物 (`tools\make_dist.ps1`、`release.yml`) へ `mye_track.exe` を同梱する。ゲームの配布物 (`--package`) には入れない (`ci.yml` の `$forbidden` に `mye_track.exe` と `.mye`)。配布物の展開先で `mye_track.exe` が答えることを確認。`release.yml` の実走・展開先の Editor からの接続・Launcher 経由の経路は未確認。Launcher と古い版のサービスの関係は [hooks-setup.md](../docs/ai-change-tracking/hooks-setup.md) §7 |
 
 仕様書 §19 の順序 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較) を守る。Phase をまたいで先へ進まない。
 

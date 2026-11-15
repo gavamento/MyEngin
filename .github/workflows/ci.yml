@@ -201,7 +201,8 @@ jobs:
           if ($missing) { throw "package is missing: $($missing -join ', ')" }
           # M66a: 配布物に開発用の道具とリポジトリを混ぜない。--package は明示コピーなので
           # 現状は素通りするが、コピー規則を足したときに黙って入り込むのを止める
-          $forbidden = @('MyeCollab.dll', 'MyeCollabCli.exe', '.git')
+          # M104u: 追跡サービスと履歴 (.mye) もゲーム配布物へ入れない (要求 §14.2)
+          $forbidden = @('MyeCollab.dll', 'MyeCollabCli.exe', 'mye_track.exe', '.git', '.mye')
           $leaked = $forbidden | Where-Object { Test-Path "cache\dist_ci\$_" }
           if ($leaked) { throw "package must not contain: $($leaked -join ', ')" }
           '[package] ' + ((Get-ChildItem -Recurse -File cache\dist_ci | Measure-Object -Property Length -Sum).Sum / 1MB).ToString('0.0') + ' MB'

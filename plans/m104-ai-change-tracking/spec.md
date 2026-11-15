@@ -86,6 +86,8 @@ git の差分では AI 以前の未コミット変更が混ざり、シーンは
 
 | D44 | M104 の検証で見つかった、M104 と無関係な既存の性質 3 件 | (1) `tools\replay_verify.bat` は Editor をリポジトリ直下で起動するので、利用者の `imgui.ini` を書き換える (sub-19 で 00:37 → 04:49) (2) 同じ bat を既定の並列度 (7) で回すと、先頭の `demo` ジョブが 0.4 秒で「The system cannot find the batch label specified - chain」で落ちることがある (2 回中 2 回。`MYE_REPLAY_JOBS=3` で全体 PASS、`demo` 単独でも PASS。ハッシュの照合の前の失敗) (3) `Scene::FindByFileId` の最初の呼び出しは線形走査 (2 万エンティティで約 0.3 秒。`fileIdCache_` が採番点でしか温まらない) | 未確認 | どれも M104 の範囲の外として直さない。M104 の検証は、replay_verify を必要なら `MYE_REPLAY_JOBS=3` で回してよく、replay_verify による `imgui.ini` の書き換えは「coder の窓を出す起動が書き換えない」の確認の対象外とする。ユーザーへの報告に別件として載せる |
 
+| D45 | Launcher で古い版を消すとき、その版の `mye_track.exe` が動いていると失敗し、文面は「close its editor first」で、サービスが原因だと気づきにくい | sub-20 の coder が `UninstallEngine` のコードを読んで確認 (rename が失敗すると、その文面がエラーとして画面に出る)。サービスは接続が 0 になってから 10 分で自分で終わる | 未確認 | M104 では Launcher を変えない (別件)。`docs\ai-change-tracking\hooks-setup.md` §7 に、待てば消せる手順を書いた |
+
 ## 3. スコープ
 
 - やる: 計画の進捗表 M104b〜M104t (Phase 0 の試作 〜 Phase 6)。順序は要求 §19 (記録 → 帰属 → 可視化 → 承認 → 復元 → 3D 比較)。最後に、エンジン配布物へのサービス同梱 (M104u、D5)。
@@ -238,6 +240,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-16 (planner、sub-20 の VERDICT round 1): D45 を追加。全サブ (sub-01〜27) が OK になった。最終レビューへ。
 - 2026-11-16 (planner、sub-19 の VERDICT round 1): **D38 が解消した** (Debug の physics のスタックオーバーフローの原因は、`EditorApp` が `wWinMain` のローカル変数だったこと。ヒープに置いて、Debug の physics を含む全スイートが通った。planner も physics の Debug の通過を確かめた)。sub-20 を詳細に書き直した (配布物、`$required`、release.yml、ゲームの配布物への混入の検査、配布物で動くこと、Launcher のアンインストールとの関係、受け入れ条件 8 件)。`tools\replay_verify.bat` がリポジトリ直下の `imgui.ini` を書き換えることと、既定の並列度で `demo` が落ちることがあるのは、bat の既存の性質で M104 の外 (D44)。
 - 2026-11-16 (planner、sub-18 の VERDICT round 1): D43 を追加。sub-19 を詳細に書き直した (最初に Debug のスタックの原因を確かめる、プレハブ伝播、計測と原点だけの判定の見直し、要求 §16 / §18 の対応表、ADR と計画の仕上げ、最後の横断、受け入れ条件 7 件)。
 - 2026-11-16 (planner、sub-17 の VERDICT round 1): D42 を追加。sub-18 を詳細に書き直した (比べる対象、アセットは今の内容、C# は読み込まない、本番とプロジェクトのファイルを変えない、受け入れ条件 11 件)。Editor を起動するときの作業ディレクトリをリポジトリの外にする注意を足した (sub-17 で利用者の `imgui.ini` が書き換わった)。

@@ -1,7 +1,7 @@
 # sub-20: エンジン配布物へのサービス同梱 (M104u)
 
 - 依存: sub-19
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-16、sub-19 の VERDICT で planner が書き直した)。M104 の最後のサブ。
 - 質問の運用: 推奨で進め、Notion に後回し。着手前の確認は無い。
@@ -69,4 +69,9 @@
 
 ## 実装メモ (coder が追記)
 
+round 1: make_dist.ps1 (build_track.bat・必須に mye_track.exe)、release.yml (track service 段)、ci.yml ($forbidden に mye_track.exe と .mye)、hooks-setup.md §7、plans/ADR-039/acceptance.md/test_checklists.md を更新。src 変更なし。確認: 配布物に bin\x64\Release\mye_track.exe あり、欠けた入力で "missing in …: mye_track.exe" で失敗、展開先で --version / serve / client (hello→status→shutdown) 通りサービス終了、Editor --package 出力に mye_track.exe と .mye 無し、Defender 検知なし (1 回)、check_rules 0 error。未確認: release.yml の実走、展開先 Editor からの接続 (対話)、Launcher 経由の実機。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-16)。確かめたこと: `mye_track` / `Editor` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、`src` に差分なし、変わったのは `tools\make_dist.ps1` (ビルドの経路と `$required` に `mye_track.exe`)、`release.yml` (package の前に `track service (Release)` の段)、`ci.yml` (`$forbidden` に `mye_track.exe` と `.mye`) と文書だけ。YAML にタブなし。`tools\check_rules.ps1` 0 error。`dist_engine\` は `.gitignore` 済みで、既存の zip 3 本 (0.86、0.86.1、20261012-2353) は残っている。`make_dist.ps1` 88 行目で、実行のたびにステージ (`dist_engine\MyEngine`) を消して作り直すのは既存の仕様。`imgui.ini` の更新時刻は 04:49:15 のまま。配布物の作成・展開先でのサービスの起動と応答・`--package` に入らないこと・Launcher のコードの読み・Defender は coder の結果による。
+  - `dist_engine\MyEngine` が作り直された件: `make_dist.ps1` の既存の仕様 (受け入れ条件 1 の実行そのもの) で、`.gitignore` 済みの生成物のステージ。中身はソースから作り直せる。利用者の作業を失うものではないので問題にしない。ただし、ステージを手で調べていた場合に備えて報告する。
+  - 質問への回答: (1) Launcher の「close its editor first」の文面は、Launcher の変更なので M104 の外の別件 (D45)。文書 (hooks-setup.md §7) で補ったのでよい。(2) `.mye` の検査が最上位だけなのは、`--package` が明示コピーなので足りる。(3) 古いサービスにつながったときの表示は未確認として残す。(4) Defender の確認が非 MOTW の 1 回なのは、未確認の範囲として acceptance.md に書いてあればよい。
