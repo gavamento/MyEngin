@@ -4,6 +4,7 @@
 //                                          開いているシーンの変更の強調・一覧・選択の同期の回帰テスト
 //====================================================================================
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -25,6 +26,7 @@
 #include "Editor/ChangeTracking/ChangeTrackingFakeIo.h"
 #include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
+#include "Editor/ChangeTracking/RemovedEntityGhosts.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/ChangeTracking/SceneChangeWireBoxes.h"
 #include "Editor/Scene/Selection.h"
@@ -39,6 +41,8 @@
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
 #include "Engine/Engine/Scene/Scene.h"
+#include "Engine/Engine/Scene/SceneSerializer.h"
+#include "Engine/Engine/Scene/TransformSystem.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace fs = std::filesystem;
@@ -1080,6 +1084,634 @@ void TestPaletteSettings(const Check& check)
     });
 }
 
+// ---- 削除されたエンティティのゴーストと Before の読み取り専用の表示 (M104r) ----
+
+using DirectX::XMFLOAT3;
+using DirectX::XMFLOAT4X4;
+
+// 親・子・孫と、無関係な 1 つ。孫は MeshRenderer を持つ。変換は全部ちがう値にして、行列の合成の取り違えを検出できるようにする
+struct GhostRig {
+    Scene scene;
+    World& world = scene.GetWorld();
+    GameObject root = scene.CreateGameObjectTracked("Root");
+    GameObject child = scene.CreateGameObjectTracked("Child");
+    GameObject grand = scene.CreateGameObjectTracked("Grand");
+    GameObject other = scene.CreateGameObjectTracked("Other");
+    TransformSystem transforms;
+    static constexpr uint64_t kMeshAsset = 7777;
+
+    GhostRig()
+    {
+        world.SetParent(child.Id(), root.Id());
+        world.SetParent(grand.Id(), child.Id());
+        world.ApplyStructuralChanges();
+        root.SetLocalPosition(1.0f, 2.0f, 3.0f);
+        root.SetLocalRotationEuler(10.0f, 20.0f, 30.0f);
+        root.SetLocalScale(2.0f, 2.0f, 2.0f);
+        child.SetLocalPosition(4.0f, 0.0f, -1.0f);
+        child.SetLocalRotationEuler(0.0f, 45.0f, 0.0f);
+        child.SetLocalScale(1.0f, 0.5f, 1.0f);
+        grand.SetLocalPosition(0.0f, 1.0f, 0.0f);
+        grand.SetLocalRotationEuler(5.0f, 0.0f, 15.0f);
+        grand.SetLocalScale(3.0f, 3.0f, 3.0f);
+        world.AddComponent<MeshRendererComponent>(grand.Id())->mesh = AssetID{ kMeshAsset };
+        world.ApplyStructuralChanges();
+        transforms.Update(world);
+    }
+    uint64_t Fid(const GameObject& g) { return world.GetComponent<FileIdComponent>(g.Id())->value; }
+    DirectX::XMFLOAT4X4 WorldOf(const GameObject& g) { return world.GetComponent<WorldMatrixComponent>(g.Id())->value; }
+    std::string BeforeOf(const GameObject& g) { return SceneSerializer::EntityToJson(scene, g.Id()).dump(); }
+};
+
+bool NearMatrix(const DirectX::XMFLOAT4X4& a, const DirectX::XMFLOAT4X4& b, float eps = 1e-5f)
+{
+    const float* pa = &a._11;
+    const float* pb = &b._11;
+    for (int i = 0; i < 16; ++i) {
+        if (std::fabs(pa[i] - pb[i]) > eps) {
+            return false;
+        }
+    }
+    return true;
+}
+
+json RemovedEntityJson(int64_t fileId, const std::string& name, const json& before, bool uncertain = false, int64_t revision = 7)
+{
+    json e = EntityJson(fileId, "removed", name.c_str());
+    e["before"] = before;
+    e["beforeOversize"] = false;
+    e["uncertain"] = uncertain;
+    e["revisionIds"] = json::array({ revision });
+    return e;
+}
+
+// 手で書いた Before (SceneSerializer の 1 エンティティの形)
+std::string MakeBefore(int64_t fileId, const char* name, int64_t parent, DirectX::XMFLOAT3 position, uint64_t mesh = 0, bool withTransform = true)
+{
+    json e = { { "fileId", fileId }, { "name", name }, { "childIndex", 0 }, { "components", json::object() } };
+    if (parent != 0) {
+        e["parent"] = parent;
+    }
+    if (withTransform) {
+        e["components"]["LocalTransform"] = { { "position", { position.x, position.y, position.z } }, { "rotation", { 0.0f, 0.0f, 0.0f, 1.0f } }, { "scale", { 1.0f, 1.0f, 1.0f } } };
+    }
+    if (mesh != 0) {
+        e["components"]["MeshRenderer"] = { { "mesh", mesh }, { "material", 0 } };
+    }
+    return e.dump();
+}
+
+void MakeCamera(DirectX::XMFLOAT4X4& view, DirectX::XMFLOAT4X4& proj)
+{
+    using namespace DirectX;
+    XMStoreFloat4x4(&view, XMMatrixLookAtLH(XMVectorSet(0.0f, 0.0f, -200.0f, 1.0f), XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f), XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f)));
+    XMStoreFloat4x4(&proj, XMMatrixPerspectiveFovLH(XMConvertToRadians(60.0f), 16.0f / 9.0f, 0.1f, 1000.0f));
+}
+
+const RemovedGhostCandidate* FindGhost(const RemovedGhostScan& scan, uint64_t fileId)
+{
+    for (const RemovedGhostCandidate& c : scan.candidates) {
+        if (c.fileId == fileId) {
+            return &c;
+        }
+    }
+    return nullptr;
+}
+
+// Before の読み方 (純粋): 名前・親・変換・メッシュ。読めない値は無いものとして扱い、JSON でないものは false
+void TestGhostParse(const Check& check)
+{
+    ParsedBefore p;
+    check(ParseRemovedBefore(MakeBefore(12, "Crate", 5, { 1.0f, 2.0f, 3.0f }, 77), p) && p.fileId == 12 && p.name == "Crate" && p.hasParent && p.parentFileId == 5 && p.hasTransform
+              && p.position.x == 1.0f && p.position.z == 3.0f && p.hasMeshRenderer && p.meshAsset == 77 && !p.hasOtherRenderable,
+          "ghost parse: name, parent, LocalTransform and the MeshRenderer mesh are read from the Before JSON");
+    check(ParseRemovedBefore(MakeBefore(13, "Bare", 0, {}, 0, false), p) && !p.hasTransform && !p.hasParent && !p.hasMeshRenderer,
+          "ghost parse: an entity without LocalTransform or parent is still read (it draws as a position mark at the origin)");
+    check(ParseRemovedBefore("{\"fileId\":14,\"components\":{\"LocalTransform\":{\"position\":[1,2],\"rotation\":\"x\"},\"Light\":{}}}", p) && p.hasTransform && p.position.x == 0.0f
+              && p.rotation.w == 1.0f && p.hasOtherRenderable,
+          "ghost parse: a malformed field is ignored (the default stays) and a Light counts as a drawable component");
+    check(!ParseRemovedBefore("not json", p) && !ParseRemovedBefore("[1,2]", p) && !ParseRemovedBefore("{\"name\":\"x\"}", p) && !ParseRemovedBefore("", p),
+          "ghost parse: text that is not an entity object with a fileId is rejected");
+}
+
+// 合成したワールド行列が、同じエンティティがライブにいたときの WorldMatrix と一致する (受け入れ条件 2)
+void TestGhostWorldMatrices(const Check& check)
+{
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    MakeCamera(view, proj);
+    const MeshAvailable noMesh = [](uint64_t) { return false; };
+
+    // (a) 子と孫が一緒に消えた。親 (Root) はライブにいる: 同じ Revision で消えた親の Before と、ライブの親の今の行列を連ねる
+    {
+        GhostRig rig;
+        const XMFLOAT4X4 childWorld = rig.WorldOf(rig.child);
+        const XMFLOAT4X4 grandWorld = rig.WorldOf(rig.grand);
+        const uint64_t childFid = rig.Fid(rig.child);
+        const uint64_t grandFid = rig.Fid(rig.grand);
+        const std::string childBefore = rig.BeforeOf(rig.child);
+        const std::string grandBefore = rig.BeforeOf(rig.grand);
+        rig.child.Destroy();
+        rig.world.ApplyStructuralChanges();
+        check(!rig.scene.FindByFileId(childFid) && !rig.scene.FindByFileId(grandFid), "ghost matrix: destroying the child also removes the grandchild from the live scene");
+        OverlayRig r;
+        r.entities = json::array({ RemovedEntityJson(static_cast<int64_t>(childFid), "Child", childBefore), RemovedEntityJson(static_cast<int64_t>(grandFid), "Grand", grandBefore) });
+        r.overlay.SetDocumentPath(kScenePath);
+        r.Settle();
+        RemovedGhostScan scan;
+        CollectRemovedGhostCandidates(rig.scene, r.overlay, view, proj, noMesh, scan);
+        const RemovedGhostCandidate* child = FindGhost(scan, childFid);
+        const RemovedGhostCandidate* grand = FindGhost(scan, grandFid);
+        check(scan.candidates.size() == 2 && child != nullptr && grand != nullptr && NearMatrix(child->world, childWorld) && NearMatrix(grand->world, grandWorld),
+              "ghost matrix: a removed child and grandchild get the world matrix they had in the live scene (removed parent chain + the live root)");
+        check(child != nullptr && grand != nullptr && child->notes == 0 && grand->notes == 0, "ghost matrix: no note when every parent in the chain was found");
+        check(grand != nullptr && grand->position.x == grandWorld._41 && grand->position.y == grandWorld._42 && grand->position.z == grandWorld._43, "ghost matrix: the position is the matrix's translation");
+        // 同じ行列が、2 回目の取り出しでも出る (今のライブの親が変わらなければ決定的)
+        RemovedGhostScan again;
+        CollectRemovedGhostCandidates(rig.scene, r.overlay, view, proj, noMesh, again);
+        check(again.candidates.size() == 2 && again.candidates[0].fileId == scan.candidates[0].fileId && again.candidates[1].fileId == scan.candidates[1].fileId
+                  && NearMatrix(again.candidates[1].world, scan.candidates[1].world, 0.0f),
+              "ghost matrix: the candidates come out in fileId order, with the same matrices every time");
+    }
+
+    // (b) 孫だけが消えた。親 (Child) はライブにいる: ライブの親の今の行列に連なる
+    {
+        GhostRig rig;
+        const XMFLOAT4X4 grandWorld = rig.WorldOf(rig.grand);
+        const uint64_t grandFid = rig.Fid(rig.grand);
+        const std::string grandBefore = rig.BeforeOf(rig.grand);
+        rig.grand.Destroy();
+        rig.world.ApplyStructuralChanges();
+        OverlayRig r;
+        r.entities = json::array({ RemovedEntityJson(static_cast<int64_t>(grandFid), "Grand", grandBefore) });
+        r.overlay.SetDocumentPath(kScenePath);
+        r.Settle();
+        RemovedGhostScan scan;
+        CollectRemovedGhostCandidates(rig.scene, r.overlay, view, proj, noMesh, scan);
+        const RemovedGhostCandidate* grand = FindGhost(scan, grandFid);
+        check(grand != nullptr && NearMatrix(grand->world, grandWorld) && grand->notes == 0, "ghost matrix: a removed grandchild whose parent is still in the scene gets its old world matrix");
+    }
+
+    // (c) 親が見つからない (消えた記録も無く、ライブにもいない): ルートとして扱い、注記を付ける
+    {
+        GhostRig rig;
+        const uint64_t grandFid = rig.Fid(rig.grand);
+        const std::string grandBefore = rig.BeforeOf(rig.grand);
+        rig.child.Destroy();
+        rig.world.ApplyStructuralChanges();
+        OverlayRig r;
+        r.entities = json::array({ RemovedEntityJson(static_cast<int64_t>(grandFid), "Grand", grandBefore) });
+        r.overlay.SetDocumentPath(kScenePath);
+        r.Settle();
+        RemovedGhostScan scan;
+        CollectRemovedGhostCandidates(rig.scene, r.overlay, view, proj, noMesh, scan);
+        const RemovedGhostCandidate* grand = FindGhost(scan, grandFid);
+        ParsedBefore parsed;
+        ParseRemovedBefore(grandBefore, parsed);
+        check(grand != nullptr && (grand->notes & kGhostNoteParentUnknown) != 0 && NearMatrix(grand->world, GhostLocalMatrix(parsed)),
+              "ghost matrix: with the parent nowhere to be found the ghost is drawn at its local transform, with the parent-unknown note");
+    }
+
+    // (d) 壊れた Before の輪 (A の親が B、B の親が A) と深すぎる鎖は、止まって注記になる
+    {
+        std::unordered_map<uint64_t, ParsedBefore> loop;
+        ParsedBefore a;
+        ParsedBefore b;
+        ParseRemovedBefore(MakeBefore(1, "A", 2, { 1.0f, 0.0f, 0.0f }), a);
+        ParseRemovedBefore(MakeBefore(2, "B", 1, { 0.0f, 1.0f, 0.0f }), b);
+        loop[1] = a;
+        loop[2] = b;
+        XMFLOAT4X4 world;
+        uint32_t notes = 0;
+        check(ComposeGhostWorld(1, loop, nullptr, world, notes) && (notes & kGhostNoteParentUnknown) != 0, "ghost matrix: a parent loop in the record stops with the parent-unknown note");
+        std::unordered_map<uint64_t, ParsedBefore> deep;
+        for (int i = 1; i <= kMaxGhostParentChain + 10; ++i) {
+            ParsedBefore p;
+            ParseRemovedBefore(MakeBefore(i, "N", i + 1, { 0.0f, 0.0f, 0.0f }), p);
+            deep[static_cast<uint64_t>(i)] = p;
+        }
+        check(ComposeGhostWorld(1, deep, nullptr, world, notes) && (notes & kGhostNoteParentUnknown) != 0, "ghost matrix: a chain deeper than the limit stops with the parent-unknown note");
+        check(!ComposeGhostWorld(999, loop, nullptr, world, notes), "ghost matrix: a fileId that is not among the removed ones composes nothing");
+    }
+}
+
+// 描けないものの扱いと形の選び方 (受け入れ条件 4)
+void TestGhostDegraded(const Check& check)
+{
+    Scene scene;
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    MakeCamera(view, proj);
+    json unreadable = RemovedEntityJson(1, "Unreadable", "this is not json");
+    json missing = RemovedEntityJson(2, "Missing", nullptr);
+    missing.erase("before"); // Blob が欠けて Before が来ていない
+    json oversize = RemovedEntityJson(3, "Oversize", nullptr);
+    oversize["before"] = nullptr;
+    oversize["beforeOversize"] = true;
+    json withMesh = RemovedEntityJson(4, "WithMesh", MakeBefore(4, "WithMesh", 0, { 0.0f, 0.0f, 0.0f }, 4242));
+    json lostMesh = RemovedEntityJson(5, "LostMesh", MakeBefore(5, "LostMesh", 0, { 1.0f, 0.0f, 0.0f }, 5151));
+    json noTransform = RemovedEntityJson(6, "Bare", MakeBefore(6, "Bare", 0, {}, 0, false));
+    json light = RemovedEntityJson(7, "Lamp", "{\"fileId\":7,\"name\":\"Lamp\",\"components\":{\"LocalTransform\":{\"position\":[2,0,0]},\"Light\":{}}}");
+    OverlayRig r;
+    r.entities = json::array({ unreadable, missing, oversize, withMesh, lostMesh, noTransform, light });
+    r.overlay.SetDocumentPath(kScenePath);
+    r.session.Model().SetInterest(kTrackAllParts);
+    r.Settle();
+
+    int meshQueries = 0;
+    const MeshAvailable available = [&](uint64_t asset) {
+        ++meshQueries;
+        return asset == 4242; // 4242 だけ今読み込まれている
+    };
+    RemovedGhostScan scan;
+    CollectRemovedGhostCandidates(scene, r.overlay, view, proj, available, scan);
+    check(scan.undrawable == 3 && scan.candidates.size() == 4, "ghost degraded: a record that is unreadable, missing or too large is counted as undrawable and does not stop the others");
+    const RemovedGhostCandidate* mesh = FindGhost(scan, 4);
+    const RemovedGhostCandidate* lost = FindGhost(scan, 5);
+    const RemovedGhostCandidate* bare = FindGhost(scan, 6);
+    const RemovedGhostCandidate* lamp = FindGhost(scan, 7);
+    check(mesh != nullptr && mesh->shape == GhostShape::Mesh && mesh->meshAsset == 4242 && (mesh->notes & kGhostNoteMeshCurrent) != 0,
+          "ghost degraded: a mesh that is loaded now is drawn as a mesh, with the note that it shows today's content");
+    check(lost != nullptr && lost->shape == GhostShape::Box && (lost->notes & kGhostNoteMeshCurrent) == 0, "ghost degraded: a mesh that cannot be found falls back to a wire box");
+    check(bare != nullptr && bare->shape == GhostShape::Marker && (bare->notes & kGhostNoteNoTransform) != 0, "ghost degraded: an entity with nothing to draw is a position mark, drawn at the origin with a note");
+    check(lamp != nullptr && lamp->shape == GhostShape::Box, "ghost degraded: a non-mesh drawable (a light) is a wire box");
+    check(meshQueries == 2, "ghost degraded: the only thing asked about a mesh is whether it is loaded now (nothing is loaded for the ghost)");
+
+    // Before の表示: 読めない・欠けている・大きすぎるは理由を出し、読めるものは中身を出す
+    check(BuildRemovedBeforeView(1, 7, true, false, "this is not json").problem == BeforeProblem::Unreadable
+              && BuildRemovedBeforeView(2, 7, false, false, "").problem == BeforeProblem::NoBefore && BuildRemovedBeforeView(3, 7, false, true, "").problem == BeforeProblem::Oversize,
+          "before view: unreadable, missing and too-large records each say why nothing can be shown");
+    AiChangesWindow window;
+    window.open = true;
+    AiChangesHost host;
+    host.allowTracking = true;
+    host.enabled = true;
+    host.projectRoot = kRoot;
+    InBothLanguages([&](Lang) {
+        for (const int64_t fileId : { 1, 2, 3, 4, 6 }) {
+            check(window.ShowRemovedBeforeFromOverlay(r.overlay, fileId), "before view: every removed entity in the table can be opened");
+            WithHeadlessImGuiFrame([&] { window.OnImGui(r.session, host); });
+            check(window.RemovedBefore().shown && !window.LastBeforeLines().empty(), "before view: the window draws the entity or the reason without trouble");
+        }
+    });
+    check(!window.ShowRemovedBeforeFromOverlay(r.overlay, 424242), "before view: an entity that is not removed in the table cannot be opened");
+}
+
+// 上限・可視の優先・強調が切 / 追跡が無効のとき 0 (受け入れ条件 5)
+void TestGhostLimits(const Check& check)
+{
+    Scene scene;
+    World& world = scene.GetWorld();
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    MakeCamera(view, proj);
+    constexpr int kVisible = kMaxRemovedGhosts + 12;
+    constexpr int kBehind = 9;
+    json list = json::array();
+    for (int i = 0; i < kVisible + kBehind; ++i) {
+        const bool behind = i >= kVisible;
+        const XMFLOAT3 position = { static_cast<float>(i % 20) * 0.1f, static_cast<float>((i / 20) % 5) * 0.1f, behind ? -300.0f : static_cast<float>(i) * 0.05f };
+        list.push_back(RemovedEntityJson(1000 + i, "G", MakeBefore(1000 + i, "G", 0, position)));
+    }
+    OverlayRig r;
+    r.entities = list;
+    r.overlay.SetDocumentPath(kScenePath);
+    r.Settle();
+    const MeshAvailable noMesh = [](uint64_t) { return false; };
+
+    SceneViewWindow window;
+    window.SetChangeOverlay(&r.overlay);
+    EngineContext ctx;
+    ctx.scene = &scene;
+    const WorldFingerprint before = Fingerprint(world);
+    window.AppendRemovedGhosts(ctx, view, proj);
+    check(window.GhostsDrawn() == kMaxRemovedGhosts && window.GhostsOmitted() == kVisible - kMaxRemovedGhosts && window.GhostsUndrawable() == 0,
+          "ghost limits: at most the limit are drawn; only visible ones count (not those behind the camera); the rest is reported as omitted");
+    check(r.overlay.GhostStats().drawn == kMaxRemovedGhosts && r.overlay.GhostStats().omitted == kVisible - kMaxRemovedGhosts, "ghost limits: the counts reach the overlay, where the AI Changes band shows them");
+    check(Fingerprint(world) == before, "ghost limits: drawing the ghosts creates no entity and leaves HashWorld, the entity count and the archetype count unchanged");
+
+    // 近いものから選ぶ。表の走査順に依らない
+    RemovedGhostScan scan;
+    CollectRemovedGhostCandidates(scene, r.overlay, view, proj, noMesh, scan);
+    check(scan.candidates.size() == static_cast<size_t>(kVisible + kBehind), "ghost limits: every removed entity with a readable record is a candidate");
+    const RemovedGhostSelection forward = SelectRemovedGhosts(scan.candidates, 10);
+    std::vector<RemovedGhostCandidate> reversed = scan.candidates;
+    std::reverse(reversed.begin(), reversed.end());
+    const RemovedGhostSelection backward = SelectRemovedGhosts(reversed, 10);
+    bool same = forward.chosen.size() == backward.chosen.size() && forward.chosen.size() == 10;
+    for (size_t i = 0; same && i < forward.chosen.size(); ++i) {
+        same = forward.chosen[i].fileId == backward.chosen[i].fileId;
+    }
+    check(same && SelectRemovedGhosts(scan.candidates, 0).chosen.empty() && SelectRemovedGhosts({}, 5).omitted == 0, "ghost limits: the chosen set does not depend on the order the table is walked; a limit of 0 or no candidates draws nothing");
+
+    // 強調が切・ゴーストが切のときは 0
+    r.overlay.SetShow(false);
+    window.AppendRemovedGhosts(ctx, view, proj);
+    check(window.GhostsDrawn() == 0 && window.GhostsOmitted() == 0, "ghost limits: with the highlight off no ghost is drawn");
+    r.overlay.SetShow(true);
+    r.overlay.SetShowGhosts(false);
+    window.AppendRemovedGhosts(ctx, view, proj);
+    check(window.GhostsDrawn() == 0, "ghost limits: with the ghost switch off no ghost is drawn");
+    r.overlay.SetShowGhosts(true);
+    window.AppendRemovedGhosts(ctx, view, proj);
+    check(window.GhostsDrawn() == kMaxRemovedGhosts, "ghost limits: switching back on draws them again");
+
+    // 追跡が無効 (表が空) と、つながりが切れたとき (表は残る) は 0
+    OverlayRig disabled(false);
+    disabled.overlay.SetDocumentPath(kScenePath);
+    disabled.Settle();
+    SceneViewWindow offWindow;
+    offWindow.SetChangeOverlay(&disabled.overlay);
+    offWindow.AppendRemovedGhosts(ctx, view, proj);
+    check(offWindow.GhostsDrawn() == 0, "ghost limits: with tracking disabled nothing is drawn");
+    r.s->peerClosed = true;
+    r.Frame();
+    check(!r.overlay.Tracking() && !r.overlay.Entities().empty(), "ghost limits: after the connection drops the table is still there but the overlay reports it is not tracking");
+    window.AppendRemovedGhosts(ctx, view, proj);
+    check(window.GhostsDrawn() == 0, "ghost limits: with the service not connected no ghost is drawn");
+
+    // 復元された行は表から消え (サービスが返さなくなり)、Refresh で取り直すとゴーストも消える
+    OverlayRig restored;
+    restored.entities = json::array({ RemovedEntityJson(31, "Gone", MakeBefore(31, "Gone", 0, { 0.0f, 0.0f, 1.0f })) });
+    restored.overlay.SetDocumentPath(kScenePath);
+    restored.Settle();
+    RemovedGhostScan live;
+    CollectRemovedGhostCandidates(scene, restored.overlay, view, proj, noMesh, live);
+    check(live.candidates.size() == 1, "ghost restore: a removed entity has a ghost before it is restored");
+    restored.entities = json::array(); // scene_changes.state = restored の行はサービスが返さない
+    restored.overlay.Refresh();
+    restored.Settle();
+    CollectRemovedGhostCandidates(scene, restored.overlay, view, proj, noMesh, live);
+    check(live.candidates.empty(), "ghost restore: once the row is restored and the overlay is refreshed, the ghost is gone");
+}
+
+// ゴーストの選択 (画面上の最も近いもの。遠ければ 0)
+void TestGhostPick(const Check& check)
+{
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    MakeCamera(view, proj);
+    const std::vector<GhostPickTarget> targets = { { 5, { 0.0f, 0.0f, 0.0f } }, { 9, { 10.0f, 0.0f, 0.0f } }, { 3, { 0.0f, 0.0f, 0.0f } } };
+    constexpr float kW = 800.0f;
+    constexpr float kH = 450.0f;
+    check(HitTestRemovedGhosts(targets, view, proj, kW, kH, kW * 0.5f, kH * 0.5f, kGhostPickRadiusPx) == 3, "ghost pick: the cursor on a ghost picks it; two at the same spot pick the smaller fileId");
+    check(HitTestRemovedGhosts(targets, view, proj, kW, kH, 5.0f, 5.0f, kGhostPickRadiusPx) == 0, "ghost pick: a click far from every ghost picks nothing");
+    check(HitTestRemovedGhosts({}, view, proj, kW, kH, 1.0f, 1.0f, kGhostPickRadiusPx) == 0, "ghost pick: no ghosts, no pick");
+    const std::vector<GhostPickTarget> behind = { { 4, { 0.0f, 0.0f, -300.0f } } };
+    check(HitTestRemovedGhosts(behind, view, proj, kW, kH, kW * 0.5f, kH * 0.5f, kGhostPickRadiusPx) == 0, "ghost pick: a ghost behind the camera is never picked");
+}
+
+// Before の読み取り専用の表示と、復元への導線 (受け入れ条件 3、要求 §16.3)
+void TestRemovedBeforeWindow(const Check& check)
+{
+    GhostRig rig;
+    const uint64_t grandFid = rig.Fid(rig.grand);
+    const std::string grandBefore = rig.BeforeOf(rig.grand);
+    rig.grand.Destroy();
+    rig.world.ApplyStructuralChanges();
+
+    OverlayRig r;
+    r.entities = json::array({ RemovedEntityJson(9, "Gone", grandBefore, false, 7) }); // 表の鍵は 9。偽のサービスの scene_diff も fileId 9 の削除を返す
+    r.overlay.SetDocumentPath(kScenePath);
+    r.session.Model().SetInterest(kTrackAllParts);
+    r.Settle();
+
+    Selection selection;
+    selection.SelectOnly(rig.Fid(rig.other));
+    int selectCalls = 0;
+    int opened = 0;
+    SceneRestoreScope openedScope = SceneRestoreScope::Field;
+    int64_t openedFileId = 0;
+    AiChangesHost host;
+    host.allowTracking = true;
+    host.enabled = true;
+    host.projectRoot = kRoot;
+    host.selectEntity = [&](uint64_t fileId) {
+        ++selectCalls;
+        return SelectEntityByFileId(rig.scene, selection, fileId);
+    };
+    host.openSceneRestore = [&](SceneRestoreScope scope, const TrackSceneChange& anchor) {
+        ++opened;
+        openedScope = scope;
+        openedFileId = anchor.fileId;
+    };
+    const WorldFingerprint worldBefore = Fingerprint(rig.world);
+
+    // Scene View のゴーストのクリック = 要求。窓は閉じていても要求を取り、開いて、Before を出す
+    AiChangesWindow window;
+    window.open = false;
+    r.overlay.RequestInspectRemoved(9);
+    InBothLanguages([&](Lang) {
+        WithHeadlessImGuiFrame([&] { window.OnImGui(r.session, host); });
+    });
+    check(window.open && window.RemovedBefore().shown && window.RemovedBefore().fileId == 9 && window.RemovedBefore().name == "Grand",
+          "before window: clicking a ghost in the Scene view opens the window on that entity's Before");
+    const RemovedBeforeView& view = window.RemovedBefore();
+    bool hasTransform = false;
+    bool hasMeshRenderer = false;
+    for (const BeforeComponent& c : view.components) {
+        if (c.name == "LocalTransform") {
+            for (const BeforeField& f : c.fields) {
+                hasTransform = hasTransform || (f.name == "position" && f.value == "[0.0,1.0,0.0]");
+            }
+        }
+        hasMeshRenderer = hasMeshRenderer || c.name == "MeshRenderer";
+    }
+    check(view.problem == BeforeProblem::None && view.hasParent && view.parentFileId == static_cast<int64_t>(rig.Fid(rig.child)) && hasTransform && hasMeshRenderer,
+          "before view: the name, the parent, the components and the field values (as recorded) are shown");
+    bool nameLine = false;
+    bool valueLine = false;
+    for (const std::string& line : window.LastBeforeLines()) {
+        nameLine = nameLine || line.find("Grand") != std::string::npos;
+        valueLine = valueLine || line.find("position: [0.0,1.0,0.0]") != std::string::npos;
+    }
+    check(nameLine && valueLine, "before view: the lines drawn on screen carry the name and the recorded value");
+    check(selection.primary == rig.Fid(rig.other) && selection.ids.size() == 1 && selectCalls == 0,
+          "before view: opening a Before never touches the Selection (the entity has no body) and never asks the host to select");
+    check(Fingerprint(rig.world) == worldBefore, "before view: drawing the Before leaves HashWorld, the entity count and the archetype count unchanged");
+    check(!rig.scene.FindByFileId(grandFid) && rig.world.AliveCount() == worldBefore.alive, "before view: nothing was created in the live scene (the deleted entity is still gone)");
+
+    // 復元への導線: 削除した変更を選び、シーンの変更が揃ったら、その行で「Entity」の復元を開く
+    check(window.RequestRestoreRemoved(r.session) && window.RestoreRequestPending(), "before restore: the button asks for the deleting change");
+    for (int i = 0; i < 8; ++i) {
+        r.Frame();
+        WithHeadlessImGuiFrame([&] { window.OnImGui(r.session, host); });
+    }
+    check(opened == 1 && openedScope == SceneRestoreScope::Entity && openedFileId == 9 && !window.RestoreRequestPending(),
+          "before restore: the scene restore preview opens once, for the Entity scope and the EntityRemoved row of this entity");
+    check(selection.primary == rig.Fid(rig.other) && Fingerprint(rig.world) == worldBefore, "before restore: reaching the restore preview changes neither the Selection nor the world");
+
+    // 一覧の EntityRemoved の行を選んだ場合も同じ Before が出る (行の beforeValue から)
+    AiChangesWindow rowWindow;
+    TrackSceneChange row;
+    row.hasFileId = true;
+    row.fileId = static_cast<int64_t>(grandFid);
+    row.changeType = "EntityRemoved";
+    row.hasBefore = true;
+    row.beforeValue = grandBefore;
+    row.documentId = row.resolvedDocumentId = "DOC1";
+    rowWindow.ShowRemovedBefore(row, 7, r.overlay);
+    check(rowWindow.RemovedBefore().shown && rowWindow.RemovedBefore().name == "Grand" && rowWindow.RemovedBefore().revisionId == 7 && rowWindow.RemovedBefore().problem == BeforeProblem::None,
+          "before view: selecting an EntityRemoved row of the list shows the same record");
+    TrackSceneChange elsewhere = row;
+    elsewhere.documentId = elsewhere.resolvedDocumentId = "NOT_OPEN";
+    rowWindow.ShowRemovedBefore(elsewhere, 7, r.overlay);
+    check(rowWindow.RemovedBefore().shown && !rowWindow.RequestRestoreRemoved(r.session), "before view: a deletion in a scene that is not open can be read but not restored from here");
+    rowWindow.CloseRemovedBefore();
+    check(!rowWindow.RemovedBefore().shown, "before view: closing the panel clears it");
+}
+
+// 未確認の印: Hierarchy のバッジ・Scene View の強調。確定した変更には出ない (受け入れ条件 6)
+void TestUncertainMarks(const Check& check)
+{
+    SceneRig rig;
+    Selection selection;
+    UndoStack undo;
+    OverlayRig r;
+    json uncertain = EntityJson(static_cast<int64_t>(rig.Fid(rig.grand)), "added", "Grand");
+    uncertain["uncertain"] = true;
+    json certain = EntityWithField(static_cast<int64_t>(rig.Fid(rig.other)), "Light", "intensity");
+    certain["uncertain"] = false;
+    r.entities = json::array({ uncertain, certain });
+    r.overlay.SetDocumentPath(kScenePath);
+    r.Settle();
+    r.overlay.RebuildAncestors(rig.scene);
+    check(r.overlay.BadgeFor(rig.Fid(rig.grand)).uncertain && !r.overlay.BadgeFor(rig.Fid(rig.other)).uncertain && !r.overlay.BadgeFor(rig.Fid(rig.root)).uncertain,
+          "uncertain marks: only the entity whose change is unknown or inferred carries the mark (not the verified one, not a faint ancestor)");
+
+    HierarchyWindow window;
+    window.SetChangeOverlay(&r.overlay);
+    window.SetSearchText("r"); // Root / Grand / Other がすべて描かれる
+    DrawHierarchy(window, rig, selection, undo);
+    check(window.DrawnBadgeCount() == 2 && window.DrawnUncertainMarkCount() == 1, "uncertain marks: the Hierarchy draws the mark on the uncertain row only");
+    r.overlay.SetShow(false);
+    DrawHierarchy(window, rig, selection, undo);
+    check(window.DrawnUncertainMarkCount() == 0, "uncertain marks: with the highlight off the mark goes with the badge");
+    r.overlay.SetShow(true);
+    InBothLanguages([&](Lang) {
+        const std::string tipUncertain = OverlayBadgeTooltip(r.overlay.Find(rig.Fid(rig.grand)), false);
+        const std::string tipCertain = OverlayBadgeTooltip(r.overlay.Find(rig.Fid(rig.other)), false);
+        check(tipUncertain.find(Tr(StrId::AiChg_BadgeUncertain)) != std::string::npos && tipCertain.find(Tr(StrId::AiChg_BadgeUncertain)) == std::string::npos,
+              "uncertain marks: the badge tooltip explains the mark, and only on the uncertain entity");
+    });
+
+    // Scene View: ワイヤ箱とゴースト
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    MakeCamera(view, proj);
+    OverlayRig scene3d;
+    json ghost = RemovedEntityJson(77, "Gone", MakeBefore(77, "Gone", 0, { 0.0f, 0.0f, 5.0f }), true);
+    json ghostCertain = RemovedEntityJson(78, "Gone2", MakeBefore(78, "Gone2", 0, { 1.0f, 0.0f, 5.0f }), false);
+    scene3d.entities = json::array({ uncertain, certain, ghost, ghostCertain });
+    scene3d.overlay.SetDocumentPath(kScenePath);
+    scene3d.Settle();
+    SceneViewWindow viewWindow;
+    viewWindow.SetChangeOverlay(&scene3d.overlay);
+    EngineContext ctx;
+    ctx.scene = &rig.scene;
+    viewWindow.AppendChangeBoxes(ctx, view, proj);
+    check(viewWindow.ChangeBoxesDrawn() == 2 && viewWindow.UncertainMarkCount() == 1, "uncertain marks: the Scene view marks the uncertain box only");
+    viewWindow.AppendRemovedGhosts(ctx, view, proj);
+    check(viewWindow.GhostsDrawn() == 2 && viewWindow.UncertainMarkCount() == 2, "uncertain marks: an uncertain deletion's ghost is marked too, a verified one is not");
+    scene3d.overlay.SetShow(false);
+    viewWindow.AppendChangeBoxes(ctx, view, proj);
+    viewWindow.AppendRemovedGhosts(ctx, view, proj);
+    check(viewWindow.UncertainMarkCount() == 0, "uncertain marks: with the highlight off the Scene view draws no mark");
+    check(viewWindow.GhostAt(0.0f, 0.0f, 800.0f, 450.0f) == 0, "uncertain marks: with the highlight off no ghost can be picked");
+}
+
+// ゴーストの入・切は強調の入・切と別に保存される (要求 §8.4)
+void TestGhostPrefs(const Check& check)
+{
+    OverlayRig r;
+    int sinkCalls = 0;
+    bool sunk = true;
+    r.overlay.SetGhostPrefSink([&](bool show) {
+        sunk = show;
+        ++sinkCalls;
+    });
+    check(r.overlay.ShowGhosts(), "ghost prefs: the ghosts are on at first");
+    r.overlay.SetShowGhosts(false);
+    r.overlay.SetShowGhosts(false);
+    check(sinkCalls == 1 && !sunk && !r.overlay.ShowGhosts() && r.overlay.Show(), "ghost prefs: switching the ghosts off is saved once and leaves the highlight on");
+    r.overlay.LoadGhostPref(true);
+    check(sinkCalls == 1 && r.overlay.ShowGhosts(), "ghost prefs: loading the saved value does not write it back");
+
+    const fs::path dir = fs::temp_directory_path() / (L"mye_overlay_ghost_prefs_" + std::to_wstring(::GetCurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    EditorSettings saved;
+    saved.Load(dir.wstring());
+    check(saved.aiChangeShowGhosts, "ghost prefs: a fresh settings file starts with the ghosts on");
+    saved.aiChangeShowGhosts = false;
+    saved.Save();
+    EditorSettings loaded;
+    loaded.Load(dir.wstring());
+    check(!loaded.aiChangeShowGhosts, "ghost prefs: the ghost switch round-trips through editor_settings.json");
+    OverlayRig fresh;
+    fresh.overlay.LoadGhostPref(loaded.aiChangeShowGhosts);
+    check(!fresh.overlay.ShowGhosts(), "ghost prefs: a new editor session starts from the saved switch");
+    fs::remove_all(dir, ec);
+
+    // 帯 (ヘッドレスの AI Changes 窓): ゴーストの切り替えと注記を英日で崩れず描ける
+    OverlayRig band;
+    band.overlay.SetDocumentPath(kScenePath);
+    band.session.Model().SetInterest(kTrackAllParts);
+    band.Settle();
+    band.overlay.NoteGhosts(kMaxRemovedGhosts, 5, 3);
+    AiChangesWindow window;
+    window.open = true;
+    AiChangesHost host;
+    host.allowTracking = true;
+    host.enabled = true;
+    host.projectRoot = kRoot;
+    InBothLanguages([&](Lang lang) {
+        WithHeadlessImGuiFrame([&] { window.OnImGui(band.session, host); });
+        check(band.overlay.GhostStats().omitted == 5 && band.overlay.GhostStats().undrawable == 3,
+              lang == Lang::En ? "ghost prefs: the band with the ghost switch and the omitted / undrawable notices draws (English)"
+                               : "ghost prefs: the band with the ghost switch and the omitted / undrawable notices draws (Japanese)");
+    });
+}
+
+// Play 中にゴーストの表示を切り替えても sim の結果が変わらない (受け入れ条件 7)
+void TestGhostPlayInvariance(const Check& check)
+{
+    auto step = [](SceneRig& rig, int tick) {
+        rig.child.SetLocalPosition(static_cast<float>(tick) * 0.5f, 1.0f, 2.0f);
+        rig.grand.SetLocalPosition(1.0f, static_cast<float>(tick) * 0.25f, 3.0f);
+    };
+    SceneRig withGhosts;
+    SceneRig without;
+    OverlayRig r;
+    // 親がライブにいる削除 (grand の位置を毎 tick 読む) と、親の無い削除
+    r.entities = json::array({ RemovedEntityJson(500, "A", MakeBefore(500, "A", static_cast<int64_t>(withGhosts.Fid(withGhosts.grand)), { 0.0f, 1.0f, 0.0f })),
+                               RemovedEntityJson(501, "B", MakeBefore(501, "B", 0, { 2.0f, 0.0f, 0.0f }, 5151)) });
+    r.overlay.SetDocumentPath(kScenePath);
+    r.Settle();
+    XMFLOAT4X4 view;
+    XMFLOAT4X4 proj;
+    MakeCamera(view, proj);
+    SceneViewWindow window;
+    window.SetChangeOverlay(&r.overlay);
+    EngineContext ctx;
+    ctx.scene = &withGhosts.scene;
+    int drawn = 0;
+    for (int tick = 0; tick < 120; ++tick) {
+        step(withGhosts, tick);
+        step(without, tick);
+        withGhosts.world.ApplyStructuralChanges();
+        without.world.ApplyStructuralChanges();
+        r.overlay.SetShowGhosts((tick / 7) % 2 == 0);
+        window.AppendRemovedGhosts(ctx, view, proj);
+        drawn += window.GhostsDrawn();
+    }
+    r.overlay.SetShowGhosts(true);
+    check(drawn > 0 && Fingerprint(withGhosts.world) == Fingerprint(without.world),
+          "ghost play invariance: toggling and drawing the ghosts over 120 ticks leaves HashWorld identical to a run without them");
+    check(withGhosts.world.GetComponent<FileIdComponent>(withGhosts.plain.Id()) == nullptr, "ghost play invariance: an entity without a fileId did not get one");
+}
+
 } // namespace
 
 void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>& check)
@@ -1100,6 +1732,15 @@ void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>
     TestChangeBoxSelection(check);
     TestChangeBoxesDrawn(check);
     TestPaletteSettings(check);
+    TestGhostParse(check);
+    TestGhostWorldMatrices(check);
+    TestGhostDegraded(check);
+    TestGhostLimits(check);
+    TestGhostPick(check);
+    TestRemovedBeforeWindow(check);
+    TestUncertainMarks(check);
+    TestGhostPrefs(check);
+    TestGhostPlayInvariance(check);
 }
 
 } // namespace mye

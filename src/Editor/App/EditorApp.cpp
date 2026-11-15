@@ -306,6 +306,11 @@ void EditorApp::OnStart(EngineContext& ctx)
         settings_.aiChangeShowOverlay = show;
         settings_.Save();
     });
+    changeTracking_.Overlay().LoadGhostPref(settings_.aiChangeShowGhosts);
+    changeTracking_.Overlay().SetGhostPrefSink([this](bool show) {
+        settings_.aiChangeShowGhosts = show;
+        settings_.Save();
+    });
     // ---- 初回自動ビルド (M66m) ----
     // DLL が丸ごと無い (まだ一度も build_collab.bat を回していない) ときだけ試す。
     // cargo が無ければ StartCollabBuild が黙って nullptr を返す = rustup 未導入の

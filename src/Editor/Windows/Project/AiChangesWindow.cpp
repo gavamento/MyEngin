@@ -226,10 +226,15 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     ChangeModel& model = session.Model();
     SyncInterest(model, session.State());
     session.Overlay().SetWindowOpen(open); // 強調が切でも、窓が開いていれば帯の件数のために取る
+    int64_t inspectFileId = 0;
+    if (session.Overlay().TakeInspectRequest(inspectFileId) && ShowRemovedBeforeFromOverlay(session.Overlay(), inspectFileId)) {
+        open = true; // Scene View のゴーストを選んだ: Before を見せるために開く
+    }
     if (!open) {
         return;
     }
     restore_.Tick(RestoreIo()); // 今のファイルの読み取りを 1 塊だけ進める (フレームを止めない)
+    TickRestoreRequest(session, host);
     ImGui::SetNextWindowSize(ImVec2(980.0f, 460.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin(Tr(StrId::Win_AiChanges), &open)) {
         ImGui::End();
@@ -244,6 +249,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     if (hasData) {
         DrawBulkPopup(session);
         DrawSceneBand(session, host);
+        DrawRemovedBefore(session, host);
         DrawReviewStatus(session);
         ImGui::Separator();
         const float height = (std::max)(ImGui::GetContentRegionAvail().y, 120.0f);
@@ -786,6 +792,13 @@ void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session, const AiChan
     }
     ImGui::SameLine();
     DrawColorSettings(overlay);
+    // 1 行に収まらないので、ゴーストの切り替えは次の行から (件数と「確認済み」のボタンが続く)
+    bool ghosts = overlay.ShowGhosts();
+    ImGui::BeginDisabled(!overlay.Show());
+    if (ImGui::Checkbox(Tr(StrId::AiChg_GhostShow), &ghosts)) {
+        overlay.SetShowGhosts(ghosts);
+    }
+    ImGui::EndDisabled();
     ImGui::SameLine();
     if (!overlay.Loaded()) {
         ImGui::TextDisabled("%s", Tr(StrId::AiChg_OverlayLoading));
@@ -826,6 +839,182 @@ void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session, const AiChan
     if (overlay.BoxStats().omitted > 0) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
         ImGui::TextWrapped("%s %d", Tr(StrId::AiChg_BoxesOmitted), overlay.BoxStats().omitted);
+        ImGui::PopStyleColor();
+    }
+    if (overlay.GhostStats().omitted > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s %d", Tr(StrId::AiChg_GhostOmitted), overlay.GhostStats().omitted);
+        ImGui::PopStyleColor();
+    }
+    if (overlay.GhostStats().undrawable > 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s %d", Tr(StrId::AiChg_GhostUndrawable), overlay.GhostStats().undrawable);
+        ImGui::PopStyleColor();
+    }
+}
+
+// ---- 削除されたエンティティの Before (M104r) ----
+
+void AiChangesWindow::ShowRemovedBefore(const TrackSceneChange& removedRow, int64_t revisionId, const SceneChangeOverlay& overlay)
+{
+    removedView_ = BuildRemovedBeforeView(removedRow.fileId, revisionId, removedRow.hasBefore, removedRow.oversize, removedRow.beforeValue);
+    const std::string& doc = removedRow.resolvedDocumentId.empty() ? removedRow.documentId : removedRow.resolvedDocumentId;
+    removedNotOpen_ = overlay.DocumentId().empty() || doc != overlay.DocumentId();
+    restorePending_ = false;
+    restoreRowMissing_ = false;
+}
+
+bool AiChangesWindow::ShowRemovedBeforeFromOverlay(const SceneChangeOverlay& overlay, int64_t fileId)
+{
+    const OverlayEntity* entity = overlay.Find(static_cast<uint64_t>(fileId));
+    if (entity == nullptr || entity->status != OverlayStatus::Removed) {
+        return false;
+    }
+    // 削除した変更 = その削除を含む最後の Revision (消えたあとに別の変更は載らない)
+    const int64_t revisionId = entity->revisionIds.empty() ? 0 : entity->revisionIds.back();
+    removedView_ = BuildRemovedBeforeView(fileId, revisionId, entity->hasBefore, entity->beforeOversize, entity->before);
+    removedNotOpen_ = overlay.DocumentId().empty();
+    restorePending_ = false;
+    restoreRowMissing_ = false;
+    return true;
+}
+
+void AiChangesWindow::CloseRemovedBefore()
+{
+    removedView_ = RemovedBeforeView();
+    restorePending_ = false;
+    restoreRowMissing_ = false;
+}
+
+bool AiChangesWindow::RequestRestoreRemoved(ChangeTrackingSession& session)
+{
+    if (!removedView_.shown || removedView_.revisionId == 0 || removedNotOpen_) {
+        return false;
+    }
+    restorePending_ = true;
+    restoreRowMissing_ = false;
+    restoreRevisionId_ = removedView_.revisionId;
+    restoreFileId_ = removedView_.fileId;
+    session.Model().SelectRevision(restoreRevisionId_);
+    return true;
+}
+
+// 「このエンティティを復元...」の続き: 削除した変更の詳細とシーンの変更が揃ったら、その EntityRemoved の行でシーンの復元の画面を開く
+void AiChangesWindow::TickRestoreRequest(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    if (!restorePending_) {
+        return;
+    }
+    const ChangeModel& model = session.Model();
+    if (model.SelectedRevision() != restoreRevisionId_ || model.SceneChangesFailed()) {
+        restorePending_ = false; // 別の変更へ移った / 取れなかった
+        restoreRowMissing_ = model.SceneChangesFailed();
+        return;
+    }
+    const nlohmann::json& detail = model.Detail();
+    const bool detailReady = detail.is_object() && detail.contains("revisionId") && detail["revisionId"].is_number_integer()
+                             && detail["revisionId"].get<int64_t>() == restoreRevisionId_;
+    if (!detailReady || !model.SceneChangesComplete()) {
+        return; // 読み込み中
+    }
+    restorePending_ = false;
+    const TrackSceneChange* row = nullptr;
+    for (const TrackSceneChange& change : model.SceneChanges()) {
+        if (change.changeType == "EntityRemoved" && change.hasFileId && change.fileId == restoreFileId_) {
+            row = &change;
+        }
+    }
+    if (row == nullptr) {
+        restoreRowMissing_ = true;
+        return;
+    }
+    selectedSceneId_ = row->sceneChangeId;
+    if (host.openSceneRestore) {
+        host.openSceneRestore(SceneRestoreScope::Entity, *row);
+    }
+}
+
+// Before の読み取り専用の表示。文字だけで、入力のウィジェットは 1 つも置かない (記録を見るだけ)
+void AiChangesWindow::DrawRemovedBefore(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    beforeLines_.clear();
+    if (!removedView_.shown) {
+        return;
+    }
+    const SceneChangeOverlay& overlay = session.Overlay();
+    ImGui::Separator();
+    ImGui::TextUnformatted(Tr(StrId::AiChg_BeforeTitle));
+    ImGui::SameLine();
+    if (ImGui::SmallButton(Tr(StrId::AiChg_BeforeClose))) {
+        CloseRemovedBefore();
+        return;
+    }
+    auto line = [&](const std::string& text, bool dim = false) {
+        beforeLines_.push_back(text);
+        if (dim) {
+            ImGui::TextDisabled("%s", text.c_str());
+        } else {
+            ImGui::TextUnformatted(text.c_str());
+        }
+    };
+    const float height = ImGui::GetTextLineHeightWithSpacing() * 9.0f;
+    if (ImGui::BeginChild("##removedbefore", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
+        const RemovedBeforeView& v = removedView_;
+        if (v.problem != BeforeProblem::None) {
+            const StrId reason = v.problem == BeforeProblem::Oversize     ? StrId::AiChg_BeforeOversize
+                                 : v.problem == BeforeProblem::NoBefore ? StrId::AiChg_BeforeNoBefore
+                                                                        : StrId::AiChg_BeforeUnreadable;
+            beforeLines_.push_back(Tr(reason));
+            ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+            ImGui::TextWrapped("%s", Tr(reason));
+            ImGui::PopStyleColor();
+        } else {
+            line(std::string(Tr(StrId::AiChg_BeforeName)) + " " + v.name + " (#" + std::to_string(v.fileId) + ")");
+            line(std::string(Tr(StrId::AiChg_BeforeParent)) + " " + (v.hasParent ? std::to_string(v.parentFileId) : std::string(Tr(StrId::AiChg_BeforeNoParent))));
+            for (const BeforeField& f : v.entityFields) {
+                line(f.name + ": " + f.value, true);
+            }
+            for (const BeforeComponent& c : v.components) {
+                beforeLines_.push_back(c.name);
+                if (ImGui::TreeNodeEx(c.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    for (const BeforeField& f : c.fields) {
+                        line(f.name.empty() ? f.value : f.name + ": " + f.value);
+                    }
+                    ImGui::TreePop();
+                }
+            }
+            const uint32_t notes = overlay.GhostNotesFor(v.fileId);
+            const std::pair<uint32_t, StrId> kNotes[] = { { kGhostNoteParentUnknown, StrId::AiChg_GhostNoteParent },
+                                                          { kGhostNoteMeshCurrent, StrId::AiChg_GhostNoteMesh },
+                                                          { kGhostNoteNoTransform, StrId::AiChg_GhostNoteNoTransform } };
+            for (const auto& [bit, text] : kNotes) {
+                if ((notes & bit) != 0) {
+                    beforeLines_.push_back(Tr(text));
+                    ImGui::TextWrapped("%s", Tr(text));
+                }
+            }
+        }
+    }
+    ImGui::EndChild();
+    // 復元への導線 (sub-16 のシーンの復元の、Entity の削除の取り消し)。ここから World は書かない: 押すと復元のプレビューが開くだけ
+    ImGui::BeginDisabled(!host.openSceneRestore || removedView_.revisionId == 0 || removedNotOpen_ || restorePending_);
+    if (ImGui::SmallButton(Tr(StrId::AiChg_BeforeRestore))) {
+        RequestRestoreRemoved(session);
+    }
+    ImGui::EndDisabled();
+    if (removedView_.revisionId == 0) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_BeforeRestoreNeedRev));
+    } else if (removedNotOpen_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_SrNotOpenShort));
+    } else if (restorePending_) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_BeforeRestoreLoading));
+    } else if (restoreRowMissing_) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextUnformatted(Tr(StrId::AiChg_BeforeRestoreMissing));
         ImGui::PopStyleColor();
     }
 }
@@ -920,6 +1109,9 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
                     if (ImGui::Selectable(line.c_str(), selectedSceneId_ == c.sceneChangeId)) {
                         selectedSceneId_ = c.sceneChangeId;
                         ActivateSceneChange(c, overlay, host);
+                        if (c.changeType == "EntityRemoved") {
+                            ShowRemovedBefore(c, model.SelectedRevision(), overlay); // 実体が無いので選択はせず、Before を読み取り専用で見せる
+                        }
                     }
                     if (tinted) {
                         ImGui::PopStyleColor();

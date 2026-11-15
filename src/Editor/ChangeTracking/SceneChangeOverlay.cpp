@@ -112,6 +112,10 @@ void SceneChangeOverlay::ParseEntities(const nlohmann::json& result, std::unorde
         e.status = ParseStatus(Str(item, "status"));
         e.name = Str(item, "name");
         e.hierarchyChanged = Bool(item, "hierarchyChanged");
+        e.uncertain = Bool(item, "uncertain");
+        e.hasBefore = item.contains("before") && item["before"].is_string();
+        e.before = e.hasBefore ? item["before"].get<std::string>() : std::string();
+        e.beforeOversize = Bool(item, "beforeOversize");
         e.hierarchy = ParseFields(item.contains("hierarchy") ? item["hierarchy"] : nlohmann::json());
         e.entityFields = ParseFields(item.contains("entityFields") ? item["entityFields"] : nlohmann::json());
         if (item.contains("components") && item["components"].is_array()) {
@@ -395,10 +399,16 @@ OverlayBadge SceneChangeOverlay::BadgeFor(uint64_t fileId) const
     const auto it = table_.find(static_cast<int64_t>(fileId));
     if (it != table_.end() && (it->second.status == OverlayStatus::Added || it->second.status == OverlayStatus::Modified)) {
         badge.status = it->second.status;
+        badge.uncertain = it->second.uncertain;
         return badge;
     }
     badge.descendantOnly = ancestors_.count(static_cast<int64_t>(fileId)) != 0;
     return badge;
+}
+
+bool SceneChangeOverlay::Tracking() const
+{
+    return client_ != nullptr && client_->CanRequest();
 }
 
 const OverlayEntity* SceneChangeOverlay::Find(uint64_t fileId) const

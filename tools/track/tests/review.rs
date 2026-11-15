@@ -701,6 +701,34 @@ fn scene_overlay_drops_approved_changes_but_keeps_rejected_and_needs_review() {
     assert_eq!(entity_count(&overlay(json!({}))), all, "再開すれば強調が戻る");
 }
 
+/// `scene_overlay` の `uncertain` は、寄与した Revision の帰属が `unknown` / `inferred` のときだけ真 (M104r)。`verified` / `claimed` は偽。
+#[test]
+fn scene_overlay_marks_only_unverified_attributions_as_uncertain() {
+    let mut fx = Fx::new("overlay_uncertain");
+    let (a, b) = two_scene_documents(&mut fx);
+    let uncertain_of = |fx: &Fx, revision: i64| -> Vec<bool> {
+        let document: String = fx
+            .db()
+            .query_row("SELECT document_id FROM scene_changes WHERE revision_id = ?1 LIMIT 1", [revision], |r| r.get(0))
+            .unwrap();
+        let overlay = scene_overlay::scene_overlay(&fx.reader(), args(json!({ "documentId": document }))).unwrap();
+        let entities = overlay["entities"].as_array().unwrap();
+        assert!(!entities.is_empty(), "{overlay}");
+        entities.iter().map(|e| e["uncertain"].as_bool().unwrap()).collect()
+    };
+    for attribution in ["unknown", "inferred"] {
+        fx.db().execute("UPDATE change_revisions SET attribution = ?1 WHERE revision_id = ?2", rusqlite::params![attribution, a]).unwrap();
+        assert!(uncertain_of(&fx, a).iter().all(|u| *u), "{attribution} は未確認");
+    }
+    for attribution in ["verified", "claimed"] {
+        fx.db().execute("UPDATE change_revisions SET attribution = ?1 WHERE revision_id = ?2", rusqlite::params![attribution, a]).unwrap();
+        assert!(uncertain_of(&fx, a).iter().all(|u| !*u), "{attribution} は確定");
+    }
+    // 別の文書の Revision の帰属は混ざらない
+    fx.db().execute("UPDATE change_revisions SET attribution = 'unknown' WHERE revision_id = ?1", [b]).unwrap();
+    assert!(uncertain_of(&fx, a).iter().all(|u| !*u));
+}
+
 // ---- 受け入れ条件 9: 作り直し -------------------------------------------------------------------
 
 #[test]

@@ -38,7 +38,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104p | 5 | 実装済み (判定待ち) | 復元の判定 (書かない): ゲートの共有 (`EditorApp::BuildGateInputs` を `AiChangesHost` 越しに、窓ごとの編集中の文書)、競合の検証 (ファイル全体・Hunk。Rust と同じ固定表 `tests\track\fixture\hunk_apply_cases.json`)、パスの検査 (`PathGuard`)、プレビュー (AI Changes 窓の「復元...」。実行は押せない)、注記 (削除・stage 済み・作り直しの見込み)。sub-10 / sub-14 から持ち越した大きいファイルの先頭・操作全体のまとめてレビュー・ファイル単位の集約。サービスは `list` の `operationId` 絞り込みを足した (記録は書かない・スキーマは版 3 のまま) |
 | M104p2 | 5 | 未着手 | ファイルと Hunk の適用 (`ReloadHub::BeginBatch` / `EndBatch`・`WriteFileReplacing`)、復元ジャーナル (`recovery\`)、巻き戻し、起動時の回復、`restore_record` / `restore_expect`。M104p の判定とプレビューの上に載せる。復元の試験は必ず一時プロジェクトで行う |
 | M104q | 5 | 実装済み (判定待ち) | ライブのシーンの復元 (Entity / Component / Field / Override)、Undo 連携。今開いているシーンだけ (開いていないシーンはファイル・Hunk)。World を `UndoStack::Record` の中で書き、ディスクは書かない。サービスは `scene_changes.state` を `restored` にする。C# コンポーネントの Field も戻せることを実走で確認。Phase 5 の横断の検証 (A20) と `replay_verify` を回した |
-| M104r | 6 | 未着手 | 削除エンティティのゴースト、Scene Overlay |
+| M104r | 6 | 実装済み (判定待ち) | 削除エンティティのゴースト (Before の JSON だけから World にエンティティを作らずに描く。親の連鎖でワールド行列を合成し、ライブの `WorldMatrix` と一致することを試験で確認。メッシュは今読み込まれているものを引くだけ)、Before の読み取り専用の表示と復元への導線、未確認 (`unknown` / `inferred`) の印 (Hierarchy・Scene View)、ゴーストの入・切。サービスは `scene_overlay` に `before` / `beforeOversize` / `uncertain` を足した (スキーマは版 3 のまま) |
 | M104s | 6 | 未着手 | Before / After のプレビュー、左右並べた 3D 比較 |
 | M104t | 6 | 未着手 | プレハブ伝播の表示、大きいシーンでの表示の計測と軽量化 |
 

@@ -16,6 +16,20 @@ using namespace DirectX;
 
 namespace mye {
 
+bool ProjectChangePoint(const XMFLOAT3& position, const XMFLOAT4X4& view, const XMFLOAT4X4& proj, float& depth)
+{
+    const XMMATRIX viewMatrix = XMLoadFloat4x4(&view);
+    const XMMATRIX viewProj = XMMatrixMultiply(viewMatrix, XMLoadFloat4x4(&proj));
+    const XMVECTOR point = XMVectorSet(position.x, position.y, position.z, 1.0f);
+    XMFLOAT3 inView;
+    XMStoreFloat3(&inView, XMVector3Transform(point, viewMatrix));
+    XMFLOAT4 clip;
+    XMStoreFloat4(&clip, XMVector4Transform(point, viewProj));
+    depth = inView.z;
+    const float limit = clip.w * kChangeBoxVisibleMargin;
+    return inView.z > 0.0f && clip.w > 0.0f && std::fabs(clip.x) <= limit && std::fabs(clip.y) <= limit;
+}
+
 void CollectChangeBoxCandidates(Scene& scene, const SceneChangeOverlay& overlay, const XMFLOAT4X4& view, const XMFLOAT4X4& proj,
                                 std::vector<ChangeBoxCandidate>& out)
 {
@@ -23,8 +37,6 @@ void CollectChangeBoxCandidates(Scene& scene, const SceneChangeOverlay& overlay,
     if (!overlay.Show()) {
         return;
     }
-    const XMMATRIX viewMatrix = XMLoadFloat4x4(&view);
-    const XMMATRIX viewProj = XMMatrixMultiply(viewMatrix, XMLoadFloat4x4(&proj));
     World& world = scene.GetWorld();
     for (const auto& [fileId, entity] : overlay.Entities()) {
         if (entity.status != OverlayStatus::Added && entity.status != OverlayStatus::Modified) {
@@ -43,14 +55,8 @@ void CollectChangeBoxCandidates(Scene& scene, const SceneChangeOverlay& overlay,
         c.entity = object.Id();
         c.position = { worldMatrix->value._41, worldMatrix->value._42, worldMatrix->value._43 };
         c.color = entity.status == OverlayStatus::Added ? OverlayColorId::Added : OverlayColorId::Modified;
-        const XMVECTOR point = XMVectorSet(c.position.x, c.position.y, c.position.z, 1.0f);
-        XMFLOAT3 inView;
-        XMStoreFloat3(&inView, XMVector3Transform(point, viewMatrix));
-        XMFLOAT4 clip;
-        XMStoreFloat4(&clip, XMVector4Transform(point, viewProj));
-        c.depth = inView.z;
-        const float limit = clip.w * kChangeBoxVisibleMargin;
-        c.visible = inView.z > 0.0f && clip.w > 0.0f && std::fabs(clip.x) <= limit && std::fabs(clip.y) <= limit;
+        c.uncertain = entity.uncertain;
+        c.visible = ProjectChangePoint(c.position, view, proj, c.depth);
         out.push_back(c);
     }
 }

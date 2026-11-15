@@ -21,6 +21,8 @@ public:
     // 直近のフレームで描いたバッジの数 (試験用)。faint = 子孫にだけ変更がある薄い印
     int DrawnBadgeCount() const { return drawnBadges_; }
     int DrawnFaintBadgeCount() const { return drawnFaintBadges_; }
+    // 帰属が未確認 (unknown / inferred) の変更に添えた小さい印の数 (試験用)
+    int DrawnUncertainMarkCount() const { return drawnUncertainMarks_; }
     // 検索欄の文字 (空 = 木、あり = 名前の部分一致のフラット表示)
     void SetSearchText(const char* text);
 
@@ -38,6 +40,7 @@ private:
     const SceneChangeOverlay* overlay_ = nullptr;
     int drawnBadges_ = 0;
     int drawnFaintBadges_ = 0;
+    int drawnUncertainMarks_ = 0;
 
     char searchBuf_[64] = {};
     uint64_t renamingFid_ = 0; // インラインリネーム中の fileId (0 = なし)

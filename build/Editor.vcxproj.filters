@@ -135,6 +135,9 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\PathGuard.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\RemovedEntityGhosts.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreApplySelfTest.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
@@ -601,6 +604,9 @@
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\PathGuard.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\RemovedEntityGhosts.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreFileIo.h">

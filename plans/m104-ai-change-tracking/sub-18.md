@@ -1,46 +1,87 @@
-# sub-18: Before / After のプレビュー、左右の 3D 比較 (M104s)
+# sub-18: Before / After のプレビューと左右の 3D 比較 (M104s)
 
 - 依存: sub-17
 - 状態: 未着手
 - 往復: 0
-- 書き込みの深さ: **骨子** (spec §6.1)。sub-17 の VERDICT で planner が詳細にする。Phase 6 へ進むことは推奨どおり裁定済み (2026-11-15)。
+- 書き込みの深さ: **詳細** (2026-11-16、sub-17 の VERDICT で planner が書き直した)
+- 質問の運用: 推奨で進め、Notion に後回し。着手前の確認は無い (Phase 6 へ進むことは裁定済み)。
+
+要求 §9.2、§9.3、§15 Phase 6 の完了条件「本番 Scene を変更せず、過去と現在の視覚比較ができる」。arch §7。**実行中の Scene を巻き戻して表示しない。本番の World・Undo・Selection・アセットの登録・プロジェクトのファイルに何も残さない。**
+
+## 範囲の取り決め (planner の裁定。spec §2 D42)
+
+1. **比べるのは「ある Revision の Before」と「その Revision の After」**、どちらもサービスの Blob (ディスクの内容の写し) から読む。加えて「今のディスクの内容」(シーンのファイルを読む) を After の代わりに選べる。**エディタのライブの状態 (未保存の編集) は比べる対象にしない** (`SaveToJson` は fileId を採番しアーキタイプを動かすので、比較のためだけに呼ばない。arch §1)。
+2. 対象はシーンの文書 (`*.scene.json`) の Revision。プレハブ・アクターの文書は、このサブでは対象外 (ゴースト、Inspector、`scene_diff` の一覧で見える)。
+3. **アセットは今の内容で描く** (メッシュ・テクスチャ・マテリアル・プレハブのベース)。比較の時点の状態を完全には再現できないので、その旨を必ず出す (要求 §9.3)。Before の時刻より後に、そのシーンが参照するアセットに記録された変更があれば、件数とパスを出す (追跡の履歴で分かる範囲。分からなければ「確かめられません」)。sub-17 のゴーストと同じ方針。
+4. C# コンポーネント (スクリプトの状態) はプレビューのシーンへ読み込まない (managed のホストは本番と共有で、インスタンスを作ると本番の C# の状態に触れうる)。描画に関係するのはメッシュ・ライト・カメラなどの組み込みのコンポーネントだけで足りる。読み込まなかったことを注記に出す。
+
+## 使えるもの
+
+- 前例: `C:\HAL\MyEngin\src\Editor\Windows\Animation\AnimationPreviewWindow.cpp` (専用の一時シーンと RT で描く。規則 16 の許可リストにある: `tools\check_rules.ps1` 1386 行目)、`C:\HAL\MyEngin\src\Editor\Asset\AssetPreviewCache.h/.cpp` (サムネイル・マテリアルのプレビューの RT。許可リスト 1383、1384 行目)。**着手時に、この 2 つが一時シーンをどう作り、本番の何に触れないようにしているかを読んで、同じ作りにする。**
+- `blob_get` (sub-10。512 KiB ずつ)、`describe` (Before / After のハッシュ)、`scene_diff` (変わったエンティティ)、`SceneChangeOverlay` の色 (`OverlayPalette`)、`RemovedEntityGhosts` の行列の合成 (sub-17)。
+- デバイスの消失からの復旧 (M88、ADR-026): プレビューの RT が作り直される / 安全に閉じること。
 
 ## やること
 
-要求 §9.2、§9.3。完了条件は「本番 Scene を変更せず、過去と現在の視覚比較ができる」。
+### A. プレビューのシーンの読み込み (`src\Editor\ChangeTracking\` に純粋な部分、描画は Editor の窓の側)
 
-1. 一時 `Scene` + 専用の `RenderSystem` + `RenderTexture` で、Before と After を別々に描く。前例は `AnimationPreviewWindow`、`AssetPreviewCache` (arch §7)。**実行中の Scene を巻き戻して表示しない。**
-2. 表示モード: Before / After / Overlay / Side by Side。カメラは左右で同期する。
-3. Before の内容は Blob の JSON から一時 Scene へ読む。現在の内容は、ディスクの After か、未保存の編集を含む Editor Snapshot かを選べるようにするかを着手時に決める。
-4. アセットの再現性: プレビューが参照するメッシュ・テクスチャ・プレハブは**今の**アセットで、比較時点の状態とは限らない。Before の時点から変わっているアセット (追跡の履歴で分かる範囲) があれば、その旨を出す (要求 §9.3)。
-5. 一時 Scene の読み込みが、`AssetDatabase` のキャッシュ・fileId の採番・ホットリロードの監視など、本番の状態に副作用を持たないことをコードで確かめる。
-6. 生の D3D 型は描画境界の外へ出さない (規則 16)。プレビュー経路の許可リストへ足す必要があれば、理由を書き `engine_spec.md` §6.3 も更新する (AGENTS.md §4.1)。
-7. 重い読み込みで無応答にしない (進捗か、分割)。
+1. Before / After の JSON を Blob から取り (大きければ数フレームに分ける。取得中は進行を出す)、**プレビュー専用の `Scene` / World** へ読み込む。読み込みの経路は、本番のシーンの読み込みと同じシリアライザを使ってよいが、次を守る:
+   - 本番の World と、その `ComponentRegistry` 以外の状態 (エンティティ、`fileIdHistory_`、選択、Undo、`ReloadHub` の開いているシーンのパス、`SceneChangeOverlay`) に触れない。
+   - **アセットを新しく読み込む場合は、本番と共有のキャッシュに入ってよいか**を前例で確かめる。共有のキャッシュに入れるのが前例どおりなら可 (メモリが増えるだけで、内容は同じ)。**`.meta` の作成 (`GuidForPath(…, true)`) やアセットの登録の変更は起こさない** (プロジェクトのファイルを増やさない)。
+   - C# コンポーネントは読み込まない (取り決め 4)。
+   - 版の違い (`version`) や壊れた JSON は「表示できない」として、落ちない。
+2. エンティティ数の上限 (定数。大きいシーンで止まらない)。超えたら、変わったエンティティとその近くだけを読む、か「大きすぎます」と出す (どちらにするかを決めて書く)。
+3. プレビューのシーンは、プレビューの窓を閉じたら破棄する。1 度に持つのは最大 2 つ (Before と After)。
+
+### B. 描画と窓 (`src\Editor\Windows\...` に新しい窓。生の D3D 型はここに閉じる)
+
+1. 表示のモード: **Before** / **After** / **重ね (Overlay)** = After を描き、変わったエンティティを強調の色のワイヤ箱で、削除されたものを Before のゴーストで重ねる / **左右 (Side by Side)** = 2 つの RT を横に並べ、カメラを同期する。
+2. カメラ: 開いたときは、変わったエンティティの範囲が収まる位置。マウスでの回転・移動・ズーム (前例の操作に合わせる)。左右では両方が同じカメラ。
+3. 窓の外の描画 (GameView、撮影の経路、Runtime) に出さない。
+4. 生の D3D 型を使うファイルを規則 16 の許可リストへ足す場合は、`tools\check_rules.ps1` の表に理由を書き、`C:\HAL\MyEngin\engine_spec.md` §6.3 も同時に更新する (AGENTS.md §4.1)。**`src\Editor\ChangeTracking\` には足さない** (窓のファイルにだけ)。
+5. 注記: アセットは今の内容 (取り決め 3)、C# は読み込んでいない、上限で一部だけ、表示できない理由。
+6. 入口: AI Changes 窓の詳細の列 (シーンの Revision のとき)「Before / After を見る」。
+
+### C. 比べる対象の切り替え
+
+- After の代わりに「今のディスクの内容」を選べる (ファイルを読むだけ。大きさの上限つき)。エディタの未保存の状態は選べない (取り決め 1。画面に 1 行説明する)。
+
+### D. 文書
+
+- arch §7 (取り決め 1〜4)、`C:\HAL\MyEngin\engine_spec.md` §9.2 (と §6.3)、`C:\HAL\MyEngin\docs\test_checklists.md`、`C:\HAL\MyEngin\plans\m104-ai-change-tracking.md` (進捗表)。
+
+## sub-17 から持ち越した注意 (作業のしかた)
+
+- **窓を出す起動 (`--screenshot`、`--frames`、対話起動) は、作業ディレクトリをリポジトリの外 (`%TEMP%` の自分のディレクトリ) にする。** リポジトリ直下で起動すると、利用者の `imgui.ini` (窓の配置) が書き換わる (sub-17 で起きた)。**`--selftest` は従来どおりリポジトリを作業ディレクトリにする** (planner が確かめた: Release の `--selftest` は、作業ディレクトリが `%TEMP%` だと 3 スイートが落ち、リポジトリなら 0 失敗。`--selftest` はリポジトリ直下の `imgui.ini` を書き換えなかった)。
+- Windows のパスを含むコードは Write / Edit ツールで書く (Bash のヒアドキュメントはバックスラッシュを潰す)。
 
 ## やらないこと (このサブでは)
 
-- 過去のアセットの内容を Blob から復元して描くこと (その旨を出すまで)。
-- プレビューの中での編集。
-
-## 触る場所 (planner の見立て)
-
-- 新規: `C:\HAL\MyEngin\src\Editor\ChangeTracking\ScenePreviewCompare.*` か `src\Editor\Windows\Project\` の窓
-- 参考: `AnimationPreviewWindow`、`AssetPreviewCache` (場所は着手時に確かめる)
-- `C:\HAL\MyEngin\tools\check_rules.ps1` (規則 16 の許可リストが要る場合)、`C:\HAL\MyEngin\engine_spec.md`
+- エディタの未保存の状態との比較。プレハブ・アクターの文書のプレビュー。過去のアセットの内容の復元。
+- プレビューの中での編集・選択の本番への反映。
+- Engine 層の変更 (変わってよいのは `LocalizationTable.inl` だけ)。`tools\track` の変更は、要るなら最小限 (例: シーンが参照するアセットの変更の問い合わせ) で、差分に出す。
 
 ## 受け入れ条件 (このサブ)
 
-1. プレビューを開く・モードを切り替える・閉じる、の前後で本番の Scene の `HashWorld` と Undo の `StateSerial` が同じ (dirty にならない) → `changetracking` スイート。
-2. Play 中にプレビューを開いても sim の結果が変わらない → スイート (開いた場合と開かない場合で、同じ Tick 数の後の `HashWorld`)。
-3. Before が読めない (`version` 違い、Blob 欠落) とき、その旨が出て落ちない → スイート。
-4. Before の時点から変わったアセットを参照しているとき、注記が出る → スイート。
-5. 4 つのモードのスクショ → `--screenshot` (Release)。見た目の合否はユーザー。
-6. デバイス消失の復旧 (M88) の後にプレビューが再生成される、または安全に閉じる → 既存の復旧のテストの形に合わせる。
-7. `Editor.exe --selftest-full`、`tools\check_rules.ps1` が通る。
+1. **本番を変えない**: プレビューを開く・モードを切り替える・カメラを動かす・閉じる、の前後で、本番の Scene の `HashWorld`、エンティティ数、アーキタイプ数、Undo の `StateSerial`、`Selection`、`ReloadHub` の開いているシーンのパスが同じ。シーンが dirty にならない → `changetracking` スイート (プレビューのシーンの読み込みと破棄を、描画なしで回す)。
+2. **プロジェクトのファイルを増やさない**: プレビューの前後で、一時プロジェクトの全ファイルのパスとハッシュが同じ (`.meta` が作られない) → スイート。
+3. Play 中にプレビューを開いても、sim の結果が変わらない (開いた場合と開かない場合で、同じ Tick 数の後の `HashWorld` が同じ) → スイート。
+4. Before が読めない (版の違い、Blob の欠け、壊れた JSON)、上限を超える大きさ、のそれぞれで、理由が出て落ちない → スイート。
+5. C# コンポーネントを含むシーンで、プレビューを開いても managed のインスタンスが増えない (managed のホストの問い合わせで数える。数えられなければ、読み込みの経路で C# を飛ばしていることをコードと試験で確かめる) → スイート。
+6. アセットの注記: Before の時刻より後に、参照するアセットに変更の記録があれば、件数とパスが出る。無ければ「今の内容で描いています」だけ → スイート (偽の応答)。
+7. 閉じると、プレビューのシーンと RT が破棄される (2 回開いて閉じても数が増えない) → スイート。
+8. デバイスの消失からの復旧の後、プレビューが作り直されるか、安全に閉じる → 既存の復旧の試験の形に合わせる (`MYE_SELFTEST_ONLY` に該当のスイート)。
+9. スクショ (一時のプローブ。コミットしない): Before、After、重ね、左右、注記、英語。**見た目の合否はユーザーの目視。**
+10. `Editor.exe --selftest` (Debug / Release)、`tools\check_rules.ps1` (規則 10、16、19。許可リストを足した場合は、その行と `engine_spec.md` §6.3 の差分がある)、`cargo test` (track)、`tools\track_verify.bat` が通る。下位の層の差分が `LocalizationTable.inl` だけ。
+11. 作業のしかた: リポジトリ直下の `imgui.ini` の更新時刻が、このサブの作業の前後で変わっていない → 確認の結果を書く。
 
 ## 検証コマンド
 
-- ビルド (Debug / Release)、`Editor.exe --selftest-full`、`tools\check_rules.ps1`、`--screenshot`
+- `MyEngine.sln` を `Debug|x64` と `Release|x64` でビルド (`/p:MyeWarnAsError=true`)
+- `MYE_SELFTEST_ONLY=changetracking` で `bin\x64\Debug\Editor.exe --selftest`、続けて `--selftest` を Debug / Release (作業ディレクトリはリポジトリ)
+- `pwsh -NoProfile -File tools\check_rules.ps1`
+- スクショ: 一時のプローブ + `bin\x64\Release\Editor.exe --frames 40 --shot-frame 36 --screenshot` (作業ディレクトリは `%TEMP%`)
+- exe の実行は PowerShell から。`tools\mcp\target\release\` の exe に触らない。ユーザーのプロセスを止めない。
 
 ## 実装メモ (coder が追記)
 

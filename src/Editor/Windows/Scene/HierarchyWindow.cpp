@@ -30,6 +30,7 @@
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor::Prefab
 
 #include "imgui.h"
+#include "fontawesome/IconsFontAwesome6.h"
 
 namespace mye {
 namespace {
@@ -101,7 +102,16 @@ void HierarchyWindow::DrawChangeBadge(uint64_t fileId, const ImVec2& rowMin, con
     ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cx, cy), kRadius,
                                                 ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, faint ? kOverlayFaintAlpha : color.a)));
     ++(faint ? drawnFaintBadges_ : drawnBadges_);
-    const ImVec2 hitMin(cx - kRadius * 1.5f, rowMin.y);
+    // 帰属が未確認 (unknown / inferred) の変更には、色ではなく小さい印を添える (要求 §8.1)
+    float hitLeft = cx - kRadius * 1.5f;
+    if (badge.uncertain) {
+        const ImVec2 size = ImGui::CalcTextSize(ICON_FA_CIRCLE_QUESTION);
+        const float markX = cx - kRadius * 2.0f - size.x;
+        ImGui::GetWindowDrawList()->AddText(ImVec2(markX, cy - size.y * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), ICON_FA_CIRCLE_QUESTION);
+        hitLeft = markX;
+        ++drawnUncertainMarks_;
+    }
+    const ImVec2 hitMin(hitLeft, rowMin.y);
     const ImVec2 hitMax(cx + kRadius * 1.5f, rowMax.y);
     if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(hitMin, hitMax)) {
         const std::string tip = OverlayBadgeTooltip(overlay_->Find(fileId), badge.descendantOnly);
@@ -115,6 +125,7 @@ void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
 {
     drawnBadges_ = 0;
     drawnFaintBadges_ = 0;
+    drawnUncertainMarks_ = 0;
     if (!open) {
         return;
     }

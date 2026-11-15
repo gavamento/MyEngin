@@ -24,6 +24,8 @@ pub const MAX_OVERLAY_ROWS: usize = 400_000;
 const MAX_CHAIN_DOCUMENTS: usize = 64;
 /// 値 (Before / After) 1 つの上限 (バイト)。超えたら値を返さず `oversize`。
 const MAX_VALUE_BYTES: usize = 8 * 1024;
+/// 削除されたエンティティの Before (断片 1 つ) の上限 (バイト)。超えたら値を返さず `beforeOversize`。
+const MAX_REMOVED_FRAGMENT_BYTES: usize = 64 * 1024;
 /// 名前を取り出すためにパースする断片の上限。
 const MAX_NAME_PARSE_BYTES: usize = 64 * 1024;
 /// 差分を取り直すときの文書の大きさの上限 (削除 → 追加の合成にだけ使う)。
@@ -38,6 +40,8 @@ pub struct OverlayRow {
     pub field: Option<String>,
     pub before: Option<String>,
     pub after: Option<String>,
+    /// この行の Revision の帰属が確定していない (`unknown` / `inferred`)。Editor が「未確認」の印を出す。
+    pub uncertain: bool,
 }
 
 /// 1 つの Revision の行 (古い順に並べて渡す)。
@@ -89,6 +93,10 @@ pub struct EntityOut {
     pub entity_fields: Vec<FieldOut>,
     pub components: Vec<ComponentOut>,
     pub revision_ids: Vec<i64>,
+    /// 寄与した行のどれかが未確認の帰属 (`unknown` / `inferred`)。
+    pub uncertain: bool,
+    /// 削除されたエンティティの Before (消える直前のエンティティの JSON の断片。字句のまま)。削除以外では `None`。
+    pub removed_fragment: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,6 +136,7 @@ struct EntAcc {
     fields: BTreeMap<(Option<String>, Option<String>), FieldAcc>,
     hierarchy: BTreeMap<String, FieldAcc>,
     revisions: BTreeSet<i64>,
+    uncertain: bool,
 }
 
 /// 字句が同じか。書き方 (空白・キーの順) が違うだけの JSON も同じとみなす。
@@ -194,13 +203,14 @@ impl Folder {
         {
             let ent = self.entities.entry(file_id).or_default();
             ent.revisions.insert(revision);
+            ent.uncertain = ent.uncertain || row.uncertain;
             match row.change_type.as_str() {
                 change_type::ENTITY_ADDED => {
                     if ent.start.is_none() {
                         ent.start = Some(false);
                     } else if !ent.present && ent.start == Some(true) {
                         if let (Some(b), Some(a)) = (&ent.removed_fragment, &row.after) {
-                            synth = synth_rows(file_id, b, a, None);
+                            synth = synth_rows(file_id, b, a, None, row.uncertain);
                         }
                     }
                     ent.present = true;
@@ -244,7 +254,7 @@ impl Folder {
                                         comp.start = Some(false);
                                     } else if !comp.present && comp.start == Some(true) {
                                         if let (Some(b), Some(a)) = (&comp.removed_fragment, &row.after) {
-                                            synth = synth_rows(file_id, b, a, Some(name));
+                                            synth = synth_rows(file_id, b, a, Some(name), row.uncertain);
                                         }
                                     }
                                     comp.present = true;
@@ -281,7 +291,7 @@ impl Folder {
 
 /// 削除 → 追加 (エンティティ / コンポーネント) の中身の差を、同じ行の形で作る。
 /// 比べられなければ行は空 (その場合の信用の低下は呼び出し側で扱わない: 同じ文書から取った断片なので通常は比べられる)。
-fn synth_rows(file_id: i64, before: &str, after: &str, component: Option<&String>) -> Vec<OverlayRow> {
+fn synth_rows(file_id: i64, before: &str, after: &str, component: Option<&String>, uncertain: bool) -> Vec<OverlayRow> {
     let wrap = |fragment: &str| match component {
         None => format!("{{\"version\":4,\"entities\":[{fragment}]}}"),
         Some(name) => {
@@ -300,6 +310,7 @@ fn synth_rows(file_id: i64, before: &str, after: &str, component: Option<&String
                 field: c.field,
                 before: c.before_value,
                 after: c.after_value,
+                uncertain,
             })
             .collect(),
         SceneOutcome::Unparsed(_) => Vec::new(),
@@ -350,7 +361,9 @@ fn finalize(file_id: i64, ent: EntAcc) -> Option<EntityOut> {
         (true, true) => Status::Modified,
     };
     let revision_ids: Vec<i64> = ent.revisions.iter().copied().collect();
+    let uncertain = ent.uncertain;
     if status != Status::Modified {
+        let removed_fragment = if status == Status::Removed { ent.removed_fragment } else { None };
         return Some(EntityOut {
             file_id,
             status,
@@ -359,6 +372,8 @@ fn finalize(file_id: i64, ent: EntAcc) -> Option<EntityOut> {
             entity_fields: Vec::new(),
             components: Vec::new(),
             revision_ids,
+            uncertain,
+            removed_fragment,
         });
     }
     let hierarchy = surviving(ent.hierarchy);
@@ -402,7 +417,7 @@ fn finalize(file_id: i64, ent: EntAcc) -> Option<EntityOut> {
     if hierarchy.is_empty() && entity_fields.is_empty() && components.is_empty() {
         return None;
     }
-    Some(EntityOut { file_id, status, name: ent.name, hierarchy, entity_fields, components, revision_ids })
+    Some(EntityOut { file_id, status, name: ent.name, hierarchy, entity_fields, components, revision_ids, uncertain, removed_fragment: None })
 }
 
 // ---- 応答の組み立て ----
@@ -442,7 +457,7 @@ fn entity_json(e: &EntityOut) -> Value {
             json!({ "name": c.name, "status": c.status.as_str(), "fields": fields })
         })
         .collect();
-    json!({
+    let mut item = json!({
         "fileId": e.file_id,
         "status": e.status.as_str(),
         "name": e.name,
@@ -451,7 +466,20 @@ fn entity_json(e: &EntityOut) -> Value {
         "entityFields": entity_fields,
         "components": components,
         "revisionIds": e.revision_ids,
-    })
+        "uncertain": e.uncertain,
+    });
+    // 削除されたエンティティの Before (Editor がゴーストを描く元)。大きすぎれば値を返さず `beforeOversize`
+    if let Some(fragment) = &e.removed_fragment {
+        if fragment.len() <= MAX_REMOVED_FRAGMENT_BYTES {
+            item["before"] = json!(fragment);
+            item["beforeOversize"] = json!(false);
+        } else {
+            item["before"] = Value::Null;
+            item["beforeOversize"] = json!(true);
+            item["beforeBytes"] = json!(fragment.len());
+        }
+    }
+    item
 }
 
 /// 文書の ID から、引き継ぎで同じ文書になる ID を全部集める (自分を含む)。
@@ -527,7 +555,8 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
 
     // 行為者が AI か不明の Revision だけ (利用者の編集と復元は強調しない)。無効にされた行は除く
     let sql = format!(
-        "SELECT r.revision_id, s.file_id, s.change_type, s.component, s.field, s.before_value, s.after_value
+        "SELECT r.revision_id, s.file_id, s.change_type, s.component, s.field, s.before_value, s.after_value,
+                r.attribution IN ('unknown', 'inferred')
            FROM scene_changes s JOIN change_revisions r ON r.revision_id = s.revision_id
           WHERE s.document_id IN ({marks}) AND s.state = 'active' AND r.actor IN ('ai', 'unknown')
             AND r.revision_id > {after}
@@ -556,6 +585,7 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
             field: r.get(4).map_err(internal)?,
             before: r.get(5).map_err(internal)?,
             after: r.get(6).map_err(internal)?,
+            uncertain: r.get(7).map_err(internal)?,
         };
         if let Some(index) = reviews.get(&revision_id) {
             let leaf = review::Leaf::Scene { file_id: row.file_id, component: row.component.clone(), field: row.field.clone() };
@@ -647,7 +677,13 @@ mod tests {
             field: field.map(str::to_string),
             before: before.map(str::to_string),
             after: after.map(str::to_string),
+            uncertain: false,
         }
+    }
+
+    fn uncertain_row(mut r: OverlayRow) -> OverlayRow {
+        r.uncertain = true;
+        r
     }
 
     fn rev(id: i64, rows: Vec<OverlayRow>) -> RevisionRows {
@@ -706,6 +742,46 @@ mod tests {
             rev(2, vec![row(Some(7), change_type::ENTITY_ADDED, None, None, None, Some(&before))]),
         ]);
         assert!(o.entities.is_empty());
+    }
+
+    #[test]
+    fn removed_entity_carries_its_before_and_the_uncertain_mark() {
+        let before = ent_json(6, "b", "\"LocalTransform\":{\"position\":[1,2,3]}");
+        let o = fold(&[
+            rev(1, vec![field_row(6, "T", "x", "1", "2")]),
+            rev(2, vec![uncertain_row(row(Some(6), change_type::ENTITY_REMOVED, None, None, Some(&before), None))]),
+            rev(3, vec![field_row(7, "T", "x", "1", "2")]),
+        ]);
+        let removed = o.entities.iter().find(|e| e.file_id == 6).unwrap();
+        assert_eq!(removed.status, Status::Removed);
+        assert_eq!(removed.removed_fragment.as_deref(), Some(before.as_str()));
+        assert!(removed.uncertain);
+        let json = entity_json(removed);
+        assert_eq!(json["before"], json!(before));
+        assert_eq!((json["beforeOversize"].as_bool(), json["uncertain"].as_bool()), (Some(false), Some(true)));
+        // 確定した帰属だけのエンティティは印が付かず、削除でなければ Before を持たない
+        let modified = o.entities.iter().find(|e| e.file_id == 7).unwrap();
+        assert!(!modified.uncertain && modified.removed_fragment.is_none());
+        assert!(entity_json(modified).get("before").is_none());
+    }
+
+    #[test]
+    fn an_oversize_before_is_not_returned() {
+        let big = ent_json(6, "b", &format!("\"C\":{{\"s\":\"{}\"}}", "x".repeat(MAX_REMOVED_FRAGMENT_BYTES)));
+        let o = fold(&[rev(1, vec![row(Some(6), change_type::ENTITY_REMOVED, None, None, Some(&big), None)])]);
+        let json = entity_json(&o.entities[0]);
+        assert!(json["before"].is_null());
+        assert_eq!((json["beforeOversize"].as_bool(), json["beforeBytes"].as_u64()), (Some(true), Some(big.len() as u64)));
+    }
+
+    #[test]
+    fn a_re_added_entity_is_not_removed_any_more() {
+        let before = ent_json(7, "x", "\"T\":{\"v\":1}");
+        let o = fold(&[
+            rev(1, vec![row(Some(7), change_type::ENTITY_REMOVED, None, None, Some(&before), None)]),
+            rev(2, vec![row(Some(7), change_type::ENTITY_ADDED, None, None, None, Some(&ent_json(7, "x", "\"T\":{\"v\":2}")))]),
+        ]);
+        assert!(o.entities[0].removed_fragment.is_none());
     }
 
     #[test]

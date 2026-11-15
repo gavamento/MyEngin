@@ -54,6 +54,7 @@ struct EditorSettings {
     std::map<std::string, int64_t> aiChangeAcks;
     // 強調の表示の入・切と 4 色 (追加・更新・削除・競合)。個人の好みなのでここ (M104m2)
     bool aiChangeShowOverlay = true;
+    bool aiChangeShowGhosts = true; // 削除されたエンティティのゴースト (M104r)
     OverlayPalette aiChangePalette;
     // ---- プロファイラの表示 (M102) ----
     int profilerTab = 0;            // 最後に開いていたタブ (ProfilerWindow のタブ順)

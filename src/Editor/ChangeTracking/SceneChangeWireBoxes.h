@@ -30,7 +30,12 @@ struct ChangeBoxCandidate {
     OverlayColorId color = OverlayColorId::Modified;
     bool visible = false;
     float depth = 0.0f; // カメラ空間の前方への距離 (近いほど優先)
+    bool uncertain = false; // 帰属が未確認 (Scene View が小さい印を足す)
 };
+
+// 点が画面に見えているか (画面の端から kChangeBoxVisibleMargin 倍までは見えているとみなす)。depth = カメラ空間の前方への距離。
+// ワイヤ箱とゴーストの候補が同じ判定を使う
+bool ProjectChangePoint(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT4X4& view, const DirectX::XMFLOAT4X4& proj, float& depth);
 
 struct ChangeBoxSelection {
     std::vector<ChangeBoxCandidate> chosen; // 描くもの (近い順)

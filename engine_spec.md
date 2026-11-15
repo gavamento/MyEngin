@@ -1555,6 +1555,19 @@ confirmation.
   Restoring is blocked while playing, in a network session, while editing a mini scene, while the tracking service is not connected, and while an
   external change to the open scene is waiting for your decision. Scenes that are not open are restored with the file / hunk restore.
   Spec: [restore-safety.md](docs/ai-change-tracking/restore-safety.md) §3.3, §8.3.
+- **Deleted-entity ghosts and the read-only Before (M104r).** An entity an AI or an unknown writer deleted from the open scene has no body any more, so
+  the **Scene view** draws a *ghost* of it from the recorded Before JSON alone: a translucent copy of the mesh it used (only if that mesh is loaded right
+  now — nothing is loaded for the ghost, and it shows today's mesh, not the one at the time of the deletion), a wire box when the mesh cannot be found or
+  the entity draws something else (skinned mesh, sprite, particles, light, UI), and a small sphere when it has nothing to draw. The world matrix is composed
+  from the recorded LocalTransform up the parent chain (parents deleted in the same change first, then the live parent's current matrix; when no parent
+  can be found it is drawn at its local transform and the window says so). **No entity is created in the world**, no `fileId` is assigned, and `HashWorld`
+  does not change; at most 64 ghosts are drawn per frame (nearest first, the band shows how many were left out and how many could not be shown because the
+  record is missing, too large or unreadable). The band has a switch for the ghosts (saved in `editor_settings.json`), and nothing is drawn while the highlight
+  is off or the tracking service is not connected. Clicking a ghost (when no live entity is under the cursor) or a *deleted entity* row in the list opens
+  its recorded content — name, parent, components and field values — in this window, **read only** (no edit control exists, and the `Selection` is never
+  changed); *Restore this entity...* from there opens the scene restore preview for that deletion. A change whose attribution is not confirmed
+  (*unknown* or *inferred*) carries a small question-mark icon — beside the Hierarchy badge and above the Scene view box or ghost — and a confirmed
+  one (*verified*, *claimed*) does not.
 - The window asks the model for only the parts it shows (`ChangeModel::SetInterest`); while it is closed nothing is fetched.
 - *Open file* uses the existing external-editor path (`externalEditorCmd`) at the first line of the selected hunk; *Show in Explorer*
   opens the folder.

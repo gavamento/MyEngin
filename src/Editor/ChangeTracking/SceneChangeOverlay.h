@@ -51,6 +51,12 @@ struct OverlayEntity {
     std::vector<OverlayField> entityFields;
     std::vector<OverlayComponent> components;
     std::vector<int64_t> revisionIds;
+    // 帰属が確定していない (unknown / inferred) 変更を含む。Hierarchy と Scene View が「未確認」の印を出す
+    bool uncertain = false;
+    // 削除されたエンティティの Before (消える直前のエンティティの JSON の断片)。ゴーストと読み取り専用の表示の元
+    bool hasBefore = false;
+    bool beforeOversize = false;
+    std::string before;
 };
 
 struct OverlayCounts {
@@ -64,6 +70,7 @@ struct OverlayCounts {
 struct OverlayBadge {
     OverlayStatus status = OverlayStatus::None;
     bool descendantOnly = false;
+    bool uncertain = false; // status が追加・更新で、帰属が未確認
     bool Any() const { return status != OverlayStatus::None || descendantOnly; }
 };
 
@@ -71,6 +78,13 @@ struct OverlayBadge {
 struct OverlayBoxStats {
     int drawn = 0;
     int omitted = 0;
+};
+
+// Scene View が 1 フレームに描いた、削除されたエンティティのゴーストの数。undrawable = Before が読めず描けないもの
+struct OverlayGhostStats {
+    int drawn = 0;
+    int omitted = 0;
+    int undrawable = 0;
 };
 
 // 取り直しの間隔の下限 (通知が続いても、これより短い間隔では取り直さない)
@@ -139,9 +153,55 @@ public:
     }
     void SetPrefsSink(std::function<void(const OverlayPalette&, bool)> sink) { prefsSink_ = std::move(sink); }
 
-    // Scene View が描いたワイヤ箱の数 (表示専用)
+    // 削除されたエンティティのゴーストの表示の切り替え (強調が入のときだけ効く)。変えると受け口へ知らせる (EditorSettings へ保存する)
+    void SetShowGhosts(bool show)
+    {
+        if (showGhosts_ != show) {
+            showGhosts_ = show;
+            if (ghostPrefSink_) {
+                ghostPrefSink_(showGhosts_);
+            }
+        }
+    }
+    bool ShowGhosts() const { return showGhosts_; }
+    // 保存済みの値を入れる (受け口へは知らせない)
+    void LoadGhostPref(bool show) { showGhosts_ = show; }
+    void SetGhostPrefSink(std::function<void(bool)> sink) { ghostPrefSink_ = std::move(sink); }
+    // 追跡サービスと話せている (無効・未接続なら偽。ゴーストはこのときだけ描く)
+    bool Tracking() const;
+
+    // Scene View が描いたワイヤ箱 / ゴーストの数 (表示専用)
     void NoteWireBoxes(int drawn, int omitted) { boxStats_ = { drawn, omitted }; }
     const OverlayBoxStats& BoxStats() const { return boxStats_; }
+    // notes = 描いたゴースト (fileId) ごとの注記 (GhostNote のビット)。Before の表示が文面にする
+    void NoteGhosts(int drawn, int omitted, int undrawable, std::unordered_map<int64_t, uint32_t> notes = {})
+    {
+        ghostStats_ = { drawn, omitted, undrawable };
+        ghostNotes_ = std::move(notes);
+    }
+    const OverlayGhostStats& GhostStats() const { return ghostStats_; }
+    uint32_t GhostNotesFor(int64_t fileId) const
+    {
+        const auto it = ghostNotes_.find(fileId);
+        return it == ghostNotes_.end() ? 0u : it->second;
+    }
+
+    // 削除されたエンティティの Before を読み取り専用で見る要求 (Scene View のゴーストのクリック)。AI Changes 窓が次のフレームで取り、窓を開く。
+    // Selection には入れない (実体が無い)
+    void RequestInspectRemoved(int64_t fileId)
+    {
+        inspectRequest_ = fileId;
+        hasInspectRequest_ = true;
+    }
+    bool TakeInspectRequest(int64_t& fileId)
+    {
+        if (!hasInspectRequest_) {
+            return false;
+        }
+        hasInspectRequest_ = false;
+        fileId = inspectRequest_;
+        return true;
+    }
     // AI Changes 窓が開いている (表を使う)。強調が切でも、窓が開いていれば取り直す
     void SetWindowOpen(bool open) { windowOpen_ = open; }
 
@@ -183,6 +243,7 @@ public:
     bool NeedsAncestorRebuild() const { return ancestorsDirty_; }
     void RebuildAncestors(Scene& scene);
 
+
     // 試験用
     int FetchCount() const { return fetches_; }
     int DocumentFetchCount() const { return documentFetches_; }
@@ -216,6 +277,12 @@ private:
     int documentFetches_ = 0;
 
     bool show_ = true;
+    bool showGhosts_ = true;
+    std::function<void(bool)> ghostPrefSink_;
+    OverlayGhostStats ghostStats_;
+    std::unordered_map<int64_t, uint32_t> ghostNotes_;
+    int64_t inspectRequest_ = 0;
+    bool hasInspectRequest_ = false;
     OverlayPalette palette_;
     bool paletteUnsaved_ = false;
     OverlayBoxStats boxStats_;

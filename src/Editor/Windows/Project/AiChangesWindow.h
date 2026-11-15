@@ -16,6 +16,7 @@
 #include "Editor/ChangeTracking/ChangeFormat.h"
 #include "Editor/ChangeTracking/ChangeModel.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
+#include "Editor/ChangeTracking/RemovedEntityGhosts.h"
 #include "Editor/ChangeTracking/RestoreFileIo.h"
 #include "Editor/ChangeTracking/RestoreFormat.h"
 #include "Editor/ChangeTracking/RestoreGate.h"
@@ -154,6 +155,21 @@ public:
     const RestoreScreen& LastRestoreScreen() const { return restoreScreen_; }
     const BlobHeadView& Heads() const { return head_; }
 
+    // ---- 削除されたエンティティの Before の読み取り専用の表示 (M104r)。窓の操作と試験が同じ口を通る ----
+    // 一覧の「エンティティの削除」の行を選んだ。Selection には入れない (実体が無い)。revisionId = いま詳細に出している変更。
+    // 行が別のシーンの変更なら、表示はするが復元は出さない
+    void ShowRemovedBefore(const TrackSceneChange& removedRow, int64_t revisionId, const SceneChangeOverlay& overlay);
+    // Scene View のゴーストを選んだ (overlay の表の削除済みのエンティティ)。表に無ければ false
+    bool ShowRemovedBeforeFromOverlay(const SceneChangeOverlay& overlay, int64_t fileId);
+    void CloseRemovedBefore();
+    // 「このエンティティを復元...」: 削除した変更を選び、シーンの変更を取り終えたら、その行でシーンの復元を開く (TickRestoreRequest が毎フレーム進める)。
+    // 削除した変更が分からない・何も開いていないときは false
+    bool RequestRestoreRemoved(ChangeTrackingSession& session);
+    const RemovedBeforeView& RemovedBefore() const { return removedView_; }
+    bool RestoreRequestPending() const { return restorePending_; }
+    // 直近のフレームで Before の表に描いた文字列の行 (名前・親・コンポーネント・値・注記)。試験が画面に出ているものを確かめる
+    const std::vector<std::string>& LastBeforeLines() const { return beforeLines_; }
+
     // 試験用
     const std::set<int64_t>& MultiSelection() const { return multi_; }
     bool BulkConfirmPending() const { return bulkPending_; }
@@ -185,6 +201,8 @@ private:
     void DrawHunkReview(ChangeTrackingSession& session);
     void DrawSceneReview(ChangeTrackingSession& session);
     void DrawSceneRestoreButton(ChangeTrackingSession& session, const AiChangesHost& host);
+    void DrawRemovedBefore(ChangeTrackingSession& session, const AiChangesHost& host);
+    void TickRestoreRequest(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawBulkPopup(ChangeTrackingSession& session);
     void DrawAggregates(ChangeTrackingSession& session);
     void DrawRestoreButtons(ChangeTrackingSession& session, const AiChangesHost& host, const std::string& actor);
@@ -232,6 +250,14 @@ private:
     uint64_t shownRestoreSerial_ = ~0ull;
     bool restoreOpenRequested_ = false;
     BlobHeadView head_;
+    // 削除されたエンティティの Before (読み取り専用)
+    RemovedBeforeView removedView_;
+    bool removedNotOpen_ = false; // その削除は、今開いていないシーンの変更
+    bool restorePending_ = false;
+    int64_t restoreRevisionId_ = 0;
+    int64_t restoreFileId_ = 0;
+    bool restoreRowMissing_ = false;
+    std::vector<std::string> beforeLines_;
     std::vector<int> items_; // 一覧の仮想行。-1 = 主の節の見出し、-2 = 不明 / 推定の節の見出し、-3 = Editor / 復元の節の見出し、0 以上 = Changes の添字
 };
 

@@ -55,6 +55,7 @@ void EditorSettings::Load(const std::wstring& dir)
             }
         }
         aiChangeShowOverlay = root.value("aiChangeShowOverlay", aiChangeShowOverlay);
+        aiChangeShowGhosts = root.value("aiChangeShowGhosts", aiChangeShowGhosts);
         for (int i = 0; i < kOverlayColorCount; ++i) {
             const char* key = kAiChangeColorKeys[i];
             if (!root.contains(key) || !root[key].is_array() || root[key].size() != 4) {
@@ -132,6 +133,7 @@ void EditorSettings::Save() const
         root["aiChangeAcks"] = acks;
     }
     root["aiChangeShowOverlay"] = aiChangeShowOverlay;
+    root["aiChangeShowGhosts"] = aiChangeShowGhosts;
     for (int i = 0; i < kOverlayColorCount; ++i) {
         const OverlayColor& color = aiChangePalette.colors[i];
         root[kAiChangeColorKeys[i]] = nlohmann::json::array({ color.r, color.g, color.b, color.a });

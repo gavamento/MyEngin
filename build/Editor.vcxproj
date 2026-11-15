@@ -62,6 +62,7 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\HunkRestore.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\PathGuard.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\RemovedEntityGhosts.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreApplySelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreFileIo.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\RestoreFormat.cpp" />
@@ -218,6 +219,7 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\HunkRestore.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\OverlayPalette.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\PathGuard.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\RemovedEntityGhosts.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreFileIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreFormat.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\RestoreGate.h" />

@@ -7,6 +7,7 @@
 #include "imgui.h"
 #include "ImGuizmo/ImGuizmo.h"
 
+#include "Editor/ChangeTracking/RemovedEntityGhosts.h" // M104r: 削除されたエンティティのゴースト (GPU の型は持たない)
 #include "Editor/Widgets/EditorWidgets.h" // M47b追補: ToolbarFlow (ツールバー折り返し)
 #include "Engine/Engine/Asset/TerrainEdit.h" // M58f: 地形ブラシ
 #include "Engine/Engine/Loop/EngineLoop.h"
@@ -57,6 +58,17 @@ public:
     // 直近の AppendChangeBoxes が積んだ数と、上限で省いた数
     int ChangeBoxesDrawn() const { return changeBoxesDrawn_; }
     int ChangeBoxesOmitted() const { return changeBoxesOmitted_; }
+    // 削除されたエンティティのゴースト (M104r): 半透明メッシュ (ghostMesh_) かワイヤ箱 (lines_) を積む。World は読むだけ。
+    // 引くメッシュは今読み込まれているものだけ (新しく読み込まない)。BuildOverlays が呼び、試験が view / proj を渡して直接呼べる
+    void AppendRemovedGhosts(EngineContext& ctx, const DirectX::XMFLOAT4X4& view, const DirectX::XMFLOAT4X4& proj);
+    // 直近の AppendRemovedGhosts が積んだ数、上限で省いた数、Before が読めず描けなかった数
+    int GhostsDrawn() const { return static_cast<int>(drawnGhosts_.size()); }
+    int GhostsOmitted() const { return ghostsOmitted_; }
+    int GhostsUndrawable() const { return ghostsUndrawable_; }
+    // 直近に積んだ「帰属が未確認」の印の数 (ワイヤ箱とゴーストの合計。ImGui が小さい印を重ねる)
+    int UncertainMarkCount() const;
+    // 画面上の (mouseX, mouseY) [画像の左上が原点の px] にあるゴーストの fileId。無ければ 0。ライブのエンティティに当たらなかったときだけ使う
+    uint64_t GhostAt(float mouseX, float mouseY, float width, float height) const;
 
     // ギズモ状態への参照 (M27c: グローバルツールバーと共有)
     ImGuizmo::OPERATION& GizmoOp() { return gizmoOp_; }
@@ -106,6 +118,8 @@ private:
     // 分岐のゴースト (M72e、SceneViewGhost.cpp): 非ライブの分岐を同じ tick のワイヤ箱 + トレイルで重ねる
     void BuildGhostOverlay(EngineContext& ctx);
     void DrawToolbar(EditorSettings& settings);
+    // AI の変更の「未確認」の印と、ゴーストの名前 (M104r)。ImGui の描画のみ (World・GPU に触れない)
+    void DrawChangeMarks(const ImVec2& imgPos, const ImVec2& size);
     // M85j: drawDebug が立った BehaviorTreeComponent の頭上に、実行中のタスク名を重ねる (描画専用。線は BehaviorTreeSystem::AppendDebugLines)
     void DrawBehaviorTreeLabels(EngineContext& ctx, World& world, float rectX, float rectY, float rectW, float rectH);
     // M85g: 選択中の PatrolRoute の点の番号・クリック選択・ドラッグ移動 (ドラッグ 1 回 = 1 Undo)。
@@ -295,6 +309,10 @@ private:
     SceneChangeOverlay* changeOverlay_ = nullptr; // M104m2: 所有は EditorApp
     int changeBoxesDrawn_ = 0;
     int changeBoxesOmitted_ = 0;
+    std::vector<DirectX::XMFLOAT3> uncertainBoxMarks_; // 直近のワイヤ箱のうち、帰属が未確認のものの位置
+    std::vector<RemovedGhostCandidate> drawnGhosts_;   // 直近に積んだゴースト (ピックと名前の表示に使う)
+    int ghostsOmitted_ = 0;
+    int ghostsUndrawable_ = 0;
     TilePaletteWindow* tilePalette_ = nullptr; // M94l: 所有は EditorApp
     PickingPass picking_;    // クリック選択 (遅延 Init)
     EditorLinePass lines_;   // グリッド/ワイヤ/アウトライン (遅延 Init)

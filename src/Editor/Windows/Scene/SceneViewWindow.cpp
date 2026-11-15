@@ -572,6 +572,7 @@ void SceneViewWindow::BuildOverlays(EngineContext& ctx, Selection& selection)
     }
 
     AppendChangeBoxes(ctx, lastView_, lastProj_); // M104m2
+    AppendRemovedGhosts(ctx, lastView_, lastProj_); // M104r
     DrawSelectionOutline(ctx, world, selection);
     BuildGhostOverlay(ctx); // M72e
 }
@@ -1707,6 +1708,7 @@ void SceneViewWindow::AppendChangeBoxes(EngineContext& ctx, const XMFLOAT4X4& vi
 {
     changeBoxesDrawn_ = 0;
     changeBoxesOmitted_ = 0;
+    uncertainBoxMarks_.clear();
     if (changeOverlay_ == nullptr || ctx.scene == nullptr) {
         return;
     }
@@ -1731,9 +1733,117 @@ void SceneViewWindow::AppendChangeBoxes(EngineContext& ctx, const XMFLOAT4X4& vi
             lines_.AddWireSphere(c.position, kChangeMarkerRadius, rgba);
         }
         ++changeBoxesDrawn_;
+        if (c.uncertain) {
+            uncertainBoxMarks_.push_back(c.position);
+        }
     }
     changeBoxesOmitted_ = selection.omitted;
     changeOverlay_->NoteWireBoxes(changeBoxesDrawn_, changeBoxesOmitted_);
+}
+
+// 削除されたエンティティのゴースト (M104r)。Before から合成した行列で、今読み込まれているメッシュの半透明 (無ければワイヤ箱、描画の無いものは位置の球) を積む。
+// World・アセットは読むだけ: エンティティを作らず、fileId を採番せず、メッシュを新しく読み込まない
+void SceneViewWindow::AppendRemovedGhosts(EngineContext& ctx, const XMFLOAT4X4& view, const XMFLOAT4X4& proj)
+{
+    drawnGhosts_.clear();
+    ghostsOmitted_ = 0;
+    ghostsUndrawable_ = 0;
+    if (changeOverlay_ == nullptr || ctx.scene == nullptr) {
+        return;
+    }
+    constexpr float kGhostMarkerRadius = 0.25f;
+    const XMFLOAT3 kGhostBoxHalf = { 0.5f, 0.5f, 0.5f };
+    const MeshAvailable meshAvailable = [&ctx](uint64_t meshAsset) {
+        return ctx.resources != nullptr && ctx.resources->meshes.GetDrawable(AssetID{ meshAsset }) != nullptr;
+    };
+    RemovedGhostScan scan;
+    CollectRemovedGhostCandidates(*ctx.scene, *changeOverlay_, view, proj, meshAvailable, scan);
+    RemovedGhostSelection selection = SelectRemovedGhosts(std::move(scan.candidates), kMaxRemovedGhosts);
+    const uint32_t lineRgba = PackOverlayRgba(changeOverlay_->Palette().Get(OverlayColorId::Removed));
+    const uint32_t meshRgba = (lineRgba & 0xFFFFFF00u) | kGhostMeshAlpha;
+    for (const RemovedGhostCandidate& c : selection.chosen) {
+        const Mesh* mesh = (c.shape == GhostShape::Mesh && ctx.resources != nullptr) ? ctx.resources->meshes.GetDrawable(AssetID{ c.meshAsset }) : nullptr;
+        if (mesh != nullptr) {
+            ghostMesh_.Add(mesh, c.world, meshRgba);
+        } else if (c.shape != GhostShape::Marker) {
+            lines_.AddWireBox(c.world, kGhostBoxHalf, lineRgba);
+        } else {
+            lines_.AddWireSphere(c.position, kGhostMarkerRadius, lineRgba);
+        }
+    }
+    drawnGhosts_ = std::move(selection.chosen);
+    ghostsOmitted_ = selection.omitted;
+    ghostsUndrawable_ = scan.undrawable;
+    std::unordered_map<int64_t, uint32_t> notes;
+    for (const RemovedGhostCandidate& c : drawnGhosts_) {
+        notes[static_cast<int64_t>(c.fileId)] = c.notes;
+    }
+    changeOverlay_->NoteGhosts(static_cast<int>(drawnGhosts_.size()), ghostsOmitted_, ghostsUndrawable_, std::move(notes));
+}
+
+int SceneViewWindow::UncertainMarkCount() const
+{
+    int count = static_cast<int>(uncertainBoxMarks_.size());
+    for (const RemovedGhostCandidate& c : drawnGhosts_) {
+        count += c.uncertain ? 1 : 0;
+    }
+    return count;
+}
+
+uint64_t SceneViewWindow::GhostAt(float mouseX, float mouseY, float width, float height) const
+{
+    std::vector<GhostPickTarget> targets;
+    targets.reserve(drawnGhosts_.size());
+    for (const RemovedGhostCandidate& c : drawnGhosts_) {
+        targets.push_back({ c.fileId, c.position });
+    }
+    return HitTestRemovedGhosts(targets, lastView_, lastProj_, width, height, mouseX, mouseY, kGhostPickRadiusPx);
+}
+
+// 変更の強調に添える ImGui の印: 帰属が未確認のものに小さい「?」、ゴーストに名前。world → screen の投影だけで、GPU パスは使わない
+void SceneViewWindow::DrawChangeMarks(const ImVec2& imgPos, const ImVec2& size)
+{
+    if (changeOverlay_ == nullptr || (uncertainBoxMarks_.empty() && drawnGhosts_.empty())) {
+        return;
+    }
+    const XMMATRIX viewProj = XMMatrixMultiply(XMLoadFloat4x4(&lastView_), XMLoadFloat4x4(&lastProj_));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const OverlayColor& removed = changeOverlay_->Palette().Get(OverlayColorId::Removed);
+    const ImU32 nameColor = ImGui::ColorConvertFloat4ToU32(ImVec4(removed.r, removed.g, removed.b, 1.0f));
+    const auto project = [&](const XMFLOAT3& p, ImVec2& out) {
+        const XMVECTOR clip = XMVector4Transform(XMVectorSet(p.x, p.y, p.z, 1.0f), viewProj);
+        const float w = XMVectorGetW(clip);
+        if (w <= 0.01f) {
+            return false;
+        }
+        out = ImVec2(imgPos.x + (XMVectorGetX(clip) / w * 0.5f + 0.5f) * size.x, imgPos.y + (0.5f - XMVectorGetY(clip) / w * 0.5f) * size.y);
+        return true;
+    };
+    const auto drawQuestion = [&](const ImVec2& at) {
+        const ImVec2 ts = ImGui::CalcTextSize(ICON_FA_CIRCLE_QUESTION);
+        const ImVec2 pos(at.x + 6.0f, at.y - 6.0f - ts.y);
+        dl->AddText(ImVec2(pos.x + 1.0f, pos.y + 1.0f), IM_COL32(0, 0, 0, 180), ICON_FA_CIRCLE_QUESTION); // 視認性のための影
+        dl->AddText(pos, IM_COL32(0xF0, 0xD0, 0x50, 0xFF), ICON_FA_CIRCLE_QUESTION);
+    };
+    ImVec2 sp;
+    for (const XMFLOAT3& p : uncertainBoxMarks_) {
+        if (project(p, sp)) {
+            drawQuestion(sp);
+        }
+    }
+    for (const RemovedGhostCandidate& c : drawnGhosts_) {
+        if (!project(c.position, sp)) {
+            continue;
+        }
+        if (c.uncertain) {
+            drawQuestion(sp);
+        }
+        if (!c.name.empty()) {
+            const ImVec2 ts = ImGui::CalcTextSize(c.name.c_str());
+            dl->AddText(ImVec2(sp.x - ts.x * 0.5f + 1.0f, sp.y + 7.0f), IM_COL32(0, 0, 0, 180), c.name.c_str());
+            dl->AddText(ImVec2(sp.x - ts.x * 0.5f, sp.y + 6.0f), nameColor, c.name.c_str());
+        }
+    }
 }
 
 void SceneViewWindow::DrawToolbar(EditorSettings& settings)
@@ -3400,6 +3510,10 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
         }
     }
 
+    if (rt_.IsValid()) {
+        DrawChangeMarks(imgPos, avail); // M104r: 未確認の印・ゴーストの名前
+    }
+
     // クリックでピッキング選択 (ギズモ上・オービット操作中・アイコンヒット時は除外)
     const bool overGizmo = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !overGizmo
@@ -3454,8 +3568,16 @@ void SceneViewWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStac
                 } else {
                     selection.SelectOnly(fid);
                 }
-            } else if (!io.KeyCtrl) {
-                selection.Clear();
+            } else {
+                // M104r: ライブのエンティティに当たらなかったときだけ、削除されたエンティティのゴーストを調べる。
+                // ゴーストは実体が無いので Selection には入れない (Before の読み取り専用の表示を AI Changes 窓で開く)
+                const uint64_t ghostFid = changeOverlay_ != nullptr ? GhostAt(static_cast<float>(px), static_cast<float>(py), avail.x, avail.y) : 0;
+                if (ghostFid != 0) {
+                    changeOverlay_->RequestInspectRemoved(static_cast<int64_t>(ghostFid));
+                }
+                if (!io.KeyCtrl) {
+                    selection.Clear();
+                }
             }
         }
     }

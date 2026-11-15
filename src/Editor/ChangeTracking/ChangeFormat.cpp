@@ -658,6 +658,9 @@ std::string OverlayBadgeTooltip(const OverlayEntity* e, bool descendantOnly)
         if (total > shown) {
             out += std::string("\n  ") + Tr(StrId::AiChg_BadgeMore);
         }
+        if (e->uncertain) {
+            out += std::string("\n") + Tr(StrId::AiChg_BadgeUncertain);
+        }
     }
     if (descendantOnly) {
         out += (out.empty() ? "" : "\n") + std::string(Tr(StrId::AiChg_BadgeDescendant));

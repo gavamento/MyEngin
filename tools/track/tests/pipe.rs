@@ -869,6 +869,11 @@ fn scene_overlay_folds_per_document_honours_after_revision_and_document_for_path
     // a: 1 は元へ戻って消え、2 は削除、3 は追加。b の変更は混ざらない
     let reply = editor.request(22, "scene_overlay", json!({ "documentId": GUID_A })).unwrap();
     assert_eq!(overlay_entities(&reply), vec![(2, "removed".to_string()), (3, "added".to_string())]);
+    // 削除されたエンティティは Before (消える直前の JSON) を持ち、追加されたものは持たない。AI の報告の無い外部の編集は未確認 (M104r)
+    let removed = &reply["result"]["entities"][0];
+    let fragment: Value = serde_json::from_str(removed["before"].as_str().expect("before of the removed entity")).unwrap();
+    assert_eq!((fragment["fileId"].as_i64(), removed["beforeOversize"].as_bool(), removed["uncertain"].as_bool()), (Some(2), Some(false), Some(true)), "{reply}");
+    assert!(reply["result"]["entities"][1].get("before").is_none() && reply["result"]["entities"][1]["uncertain"].as_bool() == Some(true), "{reply}");
     assert_eq!(reply["result"]["incomplete"], false);
     assert!(reply["result"]["latestRevisionId"].as_i64().unwrap() > first);
     let reply = editor.request(23, "scene_overlay", json!({ "documentId": GUID_B })).unwrap();
