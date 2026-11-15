@@ -90,6 +90,9 @@
     <ClCompile Include="..\src\Editor\App\LayoutManager.cpp">
       <Filter>App</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\App\OwnSaveRecord.cpp">
+      <Filter>App</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\App\StartupMoebius.cpp">
       <Filter>App</Filter>
     </ClCompile>
@@ -118,6 +121,12 @@
       <Filter>ChangeTracking</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ReviewManager.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\ReviewSelfTest.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp">
@@ -480,6 +489,9 @@
     <ClInclude Include="..\src\Editor\App\LayoutManager.h">
       <Filter>App</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\App\OwnSaveRecord.h">
+      <Filter>App</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\App\ShortcutHub.h">
       <Filter>App</Filter>
     </ClInclude>
@@ -514,6 +526,9 @@
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\OverlayPalette.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ReviewManager.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h">

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 
 #include "imgui.h"
 #include "fontawesome/IconsFontAwesome6.h"
@@ -31,6 +32,43 @@ ImVec4 ToImVec4(const OverlayColor& c)
 constexpr int kItemMainHeader = -1;
 constexpr int kItemUncertainHeader = -2;
 constexpr int kItemEditorHeader = -3;
+
+// レビューの状態の色 (テーマの意味色。強調の 4 色 (追加・変更・削除・競合) とは別)
+ImVec4 ReviewColor(const std::string& state)
+{
+    if (state == "approved" || state == "partially_approved") {
+        return themeColor::Success;
+    }
+    if (state == "rejected" || state == "partially_rejected") {
+        return themeColor::Error;
+    }
+    if (state == "needs_review") {
+        return themeColor::Warning;
+    }
+    return themeColor::TextDim;
+}
+
+// 詳細の reviewLeaves の最初の葉の種類 (hunk / scene / revision)。無ければ空
+std::string LeafKindOf(const nlohmann::json& detail)
+{
+    if (detail.is_object() && detail.contains("reviewLeaves") && detail["reviewLeaves"].is_array() && !detail["reviewLeaves"].empty()
+        && detail["reviewLeaves"][0].is_object() && detail["reviewLeaves"][0].contains("kind") && detail["reviewLeaves"][0]["kind"].is_string()) {
+        return detail["reviewLeaves"][0]["kind"].get<std::string>();
+    }
+    return std::string();
+}
+
+const char* const kReviewFilters[] = { "", "pending", "approved", "rejected", "needs_review", "partially_approved", "partially_rejected" };
+
+const char* ReviewFilterLabel(const std::string& value)
+{
+    if (value.empty()) {
+        return Tr(StrId::AiChg_FilterAny);
+    }
+    static thread_local std::string cache;
+    cache = ReviewStateLabel(value);
+    return cache.c_str();
+}
 
 const char* const kKindFilters[] = { "", "added", "modified", "deleted", "renamed" };
 const char* const kAttributionFilters[] = { "", "verified", "claimed", "inferred", "unknown" };
@@ -126,6 +164,18 @@ std::vector<DiffHunkInput> ToDiffHunks(const std::vector<TrackHunk>& hunks)
     return out;
 }
 
+void ApplyReviewBadges(std::vector<DiffHunkInput>& input, const std::vector<TrackHunk>& hunks)
+{
+    const size_t n = (std::min)(input.size(), hunks.size());
+    for (size_t i = 0; i < n; ++i) {
+        if (hunks[i].review.empty()) {
+            continue;
+        }
+        input[i].badge = "[" + ReviewStateLabel(hunks[i].review) + "]";
+        input[i].badgeColor = ImGui::GetColorU32(ReviewColor(hunks[i].review));
+    }
+}
+
 void AiChangesWindow::SyncInterest(ChangeModel& model, TrackState state) const
 {
     // 閉じている間は何も取りに行かない。開いていても、サービスと話せない状態では見る部分が無い
@@ -135,6 +185,8 @@ void AiChangesWindow::SyncInterest(ChangeModel& model, TrackState state) const
 
 void AiChangesWindow::ApplyFilter(ChangeModel& model)
 {
+    multi_.clear(); // 一覧の中身が変わる
+    anchor_ = 0;
     TrackListFilter filter;
     if (scope_ == Scope::Session) {
         filter.sessionId = sessionId_;
@@ -147,7 +199,16 @@ void AiChangesWindow::ApplyFilter(ChangeModel& model)
     } else if (!attributionFilter_.empty()) {
         filter.attributions = { attributionFilter_ };
     }
+    filter.review = reviewFilter_;
     model.SetFilter(filter);
+}
+
+void AiChangesWindow::SetReviewFilter(ChangeModel& model, const std::string& state)
+{
+    if (reviewFilter_ != state) {
+        reviewFilter_ = state;
+        ApplyFilter(model);
+    }
 }
 
 void AiChangesWindow::SelectScope(ChangeModel& model, Scope scope, const std::string& sessionId)
@@ -178,7 +239,9 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     const TrackState state = session.State();
     const bool hasData = model.Status().valid && (state == TrackState::Ready || state == TrackState::DbDegraded || state == TrackState::Disconnected);
     if (hasData) {
+        DrawBulkPopup(session);
         DrawSceneBand(session, host);
+        DrawReviewStatus(session);
         ImGui::Separator();
         const float height = (std::max)(ImGui::GetContentRegionAvail().y, 120.0f);
         if (ImGui::BeginTable("##aichg", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp,
@@ -188,9 +251,9 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
             ImGui::TableSetupColumn("##detail", ImGuiTableColumnFlags_WidthStretch, 0.44f);
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            DrawSessions(model);
+            DrawSessions(session);
             ImGui::TableNextColumn();
-            DrawChanges(model);
+            DrawChanges(session);
             ImGui::TableNextColumn();
             DrawDetail(session, host);
             ImGui::EndTable();
@@ -262,8 +325,9 @@ void AiChangesWindow::DrawHeader(ChangeTrackingSession& session, const AiChanges
     }
 }
 
-void AiChangesWindow::DrawSessions(ChangeModel& model)
+void AiChangesWindow::DrawSessions(ChangeTrackingSession& session)
 {
+    ChangeModel& model = session.Model();
     ImGui::TextUnformatted(Tr(StrId::AiChg_Sessions));
     if (!ImGui::BeginChild("##sessionlist", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
         ImGui::EndChild();
@@ -277,6 +341,14 @@ void AiChangesWindow::DrawSessions(ChangeModel& model)
         pick(Scope::Uncertain, std::string());
     }
     ImGui::Separator();
+    // 選んでいるセッション全体へのレビュー (件数を出して 1 回確認する)
+    if (scope_ == Scope::Session && !sessionId_.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvBulkSession));
+        if (const std::optional<ReviewAction> picked = DrawReviewButtons("sessionbulk", session.Review().Busy())) {
+            RequestBulkSession(session, *picked);
+        }
+        ImGui::Separator();
+    }
     const std::vector<TrackSessionRow>& sessions = model.Sessions();
     if (sessions.empty()) {
         ImGui::TextDisabled("%s", Tr(StrId::AiChg_NoSessions));
@@ -285,7 +357,8 @@ void AiChangesWindow::DrawSessions(ChangeModel& model)
     for (const TrackSessionRow& s : sessions) {
         const SessionRowText text = FormatSessionRow(s);
         ImGui::PushID(s.sessionId.c_str());
-        if (ImGui::Selectable("##session", scope_ == Scope::Session && sessionId_ == s.sessionId, 0, ImVec2(0.0f, lineH * 2.0f + 4.0f))) {
+        const float sessionH = lineH * (text.review.empty() ? 2.0f : 3.0f) + 4.0f;
+        if (ImGui::Selectable("##session", scope_ == Scope::Session && sessionId_ == s.sessionId, 0, ImVec2(0.0f, sessionH))) {
             pick(Scope::Session, s.sessionId);
         }
         // 文字は項目の上へ描く (カーソルを動かさない)
@@ -295,13 +368,17 @@ void AiChangesWindow::DrawSessions(ChangeModel& model)
         const std::string tail = text.time + "  " + text.count;
         dl->AddText(ImVec2(min.x + 4.0f, min.y + 1.0f), ImGui::GetColorU32(ImGuiCol_Text), head.c_str());
         dl->AddText(ImVec2(min.x + 4.0f, min.y + 3.0f + lineH), ImGui::GetColorU32(ImGuiCol_TextDisabled), tail.c_str());
+        if (!text.review.empty()) {
+            dl->AddText(ImVec2(min.x + 4.0f, min.y + 5.0f + lineH * 2.0f), ImGui::GetColorU32(ReviewColor(s.review)), text.review.c_str());
+        }
         ImGui::PopID();
     }
     ImGui::EndChild();
 }
 
-void AiChangesWindow::DrawChanges(ChangeModel& model)
+void AiChangesWindow::DrawChanges(ChangeTrackingSession& session)
 {
+    ChangeModel& model = session.Model();
     ImGui::TextUnformatted(Tr(StrId::AiChg_Changes));
 
     // フィルタ: パスは入力を終えたとき、種類と帰属は選んだとき
@@ -335,6 +412,17 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
         ImGui::EndCombo();
     }
     ImGui::EndDisabled();
+    ImGui::TextUnformatted(Tr(StrId::AiChg_RvFilter));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::BeginCombo("##reviewfilter", ReviewFilterLabel(reviewFilter_))) {
+        for (const char* value : kReviewFilters) {
+            if (ImGui::Selectable(ReviewFilterLabel(value), reviewFilter_ == value)) {
+                SetReviewFilter(model, value);
+            }
+        }
+        ImGui::EndCombo();
+    }
     ImGui::Checkbox(Tr(StrId::AiChg_MixSections), &mixUncertain_);
     ImGui::Checkbox(Tr(StrId::AiChg_ShowEditor), &showEditor_);
     if (model.ListIncomplete()) {
@@ -378,6 +466,16 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
     if (hiddenEditor > 0) {
         ImGui::TextDisabled("%s", (std::to_string(hiddenEditor) + " " + Tr(StrId::AiChg_EditorHidden)).c_str());
     }
+    // 複数の行を選んでいるとき: まとめてのレビュー
+    if (multi_.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvMultiHint));
+    } else {
+        ImGui::Text("%d %s", static_cast<int>(multi_.size()), Tr(StrId::AiChg_RvSelectedCount));
+        ImGui::SameLine();
+        if (const std::optional<ReviewAction> picked = DrawReviewButtons("selbulk", session.Review().Busy())) {
+            RequestBulkSelected(session, *picked);
+        }
+    }
 
     if (!ImGui::BeginChild("##changelist", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
         ImGui::EndChild();
@@ -414,8 +512,9 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
             const TrackChangeRow& row = rows[static_cast<size_t>(item)];
             const ChangeRowText text = FormatChangeRow(row);
             ImGui::PushID(static_cast<int>(row.revisionId));
-            if (ImGui::Selectable("##row", model.SelectedRevision() == row.revisionId, 0, ImVec2(0.0f, itemH))) {
-                model.SelectRevision(row.revisionId);
+            if (ImGui::Selectable("##row", model.SelectedRevision() == row.revisionId || multi_.count(row.revisionId) > 0, 0, ImVec2(0.0f, itemH))) {
+                const ImGuiIO& io = ImGui::GetIO();
+                ClickChange(model, row.revisionId, io.KeyCtrl, io.KeyShift);
             }
             // 文字は項目の上へ描く (カーソルを動かさない)。1 行目 = パス、2 行目 = 種類・帰属・印・時刻
             const ImVec2 min = ImGui::GetItemRectMin();
@@ -432,6 +531,7 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
             put(ImGui::GetColorU32(KindColor(row.changeType)), text.kind);
             put(ImGui::GetColorU32(AttributionColor(row.actor == "editor_user" || row.actor == "restore" ? std::string("editor") : row.attribution)),
                 text.attribution);
+            put(ImGui::GetColorU32(ReviewColor(row.review)), text.review.empty() ? std::string() : "<" + text.review + ">");
             put(ImGui::GetColorU32(themeColor::Warning), text.completeness.empty() ? std::string() : "[" + text.completeness + "]");
             put(colDim, text.superseded.empty() ? std::string() : "[" + text.superseded + "]");
             put(colDim, text.time);
@@ -460,6 +560,12 @@ void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChanges
         return;
     }
     const nlohmann::json& d = model.Detail();
+    if (shownRevision_ != model.SelectedRevision()) {
+        shownRevision_ = model.SelectedRevision();
+        selectedHunkId_ = 0;
+        selectedSceneId_ = 0;
+        sceneScope_ = 0;
+    }
     if (model.SelectedRevision() == 0 || !d.is_object()) {
         ImGui::TextDisabled("%s", Tr(StrId::AiChg_SelectRevision));
         ImGui::EndChild();
@@ -477,6 +583,8 @@ void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChanges
     ImGui::TextColored(KindColor(changeType), "%s", KindLabel(changeType).c_str());
     ImGui::SameLine();
     ImGui::TextDisabled("%s", FormatTimeMs(d.value("observedAt", int64_t(0))).c_str());
+
+    DrawReviewPanel(session);
 
     // 帰属: 区分だけでなく、根拠の一覧と候補のセッション
     ImGui::Spacing();
@@ -593,12 +701,24 @@ void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChanges
     }
     // Hunk の入れ替わりのときだけ DiffView の入力を作り直す (毎フレームは作らない)
     if (shownHunksSerial_ != model.HunksSerial()) {
-        diff_.SetHunks(ToDiffHunks(model.Hunks()));
+        std::vector<DiffHunkInput> input = ToDiffHunks(model.Hunks());
+        ApplyReviewBadges(input, model.Hunks());
+        diff_.SetHunks(input);
         shownHunksSerial_ = model.HunksSerial();
+        // レビューのたびに詳細を取り直すので、選んでいた Hunk を ID で探して保つ
+        const std::vector<TrackHunk>& hunks = model.Hunks();
+        for (size_t i = 0; i < hunks.size() && selectedHunkId_ != 0; ++i) {
+            if (hunks[i].hunkId == selectedHunkId_) {
+                diff_.SelectHunk(static_cast<int>(i));
+            }
+        }
     }
+    DrawHunkReview(session);
     const char* empty = Tr(model.HunksFailed() ? StrId::AiChg_HunksFailed
                                                : (model.HunksComplete() ? StrId::AiChg_NoHunks : StrId::AiChg_HunksLoading));
-    diff_.Draw("##diff", empty, 0.0f, 0.0f);
+    if (diff_.Draw("##diff", empty, 0.0f, 0.0f)) {
+        SelectHunkIndex(model, diff_.SelectedHunk());
+    }
     ImGui::EndChild();
 }
 
@@ -765,9 +885,20 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
                     } else if (!text.after.empty()) {
                         line += ": + " + text.after;  // 追加された値
                     }
+                    if (!c.review.empty()) {
+                        line = "<" + ReviewStateLabel(c.review) + "> " + line;
+                    }
                     ImGui::PushID(n);
-                    if (ImGui::Selectable(line.c_str(), false)) {
+                    const bool tinted = c.review == "approved" || c.review == "rejected" || c.review == "needs_review";
+                    if (tinted) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ReviewColor(c.review));
+                    }
+                    if (ImGui::Selectable(line.c_str(), selectedSceneId_ == c.sceneChangeId)) {
+                        selectedSceneId_ = c.sceneChangeId;
                         ActivateSceneChange(c, overlay, host);
+                    }
+                    if (tinted) {
+                        ImGui::PopStyleColor();
                     }
                     ImGui::PopID();
                 }
@@ -776,12 +907,421 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
         }
         ImGui::EndChild();
     }
+    DrawSceneReview(session);
     if (hasActivation_ && lastActivation_ != SceneChangeActivation::Selected && lastActivation_ != SceneChangeActivation::NoEntity) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
         ImGui::TextWrapped("%s", Tr(lastActivation_ == SceneChangeActivation::NotOpen ? StrId::AiChg_SceneNotOpen : StrId::AiChg_EntityGone));
         ImGui::PopStyleColor();
     }
     ImGui::Spacing();
+}
+
+// ---- レビュー (M104o) ----
+
+namespace {
+
+// 構造の変更 1 行に付けられる範囲 (狭い順: フィールド → コンポーネント → エンティティ → Revision 全体)
+std::vector<ReviewTarget> SceneReviewOptions(int64_t revisionId, const TrackSceneChange& change)
+{
+    std::vector<ReviewTarget> options;
+    if (change.hasFileId) {
+        if (!change.field.empty()) {
+            options.push_back(ReviewManager::ForField(revisionId, change.fileId, change.component, change.field));
+        }
+        if (!change.component.empty()) {
+            options.push_back(ReviewManager::ForComponent(revisionId, change.fileId, change.component));
+        }
+        options.push_back(ReviewManager::ForEntity(revisionId, change.fileId));
+    }
+    options.push_back(ReviewManager::ForRevision(revisionId));
+    return options;
+}
+
+bool IsReviewableDetail(const nlohmann::json& detail, int64_t revisionId)
+{
+    return detail.is_object() && detail.contains("reviewable") && detail["reviewable"].is_boolean() && detail["reviewable"].get<bool>()
+           && detail.contains("revisionId") && detail["revisionId"].is_number_integer() && detail["revisionId"].get<int64_t>() == revisionId;
+}
+
+} // namespace
+
+void AiChangesWindow::SetReviewNote(const std::string& note)
+{
+    std::snprintf(reviewNote_, sizeof(reviewNote_), "%s", note.c_str());
+}
+
+void AiChangesWindow::ClickChange(ChangeModel& model, int64_t revisionId, bool ctrl, bool shift)
+{
+    if (ctrl) {
+        if (multi_.empty() && model.SelectedRevision() != 0) {
+            multi_.insert(model.SelectedRevision()); // いま詳細に出している行も選択に入れる
+        }
+        if (multi_.erase(revisionId) == 0) {
+            multi_.insert(revisionId);
+        }
+        anchor_ = revisionId;
+        return;
+    }
+    if (shift && anchor_ != 0) {
+        // 表示順で、起点から押した行までの変更の行
+        const std::vector<TrackChangeRow>& rows = model.Changes();
+        std::vector<int64_t> order;
+        if (items_.empty()) {
+            for (const TrackChangeRow& row : rows) {
+                order.push_back(row.revisionId);
+            }
+        } else {
+            for (const int item : items_) {
+                if (item >= 0 && static_cast<size_t>(item) < rows.size()) {
+                    order.push_back(rows[static_cast<size_t>(item)].revisionId);
+                }
+            }
+        }
+        const auto from = std::find(order.begin(), order.end(), anchor_);
+        const auto to = std::find(order.begin(), order.end(), revisionId);
+        if (from != order.end() && to != order.end()) {
+            multi_.clear();
+            const auto lo = from < to ? from : to;
+            const auto hi = from < to ? to : from;
+            for (auto it = lo; it <= hi; ++it) {
+                multi_.insert(*it);
+            }
+            return;
+        }
+    }
+    multi_.clear();
+    anchor_ = revisionId;
+    model.SelectRevision(revisionId);
+}
+
+bool AiChangesWindow::SubmitReview(ChangeTrackingSession& session, std::vector<ReviewTarget> targets, ReviewAction action)
+{
+    const bool sent = session.Review().Submit(std::move(targets), action, reviewNote_);
+    noteSent_ = sent && reviewNote_[0] != '\0';
+    return sent;
+}
+
+bool AiChangesWindow::ReviewRevision(ChangeTrackingSession& session, ReviewAction action)
+{
+    const ChangeModel& model = session.Model();
+    if (model.SelectedRevision() == 0 || !IsReviewableDetail(model.Detail(), model.SelectedRevision())) {
+        return false;
+    }
+    return SubmitReview(session, { ReviewManager::ForRevision(model.SelectedRevision()) }, action);
+}
+
+void AiChangesWindow::SelectHunkIndex(const ChangeModel& model, int index)
+{
+    const std::vector<TrackHunk>& hunks = model.Hunks();
+    diff_.SelectHunk(index);
+    const int selected = diff_.SelectedHunk();
+    selectedHunkId_ = selected >= 0 && static_cast<size_t>(selected) < hunks.size() ? hunks[static_cast<size_t>(selected)].hunkId : 0;
+}
+
+bool AiChangesWindow::ReviewSelectedHunk(ChangeTrackingSession& session, ReviewAction action)
+{
+    const ChangeModel& model = session.Model();
+    if (model.SelectedRevision() == 0 || !IsReviewableDetail(model.Detail(), model.SelectedRevision()) || LeafKindOf(model.Detail()) != "hunk"
+        || shownHunksSerial_ != model.HunksSerial()) {
+        return false;
+    }
+    const int selected = diff_.SelectedHunk();
+    const std::vector<TrackHunk>& hunks = model.Hunks();
+    if (selected < 0 || static_cast<size_t>(selected) >= hunks.size()) {
+        return false;
+    }
+    return SubmitReview(session, { ReviewManager::ForHunk(model.SelectedRevision(), hunks[static_cast<size_t>(selected)].hunkId) }, action);
+}
+
+void AiChangesWindow::SelectSceneChange(int64_t sceneChangeId)
+{
+    if (selectedSceneId_ != sceneChangeId) {
+        sceneScope_ = 0;
+    }
+    selectedSceneId_ = sceneChangeId;
+}
+
+bool AiChangesWindow::ReviewSelectedScene(ChangeTrackingSession& session, ReviewAction action)
+{
+    const ChangeModel& model = session.Model();
+    if (model.SelectedRevision() == 0 || !IsReviewableDetail(model.Detail(), model.SelectedRevision()) || LeafKindOf(model.Detail()) != "scene") {
+        return false;
+    }
+    for (const TrackSceneChange& change : model.SceneChanges()) {
+        if (change.sceneChangeId != selectedSceneId_) {
+            continue;
+        }
+        const std::vector<ReviewTarget> options = SceneReviewOptions(model.SelectedRevision(), change);
+        const size_t index = (std::min)(static_cast<size_t>((std::max)(sceneScope_, 0)), options.size() - 1);
+        return SubmitReview(session, { options[index] }, action);
+    }
+    return false;
+}
+
+bool AiChangesWindow::RequestBulkSelected(ChangeTrackingSession& session, ReviewAction action)
+{
+    ChangeModel& model = session.Model();
+    std::vector<int64_t> selected(multi_.begin(), multi_.end());
+    if (selected.empty() && model.SelectedRevision() != 0) {
+        selected.push_back(model.SelectedRevision());
+    }
+    int skipped = 0;
+    std::vector<int64_t> ids = ReviewManager::RevisionsOf(model.Changes(), selected, &skipped);
+    if (ids.empty() || session.Review().Busy()) {
+        return false;
+    }
+    session.Review().PrepareRevisions(std::move(ids), skipped);
+    bulkAction_ = action;
+    bulkPending_ = true;
+    bulkOpenRequested_ = true;
+    return true;
+}
+
+bool AiChangesWindow::RequestBulkSession(ChangeTrackingSession& session, ReviewAction action)
+{
+    if (sessionId_.empty() || session.Review().Busy()) {
+        return false;
+    }
+    session.Review().PrepareSession(sessionId_);
+    bulkAction_ = action;
+    bulkPending_ = true;
+    bulkOpenRequested_ = true;
+    return true;
+}
+
+bool AiChangesWindow::ConfirmBulk(ChangeTrackingSession& session)
+{
+    const bool sent = session.Review().CommitPrepared(bulkAction_, reviewNote_);
+    noteSent_ = sent && reviewNote_[0] != '\0';
+    bulkPending_ = false;
+    return sent;
+}
+
+void AiChangesWindow::CancelBulk(ChangeTrackingSession& session)
+{
+    session.Review().CancelPrepared();
+    bulkPending_ = false;
+}
+
+std::optional<ReviewAction> AiChangesWindow::DrawReviewButtons(const char* id, bool busy)
+{
+    std::optional<ReviewAction> picked;
+    constexpr ReviewAction kActions[] = { ReviewAction::Approve, ReviewAction::Reject, ReviewAction::NeedsReview, ReviewAction::Reopen };
+    ImGui::PushID(id);
+    ImGui::BeginDisabled(busy);
+    for (size_t i = 0; i < std::size(kActions); ++i) {
+        if (i > 0) {
+            ImGui::SameLine();
+        }
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::SmallButton(ReviewActionLabel(kActions[i]).c_str())) {
+            picked = kActions[i];
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
+    return picked;
+}
+
+// 送信中・失敗の 1 行 (サービスの応答で確定してから表示を変えるので、結果はここに出す)
+void AiChangesWindow::DrawReviewStatus(ChangeTrackingSession& session)
+{
+    ReviewManager& review = session.Review();
+    if (review.GetStatus() == ReviewManager::Status::Sending) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvSending));
+    } else if (review.GetStatus() == ReviewManager::Status::Done) {
+        if (noteSent_) {
+            reviewNote_[0] = '\0'; // 記録できたメモは消す (失敗のときは残して、やり直せるようにする)
+            noteSent_ = false;
+        }
+    } else if (review.GetStatus() == ReviewManager::Status::Failed) {
+        noteSent_ = false;
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", ReviewErrorText(review.ErrorCode(), review.ErrorDetail()).c_str());
+        const std::string partial = ReviewPartialText(review.RecordedCount(), review.TotalCount());
+        if (!partial.empty()) {
+            ImGui::TextWrapped("%s", partial.c_str());
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::SmallButton(Tr(StrId::Common_Close))) {
+            review.ClearResult();
+        }
+    }
+}
+
+// 選んだ Revision のレビュー: 集約の状態・内訳・操作・メモ・履歴。承認・却下が何をする / しないかを文面で明示する
+void AiChangesWindow::DrawReviewPanel(ChangeTrackingSession& session)
+{
+    const ChangeModel& model = session.Model();
+    const nlohmann::json& d = model.Detail();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(Tr(StrId::AiChg_RvPanel));
+    if (!IsReviewableDetail(d, model.SelectedRevision())) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvNotReviewable));
+        return;
+    }
+    const std::string state = d.contains("review") && d["review"].is_string() ? d["review"].get<std::string>() : std::string();
+    ImGui::SameLine();
+    ImGui::TextColored(ReviewColor(state), "%s", ReviewStateLabel(state).c_str());
+    const std::string counts = ReviewCountsText(ChangeModel::ParseReviewCounts(d.contains("reviewCounts") ? d["reviewCounts"] : nlohmann::json()));
+    if (!counts.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", counts.c_str());
+    }
+    if (const std::optional<ReviewAction> picked = DrawReviewButtons("revision", session.Review().Busy())) {
+        ReviewRevision(session, *picked);
+    }
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##reviewnote", Tr(StrId::AiChg_RvNoteHint), reviewNote_, sizeof(reviewNote_));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", Tr(StrId::AiChg_RvExplainApprove));
+    ImGui::TextWrapped("%s", Tr(StrId::AiChg_RvExplainReject));
+    ImGui::PopStyleColor();
+
+    // 履歴 (古い順)。誰が、は無い (1 人の利用者の記録)
+    ImGui::TextUnformatted(Tr(StrId::AiChg_RvHistory));
+    const nlohmann::json& history = d.contains("reviewHistory") ? d["reviewHistory"] : nlohmann::json();
+    if (!history.is_array() || history.empty()) {
+        ImGui::TextDisabled("  %s", Tr(StrId::AiChg_RvNoHistory));
+        return;
+    }
+    const float lineH = ImGui::GetTextLineHeightWithSpacing();
+    const float height = (std::min)(static_cast<float>(history.size()), 6.0f) * lineH + 6.0f;
+    if (ImGui::BeginChild("##reviewhistory", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(history.size()), lineH);
+        while (clipper.Step()) {
+            for (int n = clipper.DisplayStart; n < clipper.DisplayEnd; ++n) {
+                const nlohmann::json& row = history[static_cast<size_t>(n)];
+                const std::string rowState = row.is_object() && row.contains("state") && row["state"].is_string() ? row["state"].get<std::string>() : std::string();
+                ImGui::PushStyleColor(ImGuiCol_Text, ReviewColor(rowState));
+                ImGui::TextUnformatted(FormatReviewHistoryRow(row).c_str());
+                ImGui::PopStyleColor();
+            }
+        }
+        clipper.End();
+    }
+    ImGui::EndChild();
+}
+
+// 差分の Hunk を選んだときの、その Hunk へのレビュー (葉が Hunk の Revision だけ)
+void AiChangesWindow::DrawHunkReview(ChangeTrackingSession& session)
+{
+    const ChangeModel& model = session.Model();
+    if (!IsReviewableDetail(model.Detail(), model.SelectedRevision()) || LeafKindOf(model.Detail()) != "hunk") {
+        return;
+    }
+    const std::vector<TrackHunk>& hunks = model.Hunks();
+    const int selected = diff_.SelectedHunk();
+    if (selected < 0 || static_cast<size_t>(selected) >= hunks.size() || shownHunksSerial_ != model.HunksSerial()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvHunkNone));
+        return;
+    }
+    const TrackHunk& hunk = hunks[static_cast<size_t>(selected)];
+    ImGui::TextUnformatted(Tr(StrId::AiChg_RvHunkSelected));
+    ImGui::SameLine();
+    ImGui::Text("#%lld", static_cast<long long>(hunk.hunkId));
+    ImGui::SameLine();
+    ImGui::TextColored(ReviewColor(hunk.review), "%s", ReviewStateLabel(hunk.review).c_str());
+    if (const std::optional<ReviewAction> picked = DrawReviewButtons("hunk", session.Review().Busy())) {
+        ReviewSelectedHunk(session, *picked);
+    }
+}
+
+// シーンの変更の行を選んだときの、その行へのレビュー。範囲は狭い順に選べる (フィールド / コンポーネント / エンティティ / 変更全体)
+void AiChangesWindow::DrawSceneReview(ChangeTrackingSession& session)
+{
+    const ChangeModel& model = session.Model();
+    if (!IsReviewableDetail(model.Detail(), model.SelectedRevision()) || LeafKindOf(model.Detail()) != "scene") {
+        return;
+    }
+    const TrackSceneChange* selected = nullptr;
+    for (const TrackSceneChange& change : model.SceneChanges()) {
+        if (change.sceneChangeId == selectedSceneId_) {
+            selected = &change;
+        }
+    }
+    if (selected == nullptr) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvSceneNone));
+        return;
+    }
+    ImGui::TextUnformatted(Tr(StrId::AiChg_RvSceneSelected));
+    ImGui::SameLine();
+    ImGui::TextColored(ReviewColor(selected->review), "%s", ReviewStateLabel(selected->review).c_str());
+    const std::vector<ReviewTarget> options = SceneReviewOptions(model.SelectedRevision(), *selected);
+    sceneScope_ = (std::min)((std::max)(sceneScope_, 0), static_cast<int>(options.size()) - 1);
+    const ReviewTarget& current = options[static_cast<size_t>(sceneScope_)];
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    if (ImGui::BeginCombo("##scenescope", ReviewScopeLabel(current.kind, current.ref).c_str())) {
+        for (size_t i = 0; i < options.size(); ++i) {
+            if (ImGui::Selectable(ReviewScopeLabel(options[i].kind, options[i].ref).c_str(), static_cast<int>(i) == sceneScope_)) {
+                sceneScope_ = static_cast<int>(i);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvSceneScope));
+    if (const std::optional<ReviewAction> picked = DrawReviewButtons("scene", session.Review().Busy())) {
+        ReviewSelectedScene(session, *picked);
+    }
+}
+
+// まとめてのレビューの確認 (件数を出して 1 回だけ)
+void AiChangesWindow::DrawBulkPopup(ChangeTrackingSession& session)
+{
+    if (!bulkPending_) {
+        return;
+    }
+    ReviewManager& review = session.Review();
+    if (bulkOpenRequested_) {
+        ImGui::OpenPopup(Tr(StrId::AiChg_RvConfirmTitle));
+        bulkOpenRequested_ = false;
+    }
+    if (!ImGui::BeginPopupModal(Tr(StrId::AiChg_RvConfirmTitle), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.0f);
+    bool canRecord = false;
+    switch (review.GetCollect()) {
+    case ReviewManager::Collect::Collecting:
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvCollecting));
+        break;
+    case ReviewManager::Collect::Failed:
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_RvCollectFailed));
+        ImGui::PopStyleColor();
+        break;
+    case ReviewManager::Collect::Ready:
+        if (review.PreparedRevisions().empty()) {
+            ImGui::TextUnformatted(Tr(StrId::AiChg_RvNothingToReview));
+        } else {
+            ImGui::TextUnformatted(ReviewConfirmText(review.PreparedRevisions().size(), review.PreparedSkipped(), bulkAction_).c_str());
+            canRecord = true;
+        }
+        break;
+    case ReviewManager::Collect::None:
+        break;
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvExplainApprove));
+    ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvExplainReject));
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::BeginDisabled(!canRecord || review.Busy());
+    if (ImGui::Button(Tr(StrId::AiChg_RvConfirmOk))) {
+        ConfirmBulk(session);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(Tr(StrId::Common_Cancel))) {
+        CancelBulk(session);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 } // namespace mye

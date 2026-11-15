@@ -25,8 +25,9 @@
 | sub-12 (M104m) シーンの変更の集約、一覧、Hierarchy のバッジ、選択の同期 | OK | 0 | 235887d9 | nit: 強調の入・切の保存は sub-24、pipe.rs の unused_mut は次に tools/track を触るサブ、cache/m104m_shots の古いログは残置。未確認: 見た目の目視 (cache/m104m_shots の 4 枚)、実 Editor の操作。Notion Q-28〜30 |
 | sub-24 (M104m2) Inspector の Field 差分、Scene View のワイヤ箱、色の設定 | OK | 0 | 98355cb7 | should: Debug の changetracking が負荷で落ちる (既存の実時間依存。planner も 5/5 で再現) → sub-25 で直す。Debug での新規試験の通過は sub-25 の後に planner が確かめ直す。nit: 箱の可視判定は原点だけ (sub-19 で見直す)、名前・タグの印なし。未確認: 見た目の目視 (cache/m104m2_shots の 3 枚)。Notion Q-31〜33 |
 | sub-25 (M104m3) 追跡クライアントの試験から実時間への依存を外す | OK | 0 | d1d4d8e7 | 負荷下の Debug changetracking 20/20 (coder)、planner も 6/6。sub-24 の新規試験の Debug 通過も確認。nit: Poll 1 回の実時間の計測は sub-19、pipe.rs の unused_mut は残り。別件: Debug の physics スイートがスタックオーバーフロー (D38。M104 では直さず、sub-14 の Debug は physics を除く)。Notion Q-34〜35 |
-| sub-13 (M104n) 未保存シーンへの外部変更の確認 | OK | 0 | (このコミット) | replay_verify PASS、Release --selftest-full 125 スイート、Debug は physics を除く 124 (いずれも coder)。should: 自分の保存で確認が出る件は sub-14。nit: Debug の Editor.exe のビルドし直しと ADR-039 の文面は sub-14。未確認: 実 Editor の操作、モーダルの目視 (cache/m104n_shots)。Notion Q-36〜38 |
-| sub-14 (M104o) レビュー | 実装中 | 0 | | 着手可 (sub-13 の VERDICT で詳細化)。Phase 3〜4 の横断の検証 (A20) を回す。Debug は physics を除く (D38) |
+| sub-13 (M104n) 未保存シーンへの外部変更の確認 | OK | 0 | 42a1b552 | replay_verify PASS、Release --selftest-full 125 スイート、Debug は physics を除く 124 (いずれも coder)。should: 自分の保存で確認が出る件は sub-14。nit: Debug の Editor.exe のビルドし直しと ADR-039 の文面は sub-14。未確認: 実 Editor の操作、モーダルの目視 (cache/m104n_shots)。Notion Q-36〜38 |
+| sub-14 (M104o) レビュー | OK | 0 | (このコミット) | round 1 で OK。操作全体の一括の導線と、ファイル単位の集約表示は sub-15 へ。Rust 側の時間依存の試験の揺れは sub-26 へ |
+| sub-26 (M104o2) サービス側の時間に依存する試験を、機械の負荷に強くする | 実装中 | 0 | | sub-14 の VERDICT で新設 (D39)。tools	rack だけ。sub-15 の前に行う |
 | sub-15 (M104p) ファイルと Hunk の復元、ジャーナル、回復 | 未着手 | | | 骨子。分割の可能性あり |
 | sub-16 (M104q) ライブのシーンの復元 | 未着手 | | | 骨子。Phase 5 の最後 |
 | sub-17 (M104r) 削除エンティティのゴースト、Overlay | 未着手 | | | 骨子。着手前に Phase 6 へ進むかユーザー確認 |
@@ -76,4 +77,5 @@
 - planner (2026-11-15、sub-09 の VERDICT): sub-23 (M104k2) を足した。順序は sub-10 → sub-23 → sub-11。sub-23 は骨子で、sub-10 の VERDICT で詳細にする。
 - planner (2026-11-15、sub-11 の VERDICT): sub-24 (M104m2) を足した。Phase 3 の順序は sub-12 → sub-24 → sub-13、その後 sub-14。sub-24 は骨子で、sub-12 の VERDICT で詳細にする。
 - planner (2026-11-15、sub-24 の VERDICT): sub-25 (M104m3) を足した。順序は sub-24 → sub-25 → sub-13 → sub-14。sub-25 が済むまで、Debug の `Editor.exe --selftest` は機械が重いと `changetracking` で落ちる (sub-24 までの検証で Debug が赤く見えても、まず機械の負荷を見ること)。
+- planner (2026-11-15、sub-14 の VERDICT): sub-26 (M104o2) を足した。順序は sub-14 → sub-26 → sub-15。sub-26 が済むまで、`cargo test` (track) の全体は機械が重いと 1 件ずつ落ちることがある (落ちた試験が `tests\watch.rs` / `tests\pipe.rs:811` なら既知)。planner は sub-26 の VERDICT で Phase 5 (sub-15、16) を詳細にする。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。

@@ -98,6 +98,10 @@ std::vector<TrackSessionRow> ChangeModel::ParseSessions(const nlohmann::json& re
         row.startedAt = Int(item, "startedAt", 0);
         row.endedAt = Int(item, "endedAt", -1);
         row.changeCount = Int(item, "changeCount", 0);
+        const nlohmann::json& review = Child(item, "review");
+        row.review = Str(review, "state");
+        row.reviewCounts = ParseReviewCounts(Child(review, "counts"));
+        row.reviewTruncated = Bool(review, "truncated");
         rows.push_back(std::move(row));
     }
     return rows;
@@ -162,6 +166,7 @@ std::vector<TrackHunk> ChangeModel::ParseHunks(const nlohmann::json& result)
         h.beforeBytes = Int(item, "beforeBytes", 0);
         h.afterBytes = Int(item, "afterBytes", 0);
         h.state = Str(item, "state");
+        h.review = Str(item, "review");
         rows.push_back(std::move(h));
     }
     return rows;
@@ -194,9 +199,20 @@ std::vector<TrackSceneChange> ChangeModel::ParseSceneChanges(const nlohmann::jso
         c.oversize = Bool(item, "oversize");
         c.beforeBytes = Int(item, "beforeBytes", 0);
         c.afterBytes = Int(item, "afterBytes", 0);
+        c.review = Str(item, "review");
         rows.push_back(std::move(c));
     }
     return rows;
+}
+
+TrackReviewCounts ChangeModel::ParseReviewCounts(const nlohmann::json& counts)
+{
+    TrackReviewCounts out;
+    out.pending = Int(counts, "pending", 0);
+    out.approved = Int(counts, "approved", 0);
+    out.rejected = Int(counts, "rejected", 0);
+    out.needsReview = Int(counts, "needsReview", 0);
+    return out;
 }
 
 void ChangeModel::MarkStale(TrackPart part, bool force)
@@ -238,6 +254,19 @@ void ChangeModel::OnNotification(const nlohmann::json& event)
         MarkStale(TrackPart::Status);
     } else if (name == trackevent::kSessionChanged) {
         MarkStale(TrackPart::Sessions);
+    } else if (name == trackevent::kReviewChanged) {
+        // 一覧の集約・セッションの集約・(選んでいる Revision の) 詳細の葉の状態が変わる
+        MarkStale(TrackPart::List);
+        MarkStale(TrackPart::Sessions);
+        const nlohmann::json& ids = Child(event, "revisionIds");
+        if (selected_ != 0 && ids.is_array()) {
+            for (const nlohmann::json& id : ids) {
+                if (id.is_number_integer() && id.get<int64_t>() == selected_) {
+                    MarkStale(TrackPart::Detail);
+                    break;
+                }
+            }
+        }
     } else if (name == trackevent::kResync) {
         // 通知を取りこぼした: 何が変わったか分からないので、全部をすぐ取り直す
         for (const TrackPart part : { TrackPart::Status, TrackPart::Sessions, TrackPart::List, TrackPart::Detail }) {
@@ -245,6 +274,13 @@ void ChangeModel::OnNotification(const nlohmann::json& event)
         }
     }
     // shutting_down は何もしない (接続が切れれば OnDisconnected)
+}
+
+void ChangeModel::Refresh()
+{
+    MarkStale(TrackPart::List);
+    MarkStale(TrackPart::Sessions);
+    MarkStale(TrackPart::Detail);
 }
 
 void ChangeModel::SetFilter(const TrackListFilter& filter)

@@ -1,7 +1,7 @@
 # sub-14: レビュー (M104o)
 
 - 依存: sub-24、sub-13 (順序は sub-24 → sub-25 → sub-13 → sub-14)
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-15、sub-13 の VERDICT で planner が書き直した)。Phase 4 はこの 1 本で、Phase 3〜4 の横断の検証 (A20) もここで回す。
 - 質問の運用: 推奨で進め、Notion に後回し。着手前の確認は無い。
@@ -117,4 +117,71 @@
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-14 (round 1)
+
+実装:
+  - tools\track\src\review.rs (新規) — 葉の今の状態 (`LatestIndex`。範囲の広さでなく新しさ、`reopened` = pending)、集約 (`Counts::aggregate`)、葉の読み出し (構造の変更 → Hunk → Revision 自身)、`describe_fields`、`group_counts` (変更 / 操作 / セッション)、`apply_event` (`reviews` へ追記)。単体試験 5 件。
+  - tools\track\src\ops_record.rs:review_set — `role = editor` だけ。targets 1〜1000 件、scope の ref を正規形だけ受ける、Revision・Hunk・fileId・コンポーネント・フィールドの実在を DB で確かめてから、1 つの `review_set` イベントとして `record_and_apply`。1 件でも不正なら何も記録しない。
+  - tools\track\src\{session.rs,revision.rs,protocol.rs,server.rs,lib.rs} — `review_set` を `apply_event` / 作り直し (`reviews` を先に消して入れ直す) / `IMPLEMENTED_OPS` / `role_allows` / 配線 / 通知名 `review_changed` に足した。
+  - tools\track\src\ops.rs — `describe` (reviewable / review / reviewCounts / reviewLeaves / reviewHistory / changeReview / operationReview、hunks に hunkId と review)、`hunks` と `scene_diff` の各要素に review、`list` の各行の review (集約。対象外は null) と `review` フィルタ (集約の 6 状態。1 回に 2000 Revision まで読み、上限なら読んだ所までと続きの cursor)、`sessions` の各行に review (集約と件数)。
+  - tools\track\src\notify.rs — `review_changed` (1 回の引きで 1 件、`revisionIds`)。
+  - tools\track\src\scene_overlay.rs — 承認済みの構造の変更を強調から外す (`excludeApproved` 既定 true、`approvedHidden`)。
+  - tools\track\tests\review.rs (新規 14 件)、tools\track\tests\pipe.rs (`unused_mut` を直した)、tests\track\27_review.ndjson (新規シナリオ。mcp / hook の forbidden を含む)、tests\track\*.expected.ndjson (11 本を撮り直し。追加の項目だけ)。
+  - src\Editor\ChangeTracking\ReviewManager.h/.cpp (新規) — `Submit` (1000 件ごとに分けて 1 件ずつ送る、応答を待って次へ。失敗で止め、記録済みの件数を持つ)、`PrepareRevisions` / `PrepareSession` (list を最後まで引く。集めきれなければ全体を失敗にして何も記録しない) / `CommitPrepared`、対象の組み立て (`ForHunk` / `ForEntity` / `ForComponent` / `ForField` / `ForSceneChange` / `RevisionsOf`)。切断・無効なら I/O を呼ばず失敗にする。
+  - src\Editor\ChangeTracking\{ChangeModel,ChangeFormat,ChangeTrackingSession,TrackProtocol,SceneChangeOverlay}.* — 応答の解釈 (review 項目)、`Refresh`、`review_changed` で一覧・セッション・(選択中なら) 詳細・オーバーレイを取り直す、購読に `review_changed`、整形 (状態 6 種・件数・範囲・履歴の行・確認文・失敗文、英日)。
+  - src\Editor\Windows\Project\AiChangesWindow.* — 詳細のレビュー欄 (状態・内訳・4 操作・メモ・履歴・「承認は何もしない / 却下は消さない」の文面)、Hunk の選択と操作 (見出しに状態、取り直しても選択を ID で保つ)、シーンの変更の行の操作 (範囲を フィールド / コンポーネント / エンティティ / 変更全体 から選ぶ)、一覧の行・セッションの行に集約、`review` の絞り込み、Ctrl / Shift クリックの複数選択、セッション全体 / 選択のまとめては件数つきの確認 1 回、送信中・失敗の 1 行 (editor_user / restore の変更には操作を出さない)。
+  - src\Editor\Widgets\DiffView.* — `DiffHunkInput` に `badge` / `badgeColor` (見出しの右に状態を出す。追跡には依存しない)。
+  - src\Editor\App\OwnSaveRecord.h/.cpp (新規)、EditorApp.h/.cpp — C の 1: 保存の直後にファイルの大きさと更新時刻を控え、保留のシーンが同じ印なら確認を出さず `DiscardPendingScene`。外から書き換えられていれば印が違うので確認が出る。
+  - src\Engine\Core\Localization\LocalizationTable.inl — `AiChg_Rv*` 48 件 (英日)。
+  - src\Editor\ChangeTracking\ReviewSelfTest.cpp (新規。`changetracking` スイートへ) — 対象の組み立て / 分割 / 1 件ずつ送る / 失敗で表示を変えない / 時間切れ / 無効で I/O ゼロ / セッションの収集 / 文面 (英日) / 通知 / 窓 (ヘッドレスの ImGui フレーム) / 自分の保存の印。
+  - docs: db-schema.md §3.4、ipc-contract.md §4.6 と通知、ADR-039 の「影響」と architecture.md §8・§9 (口 1 つ + 保留の操作。自分の保存の確認の回避)、engine_spec.md §9.2、test_checklists.md、plans\m104-ai-change-tracking.md の進捗表。build\Editor.vcxproj(.filters) は `gen_project_files.ps1` の再生成 (新規 4 ファイル)。
+
+仕様との差分:
+  - [追加] `review_set` は行為者が `editor_user` / `restore` の Revision を `bad_args` で断る (仕様は集約に数えないとだけ。Editor は操作を出さないが、サービス側でも対象外を弾く)。
+  - [追加] 構造の変更を持つ Revision への `hunk` 範囲は `bad_args` (葉は構造の変更で、Hunk への記録は状態に効かず黙って無意味な行になるため)。構造の変更が無い Revision の `entity` などは `not_found`。
+  - [追加] `list` の `review` フィルタは集約の 6 状態だけ (旧 `reopened` は受けない)。集約の読み出しの上限: list は 2000 Revision / 1 回、変更・操作・セッションの集約は 5000 Revision (超えたら `truncated`)。
+  - [追加] `scene_overlay` に `excludeApproved` (既定 true) と `approvedHidden`。`describe` の hunks に `hunkId`。
+  - [追加] `ChangeModel::Refresh`、`DiffHunkInput.badge / badgeColor` (DiffView を触った)、`OwnSaveRecord` (新規ファイル)。EditorApp の `NoteFileSaved` が全ての保存で印を控える (stat だけ)。
+  - [未実装] 「操作全体」を窓から選んでまとめて承認する導線 (操作 ID を選ぶ画面が無い)。サービスは `operationReview` を返し、`ReviewManager::PrepareRevisions` は任意の Revision 集合を受けるので、足すのは導線だけ。
+  - [未実装] 変更 (ファイル) 単位・操作単位の集約を窓に出すこと (サービスは `changeReview` / `operationReview` を返すが、窓は Revision・セッションの集約だけを出す)。
+  - [未実装] MCP からの `review_set` の道具 (仕様どおり足さない)。`tools\mcp\src` は変えていない (`mcp_verify` は回していない)。
+
+検証:
+  - cargo test --manifest-path tools\track\Cargo.toml → 13 本 265 件 OK、警告 0 (`unused_mut` も解消。新規 `tests\review.rs` は 14 件 + `review.rs` の単体 5 件)。
+  - tools\build_track.bat Release → tools\track_verify.bat → 27 シナリオ全部 PASS (27_review 新規。11 本の期待値は追加項目だけの差で、削除・値の変更は 0 を機械で確認)。実行後 mye_track.exe なし。
+  - cargo test --manifest-path tools\mcp\Cargo.toml (--target-dir cache\track_verify\mcp_target) → 58 件 OK。tools\mcp_verify.bat は未実行 (tools\mcp\src を変えていない。MCP が絡む track_verify の 16 / 17 は撮り直し済みで PASS)。
+  - MyEngine.sln を Debug|x64 と Release|x64 で `/p:MyeWarnAsError=true` ビルド → 成功 (警告 0)。スクショ用のプローブ (ReviewProbe.h と EditorApp の差し込み) を外したあとにもう一度。Editor.exe は Debug (16:00) / Release (16:08) とも最後のソースの変更 (15:29) より新しい (C の 3)。
+  - MYE_SELFTEST_ONLY=changetracking の Debug --selftest → ALL PASS (新規の試験を含む、FAIL 0)。
+  - Release の `Editor.exe --selftest-full` → 125 スイート 0 失敗 (227 秒)。Debug は `--selftest-list` のスイート名 124 個 (`physics` だけ除く。D38) を `MYE_SELFTEST_ONLY` に並べて `--selftest` → 124 スイート 0 失敗 (668 秒)。どちらも実行後に mye_track.exe なし。**Debug の physics は除いた (既知の別件。調べていない)**。
+  - tools\replay_verify.bat → [PASS] (24 ジョブ、17 シーン)。追跡の有効・無効で結果が変わらない根拠: replay_verify は非対話起動で `allowChangeTracking` が偽 → 設定が有効でも追跡のコードは I/O をしない (sub-09 の条件 2、3。`disabled` の試験)。加えて changeTrackingEnabled = true の一時プロジェクト (`%TEMP%\mye_m104o_proj`、`LOCALAPPDATA` を一時の場所へ向けてプロジェクト一覧を汚さない) を Release の `Editor.exe --project <dir> --frames 60` で非対話起動 → 終了コード 0、実行中 (12 秒間 100 ms おきに監視) も後も mye_track.exe なし、`.mye\ai_changes\` なし。
+  - pwsh tools\check_rules.ps1 → 0 error (警告 66 は既存のみ)。pwsh tools\check_rules_selftest.ps1 → FAIL なし。
+  - git diff ca6a3991 -- src\Shared src\Scripting\Interop.cs → 空。git diff --stat ca6a3991 -- src\Engine → LocalizationTable.inl と HotReload\ReloadHub.{h,cpp} / ReloadHubSelfTest.cpp だけ。Runtime / Server / GameLogic に差分なし。ABI・SimSnapshot・TypeId は変えていない。
+  - スクショ (一時のプローブ + Release の `Editor.exe --frames 40 --shot-frame 36 --screenshot`。プローブは外した): C:\HAL\MyEngin\cache\m104o_shots\ の 1_detail_ja.png (詳細のレビュー欄・履歴・Hunk の操作)、2_hunks_ja.png (Hunk ごとの状態・選択)、3_list_ja.png (一覧と「一部承認 / 未確認 2 / 承認済み 3 / 却下 1」のセッション)、4_bulk_ja.png と 4_bulk_en.png (まとめての確認)、5_detail_en.png / 5_hunks_en.png (英語)。撮れた・文字が切れていない・化けていない、まで確認した。**見た目の合否はユーザーの目視 (未確認)**。画面は偽のサービスの応答 (FakeIo) で描いたもので、実サービスと実 Editor の操作は未確認。
+
+自己採点 (1-5):
+  仕様適合: 4 — 受け入れ条件 1〜12・14・15 は機械で確認。「操作全体」の一括の導線と、変更・操作の集約の窓表示は入れていない ([未実装] に明記)。見た目 (条件 13) は目視待ち。
+  正しさ: 4 — サービスは実 DB の結合試験 (別 Revision への非継承・追記だけ・新しさ・集約・何も変えない・作り直し・役割・overlay) と pipe 越しのシナリオで確認。Editor は偽の I/O と窓の描画で確認。実 Editor を人が操作する確認 (実サービスとの組み合わせ、自分の保存の確認が実際に出なくなること) は未実施。
+  コード品質: 4 — 状態の決め方と集約は DB に触れない純粋な関数に切り出して 1 か所。`list` の `review` フィルタの走査上限と cursor は新しい仕組みなので、大量の Revision での実測はしていない。
+  テスト: 4 — 受け入れ条件ごとに試験があり (Rust 19 件、Editor の新規試験、シナリオ 27)、全スイートを回した。実サービスを Editor から叩く結合 (`MYE_TRACK_PROBE`) にはレビューを足していない。
+
+不安・質問:
+  - 「操作全体」のまとめて承認の導線を、このサブで足すか後続に回すか (planner の判断)。足すなら窓の詳細に「この操作の変更をまとめてレビュー」を置く形で、`PrepareRevisions` を使える。
+  - `review_set` を `editor_user` / `restore` の Revision に対して拒否する判断 (上の [追加] の 1 つ目) で良いか。復元 (sub-15) が `restore` の Revision へレビューを付ける要求を持つなら戻す。
+  - 変更 (ファイル) 単位の集約を窓のどこに出すか (一覧は Revision 単位なので、Change 単位の見出しが要る)。
+
+触ったファイル: (上の「実装」の一覧。生成物 `build\Editor.vcxproj(.filters)` を除く)
+  tools\track\src\{review.rs(新規),ops.rs,ops_record.rs,notify.rs,protocol.rs,revision.rs,scene_overlay.rs,server.rs,session.rs,lib.rs}、tools\track\tests\{review.rs(新規),pipe.rs}、tests\track\{27_review.ndjson,27_review.expected.ndjson(新規),06,11,12,14,15,16,17,18,24,25,26 の expected.ndjson}、src\Editor\ChangeTracking\{ReviewManager.h,ReviewManager.cpp,ReviewSelfTest.cpp(新規),ChangeModel.h/.cpp,ChangeFormat.h/.cpp,ChangeTrackingSession.h/.cpp,ChangeTrackingSelfTest.h/.cpp,SceneChangeOverlay.cpp,TrackProtocol.h}、src\Editor\Windows\Project\AiChangesWindow.h/.cpp、src\Editor\Widgets\DiffView.h/.cpp、src\Editor\App\{OwnSaveRecord.h,OwnSaveRecord.cpp(新規),EditorApp.h,EditorApp.cpp}、src\Engine\Core\Localization\LocalizationTable.inl、docs\adr\ADR-039-ai-change-tracking.md、docs\ai-change-tracking\{architecture.md,db-schema.md,ipc-contract.md}、docs\test_checklists.md、engine_spec.md、plans\m104-ai-change-tracking.md、plans\m104-ai-change-tracking\sub-14.md (実装メモ)
+
+消した・止めたもの: 止めたプロセスなし (自分が起動した Editor.exe / mye_track.exe は全部自然に終了。実行後の mye_track.exe は 0)。消したのは自分が作った物だけ: %TEMP%\mye_m104o_proj、%TEMP%\mye_m104o_localappdata、src\Editor\ChangeTracking\ReviewProbe.h (スクショ用のプローブ)。既存の %TEMP%\mye_track_*、%TEMP%\mye_m104b\、tools\mcp\target\release\、cache\m104*_shots の既存分には触っていない。cache\m104o_shots\ と cache\m104o_*.out / .err は残した (コミットしない生成物)。
+
+申し送り:
+  - sub-15 (復元) へ: 復元の状態 (`changes.state` / `change_hunks.state` / `scene_changes.state`) には触れていない。レビューの `reviews` は `events` から作り直せるので、復元が Revision を足すときは行為者を `restore` にすれば集約に数えられない。
+  - ユーザーの目視が要る: cache\m104o_shots の 7 枚 (偽の応答で描いたもの)、実サービス + 実 Editor でのレビュー操作 (docs\test_checklists.md の M104o)、自分の保存の直後に編集を続けても確認が出ないこと。
+  - nit: `ReviewSelfTest` の窓の試験は FakeIo の応答に依存する。サービスが返す項目を変えたら、Rig の応答も合わせる。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `Editor` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、基点からの `src\Engine` の差分は `LocalizationTable.inl` と `HotReload\ReloadHub.*` だけ、`src\Shared` / `Interop.cs` / Runtime / Server / GameLogic に差分なし、スキーマ (`v1.sql`〜`v3.sql`) と `tools\mcp` に差分なし (移行は足していない)、スクショ用のプローブ (`ReviewProbe.h`) の残りなし、Debug / Release の `Editor.exe` は最後のソースの変更より新しい。planner の実走: `tools\track_verify.bat` 全シナリオ PASS。`cargo test` (track) は 5 回中 2 回が 265 件全部通過、**3 回は sub-14 より前からある試験が 1 件ずつ落ちた** (`tests\pipe.rs:811`、`tests\watch.rs:988`、`tests\watch.rs:780`。毎回違う。機械はユーザーの別のプログラムで重かった)。sub-14 が足した試験 (`tests\review.rs` 14 件ほか) は 5 回とも失敗していない。Editor 側 (ビルド、`changetracking`、`--selftest-full`、`replay_verify`、check_rules、スクショ) は coder の結果による (planner は Rust 側の揺れの確認に時間を使い、再実行していない)。
+  - Rust 側の揺れは sub-14 の変更によるものではないと見て、sub-14 は OK。直しは新しい sub-26 (M104o2) で、復元 (sub-15) の前に行う (spec §2 D39)。
+  - 追加・未実装の判定: `editor_user` / `restore` の Revision への `review_set` を断る、構造の変更を持つ Revision への hunk 範囲を断る、`list` の `review` フィルタを集約の 6 状態にする、読み出しの上限、`excludeApproved`、`DiffHunkInput` の `badge`、`OwnSaveRecord`、は全部採る。「操作全体」のまとめての導線と、変更 (ファイル) 単位の集約の表示が無いのは、要求 §10.2 の単位 (Operation / File) に対して足りないので、sub-15 で窓を触るときに足す (小さい追加)。
+  - 質問への回答: (1) 操作全体のまとめての導線は sub-15 で足す (詳細の列に「この操作の変更をまとめてレビュー」)。(2) `editor_user` / `restore` への `review_set` を断るのはそのままでよい。復元が作る Revision にレビューを付ける要求は無い。(3) 変更 (ファイル) 単位の集約は、詳細の列の見出しに「このファイルの全 Revision」の状態と件数として出す (sub-15 で)。
+  - 未確認: 実サービス + 実 Editor でのレビューの操作、自分の保存の直後に確認が出ないことの実機の確認、スクショ 7 枚の見た目 (ユーザーの目視)。

@@ -228,6 +228,11 @@ void SceneChangeOverlay::OnNotification(const nlohmann::json& event)
         if (!documentId_.empty()) {
             MarkStale(false);
         }
+    } else if (name == trackevent::kReviewChanged) {
+        // 承認された構造の変更は強調から外れる (サービスが返さなくなる)。どの文書の Revision かは通知に無いので、開いている文書は取り直す
+        if (!documentId_.empty()) {
+            MarkStale(false);
+        }
     } else if (name == trackevent::kResync) {
         needDocument_ = !docPath_.empty();
         documentRetryAtMs_ = 0;

@@ -23,6 +23,10 @@ void RunChangeViewSelfTests(const std::function<void(bool, const char*)>& check)
 // 実際に Hierarchy を描いて、バッジの数・World が変わらないこと・取り直しの契機を確かめる。RunChangeTrackingSelfTest の末尾から呼ぶ
 void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>& check);
 
+// レビュー (承認・却下・要確認・再開) の Editor 側 (M104o) の回帰テスト (ReviewSelfTest.cpp)。対象の組み立て (1000 件ごとに分ける) / 失敗・時間切れで
+// 表示を先に変えないこと / まとめての確認 / 文面 (英日) / 窓 (ヘッドレスの ImGui フレーム) / 自分の保存の印。RunChangeTrackingSelfTest の末尾から呼ぶ
+void RunReviewSelfTests(const std::function<void(bool, const char*)>& check);
+
 // 描画バックエンドの無い ImGui の文脈を 1 つ作り、フレームを 1 つ回して捨てる (frame の中で窓を描く試験用)。
 // 既にある文脈 (Editor 本体) には触らず、終わったら元へ戻す
 void WithHeadlessImGuiFrame(const std::function<void()>& frame);

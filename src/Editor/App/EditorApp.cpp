@@ -756,6 +756,7 @@ void EditorApp::SaveActorEdit(EngineContext& ctx)
 void EditorApp::NoteFileSaved(const std::wstring& absPath)
 {
     scm_.HintSaved(absPath);
+    ownSave_.Note(absPath);
     // 追跡が接続中のときだけ中で動く (無効・非対話起動・切断中は何もしない)
     changeTracking_.NoteSaved(absPath);
 }
@@ -2386,6 +2387,11 @@ void EditorApp::DrawExternalSceneChangeModal(EngineContext& ctx)
         break;
     }
 
+    // 保留の正体が自分の保存の監視イベントなら (控えた大きさと更新時刻が同じ)、確認を出さずに捨てる。
+    // ライブのシーンは保存の内容 + その後の編集なので、読み込む必要が無い。外から書き換えられていれば印が違うので確認になる
+    if (ctx.reloadHub->HasPendingScene() && ownSave_.MatchesNow(ctx.reloadHub->PendingScenePath())) {
+        ctx.reloadHub->DiscardPendingScene();
+    }
     const bool pending = ctx.reloadHub->HasPendingScene();
     const bool canResolve = !playMode_.InPlayMode() && actorEdit_ == nullptr;
     if (pending && canResolve && !IsSceneDirty()) {

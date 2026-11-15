@@ -1489,8 +1489,8 @@ The editor ships in **Japanese by default** and can be switched to English at ru
 
 *Window > AI Changes* shows what the AI Change Tracking service (`mye_track.exe`, [ADR-039](docs/adr/ADR-039-ai-change-tracking.md),
 `docs/ai-change-tracking/`) recorded for the open project. It is closed by default, docks in the centre tab group when
-the layout is rebuilt, and never writes to the project: the window has no approve / restore buttons (those come with the
-review and restore milestones).
+the layout is rebuilt, and never writes to the project: the window has review buttons (below) but no restore button (that
+comes with the restore milestone).
 
 - **Off by default.** Tracking runs only when `changeTrackingEnabled` is true in the project's editor settings **and** the
   editor was started interactively (`--selftest`, `--screenshot`, replay and other automated launches never connect to or
@@ -1536,6 +1536,17 @@ review and restore milestones).
   hunk headers, `eolOnly` hunks marked as line-ending-only (no add / delete colours), a mark on lines whose ending changed
   (LF / CRLF / none), hunk selection for later milestones. It draws only the visible rows (`ImGuiListClipper`) and scans the text
   once when the input arrives. It does not depend on the tracking code. Lines longer than 4096 bytes are cut with an ellipsis.
+- **Review (M104o).** Each AI / unknown change can be *Approved*, *Rejected*, marked *Needs review* or *Reopened*, as a whole, per hunk
+  (select a hunk header in the diff), or per scene-change row (field / component / entity / whole change). Approving only records
+  that you checked the change: it stages, commits and pushes nothing and writes no file, and rejecting does not remove the change
+  (restoring is a separate operation). The service keeps an append-only record and computes the state: the newest record
+  that covers a leaf (hunk / structural change / the revision itself) wins, not the widest scope; a revision, a file, an operation
+  and a session show the aggregate (Pending / Approved / Rejected / Needs review / Partially approved / Partially rejected) and counts.
+  Your own saves and restores are not reviewed. A session or several selected rows (Ctrl / Shift click) can be reviewed at once after one
+  confirmation that shows the count. The screen changes only after the service answers (a failure or a time-out is shown, nothing is
+  changed optimistically). Approved structural changes drop out of the Hierarchy / Inspector / Scene view highlight; rejected and needs-review
+  ones stay. Only the Editor role may record a review (the MCP tools and hooks cannot). Spec: [ipc-contract.md](docs/ai-change-tracking/ipc-contract.md) §4.6,
+  [db-schema.md](docs/ai-change-tracking/db-schema.md) §3.4.
 - The window asks the model for only the parts it shows (`ChangeModel::SetInterest`); while it is closed nothing is fetched.
 - *Open file* uses the existing external-editor path (`externalEditorCmd`) at the first line of the selected hunk; *Show in Explorer*
   opens the folder.

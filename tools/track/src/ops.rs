@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use crate::attribution;
 use crate::document;
 use crate::scene_diff::change_type;
+use crate::review;
 use crate::protocol::{code, Args, OpError, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT};
 use crate::session::session_candidate_sql;
 
@@ -30,7 +31,6 @@ fn internal(e: rusqlite::Error) -> OpError {
 
 const CHANGE_TYPES: &[&str] = &["added", "modified", "deleted", "renamed"];
 const ATTRIBUTIONS: &[&str] = &["verified", "claimed", "inferred", "unknown"];
-const REVIEW_STATES: &[&str] = &["pending", "approved", "rejected", "needs_review", "reopened"];
 
 fn one_of(key: &str, value: &str, allowed: &[&str]) -> Result<(), OpError> {
     if allowed.contains(&value) {
@@ -80,7 +80,7 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         one_of("attribution", a, ATTRIBUTIONS)?;
     }
     if let Some(r) = &review {
-        one_of("review", r, REVIEW_STATES)?;
+        one_of("review", r, review::AGGREGATE_STATES)?;
     }
     let cursor_id = match &cursor {
         None => None,
@@ -124,65 +124,126 @@ pub fn list(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         let n = bind(&mut values, SqlValue::Text(s));
         conditions.push(session_candidate_sql(n));
     }
-    if let Some(state) = review {
-        let n = bind(&mut values, SqlValue::Text(state));
-        conditions.push(format!("{REVIEW_STATE_SQL} = ?{n}"));
+    // レビューの状態は葉からの集約なので SQL では絞れない。絞るときは対象の行為者に限り、行を読みながら集約して選ぶ
+    if review.is_some() {
+        conditions.push("r.actor IN ('ai', 'unknown')".to_string());
     }
-    if let Some(id) = cursor_id {
-        let n = bind(&mut values, SqlValue::Integer(id));
-        conditions.push(format!("r.revision_id < ?{n}"));
-    }
-    let n = bind(&mut values, SqlValue::Integer(limit + 1));
     let where_clause = if conditions.is_empty() { String::new() } else { format!("WHERE {}", conditions.join(" AND ")) };
-    let sql = format!(
-        "SELECT r.revision_id, r.change_id, r.seq, c.path, r.old_path, r.change_type, c.kind, c.state, r.observed_at,
-                r.completeness, r.actor, r.attribution, r.diff_mode, r.operation_id, sb.size, sa.size,
-                (SELECT COUNT(*) FROM change_hunks h WHERE h.revision_id = r.revision_id),
-                {REVIEW_STATE_SQL}
-           FROM change_revisions r JOIN changes c ON c.change_id = r.change_id
-           LEFT JOIN snapshots sb ON sb.snapshot_id = r.before_snapshot
-           LEFT JOIN snapshots sa ON sa.snapshot_id = r.after_snapshot
-           {where_clause}
-          ORDER BY r.revision_id DESC LIMIT ?{n}"
-    );
-    let mut stmt = conn.prepare(&sql).map_err(internal)?;
-    let rows = stmt
-        .query_map(params_from_iter(values.iter()), |r| {
-            Ok(json!({
-                "revisionId": r.get::<_, i64>(0)?,
-                "changeId": r.get::<_, i64>(1)?,
-                "seq": r.get::<_, i64>(2)?,
-                "path": r.get::<_, String>(3)?,
-                "oldPath": r.get::<_, Option<String>>(4)?,
-                "changeType": r.get::<_, String>(5)?,
-                "contentKind": r.get::<_, String>(6)?,
-                "changeState": r.get::<_, String>(7)?,
-                "observedAt": r.get::<_, i64>(8)?,
-                "completeness": r.get::<_, String>(9)?,
-                "actor": r.get::<_, String>(10)?,
-                "attribution": r.get::<_, String>(11)?,
-                "diffMode": r.get::<_, String>(12)?,
-                "operationId": r.get::<_, Option<String>>(13)?,
-                "beforeSize": r.get::<_, Option<i64>>(14)?,
-                "afterSize": r.get::<_, Option<i64>>(15)?,
-                "hunkCount": r.get::<_, i64>(16)?,
-                "review": r.get::<_, String>(17)?,
-            }))
-        })
-        .map_err(internal)?;
-    let mut items: Vec<Value> = rows.collect::<rusqlite::Result<_>>().map_err(internal)?;
-    let next_cursor = if items.len() as i64 > limit {
-        items.truncate(limit as usize);
-        items.last().and_then(|v| v["revisionId"].as_i64()).map(|id| id.to_string())
-    } else {
-        None
+    let run_query = |after: Option<i64>, take: i64| -> Result<Vec<Value>, OpError> {
+        let mut values = values.clone();
+        let mut clause = where_clause.clone();
+        if let Some(id) = after {
+            values.push(SqlValue::Integer(id));
+            let joiner = if clause.is_empty() { "WHERE" } else { " AND" };
+            clause = format!("{clause}{joiner} r.revision_id < ?{}", values.len());
+        }
+        values.push(SqlValue::Integer(take));
+        let n = values.len();
+        let sql = format!(
+            "SELECT r.revision_id, r.change_id, r.seq, c.path, r.old_path, r.change_type, c.kind, c.state, r.observed_at,
+                    r.completeness, r.actor, r.attribution, r.diff_mode, r.operation_id, sb.size, sa.size,
+                    (SELECT COUNT(*) FROM change_hunks h WHERE h.revision_id = r.revision_id)
+               FROM change_revisions r JOIN changes c ON c.change_id = r.change_id
+               LEFT JOIN snapshots sb ON sb.snapshot_id = r.before_snapshot
+               LEFT JOIN snapshots sa ON sa.snapshot_id = r.after_snapshot
+               {clause}
+              ORDER BY r.revision_id DESC LIMIT ?{n}"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(internal)?;
+        let rows = stmt
+            .query_map(params_from_iter(values.iter()), |r| {
+                Ok(json!({
+                    "revisionId": r.get::<_, i64>(0)?,
+                    "changeId": r.get::<_, i64>(1)?,
+                    "seq": r.get::<_, i64>(2)?,
+                    "path": r.get::<_, String>(3)?,
+                    "oldPath": r.get::<_, Option<String>>(4)?,
+                    "changeType": r.get::<_, String>(5)?,
+                    "contentKind": r.get::<_, String>(6)?,
+                    "changeState": r.get::<_, String>(7)?,
+                    "observedAt": r.get::<_, i64>(8)?,
+                    "completeness": r.get::<_, String>(9)?,
+                    "actor": r.get::<_, String>(10)?,
+                    "attribution": r.get::<_, String>(11)?,
+                    "diffMode": r.get::<_, String>(12)?,
+                    "operationId": r.get::<_, Option<String>>(13)?,
+                    "beforeSize": r.get::<_, Option<i64>>(14)?,
+                    "afterSize": r.get::<_, Option<i64>>(15)?,
+                    "hunkCount": r.get::<_, i64>(16)?,
+                }))
+            })
+            .map_err(internal)?;
+        let mut items: Vec<Value> = rows.collect::<rusqlite::Result<_>>().map_err(internal)?;
+        // レビューの集約 (対象外の行為者は null)
+        for item in &mut items {
+            let revision_id = item["revisionId"].as_i64().unwrap_or(0);
+            let reviewable = item["actor"].as_str().is_some_and(review::is_reviewable_actor);
+            item["review"] = if reviewable {
+                json!(review::revision_counts(conn, revision_id).map_err(internal)?.aggregate().as_str())
+            } else {
+                Value::Null
+            };
+        }
+        Ok(items)
     };
+
+    let mut items: Vec<Value>;
+    let next_cursor: Option<String>;
+    match &review {
+        None => {
+            items = run_query(cursor_id, limit + 1)?;
+            next_cursor = if items.len() as i64 > limit {
+                items.truncate(limit as usize);
+                items.last().and_then(|v| v["revisionId"].as_i64()).map(|id| id.to_string())
+            } else {
+                None
+            };
+        }
+        Some(wanted) => {
+            // 1 回の問い合わせで読む行数に上限を置く。上限に達したら、読んだ所までを返して続きの cursor を渡す
+            items = Vec::new();
+            let mut scanned = 0i64;
+            let mut after = cursor_id;
+            let mut more = false;
+            let mut last_scanned: Option<i64> = None;
+            'scan: loop {
+                let batch = run_query(after, REVIEW_SCAN_BATCH)?;
+                let full = batch.len() as i64 == REVIEW_SCAN_BATCH;
+                for item in batch {
+                    let id = item["revisionId"].as_i64().unwrap_or(0);
+                    last_scanned = Some(id);
+                    scanned += 1;
+                    after = Some(id);
+                    if item["review"].as_str() == Some(wanted.as_str()) {
+                        items.push(item);
+                        if items.len() as i64 > limit {
+                            more = true;
+                            break 'scan;
+                        }
+                    }
+                    if scanned >= REVIEW_SCAN_LIMIT {
+                        more = full;
+                        break 'scan;
+                    }
+                }
+                if !full {
+                    break;
+                }
+            }
+            if items.len() as i64 > limit {
+                items.truncate(limit as usize);
+                next_cursor = items.last().and_then(|v| v["revisionId"].as_i64()).map(|id| id.to_string());
+            } else {
+                next_cursor = if more { last_scanned.map(|id| id.to_string()) } else { None };
+            }
+        }
+    }
     Ok(json!({ "items": items, "nextCursor": next_cursor, "limit": limit }))
 }
 
-/// Revision 単位のレビュー状態 (`reviews` の最新の行。無ければ `pending`)。
-const REVIEW_STATE_SQL: &str = "COALESCE((SELECT v.state FROM reviews v WHERE v.revision_id = r.revision_id \
-     AND v.scope_kind = 'revision' ORDER BY v.review_id DESC LIMIT 1), 'pending')";
+/// `review` で絞るときに 1 回の問い合わせで読む Revision の数の上限と、1 回の読み出しの大きさ。
+const REVIEW_SCAN_LIMIT: i64 = 2000;
+const REVIEW_SCAN_BATCH: i64 = 200;
 
 /// 1 つの Revision の詳細。Hunk は行番号と行数まで (本文は返さない)。
 pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
@@ -191,8 +252,7 @@ pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     let sql = format!(
         "SELECT r.revision_id, r.change_id, r.seq, c.path, r.old_path, r.change_type, c.kind, c.state, r.observed_at,
                 r.completeness, r.actor, r.attribution, r.diff_mode, r.operation_id,
-                sb.blob_hash, sb.size, sb.blob_state, sa.blob_hash, sa.size, sa.blob_state,
-                {REVIEW_STATE_SQL}
+                sb.blob_hash, sb.size, sb.blob_state, sa.blob_hash, sa.size, sa.blob_state
            FROM change_revisions r JOIN changes c ON c.change_id = r.change_id
            LEFT JOIN snapshots sb ON sb.snapshot_id = r.before_snapshot
            LEFT JOIN snapshots sa ON sa.snapshot_id = r.after_snapshot
@@ -233,7 +293,6 @@ pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
                 "before": before,
                 "after": after,
                 "restorable": restorable,
-                "review": r.get::<_, String>(20)?,
             }))
         })
         .optional()
@@ -243,7 +302,7 @@ pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     };
     let mut stmt = conn
         .prepare(
-            "SELECT ordinal, old_start, old_count, new_start, new_count, eol_only, state
+            "SELECT ordinal, old_start, old_count, new_start, new_count, eol_only, state, hunk_id
                FROM change_hunks WHERE revision_id = ?1 ORDER BY ordinal",
         )
         .map_err(internal)?;
@@ -257,10 +316,24 @@ pub fn describe(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
                 "newCount": r.get::<_, i64>(4)?,
                 "eolOnly": r.get::<_, i64>(5)? != 0,
                 "state": r.get::<_, String>(6)?,
+                "hunkId": r.get::<_, i64>(7)?,
             }))
         })
         .map_err(internal)?;
-    detail["hunks"] = Value::Array(hunks.collect::<rusqlite::Result<_>>().map_err(internal)?);
+    let change_id = detail["changeId"].as_i64().unwrap_or(0);
+    let operation_id = detail["operationId"].as_str().map(str::to_string);
+    if let Value::Object(fields) = review::describe_fields(conn, revision_id, change_id, operation_id.as_deref()).map_err(internal)? {
+        for (key, value) in fields {
+            detail[key.as_str()] = value;
+        }
+    }
+    let mut hunk_items: Vec<Value> = hunks.collect::<rusqlite::Result<_>>().map_err(internal)?;
+    let index = review::LatestIndex::new(&review::load_rows(conn, revision_id).map_err(internal)?);
+    for item in &mut hunk_items {
+        let id = item["hunkId"].as_i64().unwrap_or(0);
+        item["review"] = json!(index.state_of(&review::Leaf::Hunk(id)).as_str());
+    }
+    detail["hunks"] = Value::Array(hunk_items);
     if let Some(summary) = scene_summary(conn, revision_id).map_err(internal)? {
         detail["sceneSummary"] = summary;
     }
@@ -313,8 +386,11 @@ pub fn sessions(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     let rows = stmt
         .query_map(params![cursor_at, cursor_id, limit + 1], |r| {
             let session_id: String = r.get(0)?;
+            let (counts, truncated) =
+                review::group_counts(conn, &session_candidate_sql(1), &[&session_id as &dyn rusqlite::ToSql])?;
             Ok(json!({
                 "changeCount": crate::session::change_count(conn, &session_id)?,
+                "review": review::group_json(&counts, truncated),
                 "sessionId": session_id,
                 "provider": r.get::<_, String>(1)?,
                 "source": r.get::<_, String>(2)?,
@@ -369,6 +445,7 @@ pub fn hunks(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         )
         .map_err(internal)?;
     let mut rows = stmt.query(params![revision_id, after_ordinal]).map_err(internal)?;
+    let index = review::LatestIndex::new(&review::load_rows(conn, revision_id).map_err(internal)?);
     let mut items: Vec<Value> = Vec::new();
     let mut used = 0usize;
     let mut next_cursor: Option<String> = None;
@@ -387,6 +464,7 @@ pub fn hunks(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
             "newCount": r.get::<_, i64>(5).map_err(internal)?,
             "eolOnly": r.get::<_, i64>(10).map_err(internal)? != 0,
             "state": r.get::<_, String>(11).map_err(internal)?,
+            "review": index.state_of(&review::Leaf::Hunk(r.get::<_, i64>(0).map_err(internal)?)).as_str(),
             "oversize": false,
         });
         // JSON の長さは生の長さ以上なので、生の長さで単独でも収まらないと分かれば JSON にしない
@@ -468,6 +546,7 @@ pub fn scene_diff(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         )
         .map_err(internal)?;
     let mut rows = stmt.query(params![revision_id, after_id]).map_err(internal)?;
+    let index = review::LatestIndex::new(&review::load_rows(conn, revision_id).map_err(internal)?);
     let mut items: Vec<Value> = Vec::new();
     let mut used = 0usize;
     let mut next_cursor: Option<String> = None;
@@ -476,7 +555,13 @@ pub fn scene_diff(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
         let document_id: String = r.get(1).map_err(internal)?;
         let before: Option<String> = r.get(6).map_err(internal)?;
         let after: Option<String> = r.get(7).map_err(internal)?;
+        let leaf = review::Leaf::Scene {
+            file_id: r.get(2).map_err(internal)?,
+            component: r.get(4).map_err(internal)?,
+            field: r.get(5).map_err(internal)?,
+        };
         let mut item = json!({
+            "review": index.state_of(&leaf).as_str(),
             "sceneChangeId": scene_change_id,
             "documentId": document_id,
             "resolvedDocumentId": document::resolve(conn, &document_id).map_err(internal)?,

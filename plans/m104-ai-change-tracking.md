@@ -34,7 +34,7 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104m2 | 3 | 未着手 | Inspector の Field 差分、Scene View のワイヤ箱、色の設定 (4 色)。M104m の後、M104n の前 |
 | M104m3 | 3 | 実装中 | 追跡クライアントの試験から実時間への依存を外す。`TrackIo::NowMicros` を足し、`Poll()` の時間の上限を差し替えられる時計で測る (製品の挙動は同じ)。試験は偽の時計で決定的にする |
 | M104n | 3 | 未着手 | 未保存シーンへの外部変更の確認 (`ReloadHub` の口)。他のサブから独立しているので前倒しできる |
-| M104o | 4 | 未着手 | レビュー (範囲ごとの承認・却下・要確認・再開)、集約表示 |
+| M104o | 4 | 実装済み (判定待ち) | レビュー: サービスの `review_set` (role = editor だけ・1 回 1000 件まで・追記だけ・`events` から作り直せる)、葉ごとの今の状態 (新しさで決まる) と集約 (Revision / 変更 / 操作 / セッション)、`describe` / `hunks` / `scene_diff` / `list` / `sessions` への反映、通知 `review_changed`、`scene_overlay` は承認済みを強調から外す。Editor: `ReviewManager`、AI Changes 窓の承認・却下・要確認・再開 (Revision / Hunk / シーンの変更の範囲)、まとめて (セッション・複数選択) は件数つきの確認 1 回、履歴、集約の表示と絞り込み。sub-13 から持ち越した自分の保存の確認 (`OwnSaveRecord`)。Phase 3〜4 の横断の検証を含む。スキーマは版 3 のまま |
 | M104p | 5 | 未着手 | ゲートの共有、ファイルと Hunk の復元、復元ジャーナル、起動時の回復 |
 | M104q | 5 | 未着手 | ライブのシーンの復元 (Entity / Component / Field / Override)、Undo 連携 |
 | M104r | 6 | 未着手 | 削除エンティティのゴースト、Scene Overlay |

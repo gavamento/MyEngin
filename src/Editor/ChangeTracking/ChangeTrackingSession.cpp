@@ -59,6 +59,8 @@ void ChangeTrackingSession::StartWithIo(std::unique_ptr<TrackIo> io, const std::
 void ChangeTrackingSession::Wire()
 {
     model_.Attach(&client_);
+    review_.Attach(&client_, &model_);
+    review_.Reset();
     overlay_.Attach(&client_);
     overlay_.Reset();
     client_.SetNotifyHandler([this](const nlohmann::json& event) {
@@ -75,7 +77,7 @@ void ChangeTrackingSession::Wire()
             client_.Request(trackop::kSubscribe,
                             { { "events", { trackevent::kChangeRecorded, trackevent::kAttributionUpdated,
                                             trackevent::kCoverageGap, trackevent::kSessionChanged,
-                                            trackevent::kShuttingDown } } },
+                                            trackevent::kReviewChanged, trackevent::kShuttingDown } } },
                             [](const nlohmann::json& response) {
                                 if (!response.value("ok", false)) {
                                     MYE_LOG_INFO("[track] subscribe に失敗: %s", response.dump().c_str());

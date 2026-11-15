@@ -4,7 +4,7 @@
 //! 集約 (`fold`) は (Revision の列, 行の列) → エンティティごとの状態、を返す純粋な関数 (DB に触れない)。
 //! Editor が Revision を 1 つずつ取って自分でまとめないよう、まとめ方をここに 1 か所だけ置く。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use rusqlite::{params_from_iter, Connection, OptionalExtension};
@@ -15,6 +15,7 @@ use crate::lexjson;
 use crate::ops::HUNKS_PAGE_BUDGET;
 use crate::ops_record::normalize_path;
 use crate::protocol::{code, Args, OpError};
+use crate::review;
 use crate::scene_diff::{self, change_type, DocKind, SceneOutcome};
 
 /// 1 回の集約で読む `scene_changes` の行の上限。超えたら `truncated` (巨大なシーンでも応答が返るように)。
@@ -470,6 +471,29 @@ fn chain_ids(conn: &Connection, target: &str) -> rusqlite::Result<Vec<String>> {
     Ok(ids)
 }
 
+/// 文書にかかる Revision (対象の行為者だけ) のレビューの行を、Revision ごとの索引にする。行が無い Revision は載らない。
+fn load_review_indexes(conn: &Connection, marks: &str, ids: &[String]) -> rusqlite::Result<HashMap<i64, review::LatestIndex>> {
+    let sql = format!(
+        "SELECT v.revision_id, v.review_id, v.scope_kind, v.scope_ref, v.state
+           FROM reviews v JOIN change_revisions r ON r.revision_id = v.revision_id
+          WHERE r.actor IN ('ai', 'unknown')
+            AND v.revision_id IN (SELECT revision_id FROM scene_changes WHERE document_id IN ({marks}))
+          ORDER BY v.revision_id, v.review_id"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut grouped: HashMap<i64, Vec<review::ReviewRow>> = HashMap::new();
+    let mut rows = stmt.query(params_from_iter(ids.iter()))?;
+    while let Some(r) = rows.next()? {
+        grouped.entry(r.get(0)?).or_default().push(review::ReviewRow {
+            review_id: r.get(1)?,
+            scope_kind: r.get(2)?,
+            scope_ref: r.get(3)?,
+            state: r.get(4)?,
+        });
+    }
+    Ok(grouped.into_iter().map(|(id, rows)| (id, review::LatestIndex::new(&rows))).collect())
+}
+
 fn internal(e: rusqlite::Error) -> OpError {
     OpError::new(code::INTERNAL, format!("DB の読み取りに失敗: {e}"))
 }
@@ -479,6 +503,8 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
     let document_id = args.required_string("documentId")?;
     let after_revision = args.int("afterRevisionId")?;
     let cursor = args.string("cursor")?;
+    // 承認済みの構造の変更は強調から外す (確認が済んだものにバッジを出し続けない)。既定は外す
+    let exclude_approved = args.bool("excludeApproved")?.unwrap_or(true);
     args.finish()?;
     let after_entity = match &cursor {
         None => None,
@@ -509,6 +535,8 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
         after = after_revision.unwrap_or(0),
         limit = MAX_OVERLAY_ROWS + 1
     );
+    let reviews = if exclude_approved { load_review_indexes(conn, &marks, &ids).map_err(internal)? } else { HashMap::new() };
+    let mut approved_hidden = 0usize;
     let mut stmt = conn.prepare(&sql).map_err(internal)?;
     let mut rows = stmt.query(params_from_iter(ids.iter())).map_err(internal)?;
     let mut revisions: Vec<RevisionRows> = Vec::new();
@@ -529,6 +557,13 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
             before: r.get(5).map_err(internal)?,
             after: r.get(6).map_err(internal)?,
         };
+        if let Some(index) = reviews.get(&revision_id) {
+            let leaf = review::Leaf::Scene { file_id: row.file_id, component: row.component.clone(), field: row.field.clone() };
+            if index.state_of(&leaf) == review::LeafState::Approved {
+                approved_hidden += 1;
+                continue;
+            }
+        }
         match revisions.last_mut() {
             Some(last) if last.revision_id == revision_id => last.rows.push(row),
             _ => revisions.push(RevisionRows { revision_id, rows: vec![row] }),
@@ -558,6 +593,7 @@ pub fn scene_overlay(conn: &Connection, mut args: Args) -> Result<Value, OpError
         "truncated": truncated,
         "unparsedRevisionIds": overlay.unparsed_revisions,
         "latestRevisionId": latest,
+        "approvedHidden": approved_hidden,
     });
     // ルート直下の変更は最初のページだけに入れる (ページをまたいで重複させない)
     if after_entity.is_none() {

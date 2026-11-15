@@ -243,6 +243,26 @@ CREATE TABLE events (
 - **解析不可**: `change_type = unparsed` の 1 行 (`file_id` NULL、`after_value` に理由の JSON 文字列。列は足さない)。理由: 空・壊れた JSON・UTF-8 でない・ルートがオブジェクトでない・`entities` が無い / 配列でない・`fileId` が無い / 整数でない / 重複・版が前後で違う・知らない版 (シーンは 1〜4 (無ければ 1)、プレハブ / アクターは `prefab` / `actor` = 1)・1 つの文書が上限 (行 diff の合計上限の半分、既定 8 MiB) を超える。ファイル単位の Revision と行 diff は残る。Blob が読めない・バイナリ・除外パスの Revision は行だけで、構造の変更も `unparsed` も無い。
 - **値**: `before_value` / `after_value` は元のバイト列から切り出した JSON の断片 (数値は字句のまま。そのまま書き戻せる)。キーの重複した JSON は曖昧なので解析不可。
 
+### 3.4 レビューの状態 (M104o)
+
+正本は `tools\track\src\review.rs` (状態の決め方と集約は DB に触れない純粋な関数)。**スキーマは変えない** (版は 3 のまま。`reviews` は版 1 の表と `idx_reviews_revision` で足りる)。
+
+- **記録**: `review_set` が 1 回の要求を 1 つの `events` 行 (`kind = review_set`) として記録し、対象ごとに `reviews` へ 1 行ずつ足す (`record_and_apply`)。`reviews` は派生の表で、`events` から作り直せる (§6。作り直しは `reviews` を先に消し、`review_set` のイベントを順に入れ直す。`review_id` は挿入順なので、作り直した DB は元と同じ行・同じ状態になる)。行は足すだけで、過去の行は書き換えない・消さない。`scope_ref` は `revision` → 空、`hunk` → `hunk_id`、`entity` → `fileId`、`component` → `fileId/Component`、`field` → `fileId/Component/field` (コンポーネントを持たないフィールドは `fileId//field`)。`state` は `approved` / `rejected` / `needs_review` / `reopened` (`pending` は記録しない。未確認へ戻すのは `reopened`)。
+- **検査** (記録の前。1 件でも不正なら何も記録しない): Revision が存在する。行為者が `ai` か `unknown` (`editor_user` / `restore` は対象外で `bad_args`)。`hunk` は `hunk_id` がその Revision のもので、構造の変更を持たない Revision だけ (持つ Revision の葉は構造の変更なので、Hunk への記録は状態に効かず `bad_args`)。`entity` / `component` / `field` はその Revision の `scene_changes` に実在する。別の Revision の Hunk ID や存在しない範囲は `not_found`。`ref` は正規の書き方だけ (先頭の 0 は不可)。
+- **葉**: 構造の変更 (`scene_changes` の行) を持つ Revision はその各行、無ければ Hunk、どちらも無い (バイナリ・除外・解析不可で行が無い・削除だけ) Revision は Revision 自身。復元の状態 (`state`) は見ない。
+- **葉の今の状態**: その葉を含む範囲 (葉自身 → フィールド → コンポーネント → エンティティ → Revision) に付いた行のうち、**いちばん新しい行** (`review_id` が最大) の状態。行が無ければ `pending`、`reopened` が最新なら `pending`。**範囲の広さではなく新しさで決まる** (Revision 全体を承認したあとで 1 つの Hunk を却下すればその Hunk だけ却下、そのあと Revision 全体を承認すれば全部承認)。文書全体の変更 (`file_id` が無い行) は Revision の範囲の行だけが効く。
+- **集約** (Revision / 変更 (ファイル) / 操作 / セッション。子から問い合わせのたびに計算し、保存しない):
+
+  | 葉の状態 | 集約 |
+  |---|---|
+  | 全部 `pending` / 全部 `approved` / 全部 `rejected` / 全部 `needs_review` | その状態 |
+  | `needs_review` が 1 つでもある (全部ではない) | `needs_review` |
+  | `approved` が 1 つでもある (上に当たらない) | `partially_approved` |
+  | それ以外 (`rejected` と `pending` の混在) | `partially_rejected` |
+
+  変更・操作・セッションは、属する Revision の葉を全部集めて同じ規則で数える (件数 = 状態ごとの葉の数)。**対象は行為者が `ai` か `unknown` の Revision だけ**で、`editor_user` / `restore` の Revision は数えない (Revision 自身の集約も `null`)。1 回の集約で読む Revision は 5000 まで (超えたら `truncated`)。`list` の `review` フィルタは集約で絞り、1 回に読む Revision は 2000 まで (上限に達したら読んだ所までを返して続きの `nextCursor` を渡す)。
+- **`scene_overlay`**: 今の状態が `approved` の構造の変更は強調から外す (既定。`excludeApproved: false` で戻せる)。`rejected` と `needs_review` は強調したまま。Editor の「ここまで確認済みにする」(表示だけの印) とは別。
+
 ## 4. Blob ストア
 
 - 名前は内容の SHA-256 (hex)。同じ内容は 1 つしか持たない。

@@ -1,11 +1,21 @@
 # sub-15: ファイルと Hunk の復元、ジャーナル、回復 (M104p)
 
-- 依存: sub-14
+- 依存: sub-26 (順序は sub-14 → sub-26 → sub-15)
 - 状態: 未着手
 - 往復: 0
 - 書き込みの深さ: **骨子** (spec §6.1)。sub-14 の VERDICT で planner が Phase 5 を見直してから着手する。大きければ「ゲートと競合検証」「適用とジャーナルと回復」の 2 本に割る (spec §7.2)。
 
 この機能で初めて作業ツリーを書くサブ。安全性は P0 (要求 §15 Phase 5)。**復元は one-way door に近い操作なので、テストは必ず一時プロジェクトで行い、リポジトリの作業ツリーで試さない。**
+
+## Phase 4 までの結果による追記 (2026-11-15、sub-14 の VERDICT。sub-26 の VERDICT で planner が全体を詳細にし、必要なら 2 本に割る)
+
+- 質問の運用: 推奨で進め、Notion に後回し。
+- 使えるもの: `blob_get` (sub-10。512 KiB ずつ、原本とバイト一致)、`hunks` (本文つき、`state`、`review`)、`DiffViewer` / `DiffRows` (`src\Editor\Widgets\DiffView.h`。Hunk の選択つき)、`TrackClient::Request`、`ChangeTrackingSession::NoteSaved` (保存の直後に大きさと更新時刻を控える)、`OwnSaveRecord` (sub-14)、`ReloadHub` の一括適用 (`BeginBatch` / `EndBatch`。この経路は未保存の確認の口を通らない。sub-13)、`reviewable` (行為者が `ai` / `unknown` の Revision)。
+- サービス側の `restore_expect` は、sub-23 の `editor_saved` と同じ作りで足せる (`attribution.rs` の知らせの照合、`session.rs` の `apply_event`、`revision.rs` の作り直し)。`conclude` は `restore_expected` を既に持つ。AI Changes 窓の「エディタ / 復元による変更」の節と文面は sub-23 で入っている。
+- 復元が作る変更は行為者 `restore` で、レビューの集約に数えられず、シーン上の強調にも出ない (sub-12、sub-14)。
+- スキーマの版は 3。`restore_operations` は v1 にある。列が足りなければ移行 v4。
+- **sub-14 から持ち越した小さい追加** (窓を触るついでに): (1) 詳細の列に「この操作の変更をまとめてレビュー」(`describe` の `operationReview` と `ReviewManager::PrepareRevisions` を使う。件数つきの確認 1 回) (2) 詳細の列の見出しに、変更 (ファイル) 単位の集約 (`changeReview`) の状態と件数。要求 §10.2 の単位 (Operation / File) を満たすため。
+- 復元の対象にするのは `reviewable` な Revision (行為者が `ai` / `unknown`) を基本にする。`editor_user` の保存を復元の対象に含めるかは、このサブの見直しで決める (推奨: 含めない。Editor の利用者自身の編集は Undo と git で戻す)。
 
 ## やること
 

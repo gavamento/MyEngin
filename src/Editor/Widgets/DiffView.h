@@ -26,6 +26,8 @@ struct DiffHunkInput {
     bool oversize = false;   // 大きすぎて本文を持たない (beforeBytes / afterBytes だけ)
     int64_t beforeBytes = 0;
     int64_t afterBytes = 0;
+    std::string badge;       // 見出しの右に添える短い文字列 (呼び手の状態表示。空 = 無し)
+    uint32_t badgeColor = 0; // badge の色 (ImU32。0 = 副文字の色)
 };
 
 enum class DiffLayout : uint8_t { Inline, Split };
@@ -97,6 +99,8 @@ public:
     bool HunkOversize(size_t hunk) const { return headers_[hunk].oversize; }
     int64_t HunkBeforeBytes(size_t hunk) const { return headers_[hunk].beforeBytes; }
     int64_t HunkAfterBytes(size_t hunk) const { return headers_[hunk].afterBytes; }
+    const std::string& HunkBadge(size_t hunk) const { return headers_[hunk].badge; }
+    uint32_t HunkBadgeColor(size_t hunk) const { return headers_[hunk].badgeColor; }
 
     // 表示する桁の最大 (全角 = 2、タブ展開後)。横スクロールの幅の見積り
     int32_t MaxColumns() const { return maxColumns_; }
@@ -113,6 +117,8 @@ private:
         bool oversize = false;
         int64_t beforeBytes = 0;
         int64_t afterBytes = 0;
+        std::string badge;
+        uint32_t badgeColor = 0;
     };
     // タブを展開し、長すぎる行を切って pool_ に積む
     DiffTextRef Store(std::string_view body);

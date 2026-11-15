@@ -68,7 +68,7 @@ git の差分には AI 以前の未コミットの変更が混ざり、シーン
 - 新しい crate `tools\track\` と、新しい依存 (`rusqlite` bundled、`sha2`、`notify`、`windows-sys`)。C コンパイラが要る。
 - 新しい `check_rules` の規則 19 (追跡の封じ込め)。規則 9 に版定数の組を 1 つ、規則 15-c / 15-d の許可表に 1 ファイルを足す。
 - ADR-032 の「道具は 5 つ」が 10 になる。実装時に ADR-032 と [docs\mcp-server.md](../mcp-server.md) を直す。
-- Engine 層の変更は `ReloadHub` の口 1 つ。未設定なら挙動は今と同じ。
+- Engine 層の変更は `ReloadHub` だけ: 「今適用してよいか」を問う口 1 つ (`SetSceneApplyGate`) と、保留の操作 (`HasPendingScene` / `PendingScenePath` / `RequestApplyPendingScene` / `DiscardPendingScene` / `TakePendingSceneResult`)。口が未設定なら挙動は今と同じ。
 - Editor の既存挙動の変更は 1 つ: 未保存のシーンに外部の変更が来たとき、確認が出る。
 
 ## 未決のまま残したもの

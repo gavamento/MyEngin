@@ -1,6 +1,6 @@
 {"id":1,"ok":true,"result":{"connectionPid":<N>,"coverage":{"baselineScanned":0,"baselineTotal":0,"baselining":false,"phase":"watching","unrecorded":false},"projectId":"<PROJECT_ID>","proto":1,"role":"editor","serviceStartedAt":<N>}}
-{"id":2,"ok":true,"result":{"items":[{"afterText":"hello\nworld\n","beforeText":"","contextPost":"","contextPre":"","eolOnly":false,"hunkId":1,"newCount":2,"newStart":1,"oldCount":0,"oldStart":1,"ordinal":0,"oversize":false,"state":"active"}],"nextCursor":null}}
-{"id":3,"ok":true,"result":{"items":[{"afterText":"there\n","beforeText":"","contextPost":"world\n","contextPre":"hello\n","eolOnly":false,"hunkId":2,"newCount":1,"newStart":2,"oldCount":0,"oldStart":2,"ordinal":0,"oversize":false,"state":"active"}],"nextCursor":null}}
+{"id":2,"ok":true,"result":{"items":[{"afterText":"hello\nworld\n","beforeText":"","contextPost":"","contextPre":"","eolOnly":false,"hunkId":1,"newCount":2,"newStart":1,"oldCount":0,"oldStart":1,"ordinal":0,"oversize":false,"review":"pending","state":"active"}],"nextCursor":null}}
+{"id":3,"ok":true,"result":{"items":[{"afterText":"there\n","beforeText":"","contextPost":"world\n","contextPre":"hello\n","eolOnly":false,"hunkId":2,"newCount":1,"newStart":2,"oldCount":0,"oldStart":2,"ordinal":0,"oversize":false,"review":"pending","state":"active"}],"nextCursor":null}}
 {"id":4,"ok":true,"result":{"items":[],"nextCursor":null}}
 {"error":{"code":"not_found","detail":"revisionId 99 は無い"},"id":5,"ok":false}
 {"error":{"code":"bad_args","detail":"cursor が読めない"},"id":6,"ok":false}

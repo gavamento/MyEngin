@@ -45,12 +45,12 @@ impl Role {
 /// このサブで実装している op。ここに無い op は `unknown_op` (未実装も含む)。
 pub const IMPLEMENTED_OPS: &[&str] = &[
     "hello", "status", "list", "describe", "sessions", "hunks", "scene_diff", "scene_overlay", "document_for_path", "blob_get", "shutdown", "subscribe",
-    "session_begin", "session_end", "op_begin", "op_end", "report", "editor_saved",
+    "session_begin", "session_end", "op_begin", "op_end", "report", "editor_saved", "review_set",
 ];
 
 /// `subscribe` で選べる通知の名前 (ipc-contract.md §4.5)。`resync` は購読に関わらず必ず届くので、ここには入れない。
 pub const EVENT_NAMES: &[&str] =
-    &["change_recorded", "attribution_updated", "coverage_gap", "session_changed", "shutting_down"];
+    &["change_recorded", "attribution_updated", "coverage_gap", "session_changed", "review_changed", "shutting_down"];
 
 /// 役割が op を呼べるか。`hello` は役割を決める前なので表に含めない。
 pub fn role_allows(role: Role, op: &str) -> bool {
@@ -69,6 +69,8 @@ pub fn role_allows(role: Role, op: &str) -> bool {
         "report" => role == Role::Mcp,
         // Editor の保存の知らせは Editor だけ (AI 側が「Editor が書いた」と名乗って帰属を書き換えられないように)
         "editor_saved" => role == Role::Editor,
+        // レビューは利用者の判断の記録。AI 側 (MCP・フック) が自分の変更を承認できないように Editor だけ (要求 §12.6)
+        "review_set" => role == Role::Editor,
         _ => false,
     }
 }
@@ -292,6 +294,8 @@ mod tests {
             assert!(role_allows(Role::Editor, op));
             assert!(!role_allows(Role::Mcp, op) && !role_allows(Role::Hook, op));
         }
+        assert!(role_allows(Role::Editor, "review_set"));
+        assert!(!role_allows(Role::Mcp, "review_set") && !role_allows(Role::Hook, "review_set"));
         assert!(role_allows(Role::Editor, "editor_saved"));
         assert!(!role_allows(Role::Mcp, "editor_saved") && !role_allows(Role::Hook, "editor_saved"));
     }

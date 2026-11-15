@@ -729,7 +729,7 @@ fn scene_diff_is_paged_oversize_values_are_flagged_and_only_the_editor_may_ask()
     let after = build('b');
     fs::write(project.join("main.scene.json"), &before).unwrap();
 
-    let mut service = ServiceProc::spawn(&project);
+    let service = ServiceProc::spawn(&project);
     service.wait_watching();
     let mut editor = service.connect("editor");
     subscribe_all(&mut editor);

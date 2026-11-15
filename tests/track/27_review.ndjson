@@ -1,0 +1,29 @@
+# review_set: editor だけが記録できる (mcp / hook は forbidden)。承認・却下・再開は追記で、Revision と組の範囲だけを受ける
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.txt a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n
+# wait-recorded 1
+# write a.txt A\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n
+# wait-recorded 2
+{"id":2,"op":"describe","args":{"revisionId":2}}
+{"id":3,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"revision"}}],"state":"approved"}}
+{"id":4,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"hunk","ref":"3"}}],"state":"rejected","note":"要らない"}}
+{"id":5,"op":"hunks","args":{"revisionId":2}}
+{"id":6,"op":"list","args":{"review":"partially_approved"}}
+{"id":7,"op":"list","args":{"review":"approved"}}
+{"id":8,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"hunk","ref":"1"}}],"state":"approved"}}
+{"id":9,"op":"review_set","args":{"targets":[{"revisionId":1,"scope":{"kind":"revision"}},{"revisionId":2,"scope":{"kind":"hunk","ref":"3"}}],"state":"reopened"}}
+{"id":10,"op":"describe","args":{"revisionId":2}}
+{"id":11,"op":"review_set","args":{"targets":[],"state":"approved"}}
+{"id":12,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"revision"}}],"state":"pending"}}
+{"id":13,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"nope"}}],"state":"approved"}}
+{"id":14,"op":"review_set","args":{"targets":[{"revisionId":9,"scope":{"kind":"revision"}}],"state":"approved"}}
+{"id":15,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"entity","ref":"1"}}],"state":"approved"}}
+{"id":16,"op":"list","args":{"review":"reopened"}}
+{"id":17,"op":"sessions"}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"revision"}}],"state":"approved"}}
+{"id":3,"op":"list","args":{"review":"pending","limit":1}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"review_set","args":{"targets":[{"revisionId":2,"scope":{"kind":"revision"}}],"state":"approved"}}

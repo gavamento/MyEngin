@@ -3276,3 +3276,67 @@ MYE_STR(AiChg_ColorReset,     "Reset to default",                      "既定�
 MYE_STR(AiChg_ColorNote,      "Used by the Hierarchy badges, the Inspector marks and the Scene view boxes. Saved in your editor settings.",
                               "Hierarchy のバッジ・Inspector の印・Scene View の枠に使います。エディタの設定に保存されます。")
 MYE_STR(AiChg_BoxesOmitted,   "Scene view box limit reached. Not outlined:", "Scene View の枠の上限に達しました。枠を出していない数:")
+
+// ---- レビュー (M104o) ----
+MYE_STR(AiChg_RvPending,      "Pending",                               "未確認")
+MYE_STR(AiChg_RvApproved,     "Approved",                              "承認済み")
+MYE_STR(AiChg_RvRejected,     "Rejected",                              "却下")
+MYE_STR(AiChg_RvNeedsReview,  "Needs review",                          "要確認")
+MYE_STR(AiChg_RvPartiallyApproved, "Partially approved",               "一部承認")
+MYE_STR(AiChg_RvPartiallyRejected, "Partially rejected",               "一部却下")
+MYE_STR(AiChg_RvActApprove,   "Approve",                               "承認")
+MYE_STR(AiChg_RvActReject,    "Reject",                                "却下")
+MYE_STR(AiChg_RvActNeedsReview, "Needs review",                        "要確認")
+MYE_STR(AiChg_RvActReopen,    "Reopen",                                "再開")
+MYE_STR(AiChg_RvNoteHint,     "Note (optional)",                       "メモ (任意)")
+MYE_STR(AiChg_RvExplainApprove, "Approving only records that you checked this. It does not stage, commit or push anything and writes no file.",
+                              "承認は「確認した」という記録だけです。git の stage・commit・push も、ファイルの書き込みもしません。")
+MYE_STR(AiChg_RvExplainReject, "Rejecting does not remove the change. Restoring is a separate operation.",
+                              "却下しても変更は消えません。元に戻すのは「復元」で、別の操作です。")
+MYE_STR(AiChg_RvNotReviewable, "This change was made by you (an editor save or a restore), so it is not reviewed.",
+                              "この変更は利用者自身の操作 (エディタの保存・復元) なので、レビューの対象ではありません。")
+MYE_STR(AiChg_RvHistory,      "Review history",                        "レビューの履歴")
+MYE_STR(AiChg_RvNoHistory,    "(no review records yet)",               "(レビューの記録はまだありません)")
+MYE_STR(AiChg_RvScopeRevision, "Whole change",                         "変更全体")
+MYE_STR(AiChg_RvScopeHunk,    "Hunk",                                  "Hunk")
+MYE_STR(AiChg_RvScopeEntity,  "Entity",                                "エンティティ")
+MYE_STR(AiChg_RvScopeComponent, "Component",                           "コンポーネント")
+MYE_STR(AiChg_RvScopeField,   "Field",                                 "フィールド")
+MYE_STR(AiChg_RvSending,      "Recording the review...",               "レビューを記録しています...")
+MYE_STR(AiChg_RvFailed,       "Could not record the review:",          "レビューを記録できませんでした:")
+MYE_STR(AiChg_RvPartialDone,  "{recorded} of {total} targets were recorded before it failed.",
+                              "失敗するまでに {total} 件中 {recorded} 件を記録しました。")
+MYE_STR(AiChg_RvErrNotFound,  "The target is no longer there (the list may be out of date). Nothing was recorded.",
+                              "対象が見つかりません (一覧が古いかもしれません)。何も記録していません。")
+MYE_STR(AiChg_RvErrTimeout,   "The service did not answer in time. The review may or may not be recorded; the list is being refreshed.",
+                              "サービスが時間内に応答しませんでした。記録されたかどうか分かりません。一覧を取り直しています。")
+MYE_STR(AiChg_RvErrDisconnected, "The connection to the service is down. Nothing was recorded.",
+                              "サービスとの接続が切れています。何も記録していません。")
+MYE_STR(AiChg_RvErrBadArgs,   "The service refused the request:",      "サービスが要求を受け付けませんでした:")
+MYE_STR(AiChg_RvPanel,        "Review",                                "レビュー")
+MYE_STR(AiChg_RvLeafCounts,   "Items",                                 "内訳")
+MYE_STR(AiChg_RvHunkSelected, "Selected hunk",                         "選んだ Hunk")
+MYE_STR(AiChg_RvHunkNone,     "Click a hunk header in the diff to review that hunk on its own.",
+                              "差分の Hunk の見出しをクリックすると、その Hunk だけをレビューできます。")
+MYE_STR(AiChg_RvSceneSelected, "Selected scene change",                "選んだシーンの変更")
+MYE_STR(AiChg_RvSceneNone,    "Click a scene change row to review it on its own.",
+                              "シーンの変更の行をクリックすると、その変更だけをレビューできます。")
+MYE_STR(AiChg_RvSceneScope,   "Scope",                                 "範囲")
+MYE_STR(AiChg_RvFilter,       "Review",                                "レビュー")
+MYE_STR(AiChg_RvBulkSelected, "Review selected changes",               "選んだ変更をまとめてレビュー")
+MYE_STR(AiChg_RvBulkSession,  "Review all changes of this session",    "このセッションの変更をまとめてレビュー")
+MYE_STR(AiChg_RvMultiHint,    "Ctrl+click or Shift+click to select several changes.",
+                              "Ctrl+クリック / Shift+クリックで複数の変更を選べます。")
+MYE_STR(AiChg_RvSelectedCount, "selected",                             "件を選択中")
+MYE_STR(AiChg_RvConfirmTitle, "Record this review for many changes?###AiChgRvConfirm",
+                              "まとめてレビューを記録しますか?###AiChgRvConfirm")
+MYE_STR(AiChg_RvConfirmBody,  "This records \"{action}\" for {count} changes.",
+                              "{count} 件の変更に「{action}」を記録します。")
+MYE_STR(AiChg_RvConfirmSkipped, "{skipped} changes made by you (editor saves, restores) are left out.",
+                              "利用者自身の操作 (エディタの保存・復元) の変更 {skipped} 件は対象に含めません。")
+MYE_STR(AiChg_RvConfirmOk,    "Record",                                "記録する")
+MYE_STR(AiChg_RvCollecting,   "Collecting the changes of this session...", "セッションの変更を集めています...")
+MYE_STR(AiChg_RvCollectFailed, "Could not collect every change of this session, so nothing will be recorded.",
+                              "セッションの変更を集めきれなかったため、何も記録しません。")
+MYE_STR(AiChg_RvNothingToReview, "There is nothing to review here.",   "レビューの対象がありません。")
+MYE_STR(AiChg_RvTruncated,    "(counted partly)",                      "(一部だけ集計)")

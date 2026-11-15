@@ -75,6 +75,7 @@ pub fn apply_event(
             }
             Ok(())
         }
+        "review_set" => crate::review::apply_event(conn, at, payload),
         "editor_saved" => match (payload["path"].as_str(), payload["hash"].as_str()) {
             (Some(path), Some(hash)) => attribution::apply_editor_saved(conn, at, path, hash),
             _ => Ok(()),
@@ -96,6 +97,7 @@ pub fn is_session_event(kind: &str) -> bool {
             | "op_abandoned"
             | "reported"
             | "editor_saved"
+            | "review_set"
     )
 }
 

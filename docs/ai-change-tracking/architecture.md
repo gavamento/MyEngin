@@ -284,12 +284,12 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 仕様書 §7.5 と §16.3 を満たすには、既存の自動適用を変える必要がある。ユーザー判断 (2026-11-13) は「未保存のときだけ止めて確認する」。
 
 - `ReloadActiveScene` は Engine 層、dirty の判定 (`EditorApp::IsSceneDirty` = `undo_.StateSerial() != savedStateSerial_`) は Editor 層にある。Engine から Editor を呼ぶ依存は作れない。
-- `ReloadHub` に「開いているシーンの外部変更を今適用してよいか」を問う関数の口を足す (`SetKernelHooks` と同じ、呼び手が渡す形)。未設定なら今までどおり適用する = Runtime と既存テストの挙動は変わらない。
+- `ReloadHub` に「開いているシーンの外部変更を今適用してよいか」を問う関数の口 (`SetSceneApplyGate`) と、保留の操作 (`HasPendingScene` / `PendingScenePath` / `RequestApplyPendingScene` / `DiscardPendingScene` / `TakePendingSceneResult`) を足す (`SetKernelHooks` と同じ、呼び手が渡す形)。口が未設定なら今までどおり適用する = Runtime と既存テストの挙動は変わらない。
 - 口が「保留」を返したら、`ReloadHub` はそのパスを保留として覚えるだけで適用しない。Editor は「外部で変更された。読み込む / 自分の編集を保つ」を出す。
   - 「読み込む」: 保留を適用する (今までと同じ `ApplyDiff`)。
   - 「自分の編集を保つ」: 保留を捨てる。次に保存するとディスク側を上書きすることを確認文に書く。
 - dirty でなければ今までどおり自動適用する。
-- 自分の保存で起きる監視イベントは、今も `ApplyDiff` をもう一度走らせている (同じ内容なので結果は変わらない)。保存直後は dirty でないので、この変更の後も同じ。
+- 自分の保存で起きる監視イベントは、今も `ApplyDiff` をもう一度走らせている (同じ内容なので結果は変わらない)。保存の直後はたいてい dirty でないので同じだが、監視のイベントが届くまでの約 150 ms 以内に編集を続けると未保存の状態で届き、自分の保存が「外部の変更」の確認になる。これを避けるため、Editor は保存の直後にファイルの大きさと最終更新時刻を控え (`OwnSaveRecord`)、保留になった時点のファイルが同じ印なら確認を出さずに `DiscardPendingScene` する (ライブのシーンは保存の内容 + その後の編集なので、読み込む必要が無い)。外から書き換えられていれば印が違うので、今までどおり確認が出る。
 
 **未決 (ユーザー判断が要る)**: Play 中に外部変更が来たときの扱い。今は Play 中の World へそのまま適用され、Stop で Play 前の状態に戻るので、変更は次の外部変更まで反映されないままになる。案は [plans\m104-ai-change-tracking.md](../../plans/m104-ai-change-tracking.md) の未決事項にある。
 
@@ -298,7 +298,7 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 - ECS にコンポーネントを足さない。SimSnapshot の版 (現行 82)、TypeId、ABI (v35 = 202 スロット) は変えない。
 - 追跡の状態は World の外に置く。前例は `Selection`、`CameraPilot`、Scene View のギズモ状態、`GhostTrack`。
 - `src\Editor\ChangeTracking\` を Engine / Runtime / GameLogic / Shared / Server から include させない。規則 12 と同じ形の規則を `check_rules.ps1` に足す (規則 19、M104j で実装済み。`tools\check_rules_selftest.ps1` に検査がある)。
-- §8 の `ReloadHub` の口は Engine 層の変更だが、未設定時の挙動は今と同じ。口が呼ばれるのはフェーズ 2 のセーフポイントで、sim の Tick の中ではない。
+- §8 の `ReloadHub` の口と保留の操作は Engine 層の変更だが、口が未設定のときの挙動は今と同じ。口が呼ばれるのはフェーズ 2 のセーフポイントで、sim の Tick の中ではない。
 - 受け入れ条件: 追跡を有効にした場合と無効にした場合で `tools\replay_verify.bat` の結果が一致する。Scene View のハイライトを出した状態と出していない状態で `HashWorld` が一致する。
 - 追跡は Editor 専用。`Runtime.exe` と `Server.exe` はサービスへ接続しない。`.mye\` は配布物に入らない (既に `.gitignore` とプロジェクトのテンプレートが除外している)。
 

@@ -149,7 +149,7 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `editor_saved` | `path`, `hash` | Editor がこのファイルをこの内容で保存した。監視が同じ内容を観測したら、行為者を「Editor の利用者」にする |
 | `editor_snapshot` | `documentId`, `path`, `json` の Blob ハッシュ, `dirty` | Editor Snapshot の登録 (中身は先に `blob_put` で送る) |
 | `blob_put` | `hash`, `offset`, `data` (base64), `last` | Editor から Blob を送る。サービスが受け取った全体のハッシュを確かめてから確定する |
-| `review_set` | `revisionId`, `scope`, `state`, `note?` | レビューの記録。過去の記録は消さず、追記する |
+| `review_set` | `targets[]` (`{ revisionId, scope: { kind, ref? } }`), `state`, `note?` | レビューの記録 (M104o。§4.6)。過去の記録は消さず、追記する |
 | `restore_record` | `restoreId`, `state`, `targets`, `preHashes?`, `postHashes?`, `error?` | 復元の進行を履歴へ記録する。**適用するのは Editor で、サービスは記録だけ** |
 | `restore_expect` | `restoreId`, `paths`, `hashes` | これから Editor が書くファイルと内容。監視が同じ内容を観測したら、行為者を「復元」にする |
 
@@ -169,10 +169,21 @@ collab の取り決め (`tools\collab\src\protocol.rs`) に合わせる。
 | `attribution_updated` | あとから帰属が変わった (報告が届いた、など) | `revisionId`, 新しい帰属 |
 | `coverage_gap` | 取り逃しや停止区間を記録した | 区間、理由 |
 | `session_changed` | セッションの開始・終了・中断 | `sessionId`, `status` |
+| `review_changed` | レビューが記録された (M104o) | `revisionIds` (1 回の引きで記録された Revision。重複なし) |
 | `shutting_down` | サービスが終了する | 理由 |
 | `resync` | 通知のキューがあふれて、古い通知を捨てた | `reason` (`queue_overflow`)。**購読の対象ではなく、捨てたときは必ず届く**。受け取ったら一覧・状態・詳細を取り直す |
 
 通知は `subscribe` を呼んだ `editor` の接続だけに届く。実装の取り決めは §9.8。
+
+### 4.6 レビュー (M104o)
+
+承認は「確認した」という記録で、**何も実行しない** (git の stage / commit / push、ビルド、テスト、ファイルの書き込み、Revision の復元状態に触れない)。却下も変更を消さない (取り消すのは復元で、別の操作)。保存の形と状態の決め方は db-schema.md §3.4、実装は `tools\track\src\review.rs` と `ops_record.rs` の `review_set`。
+
+- `review_set` は `role = editor` だけ (`mcp` / `hook` は `forbidden`。AI が自分の変更を承認できないように。要求 §12.6)。引数: `targets` (配列、1〜1000 件。超えたら `bad_args` なので Editor が分けて送る)、`state` (`approved` / `rejected` / `needs_review` / `reopened`)、`note` (任意、4000 文字まで)。`targets[]` の `scope.kind` は `revision` (`ref` なし) / `hunk` (`ref` = `hunkId`) / `entity` (`ref` = `fileId`) / `component` (`ref` = `"fileId/Component"`) / `field` (`ref` = `"fileId/Component/field"`、コンポーネントに属さないフィールドは `"fileId//field"`)。
+- **1 回の要求は 1 つのイベント**として記録する (セッションや操作をまとめて承認するのが 1 つの出来事になる)。1 件でも不正なら何も記録しない。エラー: Revision が無い・Hunk がその Revision のものでない・範囲が実在しない → `not_found`、形が違う・行為者が対象外・状態が不正・上限超え → `bad_args`、DB へ書けない → `db_degraded`。
+- 結果: `{ recorded, revisions: [{ revisionId, review }] }` (`review` は記録後の Revision の集約)。時間切れは 5 秒 (記録の op)。
+- **取得への反映**: `describe` に `reviewable` (行為者が `ai` / `unknown`)、`review` (集約。対象外は `null`)、`reviewCounts` (`{ pending, approved, rejected, needsReview }`)、`reviewLeaves[]` (`{ kind: hunk | scene | revision, hunkId? / sceneChangeId?, state }`、1000 件まで)、`reviewHistory[]` (古い順。`reviewId`、`scopeKind`、`scopeRef`、`state`、`note`、`decidedAt`。1000 件まで)、`changeReview` / `operationReview` (`{ state, counts, truncated }`)、`hunks[]` の各要素に `hunkId` と `review`。`hunks` と `scene_diff` の各要素に `review` (葉の今の状態)。`list` の各行の `review` は集約 (対象外は `null`) で、`review` フィルタは集約の 6 状態 (`pending` / `approved` / `rejected` / `needs_review` / `partially_approved` / `partially_rejected`)。`sessions` の各行に `review` (`{ state, counts, truncated }`)。`scene_overlay` は承認済みの構造の変更を返さない (`excludeApproved`、省略は true。除いた数は `approvedHidden`)。
+- 通知 `review_changed` (`revisionIds`) は、`subscribe` の対象に足した (§4.5)。
 
 ## 5. エラーコード
 
@@ -303,12 +314,13 @@ Rust の `Command` は継承可能なハンドルを子へ複製するため、�
 
 正本は `tools\track\src\notify.rs`。
 
-- `subscribe` (`role = editor` だけ。他は `forbidden`) は、`events` の名前 (`change_recorded` / `attribution_updated` / `coverage_gap` / `session_changed` / `shutting_down`) を検査して購読を登録する。検査が全部通ってから登録するので、失敗した要求で購読は残らない。2 回目は `bad_args` (接続と通知は続く)。結果は `{}`。
+- `subscribe` (`role = editor` だけ。他は `forbidden`) は、`events` の名前 (`change_recorded` / `attribution_updated` / `coverage_gap` / `session_changed` / `review_changed` / `shutting_down`) を検査して購読を登録する。検査が全部通ってから登録するので、失敗した要求で購読は残らない。2 回目は `bad_args` (接続と通知は続く)。結果は `{}`。
 - **通知は記録の経路に触れずに作る。** 購読者がいる間だけ、読み取り専用の DB 接続が 200 ms ごとに新しい行を引き、通知にする (購読者が 0 の間は引かない)。位置は購読したときの DB の末尾で、購読より前の出来事は通知にならない (取り直しは `list` で行う)。Writer も監視も通知を待たない。通知の遅れの上限は 200 ms + 接続の送り出しの間隔 (10 ms)。
   - `change_recorded`: 新しい `change_revisions` の行ごとに 1 件。`revisionId`、`changeId`、`path`、`changeType`、`actor`、`attribution` (その時点の値。`actor` は仕様の項目に足した)。シーン / プレハブ / アクターのときは `documentId` が付く (M104l。Editor が開いている文書の変更かをすぐ判定できる。項目の追加なのでプロトコル版は上げない)。
   - `attribution_updated`: **すでに知らせた** Revision に `attribution_evidence` が足されたら 1 件 (回ごとに Revision 1 つにつき 1 件)。`revisionId`、`actor`、`attribution` (その時点の値)。同じ回で初めて知らせる Revision の根拠は `change_recorded` に含まれるので、重ねて出さない。
   - `coverage_gap`: 新しい `coverage_gaps` の行ごとに 1 件。`gapId`、`fromAt`、`toAt`、`reason`、`scope`。
   - `session_changed`: セッションの `status` が変わった (新しいセッションを含む) ごとに 1 件。`sessionId`、`status`。
+  - `review_changed` (M104o): 新しい `reviews` の行があれば、その回で 1 件にまとめて `revisionIds` を送る。
   - `shutting_down`: サービスが終わるとき、購読者へ `reason` (`shutdown_op` / `idle_timeout` / `signal` ...) を送り、書き終わるのを最大 500 ms 待ってから止める。
 - **購読ごとの上限つきキュー** (既定 256 件。`serve --notify-queue <n>` で変える。試験用)。あふれたら一番古い通知を捨て、次の送り出しの先頭に `resync` を 1 つ付ける (あふれの区間で 1 つ)。読まないクライアントがいても、積むだけなので Writer と監視は止まらない。サービスの接続スレッドは、読み取りで止まる前に通知を送る (同期ハンドルの `ReadFile` で止まっている間は別スレッドから `WriteFile` できないので、購読した接続は `PeekNamedPipe` で入力を見ながら 10 ms ごとに送り出しを見る)。
 - プロトコル版は上げない (op の追加だけ。§7)。

@@ -286,6 +286,7 @@ ChangeRowText FormatChangeRow(const TrackChangeRow& row)
     out.superseded = row.changeState == "superseded" ? std::string(Tr(StrId::AiChg_Superseded)) : std::string();
     out.time = FormatTimeMs(row.observedAt);
     out.size = row.afterSize >= 0 ? FormatBytes(row.afterSize) : std::string();
+    out.review = ReviewStateLabel(row.review);
     return out;
 }
 
@@ -296,7 +297,161 @@ SessionRowText FormatSessionRow(const TrackSessionRow& row)
     out.status = SessionStatusLabel(row.status);
     out.time = FormatTimeMs(row.startedAt);
     out.count = std::to_string(row.changeCount) + " " + Tr(StrId::AiChg_SessionChanges);
+    if (!row.review.empty()) {
+        out.review = ReviewStateLabel(row.review);
+        const std::string counts = ReviewCountsText(row.reviewCounts);
+        if (!counts.empty()) {
+            out.review += " (" + counts + ")";
+        }
+        if (row.reviewTruncated) {
+            out.review += std::string(" ") + Tr(StrId::AiChg_RvTruncated);
+        }
+    }
     return out;
+}
+
+namespace {
+
+const Entry kReviewStates[] = {
+    { "pending", StrId::AiChg_RvPending },
+    { "reopened", StrId::AiChg_RvPending },
+    { "approved", StrId::AiChg_RvApproved },
+    { "rejected", StrId::AiChg_RvRejected },
+    { "needs_review", StrId::AiChg_RvNeedsReview },
+    { "partially_approved", StrId::AiChg_RvPartiallyApproved },
+    { "partially_rejected", StrId::AiChg_RvPartiallyRejected },
+};
+
+// {name} を値に置き換える (Tr の結果を書式文字列として使わない)
+std::string Substitute(std::string text, const std::vector<std::pair<std::string, std::string>>& values)
+{
+    for (const auto& [name, value] : values) {
+        const std::string token = "{" + name + "}";
+        for (size_t pos = text.find(token); pos != std::string::npos; pos = text.find(token, pos + value.size())) {
+            text.replace(pos, token.size(), value);
+        }
+    }
+    return text;
+}
+
+} // namespace
+
+std::string ReviewStateLabel(const std::string& state)
+{
+    if (state.empty()) {
+        return std::string();
+    }
+    const std::string label = Lookup(kReviewStates, state);
+    return label.empty() ? state : label;
+}
+
+const std::vector<std::string>& ReviewAggregateStates()
+{
+    static const std::vector<std::string> kStates = { "pending",      "approved",           "rejected",
+                                                      "needs_review", "partially_approved", "partially_rejected" };
+    return kStates;
+}
+
+std::string ReviewCountsText(const TrackReviewCounts& counts)
+{
+    std::string out;
+    auto put = [&](StrId label, int64_t n) {
+        if (n <= 0) {
+            return;
+        }
+        if (!out.empty()) {
+            out += " / ";
+        }
+        out += std::string(Tr(label)) + " " + std::to_string(n);
+    };
+    put(StrId::AiChg_RvPending, counts.pending);
+    put(StrId::AiChg_RvApproved, counts.approved);
+    put(StrId::AiChg_RvRejected, counts.rejected);
+    put(StrId::AiChg_RvNeedsReview, counts.needsReview);
+    return out;
+}
+
+std::string ReviewActionLabel(ReviewAction action)
+{
+    switch (action) {
+    case ReviewAction::Approve: return Tr(StrId::AiChg_RvActApprove);
+    case ReviewAction::Reject: return Tr(StrId::AiChg_RvActReject);
+    case ReviewAction::NeedsReview: return Tr(StrId::AiChg_RvActNeedsReview);
+    case ReviewAction::Reopen: return Tr(StrId::AiChg_RvActReopen);
+    }
+    return std::string();
+}
+
+std::string ReviewScopeLabel(const std::string& kind, const std::string& ref)
+{
+    if (kind == "revision") {
+        return Tr(StrId::AiChg_RvScopeRevision);
+    }
+    if (kind == "hunk") {
+        return std::string(Tr(StrId::AiChg_RvScopeHunk)) + " #" + ref;
+    }
+    // entity = fileId、component = "fileId/Component"、field = "fileId/Component/field" ("fileId//field" はコンポーネントなし)
+    const size_t first = ref.find('/');
+    const std::string file = ref.substr(0, first);
+    if (kind == "entity" || first == std::string::npos) {
+        return std::string(Tr(StrId::AiChg_RvScopeEntity)) + " #" + file;
+    }
+    const size_t second = ref.find('/', first + 1);
+    const std::string component = ref.substr(first + 1, second == std::string::npos ? std::string::npos : second - first - 1);
+    if (kind == "component" || second == std::string::npos) {
+        return std::string(Tr(StrId::AiChg_RvScopeComponent)) + " #" + file + " " + component;
+    }
+    const std::string field = ref.substr(second + 1);
+    return std::string(Tr(StrId::AiChg_RvScopeField)) + " #" + file + " " + (component.empty() ? field : component + "." + field);
+}
+
+std::string FormatReviewHistoryRow(const nlohmann::json& row)
+{
+    auto str = [&](const char* key) { return row.contains(key) && row[key].is_string() ? row[key].get<std::string>() : std::string(); };
+    const int64_t at = row.contains("decidedAt") && row["decidedAt"].is_number_integer() ? row["decidedAt"].get<int64_t>() : 0;
+    std::string out = FormatTimeMs(at);
+    out += "  " + ReviewStateLabel(str("state")) + "  " + ReviewScopeLabel(str("scopeKind"), str("scopeRef"));
+    const std::string note = str("note");
+    if (!note.empty()) {
+        out += "  - " + ClipValue(note, 80);
+    }
+    return out;
+}
+
+std::string ReviewConfirmText(size_t count, int skipped, ReviewAction action)
+{
+    std::string out =
+        Substitute(Tr(StrId::AiChg_RvConfirmBody), { { "count", std::to_string(count) }, { "action", ReviewActionLabel(action) } });
+    if (skipped > 0) {
+        out += "\n" + Substitute(Tr(StrId::AiChg_RvConfirmSkipped), { { "skipped", std::to_string(skipped) } });
+    }
+    return out;
+}
+
+std::string ReviewErrorText(const std::string& code, const std::string& detail)
+{
+    std::string text;
+    if (code == "not_found") {
+        text = Tr(StrId::AiChg_RvErrNotFound);
+    } else if (code == "timeout") {
+        text = Tr(StrId::AiChg_RvErrTimeout);
+    } else if (code == "disconnected" || code == "not_connected") {
+        text = Tr(StrId::AiChg_RvErrDisconnected);
+    } else {
+        text = std::string(Tr(StrId::AiChg_RvErrBadArgs)) + " " + code;
+        if (!detail.empty()) {
+            text += " (" + ClipValue(detail, 120) + ")";
+        }
+    }
+    return std::string(Tr(StrId::AiChg_RvFailed)) + " " + text;
+}
+
+std::string ReviewPartialText(size_t recorded, size_t total)
+{
+    if (recorded == 0 || recorded >= total) {
+        return std::string();
+    }
+    return Substitute(Tr(StrId::AiChg_RvPartialDone), { { "recorded", std::to_string(recorded) }, { "total", std::to_string(total) } });
 }
 
 std::wstring ProjectFilePath(const std::wstring& projectRoot, const std::string& relPath)

@@ -1470,6 +1470,9 @@ bool RunChangeTrackingSelfTest()
     // ---- (m) シーンの変更の強調・一覧・選択の同期 (M104m) ----
     RunSceneChangeOverlaySelfTests(check);
 
+    // ---- (n) レビュー (M104o) ----
+    RunReviewSelfTests(check);
+
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {
         RunProbe(probe, check);

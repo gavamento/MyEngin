@@ -7,6 +7,7 @@
 
 #include "Editor/Asset/AssetPreviewCache.h"
 #include "Editor/App/EditorSettings.h"
+#include "Editor/App/OwnSaveRecord.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
 #include "Editor/Widgets/EditorToolbar.h"
 #include "Editor/App/LayoutManager.h"
@@ -200,6 +201,8 @@ private:
     SourceControlWindow sourceControl_;
     // M104j: AI Change Tracking。窓 (M104k) と独立に生きる。設定が無効なら何も起動しない
     ChangeTrackingSession changeTracking_;
+    // 自分の保存の直後のファイルの印 (保存の直後に編集を続けたとき、自分の保存の監視イベントを外部変更として確認しない)
+    OwnSaveRecord ownSave_;
     AiChangesWindow aiChanges_; // M104k (既定は閉じている)
     // M66d: working tree を書き換える git 操作の唯一の入口 (ゲート + 一括適用 + モーダル)
     GitTransaction gitTx_;

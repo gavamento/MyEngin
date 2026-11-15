@@ -170,6 +170,8 @@ void DiffRows::Build(const std::vector<DiffHunkInput>& hunks)
         info.oversize = in.oversize;
         info.beforeBytes = in.beforeBytes;
         info.afterBytes = in.afterBytes;
+        info.badge = in.badge;
+        info.badgeColor = in.badgeColor;
         headers_.push_back(std::move(info));
         maxLineNo_ = (std::max)({ maxLineNo_, in.oldStart + in.oldCount + 3, in.newStart + in.newCount + 3 });
 
@@ -394,9 +396,15 @@ bool DiffViewer::Draw(const char* id, const char* emptyMessage, float width, flo
                 if (kind == DiffRowKind::Header) {
                     const std::string& header = rows_.HunkHeader(h);
                     dl->AddText(ImVec2(min.x + m.charW, textY), colDim, header.c_str(), header.c_str() + header.size());
+                    float afterX = min.x + m.charW * 3.0f + ImGui::CalcTextSize(header.c_str()).x;
                     if (rows_.HunkEolOnly(h)) {
-                        const float x = min.x + m.charW * 3.0f + ImGui::CalcTextSize(header.c_str()).x;
-                        dl->AddText(ImVec2(x, textY), ImGui::GetColorU32(themeColor::Warning), Tr(StrId::DiffView_EolOnly));
+                        dl->AddText(ImVec2(afterX, textY), ImGui::GetColorU32(themeColor::Warning), Tr(StrId::DiffView_EolOnly));
+                        afterX += ImGui::CalcTextSize(Tr(StrId::DiffView_EolOnly)).x + m.charW * 2.0f;
+                    }
+                    const std::string& badge = rows_.HunkBadge(h);
+                    if (!badge.empty()) {
+                        const uint32_t color = rows_.HunkBadgeColor(h);
+                        dl->AddText(ImVec2(afterX, textY), color != 0 ? color : colDim, badge.c_str(), badge.c_str() + badge.size());
                     }
                 } else {
                     char buf[160];

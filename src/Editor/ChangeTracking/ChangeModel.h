@@ -33,6 +33,16 @@ struct TrackStatusInfo {
     bool Baselining() const { return phase == "starting" || phase == "baselining"; }
 };
 
+// レビューの状態ごとの葉の数 (葉 = Hunk / 構造の変更 / Revision 自身)
+struct TrackReviewCounts {
+    int64_t pending = 0;
+    int64_t approved = 0;
+    int64_t rejected = 0;
+    int64_t needsReview = 0;
+    int64_t Total() const { return pending + approved + rejected + needsReview; }
+    bool operator==(const TrackReviewCounts&) const = default;
+};
+
 struct TrackSessionRow {
     std::string sessionId;
     std::string provider;
@@ -42,6 +52,10 @@ struct TrackSessionRow {
     int64_t startedAt = 0;
     int64_t endedAt = -1; // -1 = 終わっていない
     int64_t changeCount = 0; // そのセッションが候補に入っている変更の数
+    // レビューの集約 (pending / approved / rejected / needs_review / partially_approved / partially_rejected。空 = サービスが返さなかった)
+    std::string review;
+    TrackReviewCounts reviewCounts;
+    bool reviewTruncated = false; // 数えきれなかった (件数は読めた分だけ)
 };
 
 struct TrackChangeRow {
@@ -54,6 +68,7 @@ struct TrackChangeRow {
     std::string attribution;
     std::string completeness;
     std::string diffMode;
+    // レビューの集約。空 = レビューの対象ではない (行為者が editor_user / restore)
     std::string review;
     std::string changeState; // active / superseded / ...
     int64_t observedAt = 0;
@@ -78,7 +93,8 @@ struct TrackHunk {
     bool oversize = false;
     int64_t beforeBytes = 0;
     int64_t afterBytes = 0;
-    std::string state; // active / restored / conflicted
+    std::string state;  // active / restored / conflicted
+    std::string review; // 今のレビューの状態 (pending / approved / rejected / needs_review)
 };
 
 // scene_diff の 1 件 (構造の変更)。値は JSON の字句のまま。oversize のときは値が空で、大きさだけが入る
@@ -98,6 +114,7 @@ struct TrackSceneChange {
     bool oversize = false;
     int64_t beforeBytes = 0;
     int64_t afterBytes = 0;
+    std::string review; // 今のレビューの状態 (pending / approved / rejected / needs_review)
 };
 
 struct TrackListFilter {
@@ -144,6 +161,9 @@ public:
     // 毎フレーム 1 回 (TrackClient::Poll の後)。必要な部分だけ要求を出す
     void Tick();
 
+    // レビューを送ったあと (成功・失敗とも) 表示を実際の状態へ合わせる: 一覧・セッション・詳細を古い印にする (間引きはかかる)
+    void Refresh();
+
     // 一覧のフィルタ。変えたら一覧を取り直す
     void SetFilter(const TrackListFilter& filter);
     const TrackListFilter& Filter() const { return filter_; }
@@ -184,6 +204,8 @@ public:
     static std::vector<TrackChangeRow> ParseChanges(const nlohmann::json& result);
     static std::vector<TrackHunk> ParseHunks(const nlohmann::json& result);
     static std::vector<TrackSceneChange> ParseSceneChanges(const nlohmann::json& result);
+    // 件数の JSON ({pending, approved, rejected, needsReview}) を読む。無ければ全部 0
+    static TrackReviewCounts ParseReviewCounts(const nlohmann::json& counts);
 
 private:
     struct PartState {

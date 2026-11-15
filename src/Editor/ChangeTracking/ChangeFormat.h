@@ -11,6 +11,7 @@
 #include "nlohmann/json.hpp"
 
 #include "Editor/ChangeTracking/ChangeModel.h"
+#include "Editor/ChangeTracking/ReviewManager.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/ChangeTracking/TrackClient.h"
 
@@ -62,6 +63,7 @@ struct ChangeRowText {
     std::string superseded;    // 空 = 引き継がれていない
     std::string time;
     std::string size;          // After の大きさ。無ければ空
+    std::string review;        // レビューの集約の文面。レビューの対象でない行は空
 };
 ChangeRowText FormatChangeRow(const TrackChangeRow& row);
 
@@ -70,6 +72,7 @@ struct SessionRowText {
     std::string status;
     std::string time;
     std::string count;  // 「N 件の変更」
+    std::string review; // レビューの集約の文面 + 件数 (サービスが返さなければ空)
 };
 SessionRowText FormatSessionRow(const TrackSessionRow& row);
 
@@ -116,6 +119,27 @@ std::string UnparsedReason(const std::string& afterValue);
 
 // Hierarchy のバッジのツールチップ: 種類 + コンポーネント名・フィールド名を最大 3 つ。entity が null なら子孫の注記だけ
 std::string OverlayBadgeTooltip(const OverlayEntity* entity, bool descendantOnly);
+
+// ---- レビュー (M104o) ----
+
+// レビューの状態の文面 (葉の 4 状態と集約の 6 状態)。reopened は pending と同じ。未知の値は値そのもの。空は空
+std::string ReviewStateLabel(const std::string& state);
+// 状態の一覧 (集約の 6 状態。文面の網羅の試験用)
+const std::vector<std::string>& ReviewAggregateStates();
+// 件数 ("Approved 1 / Rejected 1 / Pending 2")。0 の状態は省く。全部 0 なら空
+std::string ReviewCountsText(const TrackReviewCounts& counts);
+// 操作の名前 (承認 / 却下 / 要確認 / 再開)
+std::string ReviewActionLabel(ReviewAction action);
+// 範囲 (reviews.scope_kind / scope_ref) の文面。「Hunk #12」「フィールド #5 Transform.position」「変更全体」など
+std::string ReviewScopeLabel(const std::string& kind, const std::string& ref);
+// 履歴 (describe の reviewHistory[] の 1 要素) の 1 行: 時刻・状態・範囲・メモ
+std::string FormatReviewHistoryRow(const nlohmann::json& row);
+// まとめての確認の本文 (件数・操作)。skipped > 0 なら対象外にした件数も添える。2 行 (改行区切り)
+std::string ReviewConfirmText(size_t count, int skipped, ReviewAction action);
+// 失敗の文面。code / detail は応答のまま (切断・時間切れの合成値を含む)。何も記録されなかった場合も、そう書く
+std::string ReviewErrorText(const std::string& code, const std::string& detail);
+// 分けて送った途中で失敗したときの補足 ("N 件中 M 件を記録した")。全部記録済み・何も記録していないときは空
+std::string ReviewPartialText(size_t recorded, size_t total);
 
 // ---- Inspector の印 (M104m2) ----
 

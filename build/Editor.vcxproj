@@ -47,6 +47,7 @@
     <ClCompile Include="..\src\Editor\App\EditorMain.cpp" />
     <ClCompile Include="..\src\Editor\App\EditorSettings.cpp" />
     <ClCompile Include="..\src\Editor\App\LayoutManager.cpp" />
+    <ClCompile Include="..\src\Editor\App\OwnSaveRecord.cpp" />
     <ClCompile Include="..\src\Editor\App\StartupMoebius.cpp" />
     <ClCompile Include="..\src\Editor\App\StartupSplash.cpp" />
     <ClCompile Include="..\src\Editor\Asset\AssetOps.cpp" />
@@ -57,6 +58,8 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ReviewManager.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\ReviewSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlaySelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.cpp" />
@@ -177,6 +180,7 @@
     <ClInclude Include="..\src\Editor\App\EditorGlobalSettings.h" />
     <ClInclude Include="..\src\Editor\App\EditorSettings.h" />
     <ClInclude Include="..\src\Editor\App\LayoutManager.h" />
+    <ClInclude Include="..\src\Editor\App\OwnSaveRecord.h" />
     <ClInclude Include="..\src\Editor\App\ShortcutHub.h" />
     <ClInclude Include="..\src\Editor\App\StartupMoebius.h" />
     <ClInclude Include="..\src\Editor\App\StartupSplash.h" />
@@ -189,6 +193,7 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\OverlayPalette.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\ReviewManager.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeWireBoxes.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackClient.h" />

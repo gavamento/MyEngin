@@ -92,6 +92,7 @@ pub struct Cursors {
     revision: i64,
     evidence: i64,
     gap: i64,
+    review: i64,
     sessions: HashMap<String, String>,
 }
 
@@ -103,8 +104,9 @@ impl Cursors {
         let revision = max("SELECT COALESCE(MAX(revision_id), 0) FROM change_revisions")?;
         let evidence = max("SELECT COALESCE(MAX(evidence_id), 0) FROM attribution_evidence")?;
         let gap = max("SELECT COALESCE(MAX(gap_id), 0) FROM coverage_gaps")?;
+        let review = max("SELECT COALESCE(MAX(review_id), 0) FROM reviews")?;
         let sessions = read_sessions(&tx)?;
-        Ok(Cursors { revision, evidence, gap, sessions })
+        Ok(Cursors { revision, evidence, gap, review, sessions })
     }
 }
 
@@ -203,6 +205,23 @@ pub fn poll_once(conn: &Connection, cursors: &mut Cursors) -> rusqlite::Result<V
             let (id, event) = row?;
             cursors.gap = id;
             events.push(event);
+        }
+    }
+
+    // レビューが足された Revision (1 回の引きで 1 つの通知にまとめる)
+    {
+        let mut stmt = tx.prepare("SELECT review_id, revision_id FROM reviews WHERE review_id > ?1 ORDER BY review_id LIMIT ?2")?;
+        let rows = stmt.query_map([cursors.review, BATCH_LIMIT], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut revision_ids: Vec<i64> = Vec::new();
+        for row in rows {
+            let (review_id, revision_id) = row?;
+            cursors.review = review_id;
+            if !revision_ids.contains(&revision_id) {
+                revision_ids.push(revision_id);
+            }
+        }
+        if !revision_ids.is_empty() {
+            events.push(json!({ "event": "review_changed", "revisionIds": revision_ids }));
         }
     }
 

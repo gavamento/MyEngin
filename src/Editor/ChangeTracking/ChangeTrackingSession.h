@@ -11,6 +11,7 @@
 #include <string>
 
 #include "Editor/ChangeTracking/ChangeModel.h"
+#include "Editor/ChangeTracking/ReviewManager.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/ChangeTracking/TrackClient.h"
 
@@ -57,6 +58,8 @@ public:
     TrackState State() const { return client_.State(); }
     TrackClient& Client() { return client_; }
     ChangeModel& Model() { return model_; }
+    ReviewManager& Review() { return review_; }
+    const ReviewManager& Review() const { return review_; }
     const ChangeModel& Model() const { return model_; }
     SceneChangeOverlay& Overlay() { return overlay_; }
     const SceneChangeOverlay& Overlay() const { return overlay_; }
@@ -69,6 +72,7 @@ private:
     // ★宣言順に意味がある: client_ のデストラクタが保留中の要求を失敗で返し、そのコールバックが model_ に触る。
     //   model_ を先に宣言して、後に壊れるようにする
     ChangeModel model_;
+    ReviewManager review_;
     SceneChangeOverlay overlay_;
     TrackClient client_;
     uint32_t seenConnects_ = 0;

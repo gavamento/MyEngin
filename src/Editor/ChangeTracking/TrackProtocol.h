@@ -30,6 +30,8 @@ inline constexpr const char* kBlobGet = "blob_get";
 inline constexpr const char* kShutdown = "shutdown";
 // Editor が保存した内容のハッシュを知らせる (role = editor だけ)。行為者を「Editor の利用者」にする根拠になる
 inline constexpr const char* kEditorSaved = "editor_saved";
+// 承認・却下・要確認・再開を記録する (role = editor だけ)。何も実行しない (git・ファイル・復元の状態に触れない)
+inline constexpr const char* kReviewSet = "review_set";
 } // namespace trackop
 
 namespace trackevent {
@@ -37,6 +39,8 @@ inline constexpr const char* kChangeRecorded = "change_recorded";
 inline constexpr const char* kAttributionUpdated = "attribution_updated";
 inline constexpr const char* kCoverageGap = "coverage_gap";
 inline constexpr const char* kSessionChanged = "session_changed";
+// レビューが記録された Revision (revisionIds)
+inline constexpr const char* kReviewChanged = "review_changed";
 inline constexpr const char* kShuttingDown = "shutting_down";
 // subscribe の対象ではなく、キューのあふれで通知を落としたとき必ず届く
 inline constexpr const char* kResync = "resync";

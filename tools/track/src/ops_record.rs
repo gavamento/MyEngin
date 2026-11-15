@@ -24,6 +24,7 @@ use crate::ops::open_reader;
 use crate::process::process_start_ms;
 use crate::protocol::{code, Args, OpError, Role};
 use crate::random::uuid_v4;
+use crate::review;
 use crate::session::{self, find_session, record_and_apply, SessionKey, SessionRow};
 use crate::store::{Store, StoreError};
 use crate::watch::FlushHandle;
@@ -586,5 +587,187 @@ pub fn editor_saved(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result
     run_in_writer(env, move |store| {
         record_and_apply(store, at, "editor_saved", json!({ "path": rel, "hash": hash })).map_err(store_err)?;
         Ok(json!({ "path": rel, "pending": pending }))
+    })
+}
+
+// ---- review_set ---------------------------------------------------------------------------------
+
+/// `scope` を読む。`ref` は `kind` ごとの形で、正規の書き方 (数字の先頭の 0 なし) だけを受ける。
+fn parse_scope(scope: &Value) -> Result<(String, String), OpError> {
+    let Value::Object(map) = scope else { return Err(OpError::bad_args("scope はオブジェクトでなければならない")) };
+    if let Some(extra) = map.keys().find(|k| !matches!(k.as_str(), "kind" | "ref")) {
+        return Err(OpError::bad_args(format!("scope の知らない項目: {}", crate::protocol::clip(extra))));
+    }
+    let kind = map.get("kind").and_then(Value::as_str).ok_or_else(|| OpError::bad_args("scope.kind が要る"))?;
+    if !review::SCOPE_KINDS.contains(&kind) {
+        return Err(OpError::bad_args(format!("scope.kind は {} のどれか", review::SCOPE_KINDS.join(" / "))));
+    }
+    let scope_ref = match map.get("ref") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(text)) => Some(text.as_str()),
+        Some(_) => return Err(OpError::bad_args("scope.ref は文字列でなければならない")),
+    };
+    let bad = || OpError::bad_args(format!("scope.ref の形が {kind} と合わない"));
+    let canonical = match kind {
+        "revision" => {
+            if scope_ref.is_some() {
+                return Err(OpError::bad_args("revision の scope に ref は付けない"));
+            }
+            String::new()
+        }
+        "hunk" | "entity" => {
+            let n: i64 = scope_ref.ok_or_else(bad)?.parse().map_err(|_| bad())?;
+            n.to_string()
+        }
+        "component" => {
+            let (file, component) = scope_ref.ok_or_else(bad)?.split_once('/').ok_or_else(bad)?;
+            let file: i64 = file.parse().map_err(|_| bad())?;
+            if component.is_empty() || component.contains('/') {
+                return Err(bad());
+            }
+            review::component_ref(file, component)
+        }
+        _ => {
+            let mut parts = scope_ref.ok_or_else(bad)?.splitn(3, '/');
+            let (Some(file), Some(component), Some(field)) = (parts.next(), parts.next(), parts.next()) else {
+                return Err(bad());
+            };
+            let file: i64 = file.parse().map_err(|_| bad())?;
+            if field.is_empty() {
+                return Err(bad());
+            }
+            review::field_ref(file, (!component.is_empty()).then_some(component), field)
+        }
+    };
+    if scope_ref.is_some_and(|given| given != canonical) {
+        return Err(bad());
+    }
+    Ok((kind.to_string(), canonical))
+}
+
+/// 対象がその Revision に実在するかを DB で確かめる。別の Revision の Hunk ID や存在しない範囲への記録を作らない。
+fn check_target(conn: &Connection, target: &review::Target) -> Result<(), OpError> {
+    let not_found = |what: &str| OpError::new(code::NOT_FOUND, format!("revisionId {} に {what} は無い", target.revision_id));
+    let exists = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<bool, OpError> {
+        conn.query_row(sql, params, |r| r.get::<_, bool>(0)).map_err(db_err)
+    };
+    let revision = target.revision_id;
+    match target.kind.as_str() {
+        "revision" => Ok(()),
+        "hunk" => {
+            let hunk_id: i64 = target.scope_ref.parse().map_err(|_| OpError::bad_args("hunk の ref は数字"))?;
+            if !exists("SELECT EXISTS (SELECT 1 FROM change_hunks WHERE hunk_id = ?1 AND revision_id = ?2)", &[&hunk_id, &revision])? {
+                return Err(not_found("その Hunk"));
+            }
+            // 構造の変更を持つ Revision の葉は構造の変更で、Hunk への記録は状態に効かない (黙って無意味な行を作らない)
+            if exists("SELECT EXISTS (SELECT 1 FROM scene_changes WHERE revision_id = ?1)", &[&revision])? {
+                return Err(OpError::bad_args("この Revision の葉は構造の変更なので、Hunk には記録できない"));
+            }
+            Ok(())
+        }
+        "entity" => {
+            let file: i64 = target.scope_ref.parse().map_err(|_| OpError::bad_args("entity の ref は fileId"))?;
+            exists("SELECT EXISTS (SELECT 1 FROM scene_changes WHERE revision_id = ?1 AND file_id = ?2)", &[&revision, &file])?
+                .then_some(())
+                .ok_or_else(|| not_found("そのエンティティ"))
+        }
+        "component" => {
+            let (file, component) = target.scope_ref.split_once('/').unwrap_or(("", ""));
+            let file: i64 = file.parse().map_err(|_| OpError::bad_args("component の ref の形が違う"))?;
+            exists(
+                "SELECT EXISTS (SELECT 1 FROM scene_changes WHERE revision_id = ?1 AND file_id = ?2 AND component = ?3)",
+                &[&revision, &file, &component],
+            )?
+            .then_some(())
+            .ok_or_else(|| not_found("そのコンポーネント"))
+        }
+        _ => {
+            let mut parts = target.scope_ref.splitn(3, '/');
+            let (file, component, field) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+            let file: i64 = file.parse().map_err(|_| OpError::bad_args("field の ref の形が違う"))?;
+            let component: Option<&str> = (!component.is_empty()).then_some(component);
+            exists(
+                "SELECT EXISTS (SELECT 1 FROM scene_changes WHERE revision_id = ?1 AND file_id = ?2 AND field = ?3
+                                 AND ((?4 IS NULL AND component IS NULL) OR component = ?4))",
+                &[&revision, &file, &field, &component],
+            )?
+            .then_some(())
+            .ok_or_else(|| not_found("そのフィールド"))
+        }
+    }
+}
+
+/// Editor の利用者の判断 (承認・却下・要確認・再開) を記録する。複数の対象を 1 つのイベントとして記録する。
+/// 何も実行しない (git・ファイル・Revision の復元状態に触れない)。`reviews` へ行を足すだけで、過去の行は変えない。
+pub fn review_set(env: &RecordEnv, _caller: &Caller, mut args: Args) -> Result<Value, OpError> {
+    let targets_value = args.value("targets").ok_or_else(|| OpError::bad_args("targets が要る"))?;
+    let state = args.choice("state", review::INPUT_STATES)?.ok_or_else(|| OpError::bad_args("state が要る"))?;
+    let note = args.string("note")?;
+    args.finish()?;
+    let Value::Array(items) = targets_value else { return Err(OpError::bad_args("targets は配列でなければならない")) };
+    if items.is_empty() {
+        return Err(OpError::bad_args("targets は 1 件以上"));
+    }
+    if items.len() > review::MAX_TARGETS_PER_CALL {
+        return Err(OpError::bad_args(format!("targets は {} 件まで", review::MAX_TARGETS_PER_CALL)));
+    }
+    if note.as_ref().is_some_and(|n| n.chars().count() > review::MAX_NOTE_CHARS) {
+        return Err(OpError::bad_args(format!("note は {} 文字まで", review::MAX_NOTE_CHARS)));
+    }
+    let mut targets: Vec<review::Target> = Vec::with_capacity(items.len());
+    for item in &items {
+        let Value::Object(map) = item else { return Err(OpError::bad_args("targets の要素はオブジェクトでなければならない")) };
+        if let Some(extra) = map.keys().find(|k| !matches!(k.as_str(), "revisionId" | "scope")) {
+            return Err(OpError::bad_args(format!("targets の知らない項目: {}", crate::protocol::clip(extra))));
+        }
+        let revision_id = map
+            .get("revisionId")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| OpError::bad_args("targets[].revisionId は整数でなければならない"))?;
+        let (kind, scope_ref) = parse_scope(map.get("scope").ok_or_else(|| OpError::bad_args("targets[].scope が要る"))?)?;
+        let target = review::Target { revision_id, kind, scope_ref };
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    let at = now_ms();
+    run_in_writer(env, move |store| {
+        let conn = conn_of(store)?;
+        let mut checked: Vec<i64> = Vec::new();
+        for target in &targets {
+            if !checked.contains(&target.revision_id) {
+                let actor: Option<String> = conn
+                    .query_row("SELECT actor FROM change_revisions WHERE revision_id = ?1", [target.revision_id], |r| r.get(0))
+                    .optional()
+                    .map_err(db_err)?;
+                let Some(actor) = actor else {
+                    return Err(OpError::new(code::NOT_FOUND, format!("revisionId {} は無い", target.revision_id)));
+                };
+                if !review::is_reviewable_actor(&actor) {
+                    return Err(OpError::bad_args(format!(
+                        "revisionId {} の行為者は {actor} で、レビューの対象ではない",
+                        target.revision_id
+                    )));
+                }
+                checked.push(target.revision_id);
+            }
+            check_target(conn, target)?;
+        }
+        let payload_targets: Vec<Value> = targets
+            .iter()
+            .map(|t| json!({ "revision_id": t.revision_id, "kind": t.kind, "ref": t.scope_ref }))
+            .collect();
+        let payload = json!({ "targets": payload_targets, "state": state, "note": note });
+        record_and_apply(store, at, "review_set", payload).map_err(store_err)?;
+        let conn = conn_of(store)?;
+        let mut states: Vec<Value> = Vec::new();
+        for revision_id in &checked {
+            let aggregate = review::revision_state(conn, *revision_id).map_err(db_err)?;
+            states.push(json!({
+                "revisionId": revision_id,
+                "review": aggregate.map(|(state, _)| state.as_str()),
+            }));
+        }
+        Ok(json!({ "recorded": targets.len(), "revisions": states }))
     })
 }
