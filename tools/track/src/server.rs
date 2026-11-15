@@ -31,6 +31,7 @@ use crate::protocol::{
     clip, code, error_response, ok_response, parse_request, role_allows, Args, OpError, Request, Role, EVENT_NAMES,
     IMPLEMENTED_OPS, MAX_LINE_BYTES, PROTO_VERSION,
 };
+use crate::scene_overlay;
 use crate::session::{self, LifecycleConfig};
 use crate::startup::{open_project, ServiceState, StartupReport};
 use crate::store::Paths;
@@ -466,6 +467,10 @@ fn handle_request(ctx: &Context, conn: &mut ConnState, request: &Request, client
         "sessions" => with_reader(ctx, conn, |db| ops::sessions(db, args)),
         "hunks" => with_reader(ctx, conn, |db| ops::hunks(db, args)),
         "scene_diff" => with_reader(ctx, conn, |db| ops::scene_diff(db, args)),
+        "scene_overlay" => with_reader(ctx, conn, |db| scene_overlay::scene_overlay(db, args)),
+        "document_for_path" => {
+            with_reader(ctx, conn, |db| scene_overlay::document_for_path(db, &ctx.record.root, args))
+        }
         "blob_get" => ops::blob_get(&ctx.blobs_dir, args),
         "shutdown" => args.finish().map(|()| json!({})),
         "subscribe" => subscribe(ctx, conn, args),

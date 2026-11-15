@@ -9,10 +9,12 @@
 #include <cfloat>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 #include "imgui.h"
 
 #include "Engine/Core/Localization/Localization.h"
+#include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
 
 namespace mye {
@@ -155,6 +157,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
 {
     ChangeModel& model = session.Model();
     SyncInterest(model, session.State());
+    session.Overlay().SetWindowOpen(open); // 強調が切でも、窓が開いていれば帯の件数のために取る
     if (!open) {
         return;
     }
@@ -169,6 +172,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
     const TrackState state = session.State();
     const bool hasData = model.Status().valid && (state == TrackState::Ready || state == TrackState::DbDegraded || state == TrackState::Disconnected);
     if (hasData) {
+        DrawSceneBand(session);
         ImGui::Separator();
         const float height = (std::max)(ImGui::GetContentRegionAvail().y, 120.0f);
         if (ImGui::BeginTable("##aichg", 3, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp,
@@ -182,7 +186,7 @@ void AiChangesWindow::OnImGui(ChangeTrackingSession& session, const AiChangesHos
             ImGui::TableNextColumn();
             DrawChanges(model);
             ImGui::TableNextColumn();
-            DrawDetail(model, host);
+            DrawDetail(session, host);
             ImGui::EndTable();
         }
     }
@@ -441,8 +445,9 @@ void AiChangesWindow::DrawChanges(ChangeModel& model)
     ImGui::EndChild();
 }
 
-void AiChangesWindow::DrawDetail(ChangeModel& model, const AiChangesHost& host)
+void AiChangesWindow::DrawDetail(ChangeTrackingSession& session, const AiChangesHost& host)
 {
+    ChangeModel& model = session.Model();
     ImGui::TextUnformatted(Tr(StrId::AiChg_Detail));
     if (!ImGui::BeginChild("##detail", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None)) {
         ImGui::EndChild();
@@ -540,6 +545,11 @@ void AiChangesWindow::DrawDetail(ChangeModel& model, const AiChangesHost& host)
         ImGui::PopStyleColor();
     }
 
+    // シーン / プレハブ / アクターの構造の変更 (describe に sceneSummary があるとき)
+    if (d.contains("sceneSummary") && d["sceneSummary"].is_object()) {
+        DrawSceneChanges(session, host);
+    }
+
     // 表示の切り替えと、対象ファイルへの移動
     const bool hasLines = diffMode == "lines" || diffMode == "whole";
     if (hasLines) {
@@ -584,6 +594,142 @@ void AiChangesWindow::DrawDetail(ChangeModel& model, const AiChangesHost& host)
                                                : (model.HunksComplete() ? StrId::AiChg_NoHunks : StrId::AiChg_HunksLoading));
     diff_.Draw("##diff", empty, 0.0f, 0.0f);
     ImGui::EndChild();
+}
+
+SceneChangeActivation AiChangesWindow::ActivateSceneChange(const TrackSceneChange& change, const SceneChangeOverlay& overlay,
+                                                           const AiChangesHost& host)
+{
+    SceneChangeActivation result = SceneChangeActivation::Selected;
+    const std::string& doc = change.resolvedDocumentId.empty() ? change.documentId : change.resolvedDocumentId;
+    if (!change.hasFileId) {
+        result = SceneChangeActivation::NoEntity;
+    } else if (overlay.DocumentId().empty() || doc != overlay.DocumentId()) {
+        result = SceneChangeActivation::NotOpen;
+    } else if (!host.selectEntity || !host.selectEntity(static_cast<uint64_t>(change.fileId))) {
+        result = SceneChangeActivation::EntityMissing;
+    }
+    lastActivation_ = result;
+    hasActivation_ = true;
+    return result;
+}
+
+// 開いているシーンについての帯: 強調の切り替え・件数・「ここまで確認済みにする」・不完全の注記
+void AiChangesWindow::DrawSceneBand(ChangeTrackingSession& session)
+{
+    SceneChangeOverlay& overlay = session.Overlay();
+    ImGui::Separator();
+    ImGui::TextUnformatted(Tr(StrId::AiChg_SceneBand));
+    ImGui::SameLine();
+    if (overlay.DocumentPath().empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_OverlayNoScene));
+        return;
+    }
+    ImGui::TextDisabled("%s", WideToUtf8(std::filesystem::path(overlay.DocumentPath()).filename().wstring()).c_str());
+    bool show = overlay.Show();
+    if (ImGui::Checkbox(Tr(StrId::AiChg_OverlayShow), &show)) {
+        overlay.SetShow(show);
+    }
+    ImGui::SameLine();
+    if (!overlay.Loaded()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_OverlayLoading));
+    } else {
+        const OverlayCounts counts = overlay.Counts();
+        ImGui::TextColored(ImVec4(kOverlayAddedColor.r, kOverlayAddedColor.g, kOverlayAddedColor.b, 1.0f), "%s %d", Tr(StrId::AiChg_OverlayAdded),
+                           counts.added);
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(kOverlayModifiedColor.r, kOverlayModifiedColor.g, kOverlayModifiedColor.b, 1.0f), "%s %d",
+                           Tr(StrId::AiChg_OverlayModified), counts.modified);
+        ImGui::SameLine();
+        ImGui::TextColored(themeColor::Error, "%s %d", Tr(StrId::AiChg_OverlayRemoved), counts.removed);
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(overlay.DocumentId().empty() || overlay.LatestRevisionId() <= 0);
+    if (ImGui::SmallButton(Tr(StrId::AiChg_OverlayAck))) {
+        overlay.AcknowledgeUpTo();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", Tr(StrId::AiChg_OverlayAckNote));
+    }
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!overlay.HasAck());
+    if (ImGui::SmallButton(Tr(StrId::AiChg_OverlayShowAll))) {
+        overlay.ClearAck();
+    }
+    ImGui::EndDisabled();
+    if (overlay.Incomplete()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_OverlayIncomplete));
+        ImGui::PopStyleColor();
+    }
+    if (overlay.Truncated()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_OverlayTruncated));
+        ImGui::PopStyleColor();
+    }
+}
+
+// 選んだ Revision の構造の変更の一覧。見えている行だけを組み立てる (数万件でも重くしない)
+void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    const ChangeModel& model = session.Model();
+    const SceneChangeOverlay& overlay = session.Overlay();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(Tr(StrId::AiChg_SceneChanges));
+    const std::vector<TrackSceneChange>& changes = model.SceneChanges();
+    if (!model.SceneChangesComplete() && !model.SceneChangesFailed()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_SceneChangesLoading));
+    }
+    if (model.SceneChangesFailed()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", Tr(StrId::AiChg_SceneChangesFailed));
+        ImGui::PopStyleColor();
+    }
+    if (model.SceneChangesComplete() && changes.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_NoSceneChanges));
+    }
+    if (!changes.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_SceneClickHint));
+        const float lineH = ImGui::GetTextLineHeightWithSpacing();
+        const float height = (std::min)(static_cast<float>(changes.size()), 8.0f) * lineH + 6.0f;
+        if (ImGui::BeginChild("##scenechanges", ImVec2(0.0f, height), ImGuiChildFlags_Borders)) {
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(changes.size()), lineH);
+            while (clipper.Step()) {
+                for (int n = clipper.DisplayStart; n < clipper.DisplayEnd; ++n) {
+                    const TrackSceneChange& c = changes[static_cast<size_t>(n)];
+                    const OverlayEntity* known = c.hasFileId ? overlay.Find(static_cast<uint64_t>(c.fileId)) : nullptr;
+                    const SceneChangeText text = FormatSceneChange(c, known != nullptr ? known->name : std::string());
+                    std::string line = "[" + text.kind + "] " + text.target;
+                    if (!text.component.empty() || !text.field.empty()) {
+                        line += " " + text.component + (text.component.empty() || text.field.empty() ? "" : ".") + text.field;
+                    }
+                    if (!text.note.empty()) {
+                        line += ": " + text.note;
+                    } else if (!text.before.empty() && !text.after.empty()) {
+                        line += ": " + text.before + " -> " + text.after;
+                    } else if (!text.before.empty()) {
+                        line += ": - " + text.before; // 削除された値
+                    } else if (!text.after.empty()) {
+                        line += ": + " + text.after;  // 追加された値
+                    }
+                    ImGui::PushID(n);
+                    if (ImGui::Selectable(line.c_str(), false)) {
+                        ActivateSceneChange(c, overlay, host);
+                    }
+                    ImGui::PopID();
+                }
+            }
+            clipper.End();
+        }
+        ImGui::EndChild();
+    }
+    if (hasActivation_ && lastActivation_ != SceneChangeActivation::Selected && lastActivation_ != SceneChangeActivation::NoEntity) {
+        ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
+        ImGui::TextWrapped("%s", Tr(lastActivation_ == SceneChangeActivation::NotOpen ? StrId::AiChg_SceneNotOpen : StrId::AiChg_EntityGone));
+        ImGui::PopStyleColor();
+    }
+    ImGui::Spacing();
 }
 
 } // namespace mye

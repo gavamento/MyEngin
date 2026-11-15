@@ -814,3 +814,167 @@ fn scene_diff_is_paged_oversize_values_are_flagged_and_only_the_editor_may_ask()
     let recorded = expect_event(&mut editor, "change_recorded note.txt", |e| e["event"] == "change_recorded" && e["path"] == "note.txt");
     assert!(recorded.get("documentId").is_none(), "{recorded}");
 }
+
+/// `scene_overlay` の結果のエンティティを (fileId, status) の列にする。
+fn overlay_entities(reply: &Value) -> Vec<(i64, String)> {
+    assert_eq!(reply["ok"], true, "{}", reply.to_string().chars().take(400).collect::<String>());
+    reply["result"]["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["fileId"].as_i64().unwrap(), e["status"].as_str().unwrap().to_string()))
+        .collect()
+}
+
+/// パスの Revision の件数が `n` 以上になるまで待つ。
+fn wait_revision_count(client: &mut Client, path: &str, n: usize) {
+    wait_until(path, WAIT_LIMIT, || list_items(client, json!({ "path": path })).len() >= n);
+}
+
+#[test]
+fn scene_overlay_folds_per_document_honours_after_revision_and_document_for_path_agrees() {
+    let project = temp_project("scene_overlay");
+    const GUID_A: &str = "aaaaaaaaaaaaaaaa";
+    const GUID_B: &str = "bbbbbbbbbbbbbbbb";
+    for (name, guid) in [("a", GUID_A), ("b", GUID_B)] {
+        fs::write(project.join(format!("{name}.scene.json.meta")), format!("{{\"guid\":\"{guid}\",\"type\":\"scene\",\"version\":1}}")).unwrap();
+        fs::write(project.join(format!("{name}.scene.json")), scene_text(&[(1, "x".into()), (2, "x".into())])).unwrap();
+    }
+    let mut service = ServiceProc::spawn(&project);
+    service.wait_watching();
+    let mut editor = service.connect("editor");
+    let base_a = list_items(&mut editor, json!({ "path": "a.scene.json" })).len();
+    let base_b = list_items(&mut editor, json!({ "path": "b.scene.json" })).len();
+
+    // 同じ fileId の同じフィールドを、2 つのシーンで別々に変える
+    fs::write(project.join("a.scene.json"), scene_text(&[(1, "y".into()), (2, "x".into()), (3, "x".into())])).unwrap();
+    wait_revision_count(&mut editor, "a.scene.json", base_a + 1);
+    let first = list_items(&mut editor, json!({ "path": "a.scene.json" }))[0]["revisionId"].as_i64().unwrap();
+    fs::write(project.join("b.scene.json"), scene_text(&[(1, "z".into()), (2, "x".into())])).unwrap();
+    wait_revision_count(&mut editor, "b.scene.json", base_b + 1);
+    // a の 2 回目: 1 を元へ戻し、2 を削除
+    fs::write(project.join("a.scene.json"), scene_text(&[(1, "x".into()), (3, "x".into())])).unwrap();
+    wait_revision_count(&mut editor, "a.scene.json", base_a + 2);
+
+    let reply = editor.request(20, "document_for_path", json!({ "path": "a.scene.json" })).unwrap();
+    assert_eq!(
+        (reply["result"]["documentId"].as_str(), reply["result"]["idSource"].as_str(), reply["result"]["known"].as_bool()),
+        (Some(GUID_A), Some("meta"), Some(true)),
+        "{reply}"
+    );
+    // 絶対パスも受ける
+    let reply = editor.request(21, "document_for_path", json!({ "path": project.join("b.scene.json").to_string_lossy() })).unwrap();
+    assert_eq!(reply["result"]["documentId"], GUID_B, "{reply}");
+
+    // a: 1 は元へ戻って消え、2 は削除、3 は追加。b の変更は混ざらない
+    let reply = editor.request(22, "scene_overlay", json!({ "documentId": GUID_A })).unwrap();
+    assert_eq!(overlay_entities(&reply), vec![(2, "removed".to_string()), (3, "added".to_string())]);
+    assert_eq!(reply["result"]["incomplete"], false);
+    assert!(reply["result"]["latestRevisionId"].as_i64().unwrap() > first);
+    let reply = editor.request(23, "scene_overlay", json!({ "documentId": GUID_B })).unwrap();
+    assert_eq!(overlay_entities(&reply), vec![(1, "modified".to_string())]);
+    let field = &reply["result"]["entities"][0]["components"][0]["fields"][0];
+    assert_eq!((field["name"].as_str(), field["before"].as_str(), field["after"].as_str()), (Some("text"), Some("\"x\""), Some("\"z\"")), "{reply}");
+
+    // afterRevisionId より後だけ: a の 2 回目の変更 (1 は y -> x、2 の削除)。3 の追加は含まれない
+    let reply = editor.request(24, "scene_overlay", json!({ "documentId": GUID_A, "afterRevisionId": first })).unwrap();
+    assert_eq!(overlay_entities(&reply), vec![(1, "modified".to_string()), (2, "removed".to_string())]);
+
+    // 仮の ID: .meta の無いシーン。記録の前も後も同じ ID を返し、scene_overlay の ID と一致する
+    let reply = editor.request(25, "document_for_path", json!({ "path": "d.scene.json" })).unwrap();
+    let provisional = mye_track::document::path_id("d.scene.json");
+    assert_eq!(
+        (reply["result"]["documentId"].as_str(), reply["result"]["idSource"].as_str(), reply["result"]["known"].as_bool()),
+        (Some(provisional.as_str()), Some("path"), Some(false)),
+        "{reply}"
+    );
+    fs::write(project.join("d.scene.json"), scene_text(&[(1, "x".into())])).unwrap();
+    wait_revision_count(&mut editor, "d.scene.json", 1);
+    fs::write(project.join("d.scene.json"), scene_text(&[(1, "q".into())])).unwrap();
+    wait_revision_count(&mut editor, "d.scene.json", 2);
+    let reply = editor.request(26, "document_for_path", json!({ "path": "d.scene.json" })).unwrap();
+    assert_eq!((reply["result"]["documentId"].as_str(), reply["result"]["known"].as_bool()), (Some(provisional.as_str()), Some(true)), "{reply}");
+    let reply = editor.request(27, "scene_overlay", json!({ "documentId": provisional })).unwrap();
+    assert_eq!(overlay_entities(&reply), vec![(1, "modified".to_string())]);
+
+    // 引数と役割
+    for (op, args) in [
+        ("scene_overlay", json!({})),
+        ("scene_overlay", json!({ "documentId": GUID_A, "cursor": "x" })),
+        ("scene_overlay", json!({ "documentId": GUID_A, "zzz": 1 })),
+        ("document_for_path", json!({ "path": "note.txt" })),
+        ("document_for_path", json!({ "path": "..\\outside.scene.json" })),
+        ("document_for_path", json!({})),
+    ] {
+        let reply = editor.request(30, op, args.clone()).unwrap();
+        assert_eq!(reply["error"]["code"], "bad_args", "{op} {args}: {reply}");
+    }
+    for role in ["mcp", "hook"] {
+        let mut other = service.connect(role);
+        for (op, args) in [("scene_overlay", json!({ "documentId": GUID_A })), ("document_for_path", json!({ "path": "a.scene.json" }))] {
+            let reply = other.request(2, op, args).unwrap();
+            assert_eq!(reply["error"]["code"], "forbidden", "{role} {op}: {reply}");
+        }
+    }
+    assert_eq!(service.shutdown(), 0);
+}
+
+#[test]
+fn scene_overlay_is_paged_flags_oversize_values_and_lists_document_changes_once() {
+    let project = temp_project("scene_overlay_pages");
+    const GUID: &str = "cccccccccccccccc";
+    fs::write(project.join("c.scene.json.meta"), format!("{{\"guid\":\"{GUID}\",\"type\":\"scene\",\"version\":1}}")).unwrap();
+    let build = |ch: char, scene_name: &str| {
+        let mut values: Vec<(i64, String)> = (1..=400).map(|i| (i, ch.to_string().repeat(5_000))).collect();
+        values.push((401, ch.to_string().repeat(20_000)));
+        scene_text(&values).replace("\"sceneName\":\"s\"", &format!("\"sceneName\":\"{scene_name}\""))
+    };
+    fs::write(project.join("c.scene.json"), build('a', "s")).unwrap();
+    let service = ServiceProc::spawn(&project);
+    service.wait_watching();
+    let mut editor = service.connect("editor");
+    let base = list_items(&mut editor, json!({ "path": "c.scene.json" })).len();
+    fs::write(project.join("c.scene.json"), build('b', "t")).unwrap();
+    wait_revision_count(&mut editor, "c.scene.json", base + 1);
+
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    let mut ids: Vec<i64> = Vec::new();
+    let mut oversize = 0;
+    let mut first_page_changes = 0;
+    loop {
+        let args = match &cursor {
+            Some(c) => json!({ "documentId": GUID, "cursor": c }),
+            None => json!({ "documentId": GUID }),
+        };
+        let reply = editor.request(10, "scene_overlay", args).unwrap();
+        assert_eq!(reply["ok"], true, "{}", reply.to_string().chars().take(300).collect::<String>());
+        assert!(reply.to_string().len() < 1024 * 1024, "1 行の上限を超える");
+        pages += 1;
+        if pages == 1 {
+            first_page_changes = reply["result"]["documentChanges"].as_array().unwrap().len();
+        } else {
+            assert!(reply["result"].get("documentChanges").is_none(), "2 ページ目以降に文書の変更が重複している");
+        }
+        for e in reply["result"]["entities"].as_array().unwrap() {
+            ids.push(e["fileId"].as_i64().unwrap());
+            let f = &e["components"][0]["fields"][0];
+            if f["oversize"] == true {
+                oversize += 1;
+                assert!(f["before"].is_null() && f["after"].is_null());
+                assert_eq!(f["beforeBytes"], 20_002);
+                assert_eq!(e["fileId"], 401);
+            }
+        }
+        match reply["result"]["nextCursor"].as_str() {
+            Some(next) => cursor = Some(next.to_string()),
+            None => break,
+        }
+        assert!(pages < 100, "ページ送りが終わらない");
+    }
+    assert!(pages >= 2, "ページ送りになっていない: {pages}");
+    assert_eq!(ids.len(), 401);
+    assert!(ids.windows(2).all(|w| w[0] < w[1]), "fileId の昇順で重複なし");
+    assert_eq!(oversize, 1);
+    assert_eq!(first_page_changes, 1, "sceneName の変更が最初のページに 1 件");
+}

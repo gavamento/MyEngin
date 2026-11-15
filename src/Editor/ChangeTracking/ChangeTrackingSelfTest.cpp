@@ -24,6 +24,7 @@
 
 #include "Editor/App/EditorSettings.h"
 #include "Editor/ChangeTracking/ChangeModel.h"
+#include "Editor/ChangeTracking/ChangeTrackingFakeIo.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
 #include "Editor/ChangeTracking/TrackClient.h"
 #include "Editor/ChangeTracking/TrackIo.h"
@@ -71,137 +72,8 @@ const ProjectIdRow kProjectIdRows[] = {
     { R"(\\Server\Share\Proj\)", R"(\\server\share\proj\)", R"(\\server\share\proj)", "289e4848cf3b4716" },
 };
 
-// ---- 偽の I/O ----
-
-struct IoCounters {
-    int readToken = 0;
-    int openPipe = 0;
-    int closePipe = 0;
-    int write = 0;
-    int pump = 0;
-    int launch = 0;
-    int now = 0; // 時計は I/O ではないので Total に含めない
-    int Total() const { return readToken + openPipe + closePipe + write + pump + launch; }
-};
-
-struct FakeState {
-    IoCounters c;
-    int64_t nowMs = 1000;
-    bool serviceUp = true;                       // false なら OpenPipe は NotFound
-    std::deque<TrackIo::OpenResult> openScript;  // 先に積んだ結果を 1 回ずつ返す
-    bool tokenOk = true;
-    std::string token = "tokA";
-    TrackIo::LaunchResult launchResult = TrackIo::LaunchResult::Launched;
-    std::deque<std::string> chunks;              // Pump が 1 回に 1 つ返す
-    bool peerClosed = false;
-    bool pipeOpen = false;
-    bool writeOk = true;
-    std::vector<std::string> written;
-};
-
-class FakeIo final : public TrackIo {
-public:
-    explicit FakeIo(std::shared_ptr<FakeState> state) : s_(std::move(state)) {}
-
-    bool ReadServiceToken(const std::wstring&, std::string& tokenOut) override
-    {
-        ++s_->c.readToken;
-        tokenOut = s_->token;
-        return s_->tokenOk;
-    }
-    OpenResult OpenPipe(const std::string&) override
-    {
-        ++s_->c.openPipe;
-        OpenResult r = s_->serviceUp ? OpenResult::Opened : OpenResult::NotFound;
-        if (!s_->openScript.empty()) {
-            r = s_->openScript.front();
-            s_->openScript.pop_front();
-        }
-        s_->pipeOpen = r == OpenResult::Opened;
-        return r;
-    }
-    void ClosePipe() override
-    {
-        ++s_->c.closePipe;
-        s_->pipeOpen = false;
-    }
-    bool Write(const std::string& bytes) override
-    {
-        ++s_->c.write;
-        if (!s_->writeOk) {
-            return false;
-        }
-        s_->written.push_back(bytes);
-        return true;
-    }
-    PumpResult Pump(std::string& incoming) override
-    {
-        ++s_->c.pump;
-        if (!s_->pipeOpen) {
-            return PumpResult::Closed;
-        }
-        if (!s_->chunks.empty()) {
-            incoming += s_->chunks.front();
-            s_->chunks.pop_front();
-            return PumpResult::Ok;
-        }
-        return s_->peerClosed ? PumpResult::Closed : PumpResult::Ok;
-    }
-    LaunchResult LaunchService(const std::wstring&) override
-    {
-        ++s_->c.launch;
-        return s_->launchResult;
-    }
-    int64_t NowMs() override
-    {
-        ++s_->c.now;
-        return s_->nowMs;
-    }
-
-private:
-    std::shared_ptr<FakeState> s_;
-};
-
-const wchar_t* const kRoot = L"C:\\mye_track_selftest\\proj"; // 実在しなくてよい (偽の I/O はディスクに触れない)
-
-void FeedJson(FakeState& s, const json& j)
-{
-    s.chunks.push_back(j.dump() + "\n");
-}
-
-// 書き込まれた要求のうち op が合うもの (古い順)
-std::vector<json> Requests(const FakeState& s, const char* op)
-{
-    std::vector<json> out;
-    for (const std::string& w : s.written) {
-        const json j = json::parse(w, nullptr, false);
-        if (j.is_object() && j.value("op", std::string()) == op) {
-            out.push_back(j);
-        }
-    }
-    return out;
-}
-
-json OkReply(uint64_t id, const json& result)
-{
-    return json{ { "id", id }, { "ok", true }, { "result", result } };
-}
-
-json ErrReply(uint64_t id, const char* code)
-{
-    return json{ { "id", id }, { "ok", false }, { "error", { { "code", code }, { "detail", "t" } } } };
-}
-
-uint64_t LastHelloId(const FakeState& s)
-{
-    const std::vector<json> hellos = Requests(s, trackop::kHello);
-    return hellos.empty() ? 0 : hellos.back()["id"].get<uint64_t>();
-}
-
-void ReplyHelloOk(FakeState& s)
-{
-    FeedJson(s, OkReply(LastHelloId(s), { { "proto", 1 }, { "projectId", ProjectId(kRoot) }, { "role", "editor" } }));
-}
+// 偽の I/O は ChangeTrackingFakeIo.h (他のスイートと共有)
+using namespace tracktest;
 
 // 接続して hello を通す
 bool BringReady(TrackClient& client, FakeState& s)
@@ -370,6 +242,7 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
         session.Client().SetNotifyHandler([&](const json& e) {
             events.push_back(e);
             session.Model().OnNotification(e);
+            session.Overlay().OnNotification(e);
         });
         session.Model().SetInterest(kTrackAllParts);
         const bool ready = pump(session, [&] { return session.State() == TrackState::Ready; }, 60000);
@@ -449,6 +322,26 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             window.SetShowEditorChanges(true);
             WithHeadlessImGuiFrame([&] { window.OnImGui(session, host); });
             check(window.DrawnItemCount() >= 2, "probe: the window lists the editor section with the live model");
+
+            // シーンのファイルを外から書き換える → scene_overlay に出る → オーバーレイの表に入る (実サービス)
+            const fs::path scenePath = root / L"assets" / L"probe.scene.json";
+            fs::create_directories(scenePath.parent_path(), ec);
+            auto sceneText = [](const char* text) {
+                return std::string("{\"engine\":\"MyEngine\",\"entities\":[{\"childIndex\":0,\"components\":{\"Note\":{\"text\":\"") + text
+                       + "\"}},\"fileId\":1,\"name\":\"A\"}],\"nextFileId\":2,\"sceneName\":\"s\",\"version\":4}";
+            };
+            std::ofstream(scenePath, std::ios::binary) << sceneText("x");
+            session.Overlay().SetDocumentPath(scenePath.wstring());
+            const bool sceneSeen = pump(session, [&] {
+                const auto& rows = session.Model().Changes();
+                return std::any_of(rows.begin(), rows.end(), [](const TrackChangeRow& r) { return r.path == "assets/probe.scene.json"; });
+            }, 30000);
+            check(sceneSeen, "probe: the new scene file is recorded");
+            std::ofstream(scenePath, std::ios::binary) << sceneText("y");
+            const bool overlaid = pump(session, [&] { return session.Overlay().BadgeFor(1).status == OverlayStatus::Modified; }, 30000);
+            check(overlaid && !session.Overlay().DocumentId().empty() && session.Overlay().Counts().modified == 1,
+                  "probe: a scene rewritten from outside appears in scene_overlay and in the overlay table (live service)");
+            session.Overlay().SetDocumentPath(std::wstring());
         }
         session.Shutdown(); // 接続を閉じるだけ
         if (service != nullptr) {
@@ -704,6 +597,49 @@ void RunSavedNoticeTests(const std::function<void(bool, const char*)>& check)
         FeedJson(*r.s, ErrReply(sent[0]["id"].get<uint64_t>(), "unknown_op"));
         r.session.Poll();
         check(r.session.State() == TrackState::Ready && r.session.Client().PendingCount() <= 1, "saved notice: a refusal is only logged; the connection stays Ready");
+    }
+
+    // (k9) 保存を知らされた時点のファイルの大きさと更新時刻を控え、ハッシュの前後で同じでなければ送らない
+    //      (その間の外の書き込みを、Editor の利用者の保存として確定しない)
+    {
+        SavedRig r("rewritten");
+        const std::wstring abs = r.Write(L"assets\\a.scene.json", "original");
+        r.session.NoteSaved(abs);
+        r.Write(L"assets\\a.scene.json", "rewritten by someone else"); // 控えたあとの書き換え (大きさが違う)
+        r.session.Poll();
+        check(r.Sent().empty() && r.hashCalls == 0 && r.session.PendingSavedCount() == 0,
+              "saved notice: a file rewritten after the save was noted (different size) is not sent, and is not even hashed");
+    }
+    {
+        SavedRig r("sametime");
+        const std::wstring abs = r.Write(L"assets\\a.scene.json", "AAAA");
+        r.session.NoteSaved(abs);
+        r.Write(L"assets\\a.scene.json", "BBBB"); // 同じ大きさ。更新時刻だけが違う
+        std::error_code ec;
+        fs::last_write_time(abs, fs::last_write_time(abs, ec) + std::chrono::seconds(5), ec);
+        r.session.Poll();
+        check(r.Sent().empty(), "saved notice: a same-size rewrite with a newer modification time is not sent");
+    }
+    {
+        SavedRig r("during");
+        const std::wstring abs = r.Write(L"assets\\a.scene.json", "before hashing");
+        // ハッシュを取った直後に、別のプロセスが書き換える (直前の確認は通り、直後の確認で気づく)
+        r.session.SetSavedFileHasher([&r, abs](const std::wstring& path, std::string& hex) {
+            const bool ok = HashFileForSavedNotice(path, hex);
+            r.Write(L"assets\\a.scene.json", "changed while the hash was taken");
+            return ok;
+        });
+        r.session.NoteSaved(abs);
+        r.session.Poll();
+        check(r.Sent().empty(), "saved notice: a file rewritten while it was being hashed is not sent");
+    }
+    {
+        SavedRig r("untouched");
+        const std::wstring abs = r.Write(L"assets\\a.scene.json", "stable");
+        r.session.NoteSaved(abs);
+        r.session.Poll();
+        check(r.Sent().size() == 1 && r.Sent()[0]["args"].value("hash", std::string()) == Sha256Hex("stable"),
+              "saved notice: an untouched file is still sent with its hash (the stamps match)");
     }
 }
 
@@ -1488,6 +1424,9 @@ bool RunChangeTrackingSelfTest()
 
     // ---- (j) AI Changes 窓の文面・節・DiffView (ImGui を回さない部分と、ヘッドレスの 1 フレーム) ----
     RunChangeViewSelfTests(check);
+
+    // ---- (m) シーンの変更の強調・一覧・選択の同期 (M104m) ----
+    RunSceneChangeOverlaySelfTests(check);
 
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {

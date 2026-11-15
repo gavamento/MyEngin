@@ -266,6 +266,7 @@ override はエンティティの `"overrides"` キーで、`"Comp.field"` / `"n
 | 削除 Entity のゴースト | `GhostMeshPass::Add(mesh, world, rgba)` | `SceneViewGhost.cpp` (分岐ゴースト) |
 | Before / After の 3D 比較 | 一時 `Scene` + 専用 `RenderSystem` + `RenderTexture` | `AnimationPreviewWindow`、`AssetPreviewCache` |
 
+- **実装 (M104m)**: `SceneChangeOverlay` (`src\Editor\ChangeTracking\`) は `ChangeTrackingSession` のメンバで、開いている文書 1 つ分の表を持つ。文書の ID はサービスの `document_for_path` で引く (guid の規則を Editor に置かない)。表は `scene_overlay` (サービスがエンティティごとにまとめる) の結果。取り直しは、文書が変わった・`change_recorded` の `documentId` が一致した・`attribution_updated`・`resync`・接続し直したときだけで、500 ms に 1 回までに間引く (毎フレームは取らない)。別の文書へ切り替えると表を捨て、古い文書の応答は世代で捨てる。Hierarchy の子孫の集計 (子孫にだけ変更があるノードの薄い印) は、取り直したあとに 1 回だけ、ライブのシーンの親子を読んで作る (`RebuildAncestors`)。「ここまで確認済みにする」は表示だけの印 (`EditorSettings::aiChangeAcks`、documentId → Revision)。記録にもサービスにも書かない。AI Changes 窓の行のクリックは `SelectEntityByFileId` で `Selection` を変える (ライブのシーンに居ない fileId は選ばない)。
 - 表示状態は `SceneChangeOverlay` が (documentId, fileId) → 変更種別の表として持つ。各窓は毎フレーム `Scene::FindByFileId` で引く。`Selection` と同じやり方で、イベントも World のコンポーネントも使わない。
 - fileId を**読むだけ**の関数を使う。`Scene::EnsureFileId` は未採番なら採番してしまうので、表示のために呼ばない。
 - 「アウトライン」は輪郭ではなくワイヤ箱になる (輪郭を出すポストプロセスは無い)。仕様書 §8.1 の「緑色アウトライン」はこの意味で読む。

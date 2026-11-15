@@ -19,6 +19,10 @@ bool RunChangeTrackingSelfTest();
 // RunChangeTrackingSelfTest の末尾から呼ぶ (同じ "changetracking" スイート)
 void RunChangeViewSelfTests(const std::function<void(bool, const char*)>& check);
 
+// シーンの変更の強調・一覧・選択の同期 (M104m) の回帰テスト (SceneChangeOverlaySelfTest.cpp)。偽の I/O と、ヘッドレスの ImGui フレームで
+// 実際に Hierarchy を描いて、バッジの数・World が変わらないこと・取り直しの契機を確かめる。RunChangeTrackingSelfTest の末尾から呼ぶ
+void RunSceneChangeOverlaySelfTests(const std::function<void(bool, const char*)>& check);
+
 // 描画バックエンドの無い ImGui の文脈を 1 つ作り、フレームを 1 つ回して捨てる (frame の中で窓を描く試験用)。
 // 既にある文脈 (Editor 本体) には触らず、終わったら元へ戻す
 void WithHeadlessImGuiFrame(const std::function<void()>& frame);

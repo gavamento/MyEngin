@@ -3200,3 +3200,50 @@ MYE_STR(AiChg_ColPath,        "Path",                                  "パス")
 MYE_STR(AiChg_ColKind,        "Kind",                                  "種類")
 MYE_STR(AiChg_ColWho,         "Attribution",                           "帰属")
 MYE_STR(AiChg_ColTime,        "Time",                                  "時刻")
+
+// ---- シーンの変更の強調・一覧 (M104m) ----
+MYE_STR(AiChg_SceneBand,      "Open scene",                            "開いているシーン")
+MYE_STR(AiChg_OverlayShow,    "Highlight changes in the Hierarchy",    "Hierarchy で変更を強調する")
+MYE_STR(AiChg_OverlayAdded,   "added",                                 "追加")
+MYE_STR(AiChg_OverlayModified, "modified",                             "変更")
+MYE_STR(AiChg_OverlayRemoved, "removed",                               "削除")
+MYE_STR(AiChg_OverlayAck,     "Mark as seen up to here",               "ここまで確認済みにする")
+MYE_STR(AiChg_OverlayAckNote, "A display-only mark kept in your editor settings. Nothing is written to the record or the service, and it is not a review.",
+                              "エディタの設定に残る、表示だけの印です。記録にもサービスにも何も書き込まず、レビューではありません。")
+MYE_STR(AiChg_OverlayShowAll, "Show everything again",                 "全部もう一度表示")
+MYE_STR(AiChg_OverlayIncomplete, "Some changes could not be parsed, so this summary may be incomplete.",
+                              "一部の変更は解析できなかったため、この集計は不完全かもしれません。")
+MYE_STR(AiChg_OverlayTruncated, "There are too many changes; only part of them are counted.",
+                              "変更が多すぎるため、一部だけを集計しています。")
+MYE_STR(AiChg_OverlayNoScene, "No scene, prefab or actor file is open.", "シーン・プレハブ・アクターのファイルを開いていません。")
+MYE_STR(AiChg_OverlayLoading, "Loading...",                            "読み込み中...")
+MYE_STR(AiChg_SceneChanges,   "Scene changes",                         "シーンの変更")
+MYE_STR(AiChg_SceneChangesLoading, "Loading the scene changes...",     "シーンの変更を読み込んでいます...")
+MYE_STR(AiChg_SceneChangesFailed, "Could not load all the scene changes.", "シーンの変更を最後まで読み込めませんでした。")
+MYE_STR(AiChg_NoSceneChanges, "No structural changes in this revision.", "この変更には構造の変更がありません。")
+MYE_STR(AiChg_SceneClickHint, "Click a row to select that entity in the open scene.",
+                              "行をクリックすると、開いているシーンのそのエンティティを選択します。")
+MYE_STR(AiChg_SceneNotOpen,   "This scene is not the one that is open, so nothing was selected.",
+                              "このシーンは開いているシーンではないため、選択しませんでした。")
+MYE_STR(AiChg_EntityGone,     "This entity does not exist in the open scene (deleted, or not saved yet), so it cannot be selected.",
+                              "このエンティティは開いているシーンに存在しない (削除された、または未保存) ため、選択できません。")
+MYE_STR(AiChg_ScKindEntityAdded, "Entity added",                       "エンティティを追加")
+MYE_STR(AiChg_ScKindEntityRemoved, "Entity removed",                   "エンティティを削除")
+MYE_STR(AiChg_ScKindHierarchy, "Parent / order changed",               "親・並びの変更")
+MYE_STR(AiChg_ScKindComponentAdded, "Component added",                 "コンポーネントを追加")
+MYE_STR(AiChg_ScKindComponentRemoved, "Component removed",             "コンポーネントを削除")
+MYE_STR(AiChg_ScKindField,    "Field changed",                         "フィールドの変更")
+MYE_STR(AiChg_ScKindEntityModified, "Entity property changed",         "エンティティの属性の変更")
+MYE_STR(AiChg_ScKindPrefabAsset, "Prefab asset changed (the prefab file itself)",
+                              "プレハブ本体 (ファイル自体) の変更")
+MYE_STR(AiChg_ScKindPrefabInstance, "Prefab instance source changed (which prefab it points to)",
+                              "プレハブのインスタンスの参照元の変更")
+MYE_STR(AiChg_ScKindPrefabOverride, "Prefab override changed (an edit that applies to this instance only)",
+                              "プレハブの上書き (このインスタンスだけの編集) の変更")
+MYE_STR(AiChg_ScKindPrefabPropagation, "Propagated from a prefab change", "プレハブの変更の波及")
+MYE_STR(AiChg_ScKindUnparsed, "Could not compare structurally",        "構造を比べられなかった")
+MYE_STR(AiChg_ScWholeScene,   "(whole document)",                      "(文書全体)")
+MYE_STR(AiChg_BadgeAdded,     "Added in the file",                     "ファイルに追加された")
+MYE_STR(AiChg_BadgeModified,  "Modified in the file",                  "ファイルで変更された")
+MYE_STR(AiChg_BadgeDescendant, "A descendant has changes",             "子孫に変更があります")
+MYE_STR(AiChg_BadgeMore,      "(and more)",                            "(ほか)")

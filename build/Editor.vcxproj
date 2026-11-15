@@ -57,6 +57,8 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp" />
+    <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlaySelfTest.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackClient.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackIo.cpp" />
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackLaunch.cpp" />
@@ -181,8 +183,10 @@
     <ClInclude Include="..\src\Editor\Asset\AssetPreviewCache.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeFormat.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeModel.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingFakeIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h" />
+    <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackClient.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackIo.h" />
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackLaunch.h" />

@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Editor/ChangeTracking/ChangeFormat.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <utility>
@@ -376,6 +377,137 @@ std::vector<std::string> StatusLines(const TrackStatusInfo& s)
         lines.push_back(Tr(StrId::AiChg_StatWatchFallback));
     }
     return lines;
+}
+
+// ---- シーンの変更 (M104m) ----
+
+namespace {
+
+const Entry kSceneKinds[] = {
+    { "EntityAdded", StrId::AiChg_ScKindEntityAdded },
+    { "EntityRemoved", StrId::AiChg_ScKindEntityRemoved },
+    { "HierarchyChanged", StrId::AiChg_ScKindHierarchy },
+    { "ComponentAdded", StrId::AiChg_ScKindComponentAdded },
+    { "ComponentRemoved", StrId::AiChg_ScKindComponentRemoved },
+    { "FieldModified", StrId::AiChg_ScKindField },
+    { "EntityModified", StrId::AiChg_ScKindEntityModified },
+    { "PrefabAssetChanged", StrId::AiChg_ScKindPrefabAsset },
+    { "PrefabInstanceChanged", StrId::AiChg_ScKindPrefabInstance },
+    { "PrefabOverrideChanged", StrId::AiChg_ScKindPrefabOverride },
+    { "PrefabPropagation", StrId::AiChg_ScKindPrefabPropagation },
+    { "unparsed", StrId::AiChg_ScKindUnparsed },
+};
+
+} // namespace
+
+std::string SceneKindLabel(const std::string& changeType)
+{
+    return OrKey(Lookup(kSceneKinds, changeType), changeType);
+}
+
+const std::vector<std::string>& SceneChangeKinds()
+{
+    static const std::vector<std::string> kinds = [] {
+        std::vector<std::string> out;
+        for (const Entry& e : kSceneKinds) {
+            out.push_back(e.key);
+        }
+        return out;
+    }();
+    return kinds;
+}
+
+std::string ClipValue(const std::string& fragment, size_t maxChars)
+{
+    std::string out;
+    size_t chars = 0;
+    for (size_t i = 0; i < fragment.size();) {
+        const unsigned char lead = static_cast<unsigned char>(fragment[i]);
+        const size_t len = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
+        if (chars >= maxChars) {
+            out += "...";
+            return out;
+        }
+        const size_t take = (std::min)(len, fragment.size() - i);
+        if (take == 1 && (fragment[i] == '\n' || fragment[i] == '\r' || fragment[i] == '\t')) {
+            out += ' ';
+        } else {
+            out.append(fragment, i, take);
+        }
+        i += take;
+        ++chars;
+    }
+    return out;
+}
+
+std::string UnparsedReason(const std::string& afterValue)
+{
+    const nlohmann::json parsed = nlohmann::json::parse(afterValue, nullptr, false);
+    return parsed.is_string() ? parsed.get<std::string>() : afterValue;
+}
+
+SceneChangeText FormatSceneChange(const TrackSceneChange& c, const std::string& entityName)
+{
+    SceneChangeText text;
+    text.kind = SceneKindLabel(c.changeType);
+    if (c.hasFileId) {
+        text.target = (entityName.empty() ? std::string() : entityName + " ") + "(#" + std::to_string(c.fileId) + ")";
+    } else {
+        text.target = Tr(StrId::AiChg_ScWholeScene);
+    }
+    text.component = c.component;
+    text.field = c.field;
+    if (c.changeType == "unparsed") {
+        text.note = UnparsedReason(c.afterValue);
+        return text;
+    }
+    if (c.oversize) {
+        text.before = c.beforeBytes > 0 ? Tr(StrId::DiffView_Oversize) : std::string();
+        text.after = c.afterBytes > 0 ? Tr(StrId::DiffView_Oversize) : std::string();
+        return text;
+    }
+    text.before = c.hasBefore ? ClipValue(c.beforeValue, kSceneValueMaxChars) : std::string();
+    text.after = c.hasAfter ? ClipValue(c.afterValue, kSceneValueMaxChars) : std::string();
+    return text;
+}
+
+std::string OverlayBadgeTooltip(const OverlayEntity* e, bool descendantOnly)
+{
+    constexpr size_t kMaxNames = 3;
+    std::string out;
+    if (e != nullptr && (e->status == OverlayStatus::Added || e->status == OverlayStatus::Modified)) {
+        out = Tr(e->status == OverlayStatus::Added ? StrId::AiChg_BadgeAdded : StrId::AiChg_BadgeModified);
+        size_t shown = 0;
+        size_t total = 0;
+        auto put = [&](const std::string& label) {
+            ++total;
+            if (shown < kMaxNames) {
+                out += "\n  " + label;
+                ++shown;
+            }
+        };
+        for (const OverlayField& f : e->hierarchy) {
+            put(f.name);
+        }
+        for (const OverlayField& f : e->entityFields) {
+            put(f.name);
+        }
+        for (const OverlayComponent& comp : e->components) {
+            if (comp.fields.empty()) {
+                put(comp.name);
+            }
+            for (const OverlayField& f : comp.fields) {
+                put(comp.name + "." + f.name);
+            }
+        }
+        if (total > shown) {
+            out += std::string("\n  ") + Tr(StrId::AiChg_BadgeMore);
+        }
+    }
+    if (descendantOnly) {
+        out += (out.empty() ? "" : "\n") + std::string(Tr(StrId::AiChg_BadgeDescendant));
+    }
+    return out;
 }
 
 } // namespace mye

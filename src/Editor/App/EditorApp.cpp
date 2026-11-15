@@ -261,6 +261,12 @@ void EditorApp::OnStart(EngineContext& ctx)
     // 既定は無効。有効なプロジェクトの対話起動でだけ、サービスへ接続 (居なければ起動) する
     changeTracking_.Start(GetExecutableDir(), ctx.projectRoot,
                           allowChangeTracking && settings_.changeTrackingEnabled);
+    // 「ここまで確認済みにする」の印は表示だけのもの。エディタの設定に残し、記録にもサービスにも書かない (M104m)
+    changeTracking_.Overlay().LoadAcks(settings_.aiChangeAcks);
+    changeTracking_.Overlay().SetAckSink([this](const std::map<std::string, int64_t>& acks) {
+        settings_.aiChangeAcks = acks;
+        settings_.Save();
+    });
     // ---- 初回自動ビルド (M66m) ----
     // DLL が丸ごと無い (まだ一度も build_collab.bat を回していない) ときだけ試す。
     // cargo が無ければ StartCollabBuild が黙って nullptr を返す = rustup 未導入の
@@ -884,6 +890,15 @@ void EditorApp::OnImGui(EngineContext& ctx)
     }
     ImGuizmo::BeginFrame(); // ImGui NewFrame 後・ギズモ使用前に 1 回
 
+    {
+        // AI の変更の強調 (M104m): 開いている文書を伝え、取り直しのあとに子孫の集計を 1 回だけ作る。World は読むだけ
+        SceneChangeOverlay& overlay = changeTracking_.Overlay();
+        overlay.SetDocumentPath(actorEdit_ ? actorEdit_->path : scenePath_);
+        if (overlay.NeedsAncestorRebuild() && ctx.scene != nullptr) {
+            overlay.RebuildAncestors(*ctx.scene);
+        }
+        hierarchy_.SetChangeOverlay(&overlay);
+    }
     hierarchy_.OnImGui(ctx, selection_, undo_);
     inspector_.OnImGui(ctx, selection_, undo_, preview_, playMode_.InPlayMode());
     console_.OnImGui();
@@ -1042,6 +1057,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
         };
         host.openFile = [this, &ctx](const std::wstring& absPath, int line) {
             OpenScriptInIde(ctx, settings_.externalEditorCmd, vsLauncher_, absPath, line);
+        };
+        host.selectEntity = [this, &ctx](uint64_t fileId) {
+            return ctx.scene != nullptr && SelectEntityByFileId(*ctx.scene, selection_, fileId);
         };
         host.showInExplorer = [](const std::wstring& absPath) {
             const std::wstring args = L"/select,\"" + absPath + L"\"";

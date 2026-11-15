@@ -218,6 +218,7 @@ D3、D4、D10 は sub-01 / sub-05 の結果で決まる。着手時に聞く項�
 
 確定後の変更のみ。
 
+- 2026-11-15 (planner、sub-12 の VERDICT round 1): sub-24 を着手可にした (sub-12 の結果、強調の入・切の保存を色と一緒に入れること、Scene View の試験の分け方を追記)。
 - 2026-11-15 (planner、sub-11 の VERDICT round 1): sub-12 を詳細に書き直した (サービス側に `scene_overlay` と `document_for_path`、`SceneChangeOverlay`、AI Changes 窓の「シーンの変更」の一覧、Hierarchy のバッジ、選択の同期、受け入れ条件 13 件)。大きいので Inspector の Field 差分・Scene View のワイヤ箱・色の設定を **sub-24 (M104m2)** に分け、sub-14 の依存を sub-24 と sub-13 にした。DB のスキーマ版は 3。
 - 2026-11-15 (planner、sub-23 の VERDICT round 1): sub-11 を詳細に書き直した (文書の同一性、字句のままの構造比較、解析不可の扱い、`scene_diff`、作り直し、受け入れ条件 14 件)。sub-23 の読み直しの穴を狭める直しを sub-12 に、`ipc-contract.md` の制御文字の直しを sub-11 に足した。DB のスキーマ版は 2 (sub-23 が索引を足した)。
 - 2026-11-15 (planner、sub-10 の VERDICT round 1): Diff 表示の部品のクラス名は `DiffViewer` / `DiffRows` (ファイルは `src\Editor\Widgets\DiffView.h`)。既存の `mye::DiffView` (`SourceControlState.h`) と同名を避けた。以後の sub で「DiffView」と書いてあるのはこの部品のこと。oversize の Hunk の表示の残りを sub-15 に、「セッションなし」の取り方の直しを sub-23 に足した。sub-23 を着手可にした。

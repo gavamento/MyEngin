@@ -81,6 +81,25 @@ struct TrackHunk {
     std::string state; // active / restored / conflicted
 };
 
+// scene_diff の 1 件 (構造の変更)。値は JSON の字句のまま。oversize のときは値が空で、大きさだけが入る
+struct TrackSceneChange {
+    int64_t sceneChangeId = 0;
+    std::string documentId;
+    std::string resolvedDocumentId; // 引き継ぎをたどった ID
+    bool hasFileId = false;
+    int64_t fileId = 0;
+    std::string changeType; // EntityAdded ... PrefabPropagation / unparsed
+    std::string component;
+    std::string field;
+    bool hasBefore = false;
+    bool hasAfter = false;
+    std::string beforeValue;
+    std::string afterValue; // unparsed のときは理由の JSON 文字列
+    bool oversize = false;
+    int64_t beforeBytes = 0;
+    int64_t afterBytes = 0;
+};
+
 struct TrackListFilter {
     std::string sessionId;
     std::string path;
@@ -149,6 +168,11 @@ public:
     bool HunksFailed() const { return hunksFailed_; }
     // Hunk の入れ替えのたびに増える。DiffView の入力を作り直す合図
     uint64_t HunksSerial() const { return hunksSerial_; }
+    // 選んだ Revision の構造の変更 (scene_diff。describe に sceneSummary があるときだけ全ページを取る)
+    const std::vector<TrackSceneChange>& SceneChanges() const { return sceneChanges_; }
+    bool SceneChangesComplete() const { return sceneComplete_; }
+    bool SceneChangesFailed() const { return sceneFailed_; }
+    uint64_t SceneChangesSerial() const { return sceneSerial_; }
 
     // 試験用: その部分を取りに行った回数と、古い印
     int FetchCount(TrackPart part) const { return part_[Index(part)].fetches; }
@@ -159,6 +183,7 @@ public:
     static std::vector<TrackSessionRow> ParseSessions(const nlohmann::json& result);
     static std::vector<TrackChangeRow> ParseChanges(const nlohmann::json& result);
     static std::vector<TrackHunk> ParseHunks(const nlohmann::json& result);
+    static std::vector<TrackSceneChange> ParseSceneChanges(const nlohmann::json& result);
 
 private:
     struct PartState {
@@ -173,6 +198,8 @@ private:
     void Fetch(TrackPart part, int64_t now);
     void FetchList(bool append);
     void FetchHunks(int64_t revisionId, std::vector<TrackHunk> collected, const std::string& cursor, int page);
+    void FetchSceneChanges(int64_t revisionId, std::vector<TrackSceneChange> collected, const std::string& cursor, int page);
+    void ResetSceneChanges();
 
     TrackClient* client_ = nullptr;
     uint32_t interest_ = 0;
@@ -192,6 +219,10 @@ private:
     bool hunksComplete_ = false;
     bool hunksFailed_ = false;
     uint64_t hunksSerial_ = 0;
+    std::vector<TrackSceneChange> sceneChanges_;
+    bool sceneComplete_ = false;
+    bool sceneFailed_ = false;
+    uint64_t sceneSerial_ = 0;
 };
 
 } // namespace mye

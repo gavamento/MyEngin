@@ -12,6 +12,7 @@
 #include "Editor/ChangeTracking/ChangeFormat.h"
 #include "Editor/ChangeTracking/ChangeModel.h"
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
+#include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/Widgets/DiffView.h"
 
 namespace mye {
@@ -31,6 +32,16 @@ struct AiChangesHost {
     std::function<void(const std::wstring& absPath, int line)> openFile;
     // エクスプローラーで場所を開く
     std::function<void(const std::wstring& absPath)> showInExplorer;
+    // 開いているシーンのエンティティを選ぶ (Hierarchy と Inspector が追従する)。ライブのシーンに居なければ false
+    std::function<bool(uint64_t fileId)> selectEntity;
+};
+
+// シーンの変更の行をクリックした結果
+enum class SceneChangeActivation : uint8_t {
+    Selected,      // 開いているシーンのエンティティを選んだ
+    NoEntity,      // 文書全体の変更 (エンティティを指さない)
+    NotOpen,       // その文書は今開いているシーンではない (選ばない)
+    EntityMissing, // ライブのシーンに居ない (削除された・未保存。選ばない)
 };
 
 // TrackHunk → DiffView の入力 (追跡に依存しない形へ詰め替える)
@@ -52,7 +63,12 @@ public:
     // 左の項目を選ぶ (一覧のフィルタを作り直す)。窓の操作と試験が同じ口を通る
     void SelectScope(ChangeModel& model, Scope scope, const std::string& sessionId);
 
+    // シーンの変更の行をクリックしたときの処理 (窓の操作と試験が同じ口を通る)。結果は同じフレームの下に文面で出す
+    SceneChangeActivation ActivateSceneChange(const TrackSceneChange& change, const SceneChangeOverlay& overlay, const AiChangesHost& host);
+
     // 試験用
+    SceneChangeActivation LastActivation() const { return lastActivation_; }
+    bool HasActivation() const { return hasActivation_; }
     Scope CurrentScope() const { return scope_; }
     const std::string& CurrentSessionId() const { return sessionId_; }
     bool MixUncertain() const { return mixUncertain_; }
@@ -66,7 +82,9 @@ private:
     void DrawHeader(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawSessions(ChangeModel& model);
     void DrawChanges(ChangeModel& model);
-    void DrawDetail(ChangeModel& model, const AiChangesHost& host);
+    void DrawDetail(ChangeTrackingSession& session, const AiChangesHost& host);
+    void DrawSceneBand(ChangeTrackingSession& session);
+    void DrawSceneChanges(ChangeTrackingSession& session, const AiChangesHost& host);
     void ApplyFilter(ChangeModel& model);
 
     Scope scope_ = Scope::All;
@@ -79,6 +97,8 @@ private:
     std::string attributionFilter_;
     DiffViewer diff_;
     uint64_t shownHunksSerial_ = ~0ull;
+    SceneChangeActivation lastActivation_ = SceneChangeActivation::Selected;
+    bool hasActivation_ = false;
     std::vector<int> items_; // 一覧の仮想行。-1 = 主の節の見出し、-2 = 不明 / 推定の節の見出し、-3 = Editor / 復元の節の見出し、0 以上 = Changes の添字
 };
 

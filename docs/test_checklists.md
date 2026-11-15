@@ -1042,6 +1042,23 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] `mye_track.exe client --project <一時プロジェクト>` から `role = mcp` で `hello` して `list` を呼ぶ (`service.json` のトークンを使う)。`Edit` と `Write` の変更が `actor = ai`、`attribution = verified` で出る。**Verified にならなければ**、`describe` の `evidence` と `tool_input` の `old_string` / `new_string` を控える (Edit の CRLF・引用符の扱いが原因のことがある)
 - [ ] 後始末: 動いている `mye_track.exe` が残っていたら、`mye_track.exe client --project <一時プロジェクト>` から `shutdown` を送って止める。記録 (`mye_hook_dump.jsonl`) に秘密が含まれていれば消す。取れた記録を `tests\track\fixture\` に固定入力として置くなら、置く前に内容を確かめる
 
+## M104m: シーンの変更の強調・一覧・選択の同期 (手動確認)
+
+機械検証は `MYE_SELFTEST_ONLY=changetracking` (取り直しの契機・バッジの数 (通常表示と検索表示)・World が変わらないこと・「ここまで確認済みにする」・選択の同期。ヘッドレスの ImGui フレームで Hierarchy を実際に描く)、`cargo test --manifest-path tools\track\Cargo.toml` (まとめ方 8 件 + サービスを通した結合 2 件)、`tools\track_verify.bat` (シナリオ 26)、`MYE_TRACK_PROBE=1` (実サービス: 外から書き換えたシーンが表に入る)。
+**このリポジトリのルートをプロジェクトにして追跡を有効にしない。** 一時プロジェクトで確かめる。
+
+- [ ] 追跡を有効にした一時プロジェクトでシーンを開き、外から (別のエディタで) シーンのフィールドを変えて保存すると、数秒以内に Hierarchy の該当の行の右に青い印が出る。追加したエンティティは緑
+- [ ] 変更のあるエンティティの親が畳まれていると、親の行に薄い青の印が出る (開くと子の行に印が出る)。検索欄に名前を入れたフラット表示でも印が出る
+- [ ] 印にマウスを載せると、変更したコンポーネント名とフィールド名が最大 3 つ出る
+- [ ] エディタの Ctrl+S で保存した変更 (利用者自身の保存) には印が出ない。外から書いたものだけに出る
+- [ ] AI Changes 窓の上の帯に、開いているシーンの名前・追加 / 変更 / 削除の件数・「Hierarchy で変更を強調する」が出る。チェックを外すと Hierarchy の印が全部消え、入れると戻る
+- [ ] 変更の一覧で Revision を選ぶと、詳細に「シーンの変更」の一覧が出る (種類・エンティティ・コンポーネント・フィールド・Before → After)。プレハブの本体 / インスタンスの参照元 / 上書きが文面で区別されている
+- [ ] 一覧の行をクリックすると、開いているシーンのそのエンティティが Hierarchy で選ばれ、Inspector が追従する。別のシーンの行や削除されたエンティティの行では選択が変わらず、理由が黄色の 1 行で出る
+- [ ] 「ここまで確認済みにする」を押すと印が全部消え、そのあとに外から変えたものだけに印が出る。エディタを閉じて開き直しても同じ。「全部もう一度表示」で戻る。サービス側には何も記録されない (AI Changes 窓の一覧に新しい行が増えない)
+- [ ] シーンを切り替える (別のシーンを開く) と、前のシーンの印がすぐ消え、新しいシーンの印に入れ替わる
+- [ ] Play 中に強調の切り替えを繰り返しても、シミュレーションに影響が出ない (リプレイ検証 `tools\replay_verify.bat` が通る)
+- [ ] 追跡を無効にしている間、または `Editor.exe --selftest` / `--screenshot` では、帯も印も出ず、サービスへ何も送られない
+
 ## M104k2: Editor の保存を追跡サービスへ知らせる (手動確認)
 
 機械検証は `MYE_SELFTEST_ONLY=changetracking` (保存の経路ごとの送信とハッシュ、無効・切断中は計算しないこと)、`cargo test --manifest-path tools\track\Cargo.toml` (照合・作り直し・役割)、`tools\track_verify.bat`。経路の一覧は `docs\ai-change-tracking\editor-save-routes.md`。

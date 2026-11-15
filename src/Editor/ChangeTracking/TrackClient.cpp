@@ -56,7 +56,8 @@ int64_t TrackOpTimeoutMs(const std::string& op)
 {
     // 一覧・詳細の取得は重くなりうるので 30 秒。それ以外 (hello・subscribe・記録) は 5 秒
     if (op == trackop::kStatus || op == trackop::kList || op == trackop::kDescribe || op == trackop::kSessions
-        || op == trackop::kHunks || op == "scene_diff" || op == trackop::kBlobGet) {
+        || op == trackop::kHunks || op == trackop::kSceneDiff || op == trackop::kSceneOverlay || op == trackop::kDocumentForPath
+        || op == trackop::kBlobGet) {
         return kTrackReadTimeoutMs;
     }
     return kTrackRecordTimeoutMs;

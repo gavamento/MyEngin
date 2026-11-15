@@ -167,6 +167,38 @@ std::vector<TrackHunk> ChangeModel::ParseHunks(const nlohmann::json& result)
     return rows;
 }
 
+std::vector<TrackSceneChange> ChangeModel::ParseSceneChanges(const nlohmann::json& result)
+{
+    std::vector<TrackSceneChange> rows;
+    const nlohmann::json& items = Child(result, "items");
+    if (!items.is_array()) {
+        return rows;
+    }
+    for (const nlohmann::json& item : items) {
+        if (!item.is_object()) {
+            continue;
+        }
+        TrackSceneChange c;
+        c.sceneChangeId = Int(item, "sceneChangeId", 0);
+        c.documentId = Str(item, "documentId");
+        c.resolvedDocumentId = Str(item, "resolvedDocumentId");
+        c.hasFileId = item.contains("fileId") && item["fileId"].is_number_integer();
+        c.fileId = Int(item, "fileId", 0);
+        c.changeType = Str(item, "changeType");
+        c.component = Str(item, "component");
+        c.field = Str(item, "field");
+        c.hasBefore = item.contains("beforeValue") && item["beforeValue"].is_string();
+        c.hasAfter = item.contains("afterValue") && item["afterValue"].is_string();
+        c.beforeValue = Str(item, "beforeValue");
+        c.afterValue = Str(item, "afterValue");
+        c.oversize = Bool(item, "oversize");
+        c.beforeBytes = Int(item, "beforeBytes", 0);
+        c.afterBytes = Int(item, "afterBytes", 0);
+        rows.push_back(std::move(c));
+    }
+    return rows;
+}
+
 void ChangeModel::MarkStale(TrackPart part, bool force)
 {
     PartState& state = part_[Index(part)];
@@ -233,6 +265,7 @@ void ChangeModel::SelectRevision(int64_t revisionId)
     }
     selected_ = revisionId;
     detail_ = nlohmann::json();
+    ResetSceneChanges();
     hunks_.clear();
     hunksComplete_ = false;
     hunksFailed_ = false;
@@ -311,6 +344,14 @@ void ChangeModel::Fetch(TrackPart part, int64_t now)
                 return;
             }
             detail_ = response["result"];
+            // 構造の変更 (シーン / プレハブ / アクター)。Hunk とは別の連なりで取る (Detail の取得中の印は Hunk の側だけが持つ)
+            if (detail_.contains("sceneSummary") && detail_["sceneSummary"].is_object()) {
+                ResetSceneChanges();
+                FetchSceneChanges(asked, {}, std::string(), 0);
+            } else {
+                ResetSceneChanges();
+                sceneComplete_ = true;
+            }
             // Hunk の本文は describe の後に取る (行のある変更だけ)。取り終えるまで Detail は取得中のまま
             const std::string mode = Str(detail_, "diffMode");
             const bool hasBody = (mode == "lines" || mode == "whole") && detail_.contains("hunks") && detail_["hunks"].is_array()
@@ -359,6 +400,43 @@ void ChangeModel::FetchHunks(int64_t revisionId, std::vector<TrackHunk> collecte
         hunksComplete_ = !failed && next.empty();
         hunksFailed_ = failed || !next.empty();
         ++hunksSerial_;
+    });
+}
+
+void ChangeModel::ResetSceneChanges()
+{
+    sceneChanges_.clear();
+    sceneComplete_ = false;
+    sceneFailed_ = false;
+    ++sceneSerial_;
+}
+
+// 1 ページ取って、続きがあれば次を要求する (Hunk と同じ作り)。選び直したあとに届いたページは捨てる
+void ChangeModel::FetchSceneChanges(int64_t revisionId, std::vector<TrackSceneChange> collected, const std::string& cursor, int page)
+{
+    nlohmann::json args = { { "revisionId", revisionId } };
+    if (!cursor.empty()) {
+        args["cursor"] = cursor;
+    }
+    client_->Request(trackop::kSceneDiff, args, [this, revisionId, page, collected = std::move(collected)](const nlohmann::json& response) mutable {
+        if (revisionId != selected_) {
+            return;
+        }
+        std::string next;
+        if (IsOk(response)) {
+            std::vector<TrackSceneChange> rows = ParseSceneChanges(response["result"]);
+            collected.insert(collected.end(), std::make_move_iterator(rows.begin()), std::make_move_iterator(rows.end()));
+            next = Str(response["result"], "nextCursor");
+        }
+        const bool failed = !IsOk(response) || (!next.empty() && page + 1 >= kTrackModelMaxHunkPages);
+        if (!failed && !next.empty() && client_->CanRequest()) {
+            FetchSceneChanges(revisionId, std::move(collected), next, page + 1);
+            return;
+        }
+        sceneChanges_ = std::move(collected);
+        sceneComplete_ = !failed && next.empty();
+        sceneFailed_ = failed || !next.empty();
+        ++sceneSerial_;
     });
 }
 

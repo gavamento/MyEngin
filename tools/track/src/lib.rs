@@ -37,6 +37,7 @@ pub mod random;
 pub mod rename;
 pub mod revision;
 pub mod scene_diff;
+pub mod scene_overlay;
 pub mod schema;
 pub mod server;
 pub mod session;

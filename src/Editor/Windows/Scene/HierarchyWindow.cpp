@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "Editor/Asset/AssetOps.h"
+#include "Editor/ChangeTracking/ChangeFormat.h"
+#include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/Widgets/CreateMenu.h"
 #include "Editor/Widgets/EditorComponentCatalog.h"
 #include "Editor/Widgets/EditorWidgets.h"
@@ -77,8 +79,42 @@ bool BlockedByPartLock(World& world, EntityID e)
 
 } // namespace
 
+void HierarchyWindow::SetSearchText(const char* text)
+{
+    std::snprintf(searchBuf_, sizeof(searchBuf_), "%s", text != nullptr ? text : "");
+}
+
+void HierarchyWindow::DrawChangeBadge(uint64_t fileId, const ImVec2& rowMin, const ImVec2& rowMax)
+{
+    if (overlay_ == nullptr) {
+        return;
+    }
+    const OverlayBadge badge = overlay_->BadgeFor(fileId);
+    if (!badge.Any()) {
+        return;
+    }
+    const bool faint = badge.status == OverlayStatus::None;
+    const OverlayColor color = badge.status == OverlayStatus::Added ? kOverlayAddedColor : kOverlayModifiedColor;
+    constexpr float kRadius = 4.0f;
+    const float cx = rowMax.x - kRadius * 3.0f;
+    const float cy = (rowMin.y + rowMax.y) * 0.5f;
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cx, cy), kRadius,
+                                                ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, faint ? kOverlayFaintAlpha : color.a)));
+    ++(faint ? drawnFaintBadges_ : drawnBadges_);
+    const ImVec2 hitMin(cx - kRadius * 1.5f, rowMin.y);
+    const ImVec2 hitMax(cx + kRadius * 1.5f, rowMax.y);
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(hitMin, hitMax)) {
+        const std::string tip = OverlayBadgeTooltip(overlay_->Find(fileId), badge.descendantOnly);
+        if (!tip.empty()) {
+            ImGui::SetTooltip("%s", tip.c_str());
+        }
+    }
+}
+
 void HierarchyWindow::OnImGui(EngineContext& ctx, Selection& selection, UndoStack& undo)
 {
+    drawnBadges_ = 0;
+    drawnFaintBadges_ = 0;
     if (!open) {
         return;
     }
@@ -284,6 +320,7 @@ void HierarchyWindow::DrawFiltered(EngineContext& ctx, World& world, Selection& 
             if (ImGui::Selectable(name.c_str(), sel)) {
                 ApplyClick(ctx, e, selection);
             }
+            DrawChangeBadge(static_cast<uint64_t>(fid), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopID();
         }
     });
@@ -371,8 +408,11 @@ void HierarchyWindow::DrawEntityNode(EngineContext& ctx, World& world, EntityID 
     // (プレハブ青は名前側だけ。Pop より前に描くことで DrawItemIconLabel の文字色に乗る)
     const EntityIconInfo icon = EntityIconInfoFor(world, e);
     const bool nodeOpen = ImGui::TreeNodeEx("##node", flags);
+    const ImVec2 rowMin = ImGui::GetItemRectMin();
+    const ImVec2 rowMax = ImGui::GetItemRectMax();
     DrawItemIconLabel(icon.icon, ComponentCategoryColor(icon.category), world.GetName(e),
                       /*framed=*/false);
+    DrawChangeBadge(fid, rowMin, rowMax);
     if (isPrefab) {
         ImGui::PopStyleColor();
     }

@@ -38,6 +38,14 @@ void EditorSettings::Load(const std::wstring& dir)
         particleCpuSimd = root.value("particleCpuSimd", particleCpuSimd);
         feelMuteCamera = root.value("feelMuteCamera", feelMuteCamera);
         changeTrackingEnabled = root.value("changeTrackingEnabled", changeTrackingEnabled);
+        if (root.contains("aiChangeAcks") && root["aiChangeAcks"].is_object()) {
+            aiChangeAcks.clear();
+            for (const auto& item : root["aiChangeAcks"].items()) {
+                if (item.value().is_number_integer()) {
+                    aiChangeAcks[item.key()] = item.value().get<int64_t>();
+                }
+            }
+        }
         profilerTab = root.value("profilerTab", profilerTab);
         profilerAvgFrames = root.value("profilerAvgFrames", profilerAvgFrames);
         profilerHideZero = root.value("profilerHideZero", profilerHideZero);
@@ -89,6 +97,13 @@ void EditorSettings::Save() const
     root["particleCpuSimd"] = particleCpuSimd;
     root["feelMuteCamera"] = feelMuteCamera;
     root["changeTrackingEnabled"] = changeTrackingEnabled;
+    {
+        nlohmann::json acks = nlohmann::json::object();
+        for (const auto& [documentId, revisionId] : aiChangeAcks) {
+            acks[documentId] = revisionId;
+        }
+        root["aiChangeAcks"] = acks;
+    }
     root["profilerTab"] = profilerTab;
     root["profilerAvgFrames"] = profilerAvgFrames;
     root["profilerHideZero"] = profilerHideZero;

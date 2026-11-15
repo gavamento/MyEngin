@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -46,6 +48,8 @@ struct EditorSettings {
     // 追跡サービスへの接続・起動を許すか。**既定は無効**: 有効にすると最初のベースラインで
     // .myei_changeslobs\ に追跡対象の内容が複製される (大きいプロジェクトで数百 MB)。個人の判断なのでここ
     bool changeTrackingEnabled = false;
+    // 「ここまで確認済みにする」の印 (documentId → Revision)。**表示だけの印**で、記録にもサービスにも書かない (M104m)
+    std::map<std::string, int64_t> aiChangeAcks;
     // ---- プロファイラの表示 (M102) ----
     int profilerTab = 0;            // 最後に開いていたタブ (ProfilerWindow のタブ順)
     int profilerAvgFrames = 60;     // 平均・最大を取るフレーム数 (1 = 瞬間値)

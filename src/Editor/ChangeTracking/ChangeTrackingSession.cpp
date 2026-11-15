@@ -6,6 +6,8 @@
 #include "Editor/ChangeTracking/ChangeTrackingSession.h"
 
 #include <filesystem>
+#include <optional>
+#include <utility>
 
 #include <Windows.h>
 
@@ -57,12 +59,18 @@ void ChangeTrackingSession::StartWithIo(std::unique_ptr<TrackIo> io, const std::
 void ChangeTrackingSession::Wire()
 {
     model_.Attach(&client_);
-    client_.SetNotifyHandler([this](const nlohmann::json& event) { model_.OnNotification(event); });
+    overlay_.Attach(&client_);
+    overlay_.Reset();
+    client_.SetNotifyHandler([this](const nlohmann::json& event) {
+        model_.OnNotification(event);
+        overlay_.OnNotification(event);
+    });
     client_.SetStateHandler([this](TrackState state) {
         if (state == TrackState::Ready && client_.GetStats().connects != seenConnects_) {
             // 新しい接続が通った (DbDegraded から戻っただけのときは、購読も取り直しもそのまま)
             seenConnects_ = client_.GetStats().connects;
             model_.OnConnected();
+            overlay_.OnConnected();
             // 通知を受ける。失敗しても (古いサービスなど) 表示は取り直しで動く。通知なしで困るのは更新の遅れだけ
             client_.Request(trackop::kSubscribe,
                             { { "events", { trackevent::kChangeRecorded, trackevent::kAttributionUpdated,
@@ -75,6 +83,7 @@ void ChangeTrackingSession::Wire()
                             });
         } else if (!client_.CanRequest()) {
             model_.OnDisconnected();
+            overlay_.OnDisconnected();
         }
     });
 }
@@ -83,10 +92,27 @@ void ChangeTrackingSession::Poll()
 {
     client_.Poll();
     model_.Tick();
+    overlay_.Tick();
     DrainSaved();
 }
 
 namespace {
+
+// 大きさと最終更新時刻 (読めなければ nullopt)。保存の知らせの前後で外の書き込みが混ざっていないかの確認に使う
+std::optional<std::pair<uint64_t, int64_t>> StatForSavedNotice(const std::wstring& absPath)
+{
+    std::error_code ec;
+    const std::filesystem::path path(absPath);
+    const uint64_t size = std::filesystem::file_size(path, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    const auto time = std::filesystem::last_write_time(path, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    return std::make_pair(size, static_cast<int64_t>(time.time_since_epoch().count()));
+}
 
 // 末尾の区切りを落として、1 つだけ付ける (プロジェクトの中かの前方一致用)
 std::wstring RootPrefixKey(const std::wstring& projectRoot)
@@ -119,7 +145,12 @@ void ChangeTrackingSession::NoteSaved(const std::wstring& absPath)
     if (pendingSaved_.size() >= kTrackSavedMaxPending && pendingSaved_.find(key) == pendingSaved_.end()) {
         return;
     }
-    pendingSaved_[key] = absPath;
+    SavedEntry entry;
+    entry.absPath = absPath;
+    if (const auto stat = StatForSavedNotice(absPath)) {
+        entry.stamp = FileStamp{ stat->first, stat->second };
+    }
+    pendingSaved_[key] = std::move(entry);
 }
 
 void ChangeTrackingSession::DrainSaved()
@@ -133,10 +164,26 @@ void ChangeTrackingSession::DrainSaved()
     }
     for (int budget = kTrackSavedPerPoll; budget > 0 && !pendingSaved_.empty(); --budget) {
         const auto first = pendingSaved_.begin();
-        const std::wstring path = first->second;
+        const SavedEntry entry = first->second;
         pendingSaved_.erase(first);
+        const std::wstring& path = entry.absPath;
+        // 知らされた時点と、ハッシュの直前・直後で、大きさと更新時刻が同じであること。
+        // 違えばその間に別の書き込みがあった (外の変更を Editor の利用者の保存として確定しない)
+        auto sameAsNoted = [&] {
+            const auto stat = StatForSavedNotice(path);
+            if (stat.has_value() != entry.stamp.has_value()) {
+                return false;
+            }
+            return !stat || (stat->first == entry.stamp->size && stat->second == entry.stamp->writeTime);
+        };
+        if (!sameAsNoted()) {
+            continue;
+        }
         std::string hash;
         if (!hasher_ || !hasher_(path, hash) || hash.empty()) {
+            continue;
+        }
+        if (!sameAsNoted()) {
             continue;
         }
         client_.Request(trackop::kEditorSaved, { { "path", WideToUtf8(path) }, { "hash", hash } },

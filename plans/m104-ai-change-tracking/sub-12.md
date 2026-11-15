@@ -1,7 +1,7 @@
 # sub-12: シーンの変更の集約、一覧、Hierarchy のバッジ、選択の同期 (M104m)
 
 - 依存: sub-11
-- 状態: 未着手
+- 状態: OK (commit は台帳 harness.md を参照)
 - 往復: 0
 - 書き込みの深さ: **詳細** (2026-11-15、sub-11 の VERDICT で planner が書き直した)
 - 質問の運用: 推奨で進め、Notion に後回し。
@@ -96,4 +96,66 @@ arch §6、§7、要求 §8。**World を変えないことが存在条件** (EC
 
 ## 実装メモ (coder が追記)
 
+```
+SELF_EVAL: sub-12 (round 1)
+実装:
+  - tools\track\src\scene_overlay.rs (新規) — `fold` (純粋な関数。古い Revision から順に畳む。追加→変更=追加、追加→削除=消える、変更→削除=削除、削除→追加=変更 (scene_diff::diff で中身の差を合成)、同じ (fileId, component, field) の最初の Before と最後の After、同じ字句 (書き方だけ違う JSON を含む) に戻ったら消える、unparsed で incomplete)。`scene_overlay` (引き継ぎの鎖を逆にたどって文書を集め、actor が ai / unknown、state = active、afterRevisionId より後の行だけを読む。fileId 昇順のページ送り、値 8 KiB 超は oversize、読む行は 40 万行まで)、`document_for_path` (document.rs と同じ規則。記録が無ければその場で決めて known:false)。単体 8 件
+  - tools\track\src\protocol.rs / server.rs / lib.rs — 2 op を IMPLEMENTED_OPS・role_allows (editor だけ)・ディスパッチへ
+  - tools\track\tests\pipe.rs — 結合 2 件 (別シーンの同じ fileId が混ざらない・元へ戻ると消える・afterRevisionId・.meta の無いシーンの仮 ID が document_for_path と scene_overlay で一致・mcp/hook は forbidden・bad_args・ページ送り・oversize・文書の変更は最初のページだけ)
+  - tests\track\26_scene_overlay.ndjson / .expected.ndjson (新規) — track_verify のシナリオ 26
+  - src\Editor\ChangeTracking\SceneChangeOverlay.h/.cpp (新規) — 開いている文書 1 つ分の表。document_for_path → scene_overlay (全ページを集めてから表を入れ替える)。取り直しの契機 (パスの変更・change_recorded の documentId 一致・attribution_updated・resync・.meta の変更・接続)。500 ms の間引き。世代で古い応答を捨てる。「ここまで確認済みにする」(afterRevisionId で送る。EditorSettings へ保存)。RebuildAncestors (取り直しのあと 1 回だけ、ライブの親子を読む)。SelectEntityByFileId
+  - ChangeTrackingSession.h/.cpp — overlay_ を持ち、通知・接続・Poll を配線。NoteSaved を直す (E): 知らされた時点のファイルの大きさと更新時刻を控え、ハッシュの直前と直後に同じでなければ editor_saved を送らない
+  - ChangeModel.h/.cpp — scene_diff を全ページ取る (describe に sceneSummary があるとき)。ParseSceneChanges
+  - ChangeFormat.h/.cpp — SceneKindLabel (11 種 + unparsed。プレハブの 3 種は文面で区別)、ClipValue (UTF-8 の文字境界)、FormatSceneChange、UnparsedReason、OverlayBadgeTooltip
+  - AiChangesWindow.h/.cpp — 帯 (強調の切り替え・件数・ここまで確認済み・全部もう一度表示・incomplete / truncated の注記)、詳細の「シーンの変更」の一覧 (見えている行だけ組み立てる)、ActivateSceneChange (行のクリック → Selection。別シーン・削除済み・文書全体は選ばず理由を出す)
+  - HierarchyWindow.h/.cpp — DrawEntityNode と DrawFiltered の両方でバッジ (追加=緑・変更=青・子孫だけ=薄い青)。ツールチップ。描いた数を数える口
+  - EditorApp.cpp — 文書パスの伝達、RebuildAncestors の呼び出し、ack の保存先、host.selectEntity
+  - EditorSettings.h/.cpp — aiChangeAcks (documentId → Revision)
+  - TrackProtocol.h / TrackClient.cpp — op 名と 30 秒の時間切れ
+  - LocalizationTable.inl — 47 行の追加 (英日。変換指定子なし)
+  - ChangeTrackingFakeIo.h (新規) — 偽の I/O を ChangeTrackingSelfTest.cpp から切り出して共有。SceneChangeOverlaySelfTest.cpp (新規) — 新しい試験 (changetracking スイートの末尾から呼ぶ)
+  - ChangeTrackingSelfTest.cpp — 偽の I/O の切り出し、E の試験 4 件、実サービスのプローブにシーンの外からの書き換え → 表
+  - docs: attribution-rules.md §3 の限界、ipc-contract.md (2 op・時間切れ)、architecture.md §7、engine_spec.md §9.2、test_checklists.md、plans\m104-ai-change-tracking.md (M104m を実装済み、M104m2 の行)。build\Editor.vcxproj(.filters) は gen_project_files.ps1 の出力
+仕様との差分:
+  - [追加] scene_overlay の結果に `entityFields` (name / tagMask など、コンポーネントに属さないフィールド)、`hierarchy` (parent / childIndex の差)、フィールドごとの `changeType`、`unparsedRevisionIds`、`assetChangedRevisionId`、`truncated` を足した — 仕様の `components` / `hierarchyChanged` だけでは名前の変更や親子の変更の内容を返せない。`documentChanges` は最初のページだけ
+  - [追加] 強調の切り替え (show) は設定に保存しない (既定は表示)。「ここまで確認済み」だけを EditorSettings へ — 仕様は切り替えの保存を求めていない
+  - [未実装] 「シーンを開く導線」(任意と書かれていた)。別のシーンの行は選ばず「このシーンは開いていません」と出すだけ
+  - [逸脱] 子孫の薄い印は、表を取り直したとき (と、シーンを開いたとき) の親子で作る。Hierarchy で親子を付け替えた直後は、次に表が取り直されるまで古い — 仕様どおり「毎フレーム木を走査しない」を優先した結果
+  - [追加] 試験 9 (Play 中の切り替え) は、実際の TickRunner ではなく、決定的な「1 Tick」(位置を Tick 数から決める) を同じ回数回した 2 つのシーン (切り替え + Hierarchy の描画あり / なし) の HashWorld を比べる。強調の経路は sim に入口が無く、World を書かないことを確かめる形にした
+  - [追加] ChangeTrackingSelfTest.cpp の偽の I/O を ChangeTrackingFakeIo.h へ移した (新しい試験が同じ道具を使うため)。振る舞いは変えていない
+検証:
+  - cargo test --manifest-path tools\track\Cargo.toml → 246 件通過 (前 236 + 単体 8 + 結合 2)。コンパイルの警告は既存の 1 件 (pipe.rs の unused_mut) だけ
+  - tools\build_track.bat Release → 成功。tools\track_verify.bat → 全 26 シナリオ PASS (26_scene_overlay を新規に撮り、期待値は読んで確認: 別シーンが混ざらない・元へ戻ると消える・afterRevisionId・mcp/hook forbidden)
+  - MyEngine.sln を Debug|x64 と Release|x64 で /p:MyeWarnAsError=true ビルド → 成功 (警告 0)。プローブを外したあとにもう一度
+  - bin\x64\Debug\Editor.exe --selftest → 112 スイート 0 失敗 (changetracking PASS)。bin\x64\Release\Editor.exe --selftest → 112 スイート 0 失敗。どちらも他のビルドと並走させていない。--selftest-full、replay_verify は未実行 (この sub の検証コマンドに無く、ECS・シミュレーションを触っていない)
+  - MYE_TRACK_PROBE=1 + MYE_SELFTEST_ONLY=changetracking (Release) → 実サービスでシーンを外から書き換え → scene_overlay に出る → 表に入る、が PASS。終わりに mye_track.exe が残っていない
+  - tools\check_rules.ps1 → 0 error (65 warning は既存。新規は規則 7 の「順序非依存を確認」が SceneChangeOverlay.cpp の 2 か所 = 件数・集合への挿入だけで順序に依存しない)。下位の層の差分は LocalizationTable.inl だけ (git diff --stat -- src\Engine)
+  - スクショ (一時のプローブ + Release の Editor.exe --screenshot。プローブは外し、git diff に残っていない): C:\HAL\MyEngin\cache\m104m_shots\1_tree_ja.png (Hierarchy の通常表示。Main Camera に緑、Sun に青、折りたたまれた Spinner に薄い青)、2_search_ja.png (検索表示 "sun" で Sun に青 + AI Changes 窓の帯と一覧、日本語)、3_english.png (英語)、4_window_ja.png (帯・「シーンの変更」の一覧、日本語)。撮れた・文字が切れていない (窓が画面より広いのは既存の大きさ)・化けていない・ImGui のエラー表示が出ていない、まで確認。**見た目の合否は目視 (未確認)**
+自己採点 (1-5):
+  仕様適合: 4 — 条件 1〜10・12・13 を機械で検証。シーンを開く導線は未実装 (任意)、子孫の薄い印は取り直しの時点の親子で作る (逸脱の欄)
+  正しさ: 4 — まとめ方 8 件 + 結合 3 件 + 試験 70 件超で確認。見落としうるのは、実 Editor での操作 (本物のクリック・Ctrl+S 後の見え方)、Play 中の実 TickRunner での確認 (World を書く経路が無いことの確認のみ)
+  コード品質: 4 — 純粋な関数 (サービス) と表示 (Editor) を分け、World に触る箇所は RebuildAncestors と SelectEntityByFileId だけ。偽の I/O を共有化。overlay のクラスは表・取り直し・ack・子孫の 4 つを持つので少し大きい
+  テスト: 4 — 取り直しの契機・間引き・世代・ack の保存・Hierarchy 2 経路・World 不変・選択の同期・E の 4 通りを自動で確認。実機の人手の操作と見た目は未確認
+不安・質問:
+  - 強調の切り替えを EditorSettings へ保存するか (今は保存しない)。sub-24 の色の設定と一緒に決めるのが自然
+  - 子孫の薄い印の鮮度 (親子を付け替えた直後に古い)。Hierarchy の変更の通知口が無いので、sub-24 以降で必要なら表の再計算の合図を足す
+  - ChangeTrackingSession.NoteSaved の保存直後の stat は 1 回 (std::filesystem)。ネットワークドライブなど更新時刻の粒度が粗い場所では、同じ大きさの書き換えを見逃しうる (限界は attribution-rules.md §3 に書いた)
+触ったファイル:
+  tools\track\src\scene_overlay.rs, tools\track\src\lib.rs, tools\track\src\protocol.rs, tools\track\src\server.rs, tools\track\tests\pipe.rs, tests\track\26_scene_overlay.ndjson, tests\track\26_scene_overlay.expected.ndjson,
+  src\Editor\ChangeTracking\SceneChangeOverlay.h, SceneChangeOverlay.cpp, SceneChangeOverlaySelfTest.cpp, ChangeTrackingFakeIo.h, ChangeTrackingSession.h, ChangeTrackingSession.cpp, ChangeTrackingSelfTest.h, ChangeTrackingSelfTest.cpp, ChangeModel.h, ChangeModel.cpp, ChangeFormat.h, ChangeFormat.cpp, TrackProtocol.h, TrackClient.cpp,
+  src\Editor\Windows\Project\AiChangesWindow.h, AiChangesWindow.cpp, src\Editor\Windows\Scene\HierarchyWindow.h, HierarchyWindow.cpp, src\Editor\App\EditorApp.cpp, EditorSettings.h, EditorSettings.cpp,
+  src\Engine\Core\Localization\LocalizationTable.inl, build\Editor.vcxproj, build\Editor.vcxproj.filters,
+  docs\ai-change-tracking\attribution-rules.md, ipc-contract.md, architecture.md, docs\test_checklists.md, engine_spec.md, plans\m104-ai-change-tracking.md, plans\m104-ai-change-tracking\sub-12.md
+  (生成物でコミットしないもの: cache\m104m_shots\ のスクショと run ログ)
+申し送り:
+  - 作った一時物は、自分が作った /tmp の 1 ファイルと %TEMP%\m104m_*.txt 系 (selftest の出力) を消した。止めたプロセスは、自分が起動した Editor.exe (pid 36096、47828、42340。スクショの run が --frames 無しで終了しなかったため) だけ。既存の %TEMP%\mye_track_*、%TEMP%\mye_m104b\、cache\m104k_shots\、cache\m104k2_shots\ は触っていない。cache\m104m_shots\ の古い (プローブの初版の) ファイルは、名前が同じものを上書きし、残りの .log / .err はそのまま残る (cache の削除は許可の確認で止まったため)
+  - sub-24 へ: Inspector の Field 差分は `SceneChangeOverlay::Find(fileId)` の `components[].fields[]` (before / after / lastRevisionId / overrideField) をそのまま使える。ワイヤ箱の色は SceneChangeOverlay.h の kOverlayAddedColor / kOverlayModifiedColor / kOverlayFaintAlpha を設定へ置き換える
+  - sub-13 へ: AiChangesHost に selectEntity を足した。未保存シーンの確認の経路 (ReloadHub) は触っていない
+  - 既存の気づき: tools\track\tests\pipe.rs の scene_diff の試験の `let mut service` が unused_mut の警告 (既存、直していない)
+```
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner、2026-11-15)。確かめたこと: `mye_track` / `Editor` の残存プロセスなし、リポジトリに `.mye\ai_changes\` なし、下位の層の差分は `LocalizationTable.inl` (47 行) だけ、`schema\` / `tools\mcp` / `.claude` / `.mcp.json` に差分なし、このサブの `src` の差分に `EnsureFileId` / `GuidForPath` / `getenv` の追加なし (プローブが残っていない)、`Editor.exe` は最後のソースの変更より新しい。planner の実走: Release の `--selftest` 全体が 112 スイート 0 失敗 (実行中も後も `mye_track.exe` なし)、`tools\check_rules.ps1` 0 error、`cargo test` (track) 246 件通過、`tools\track_verify.bat` 全シナリオ PASS (26_scene_overlay を含む)。スクショ `1_tree_ja.png` を開いて見た: Hierarchy の行の右に緑・青・薄い青の印が出ていて、文字の切れ・化けなし。**見た目の合否はユーザーの目視 (未確認)。**
+  - 追加・逸脱の判定: `scene_overlay` の結果の項目の追加 (`entityFields`、`hierarchy`、`changeType` など)、強調の切り替えを保存しない、子孫の薄い印を取り直しの時点の親子で作る、条件 9 を「World を書かないこと」の確認にした、偽の I/O の切り出し、は全部採る。「シーンを開く導線」の未実装は可 (任意だった)。
+  - 質問への回答: (1) 強調の切り替えの保存は sub-24 で、色と一緒に `EditorSettings` に入れる。(2) 子孫の薄い印の鮮度はそのままでよい (親子を付け替えた直後に一時的に古いだけで、次の取り直しで直る)。(3) `NoteSaved` の確認の粒度の限界は文書にあるとおりで足りる。
+  - nit: `cache\m104m_shots\` にプローブの初版のログが残っている (削除は許可の確認で止まった、との報告)。コミットしない場所で、消すかどうかはユーザーの判断。`tools\track\tests\pipe.rs` の `unused_mut` の警告 1 件は、次に `tools\track` を触るサブで直す。

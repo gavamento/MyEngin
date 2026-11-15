@@ -1497,6 +1497,15 @@ review and restore milestones).
   turns it on or off. Turning it **on** asks once: the first baseline scan copies the contents of the project's files into
   `.mye\ai_changes\blobs\` (the real total appears in the window once tracking runs); a background service keeps recording even
   after the editor closes. Turning it **off** only closes the editor's connection — the running service is not stopped.
+- **Open-scene overlay (M104m).** While the window is open (or the Hierarchy highlight is on), the editor keeps a table of the structural changes
+  (made by an AI or an unknown writer — not by the editor user or a restore) that apply to the open scene / prefab / actor file. The service
+  folds them per entity (`scene_overlay`); the editor never re-derives the folding or the document id. The table is display-only: it adds no ECS
+  component or event, never calls `EnsureFileId`, and toggling it cannot change `HashWorld`. The **Hierarchy** draws a small badge at the right of a row
+  (green = added, blue = modified; a faint blue dot on a row whose descendants changed, e.g. a collapsed parent) in both the tree and the search view, with a
+  tooltip naming up to three component / field names. A band at the top of this window has the highlight switch, the added / modified / removed counts,
+  *Mark as seen up to here* (a display-only mark kept in `editor_settings.json`; it records nothing and is not a review) and *Show everything again*.
+  The detail column lists the selected revision's structural changes (`scene_diff`; the three prefab kinds — the prefab file, the instance's source,
+  an override — have distinct labels); clicking a row selects that entity in the open scene when the row belongs to the open scene and the entity exists.
 - **State banner.** One sentence per connection state (off / no project / connecting / running / service not found / protocol
   version mismatch / another project's service / database unavailable / reconnecting). While running it also shows the
   baseline progress, tracked files, stored content (size and count), gaps in coverage, and whether watching fell back to one

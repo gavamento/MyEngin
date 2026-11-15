@@ -7,9 +7,11 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "Editor/ChangeTracking/ChangeModel.h"
+#include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/ChangeTracking/TrackClient.h"
 
 namespace mye {
@@ -56,6 +58,8 @@ public:
     TrackClient& Client() { return client_; }
     ChangeModel& Model() { return model_; }
     const ChangeModel& Model() const { return model_; }
+    SceneChangeOverlay& Overlay() { return overlay_; }
+    const SceneChangeOverlay& Overlay() const { return overlay_; }
 
 private:
     void Wire();
@@ -65,12 +69,23 @@ private:
     // ★宣言順に意味がある: client_ のデストラクタが保留中の要求を失敗で返し、そのコールバックが model_ に触る。
     //   model_ を先に宣言して、後に壊れるようにする
     ChangeModel model_;
+    SceneChangeOverlay overlay_;
     TrackClient client_;
     uint32_t seenConnects_ = 0;
     std::wstring projectRoot_;
     SavedFileHasher hasher_ = HashFileForSavedNotice;
-    // 正規化したキー (小文字・\ 区切り) → 絶対パス。同じファイルの保存は 1 件にまとめ、順序はキー順で決める
-    std::map<std::wstring, std::wstring> pendingSaved_;
+    // 保存を知らされた時点のファイルの大きさと最終更新時刻。送る直前までに変わっていたら、外の変更が混ざったとみなして送らない
+    struct FileStamp {
+        uint64_t size = 0;
+        int64_t writeTime = 0; // file_time_type の tick 数
+        bool operator==(const FileStamp& other) const { return size == other.size && writeTime == other.writeTime; }
+    };
+    struct SavedEntry {
+        std::wstring absPath;
+        std::optional<FileStamp> stamp; // 読めなければ nullopt
+    };
+    // 正規化したキー (小文字・\ 区切り) → 保存のエントリ。同じファイルの保存は 1 件にまとめ、順序はキー順で決める
+    std::map<std::wstring, SavedEntry> pendingSaved_;
 };
 
 } // namespace mye

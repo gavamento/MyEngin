@@ -1,0 +1,31 @@
+# scene_overlay と document_for_path: 同じ fileId の変更が別のシーンの文書に混ざらず、元へ戻った変更は消える。afterRevisionId で絞れる。mcp / hook は呼べない
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.scene.json.meta {"guid":"0123456789abcdef","type":"scene","version":1}
+# wait-recorded 1
+# write b.scene.json.meta {"guid":"fedcba9876543210","type":"scene","version":1}
+# wait-recorded 2
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"x"}},"fileId":1,"name":"A"},{"childIndex":1,"components":{},"fileId":2,"name":"B"}],"nextFileId":3,"sceneName":"s","version":4}
+# wait-recorded 3
+# write b.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"x"}},"fileId":1,"name":"A"}],"nextFileId":2,"sceneName":"s","version":4}
+# wait-recorded 4
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"y"}},"fileId":1,"name":"A"},{"childIndex":1,"components":{},"fileId":2,"name":"B"},{"childIndex":2,"components":{},"fileId":3,"name":"C"}],"nextFileId":4,"sceneName":"s","version":4}
+# wait-recorded 5
+# write b.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"z"}},"fileId":1,"name":"A"}],"nextFileId":2,"sceneName":"s","version":4}
+# wait-recorded 6
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"x"}},"fileId":1,"name":"A"},{"childIndex":2,"components":{},"fileId":3,"name":"C"}],"nextFileId":4,"sceneName":"s","version":4}
+# wait-recorded 7
+{"id":2,"op":"document_for_path","args":{"path":"a.scene.json"}}
+{"id":3,"op":"document_for_path","args":{"path":"zzz.scene.json"}}
+{"id":4,"op":"scene_overlay","args":{"documentId":"0123456789abcdef"}}
+{"id":5,"op":"scene_overlay","args":{"documentId":"fedcba9876543210"}}
+{"id":6,"op":"scene_overlay","args":{"documentId":"0123456789abcdef","afterRevisionId":5}}
+{"id":7,"op":"scene_overlay","args":{"documentId":"0123456789abcdef","cursor":"x"}}
+{"id":8,"op":"document_for_path","args":{"path":"note.txt"}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"scene_overlay","args":{"documentId":"0123456789abcdef"}}
+{"id":3,"op":"document_for_path","args":{"path":"a.scene.json"}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"hook","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"scene_overlay","args":{"documentId":"0123456789abcdef"}}
+{"id":3,"op":"document_for_path","args":{"path":"a.scene.json"}}

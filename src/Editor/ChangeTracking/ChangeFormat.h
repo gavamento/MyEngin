@@ -11,6 +11,7 @@
 #include "nlohmann/json.hpp"
 
 #include "Editor/ChangeTracking/ChangeModel.h"
+#include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/ChangeTracking/TrackClient.h"
 
 namespace mye {
@@ -85,5 +86,35 @@ std::string StateBannerText(TrackState state, bool allowed, const std::string& d
 
 // 動作中のときの要約の行 (ベースラインの進捗・追跡中のファイル・Blob の総量・欠落区間・監視の縮退)
 std::vector<std::string> StatusLines(const TrackStatusInfo& status);
+
+// ---- シーンの変更 (M104m) ----
+
+// 構造の変更の種類の文面 (要求 §7.2 の 11 種 + unparsed)。プレハブの 3 種 (本体 / インスタンスの参照元 / 上書き) は文面で区別する。
+// 未知の値は値そのもの
+std::string SceneKindLabel(const std::string& changeType);
+// 種類の一覧 (11 種 + unparsed。文面の網羅の試験用)
+const std::vector<std::string>& SceneChangeKinds();
+
+// 値 (JSON の断片) を表示用に切る。改行・タブは空白にして、maxChars 文字 (UTF-8 の文字単位) を超えたら "..." を付ける
+constexpr size_t kSceneValueMaxChars = 60;
+std::string ClipValue(const std::string& fragment, size_t maxChars);
+
+// scene_diff の 1 件の行
+struct SceneChangeText {
+    std::string kind;
+    std::string target;    // 「名前 (#fileId)」。文書全体の変更は「(文書全体)」
+    std::string component; // 空 = 無し
+    std::string field;
+    std::string before;    // 空 = 無し。大きすぎる値は「大きすぎる」の文面
+    std::string after;
+    std::string note;      // unparsed の理由
+};
+// entityName: ライブのシーンのエンティティ名 (分かるときだけ。空なら fileId だけ)
+SceneChangeText FormatSceneChange(const TrackSceneChange& change, const std::string& entityName);
+// unparsed の afterValue (理由の JSON 文字列) を平文にする。読めなければ元の文字列
+std::string UnparsedReason(const std::string& afterValue);
+
+// Hierarchy のバッジのツールチップ: 種類 + コンポーネント名・フィールド名を最大 3 つ。entity が null なら子孫の注記だけ
+std::string OverlayBadgeTooltip(const OverlayEntity* entity, bool descendantOnly);
 
 } // namespace mye

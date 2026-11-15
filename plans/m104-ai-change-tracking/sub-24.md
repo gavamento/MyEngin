@@ -4,7 +4,7 @@
 - 状態: 未着手
 - 往復: 0
 - 順序: sub-12 → **sub-24** → sub-13 → sub-14 (番号は末尾。sub-11 の VERDICT で、sub-12 から分けた)
-- 書き込みの深さ: 骨子 (sub-12 の VERDICT で planner が詳細にする)
+- 書き込みの深さ: **着手可** (2026-11-15、sub-12 の VERDICT で planner が sub-12 の結果を書き足した)
 - 質問の運用: 推奨で進め、Notion に後回し。
 
 ## 着手前の確認の扱い (推奨で裁定済み。計画の未決事項 5)
@@ -26,6 +26,15 @@ sub-12 の `SceneChangeOverlay` (fileId → 状態の表。コンポーネント
    - 生の D3D 型を `ChangeTracking\` に持ち込まない (規則 16)。`SceneViewWindow` の既存の経路から呼ぶ。
 3. **色の設定**: `EditorSettings` に 4 色 (キーは 4 つ。既定値は今の定数)。AI Changes 窓の歯車のポップアップで変えられ、「既定に戻す」がある。Hierarchy のバッジ (sub-12 の定数) もこの設定を使う。
 4. 文字列は英日。`C:\HAL\MyEngin\engine_spec.md` §9.2、`C:\HAL\MyEngin\docs\test_checklists.md`。
+
+5. sub-12 の結果 (2026-11-15):
+   - 表は `SceneChangeOverlay::Find(fileId)` で引ける。`components[].fields[]` に `before` / `after` / `lastRevisionId` / `overrideField`、ほかに `entityFields` (name / tagMask など)、`hierarchy` (parent / childIndex の差) がある。値は JSON の断片 (字句のまま)。表示用の切り詰めは `ChangeFormat` の `ClipValue` (UTF-8 の文字の境界で切る)。
+   - 色は `SceneChangeOverlay.h` の `kOverlayAddedColor` / `kOverlayModifiedColor` / `kOverlayFaintAlpha` (定数)。これを `EditorSettings` の 4 色に置き換え、Hierarchy のバッジ (sub-12) も同じ設定を読むようにする。
+   - **強調の表示の入・切 (sub-12 では保存していない) を、色と一緒に `EditorSettings` に保存する。**
+   - AI Changes 窓の帯 (強調の切り替え、件数、ここまで確認済みにする) は `AiChangesWindow` にある。歯車はその帯に置く。
+   - ヘッドレスの ImGui フレームで窓を描く試験の道具 (`WithHeadlessImGuiFrame`)、偽の I/O (`ChangeTrackingFakeIo.h`)、Hierarchy の「描いた数を数える口」の前例がある。Inspector と Scene View にも同じ形の口を足す。
+   - Scene View のワイヤ箱は 3D の描画なので、ヘッドレスのスイートでは「`EditorLinePass` へ渡す箱の一覧を作る関数」(可視の判定、上限、色) を純粋な形に分けて試験し、実際の描画はスクショで確かめる。
+   - `tools\track` は触らない見込み (触るなら、`tests\pipe.rs` の `unused_mut` の警告 1 件を直す)。
 
 ## やらないこと (このサブでは)
 

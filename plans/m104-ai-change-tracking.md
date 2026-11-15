@@ -30,7 +30,8 @@ AI エージェントが行ったコード・シーン・アセットの変更�
 | M104k | 3 | 実装済み (判定待ち) | AI Changes 窓 (`src\Editor\Windows\Project\AiChangesWindow`。状態の帯、有効・無効の切り替えと確認、セッション / 変更 / 詳細の 3 列、Unknown・Inferred の別の節、根拠の一覧、`completeness` の注記)、Diff 表示部品 (`src\Editor\Widgets\DiffView.h`、クラス名は `DiffViewer`。インライン / 左右、`ImGuiListClipper`)、文面の整形 (`ChangeFormat`、ImGui を呼ばない)、サービスの `hunks` (本文つき・ページ送り・単独で大きい Hunk は `oversize`) と `blob_get` (512 KiB ずつ)、`sessions` に `changeCount`。`editor_saved` は M104k2 |
 | M104k2 | 3 | 実装済み (判定待ち) | Editor の保存をサービスへ知らせる (`editor_saved`)。サービス: op (role = editor だけ)、観測が先でも知らせが先でも同じ照合 (前後 10 秒、ハッシュ一致)、`events` から作り直せる根拠、スキーマ版 2 (`events(kind, at)` の索引)、`list` の `attribution` に配列。Editor: 保存直後の通知の口 (`EditorApp::NoteFileSaved`) から接続中だけ、書いた後のファイルのハッシュを `Poll()` で 1 回 2 件まで送る。経路の一覧は `docs\ai-change-tracking\editor-save-routes.md`。AI Changes 窓: 「エディタ / 復元による変更」の節 (切り替えで表示)、「セッションなし」をサービスの絞り込みで取る。M104k の後、M104l の前 |
 | M104l | 3 | 実装済み (判定待ち) | シーン構造 diff (サービス)、プレハブの区別、`scene_diff` |
-| M104m | 3 | 未着手 | Hierarchy のバッジ、Inspector の Field 差分、Scene View のワイヤ箱、選択の同期 |
+| M104m | 3 | 実装済み (判定待ち) | シーンの変更の集約 (サービスの `scene_overlay` / `document_for_path`)、Editor の `SceneChangeOverlay` (表・取り直しの契機・「ここまで確認済みにする」)、Hierarchy のバッジ (通常表示と検索表示の両方、子孫の薄い印)、AI Changes 窓の帯と「シーンの変更」の一覧、一覧の行から `Selection` への同期。sub-23 から持ち越した `editor_saved` の大きさ・更新時刻の確認も含む。Inspector の Field 差分・Scene View のワイヤ箱・色の設定は M104m2 |
+| M104m2 | 3 | 未着手 | Inspector の Field 差分、Scene View のワイヤ箱、色の設定 (4 色)。M104m の後、M104n の前 |
 | M104n | 3 | 未着手 | 未保存シーンへの外部変更の確認 (`ReloadHub` の口)。他のサブから独立しているので前倒しできる |
 | M104o | 4 | 未着手 | レビュー (範囲ごとの承認・却下・要確認・再開)、集約表示 |
 | M104p | 5 | 未着手 | ゲートの共有、ファイルと Hunk の復元、復元ジャーナル、起動時の回復 |

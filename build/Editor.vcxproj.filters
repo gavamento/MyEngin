@@ -120,6 +120,12 @@
     <ClCompile Include="..\src\Editor\ChangeTracking\ChangeViewSelfTest.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\ChangeTracking\SceneChangeOverlaySelfTest.cpp">
+      <Filter>ChangeTracking</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\ChangeTracking\TrackClient.cpp">
       <Filter>ChangeTracking</Filter>
     </ClCompile>
@@ -492,10 +498,16 @@
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeModel.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingFakeIo.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSelfTest.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\ChangeTrackingSession.h">
+      <Filter>ChangeTracking</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\ChangeTracking\SceneChangeOverlay.h">
       <Filter>ChangeTracking</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\ChangeTracking\TrackClient.h">
