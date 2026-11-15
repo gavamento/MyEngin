@@ -602,15 +602,15 @@ fn parse_restore_targets(env: &RecordEnv, value: Value) -> Result<Vec<Value>, Op
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let Value::Object(map) = item else { return Err(OpError::bad_args("targets の要素はオブジェクトでなければならない")) };
-        if let Some(extra) = map.keys().find(|k| !matches!(k.as_str(), "revisionId" | "scope" | "hunkIds" | "paths")) {
+        if let Some(extra) = map.keys().find(|k| !matches!(k.as_str(), "revisionId" | "scope" | "hunkIds" | "paths" | "sceneChangeIds")) {
             return Err(OpError::bad_args(format!("targets の知らない項目: {}", crate::protocol::clip(extra))));
         }
         let revision_id = map
             .get("revisionId")
             .and_then(Value::as_i64)
             .ok_or_else(|| OpError::bad_args("targets[].revisionId は整数でなければならない"))?;
-        let scope = map.get("scope").and_then(Value::as_str).filter(|s| matches!(*s, "file" | "hunks"));
-        let Some(scope) = scope else { return Err(OpError::bad_args("targets[].scope は file / hunks のどちらか")) };
+        let scope = map.get("scope").and_then(Value::as_str).filter(|s| matches!(*s, "file" | "hunks" | "scene"));
+        let Some(scope) = scope else { return Err(OpError::bad_args("targets[].scope は file / hunks / scene のどれか")) };
         let hunk_ids: Vec<i64> = match map.get("hunkIds") {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(ids)) => ids
@@ -618,6 +618,15 @@ fn parse_restore_targets(env: &RecordEnv, value: Value) -> Result<Vec<Value>, Op
                 .map(|v| v.as_i64().ok_or_else(|| OpError::bad_args("targets[].hunkIds は整数の配列")))
                 .collect::<Result<_, _>>()?,
             Some(_) => return Err(OpError::bad_args("targets[].hunkIds は整数の配列")),
+        };
+        // ライブのシーンの復元 (scope = scene): 戻した構造の変更の行
+        let scene_change_ids: Vec<i64> = match map.get("sceneChangeIds") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(ids)) if ids.len() <= restore::MAX_SCENE_IDS => ids
+                .iter()
+                .map(|v| v.as_i64().ok_or_else(|| OpError::bad_args("targets[].sceneChangeIds は整数の配列")))
+                .collect::<Result<_, _>>()?,
+            Some(_) => return Err(OpError::bad_args("targets[].sceneChangeIds は整数の配列 (上限あり)")),
         };
         let mut paths: Vec<String> = Vec::new();
         match map.get("paths") {
@@ -630,7 +639,12 @@ fn parse_restore_targets(env: &RecordEnv, value: Value) -> Result<Vec<Value>, Op
             }
             Some(_) => return Err(OpError::bad_args("targets[].paths は文字列の配列 (上限あり)")),
         }
-        out.push(json!({ "revision_id": revision_id, "scope": scope, "hunk_ids": hunk_ids, "paths": paths }));
+        let mut entry = json!({ "revision_id": revision_id, "scope": scope, "hunk_ids": hunk_ids, "paths": paths });
+        // 既存の記録 (file / hunks) の形を変えない: scene のときだけ付ける
+        if scope == "scene" {
+            entry["scene_change_ids"] = json!(scene_change_ids);
+        }
+        out.push(entry);
     }
     Ok(out)
 }

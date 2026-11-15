@@ -49,6 +49,19 @@ std::vector<RestoreBlock> EvaluateRestoreGate(const RestoreGateInput& in)
 {
     std::vector<RestoreBlock> out;
     for (const GateBlocker gate : ComputeBlockers(in.gate)) {
+        if (in.target == RestoreGateTarget::LiveScene) {
+            // World を書き換えるので、Play 中・ネットセッション中・ミニシーンの編集中 (ctx.scene が差し替わっている) だけ止める。
+            // ビルド・git の書き込み・未保存のシーン・各窓の未保存は、ファイルを書かないので止めない
+            if (gate == GateBlocker::Playing || gate == GateBlocker::NetActive || gate == GateBlocker::ActorEdit) {
+                RestoreBlock block;
+                block.gate = gate;
+                if (gate == GateBlocker::ActorEdit) {
+                    block.path = in.documents.openScene;
+                }
+                out.push_back(block);
+            }
+            continue;
+        }
         switch (gate) {
         case GateBlocker::Playing:
         case GateBlocker::NetActive:
@@ -96,6 +109,9 @@ std::vector<RestoreBlock> EvaluateRestoreGate(const RestoreGateInput& in)
     }
     if (in.blobMissing) {
         tracking(RestoreBlockKind::BlobMissing);
+    }
+    if (in.target == RestoreGateTarget::LiveScene && in.externalChangePending) {
+        tracking(RestoreBlockKind::ExternalChangePending);
     }
     return out;
 }

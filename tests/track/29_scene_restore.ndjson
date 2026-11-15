@@ -1,0 +1,26 @@
+# ライブのシーンの復元の記録: restore_record (scope = scene) の committed で、戻した構造の変更の行 (sceneChangeIds) だけ state = restored になり、scene_overlay から消える。ほかの行・変更 (ファイル) の状態・レビューは変わらない。restore_list は sceneChangeIds を返す。editor だけ
+{"id":1,"op":"hello","args":{"proto":1,"role":"editor","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+# write a.scene.json.meta {"guid":"0123456789abcdef","type":"scene","version":1}
+# wait-recorded 1
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"x"}},"fileId":1,"name":"A"},{"childIndex":1,"components":{},"fileId":2,"name":"B"}],"nextFileId":3,"sceneName":"s","version":4}
+# wait-recorded 2
+# write a.scene.json {"engine":"MyEngine","entities":[{"childIndex":0,"components":{"Note":{"text":"y"}},"fileId":1,"name":"A2"},{"childIndex":1,"components":{},"fileId":2,"name":"B"}],"nextFileId":3,"sceneName":"s","version":4}
+# wait-recorded 3
+{"id":2,"op":"scene_diff","args":{"revisionId":3}}
+{"id":3,"op":"scene_overlay","args":{"documentId":"0123456789abcdef"}}
+{"id":4,"op":"review_set","args":{"targets":[{"revisionId":3,"scope":{"kind":"revision"}}],"state":"approved"}}
+{"id":5,"op":"restore_record","args":{"restoreId":"s-1","state":"committed","targets":[{"revisionId":3,"scope":"scene","sceneChangeIds":[1],"paths":["a.scene.json"]}]}}
+{"id":6,"op":"scene_diff","args":{"revisionId":3}}
+{"id":7,"op":"scene_overlay","args":{"documentId":"0123456789abcdef","excludeApproved":false}}
+{"id":8,"op":"list","args":{"path":"a.scene.json"}}
+{"id":9,"op":"restore_list"}
+{"id":10,"op":"restore_record","args":{"restoreId":"s-2","state":"rolled_back","error":"読み直しが合わない","targets":[{"revisionId":3,"scope":"scene","sceneChangeIds":[2]}]}}
+{"id":11,"op":"scene_diff","args":{"revisionId":3}}
+{"id":12,"op":"restore_record","args":{"restoreId":"s-3","state":"committed","targets":[{"revisionId":3,"scope":"scene","sceneChangeIds":"x"}]}}
+{"id":13,"op":"restore_record","args":{"restoreId":"s-3","state":"committed","targets":[{"revisionId":3,"scope":"scene","sceneChangeIds":[1.5]}]}}
+{"id":14,"op":"restore_record","args":{"restoreId":"s-3","state":"committed","targets":[{"revisionId":3,"scope":"scenes"}]}}
+{"id":15,"op":"restore_record","args":{"restoreId":"s-4","state":"committed","targets":[{"revisionId":3,"scope":"scene","sceneChangeIds":[99999]}]}}
+{"id":16,"op":"scene_diff","args":{"revisionId":3}}
+# reconnect
+{"id":1,"op":"hello","args":{"proto":1,"role":"mcp","token":"{TOKEN}","projectRoot":"{ROOT}"}}
+{"id":2,"op":"restore_record","args":{"restoreId":"s-9","state":"committed","targets":[{"revisionId":3,"scope":"scene","sceneChangeIds":[1]}]}}

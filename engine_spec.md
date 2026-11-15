@@ -1489,8 +1489,8 @@ The editor ships in **Japanese by default** and can be switched to English at ru
 
 *Window > AI Changes* shows what the AI Change Tracking service (`mye_track.exe`, [ADR-039](docs/adr/ADR-039-ai-change-tracking.md),
 `docs/ai-change-tracking/`) recorded for the open project. It is closed by default, docks in the centre tab group when
-the layout is rebuilt, and never writes to the project: the window has review buttons (below) but no restore button (that
-comes with the restore milestone).
+the layout is rebuilt. Looking and reviewing (below) never write to the project; the restore buttons (below) write only after an explicit
+confirmation.
 
 - **Off by default.** Tracking runs only when `changeTrackingEnabled` is true in the project's editor settings **and** the
   editor was started interactively (`--selftest`, `--screenshot`, replay and other automated launches never connect to or
@@ -1547,6 +1547,14 @@ comes with the restore milestone).
   changed optimistically). Approved structural changes drop out of the Hierarchy / Inspector / Scene view highlight; rejected and needs-review
   ones stay. Only the Editor role may record a review (the MCP tools and hooks cannot). Spec: [ipc-contract.md](docs/ai-change-tracking/ipc-contract.md) §4.6,
   [db-schema.md](docs/ai-change-tracking/db-schema.md) §3.4.
+- **Restore (M104p / p2 / q).** A change by an AI or an unknown writer can be put back: a whole file or selected hunks (the preview checks the current
+  file against the recorded After and lists what would be written; the files are written only after a recovery journal holds a copy of each,
+  and a failure rolls back), or, for the scene that is open, one field / component / entity / the whole revision (*Restore scene changes...*).
+  A scene restore never writes a file: it changes the live scene in one Undo entry (Ctrl+Z puts it back), the scene becomes unsaved, and you save it.
+  Values are compared by the field's own type (`1.0` equals `1`), not by their spelling, and nothing is applied if any item no longer matches.
+  Restoring is blocked while playing, in a network session, while editing a mini scene, while the tracking service is not connected, and while an
+  external change to the open scene is waiting for your decision. Scenes that are not open are restored with the file / hunk restore.
+  Spec: [restore-safety.md](docs/ai-change-tracking/restore-safety.md) §3.3, §8.3.
 - The window asks the model for only the parts it shows (`ChangeModel::SetInterest`); while it is closed nothing is fetched.
 - *Open file* uses the existing external-editor path (`externalEditorCmd`) at the first line of the selected hunk; *Show in Explorer*
   opens the folder.

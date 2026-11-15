@@ -200,6 +200,7 @@ std::vector<TrackSceneChange> ChangeModel::ParseSceneChanges(const nlohmann::jso
         c.beforeBytes = Int(item, "beforeBytes", 0);
         c.afterBytes = Int(item, "afterBytes", 0);
         c.review = Str(item, "review");
+        c.state = Str(item, "state");
         rows.push_back(std::move(c));
     }
     return rows;

@@ -159,6 +159,8 @@ public:
     void OnNotification(const nlohmann::json& event);
     // 状態を捨てて、文書の取り直しからやり直す (Start し直し)。印は残す
     void Reset();
+    // 表を、間引きを待たずに取り直す (復元の記録のあと。通知が出ない変更のため)
+    void Refresh();
 
     // 毎フレーム 1 回 (TrackClient::Poll の後)。必要なときだけ要求を出す
     void Tick();

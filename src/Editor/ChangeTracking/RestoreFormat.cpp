@@ -98,6 +98,8 @@ std::string RestoreBlockText(const RestoreBlock& block)
     case RestoreBlockKind::TrackUnavailable: reason = Tr(StrId::AiChg_RsBlockTrack); break;
     case RestoreBlockKind::JournalPending: reason = Tr(StrId::AiChg_RsBlockJournal); break;
     case RestoreBlockKind::BlobMissing: reason = Tr(StrId::AiChg_RsBlockBlob); break;
+    case RestoreBlockKind::ExternalChangePending: reason = Tr(StrId::AiChg_SrBlockExternal); break;
+    case RestoreBlockKind::NoScene: reason = Tr(StrId::AiChg_SrBlockNoScene); break;
     }
     if (!block.path.empty()) {
         reason += " (" + block.path + ")";

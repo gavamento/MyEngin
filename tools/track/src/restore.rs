@@ -19,6 +19,8 @@ pub const STATES: &[&str] =
 /// 1 回の要求が指せる対象の数・パスの数の上限。
 pub const MAX_TARGETS: usize = 64;
 pub const MAX_PATHS: usize = 256;
+/// 1 つの対象が指せる構造の変更の行 (`sceneChangeIds`) の数の上限。
+pub const MAX_SCENE_IDS: usize = 4096;
 /// `error` の長さの上限 (文字数)。
 pub const MAX_ERROR_CHARS: usize = 1000;
 /// `restore_list` の既定と上限。
@@ -94,7 +96,16 @@ fn mark_restored(conn: &Connection, payload: &Value) -> rusqlite::Result<()> {
             .query_row("SELECT change_id FROM change_revisions WHERE revision_id = ?1", [revision_id], |r| r.get(0))
             .optional()?;
         let Some(change_id) = change_id else { continue };
-        if target["scope"].as_str() == Some("hunks") {
+        if target["scope"].as_str() == Some("scene") {
+            // ライブのシーンの復元: 戻した構造の変更の行だけ `restored` にする (強調の表 `scene_overlay` は active の行だけを返す)。
+            // 変更 (ファイル) の状態は変えない: ファイルは戻していない
+            for id in target["scene_change_ids"].as_array().into_iter().flatten().filter_map(Value::as_i64) {
+                conn.execute(
+                    "UPDATE scene_changes SET state = 'restored' WHERE scene_change_id = ?1 AND revision_id = ?2",
+                    params![id, revision_id],
+                )?;
+            }
+        } else if target["scope"].as_str() == Some("hunks") {
             for hunk in target["hunk_ids"].as_array().into_iter().flatten().filter_map(Value::as_i64) {
                 conn.execute(
                     "UPDATE change_hunks SET state = 'restored' WHERE hunk_id = ?1 AND revision_id = ?2",
@@ -133,7 +144,13 @@ pub fn list(conn: &Connection, limit: i64) -> Result<Value, OpError> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|t| json!({ "revisionId": t["revision_id"], "scope": t["scope"], "hunkIds": t["hunk_ids"], "paths": t["paths"] }))
+                .map(|t| {
+                    let mut item = json!({ "revisionId": t["revision_id"], "scope": t["scope"], "hunkIds": t["hunk_ids"], "paths": t["paths"] });
+                    if t.get("scene_change_ids").is_some() {
+                        item["sceneChangeIds"] = t["scene_change_ids"].clone();
+                    }
+                    item
+                })
                 .collect();
             Ok(json!({
                 "restoreId": r.get::<_, String>(0)?,

@@ -885,6 +885,9 @@ void RestoreRunner::PumpRecords()
             if (!records_.empty()) {
                 records_.erase(records_.begin());
             }
+            if (onRecorded_) {
+                onRecorded_();
+            }
             return;
         }
         const std::string code = ErrorCode(response);
@@ -896,6 +899,12 @@ void RestoreRunner::PumpRecords()
         }
         recordRetryAtMs_ = NowMs() + kRecordRetryMs;
     });
+}
+
+void RestoreRunner::QueueRecord(json args)
+{
+    records_.push_back(std::move(args));
+    PumpRecords();
 }
 
 void RestoreRunner::RequestHistory()

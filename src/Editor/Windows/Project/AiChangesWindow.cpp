@@ -932,6 +932,7 @@ void AiChangesWindow::DrawSceneChanges(ChangeTrackingSession& session, const AiC
         ImGui::EndChild();
     }
     DrawSceneReview(session);
+    DrawSceneRestoreButton(session, host);
     if (hasActivation_ && lastActivation_ != SceneChangeActivation::Selected && lastActivation_ != SceneChangeActivation::NoEntity) {
         ImGui::PushStyleColor(ImGuiCol_Text, themeColor::Warning);
         ImGui::TextWrapped("%s", Tr(lastActivation_ == SceneChangeActivation::NotOpen ? StrId::AiChg_SceneNotOpen : StrId::AiChg_EntityGone));
@@ -1291,6 +1292,42 @@ void AiChangesWindow::DrawSceneReview(ChangeTrackingSession& session)
     ImGui::TextDisabled("%s", Tr(StrId::AiChg_RvSceneScope));
     if (const std::optional<ReviewAction> picked = DrawReviewButtons("scene", session.Review().Busy())) {
         ReviewSelectedScene(session, *picked);
+    }
+}
+
+// 選んだ構造の変更の行の「シーンの変更を復元...」。範囲はレビューと同じ選択 (フィールド / コンポーネント / エンティティ / 変更全体)。
+// 今開いていないシーンの変更は、項目ごとには戻せない (開くか、ファイル・Hunk の復元を使う)
+void AiChangesWindow::DrawSceneRestoreButton(ChangeTrackingSession& session, const AiChangesHost& host)
+{
+    const ChangeModel& model = session.Model();
+    if (!host.openSceneRestore || !IsReviewableDetail(model.Detail(), model.SelectedRevision()) || LeafKindOf(model.Detail()) != "scene") {
+        return;
+    }
+    const TrackSceneChange* selected = nullptr;
+    for (const TrackSceneChange& change : model.SceneChanges()) {
+        if (change.sceneChangeId == selectedSceneId_) {
+            selected = &change;
+        }
+    }
+    if (selected == nullptr) {
+        return;
+    }
+    const std::vector<ReviewTarget> options = SceneReviewOptions(model.SelectedRevision(), *selected);
+    const ReviewTarget& current = options[(std::min)(static_cast<size_t>((std::max)(sceneScope_, 0)), options.size() - 1)];
+    const SceneRestoreScope scope = current.kind == "field"       ? SceneRestoreScope::Field
+                                    : current.kind == "component" ? SceneRestoreScope::Component
+                                    : current.kind == "entity"    ? SceneRestoreScope::Entity
+                                                                  : SceneRestoreScope::Revision;
+    const std::string& doc = selected->resolvedDocumentId.empty() ? selected->documentId : selected->resolvedDocumentId;
+    const bool notOpen = session.Overlay().DocumentId().empty() || doc != session.Overlay().DocumentId();
+    ImGui::BeginDisabled(notOpen);
+    if (ImGui::SmallButton(Tr(StrId::AiChg_SrButton))) {
+        host.openSceneRestore(scope, *selected);
+    }
+    ImGui::EndDisabled();
+    if (notOpen) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", Tr(StrId::AiChg_SrNotOpenShort));
     }
 }
 

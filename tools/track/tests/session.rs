@@ -1598,3 +1598,79 @@ fn a_broken_db_is_rebuilt_with_the_restore_records_and_expectations() {
     }
     assert_eq!(count_evidence(&fx.db(), "restore_expected"), 2);
 }
+
+// ---- ライブのシーンの復元の記録 (M104q): restore_record の scope = scene ---------------------------------------
+
+fn scene_row_states(conn: &Connection) -> Vec<String> {
+    dump(conn, "SELECT scene_change_id, change_type, state FROM scene_changes ORDER BY scene_change_id")
+}
+
+#[test]
+fn a_committed_scene_restore_marks_only_the_restored_scene_rows_and_survives_a_rebuild() {
+    let mut fx = Fx::new("scene_restore");
+    let scene = |text: &str, name: &str| {
+        format!("{{\"engine\":\"MyEngine\",\"entities\":[{{\"childIndex\":0,\"components\":{{\"Note\":{{\"text\":\"{text}\"}}}},\"fileId\":1,\"name\":\"{name}\"}}],\"nextFileId\":2,\"sceneName\":\"s\",\"version\":4}}")
+    };
+    fx.write("a.scene.json.meta", b"{\"guid\":\"0123456789abcdef\",\"type\":\"scene\",\"version\":1}");
+    fx.write("a.scene.json", scene("x", "A").as_bytes());
+    fx.start(cfg(2000));
+    fx.write("a.scene.json", scene("y", "A2").as_bytes());
+    wait_until("a.scene.json", || fx.revision_count("a.scene.json") == 1);
+    let rev = fx.last("a.scene.json");
+    let ids: Vec<i64> = {
+        let conn = fx.db();
+        let mut stmt = conn.prepare("SELECT scene_change_id FROM scene_changes WHERE revision_id = ?1 ORDER BY scene_change_id").unwrap();
+        let rows = stmt.query_map([rev.id], |r| r.get(0)).unwrap();
+        rows.map(Result::unwrap).collect()
+    };
+    assert_eq!(ids.len(), 2, "前提: フィールドの変更と名前の変更の 2 行: {ids:?}");
+    fx.ok("review_set", EDITOR, json!({ "targets": [{ "revisionId": rev.id, "scope": { "kind": "revision" } }], "state": "approved" }));
+    let reviews_before = dump(&fx.db(), "SELECT * FROM reviews ORDER BY review_id");
+    let changes_before = change_state(&fx.db(), "a.scene.json");
+    let target = |restored: &[i64]| json!([{ "revisionId": rev.id, "scope": "scene", "sceneChangeIds": restored, "paths": ["a.scene.json"] }]);
+    // 巻き戻した記録 (rolled_back) と、まだ committed でない記録は、行の状態を変えない
+    fx.ok("restore_record", EDITOR, json!({ "restoreId": "sr-1", "state": "rolled_back", "error": "verify_failed", "targets": target(&[ids[0]]) }));
+    assert!(scene_row_states(&fx.db()).iter().all(|row| row.contains("active")), "{:?}", scene_row_states(&fx.db()));
+    fx.ok("restore_record", EDITOR, json!({ "restoreId": "sr-2", "state": "committed", "targets": target(&[ids[0]]) }));
+    let states = scene_row_states(&fx.db());
+    assert!(states[0].contains("restored") && states[1].contains("active"), "戻した行だけが restored: {states:?}");
+    assert_eq!(change_state(&fx.db(), "a.scene.json"), changes_before, "変更 (ファイル) の状態は変えない: ファイルは戻していない");
+    assert_eq!(dump(&fx.db(), "SELECT * FROM reviews ORDER BY review_id"), reviews_before, "レビューの記録は変わらない");
+    {
+        // (読み取りの接続は、DB を壊す前に閉じる)
+        let reader = ops::open_reader(&Paths::for_project(&fx.root).db).unwrap();
+        // 強調の表 (scene_overlay) は active の行だけを返す
+        let overlay = mye_track::scene_overlay::scene_overlay(&reader, args(json!({ "documentId": "0123456789abcdef", "excludeApproved": false }))).unwrap();
+        let entity = &overlay["entities"].as_array().unwrap()[0];
+        assert_eq!(entity["components"].as_array().unwrap().len(), 0, "戻した Note.text は強調から消える: {overlay}");
+        assert_eq!(entity["entityFields"].as_array().unwrap().len(), 1, "戻していない name は残る: {overlay}");
+        // 履歴は scope = scene と sceneChangeIds を返し、ファイル・Hunk の記録の形は変えない
+        let list = ops::restore_list(&reader, args(json!({}))).unwrap();
+        let first = &list["items"].as_array().unwrap().iter().find(|i| i["restoreId"] == "sr-2").unwrap()["targets"][0];
+        assert_eq!(first["scope"], "scene");
+        assert_eq!(first["sceneChangeIds"], json!([ids[0]]));
+    }
+    // 引数の検査
+    for bad in [json!("x"), json!([1.5]), json!([[]])] {
+        let e = fx.call("restore_record", EDITOR, json!({ "restoreId": "sr-3", "state": "committed", "targets": [{ "revisionId": rev.id, "scope": "scene", "sceneChangeIds": bad }] })).unwrap_err();
+        assert_eq!(e.code, code::BAD_ARGS);
+    }
+    assert_eq!(fx.call("restore_record", EDITOR, json!({ "restoreId": "sr-3", "state": "committed", "targets": [{ "revisionId": rev.id, "scope": "scenes" }] })).unwrap_err().code, code::BAD_ARGS);
+    fx.stop();
+
+    // DB を作り直しても、行の状態と履歴は同じ
+    drop(open_project(&fx.root, now_ms()).0);
+    let before = scene_row_states(&fx.db());
+    let history_before = dump(&fx.db(), "SELECT restore_id, state, targets FROM restore_operations ORDER BY restore_id");
+    let paths = Paths::for_project(&fx.root);
+    fs::write(&paths.db, b"this is not a sqlite database").unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", paths.db.display()));
+    }
+    let (store, report) = open_project(&fx.root, now_ms());
+    assert!(report.broken_db.is_some() && report.rebuilt.is_some(), "{report:?}");
+    assert!(report.failed_steps.is_empty(), "{:?}", report.failed_steps);
+    drop(store);
+    assert_eq!(scene_row_states(&fx.db()), before, "作り直したあとも restored の行が同じ");
+    assert_eq!(dump(&fx.db(), "SELECT restore_id, state, targets FROM restore_operations ORDER BY restore_id"), history_before);
+}

@@ -22,6 +22,8 @@
 #include "Editor/ChangeTracking/RestorePlan.h"
 #include "Editor/ChangeTracking/RestorePreview.h"
 #include "Editor/ChangeTracking/ReviewManager.h"
+#include "Editor/ChangeTracking/SceneRestorePlan.h"
+#include "Editor/ChangeTracking/SceneRestoreRunner.h"
 #include "Editor/ChangeTracking/SceneChangeOverlay.h"
 #include "Editor/Widgets/DiffView.h"
 
@@ -60,6 +62,12 @@ struct AiChangesHost {
     std::function<void()> openRestoreHistory;
     // 既存の Source Control の status モデルだけを読んで、stage 済みか答える (git を起動しない・Index に触らない)。未設定 = 分からない
     std::function<StagedState(const std::string& relPath)> stagedState;
+
+    // ---- ライブのシーンの復元 (M104q) ----
+    // 今のシーン・Undo・選択・C# のホスト。未設定 = 復元できない (World に触れない)。ImGui の 1 フレームの間だけ有効な値
+    std::function<SceneRestoreEnv()> sceneRestoreEnv;
+    // 「シーンの変更を復元...」を押した (SceneRestoreDialog を開く)。anchor = 選んだ構造の変更の行。未設定 = ボタンを出さない
+    std::function<void(SceneRestoreScope scope, const TrackSceneChange& anchor)> openSceneRestore;
 };
 
 // シーンの変更の行をクリックした結果
@@ -176,6 +184,7 @@ private:
     void DrawReviewPanel(ChangeTrackingSession& session);
     void DrawHunkReview(ChangeTrackingSession& session);
     void DrawSceneReview(ChangeTrackingSession& session);
+    void DrawSceneRestoreButton(ChangeTrackingSession& session, const AiChangesHost& host);
     void DrawBulkPopup(ChangeTrackingSession& session);
     void DrawAggregates(ChangeTrackingSession& session);
     void DrawRestoreButtons(ChangeTrackingSession& session, const AiChangesHost& host, const std::string& actor);

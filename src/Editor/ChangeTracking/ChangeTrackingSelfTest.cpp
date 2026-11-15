@@ -416,6 +416,9 @@ void RunProbe(const char* mode, const std::function<void(bool, const char*)>& ch
             check(overlaid && !session.Overlay().DocumentId().empty() && session.Overlay().Counts().modified == 1,
                   "probe: a scene rewritten from outside appears in scene_overlay and in the overlay table (live service)");
             session.Overlay().SetDocumentPath(std::wstring());
+
+            // ライブのシーンの復元 (M104q。実サービス): 外から書き換えたシーンの Field を戻す → scene_changes が restored → Undo
+            RunSceneRestoreProbe(session, root.wstring(), [&](const std::function<bool()>& done, int ms) { return pump(session, done, ms); }, check);
         }
         session.Shutdown(); // 接続を閉じるだけ
         if (service != nullptr) {
@@ -1553,6 +1556,9 @@ bool RunChangeTrackingSelfTest()
     // ---- (p) 復元の判定 (M104p) ----
     RunRestoreSelfTests(check);
     RunRestoreApplySelfTests(check);
+
+    // ---- (q) ライブのシーンの復元 (M104q) ----
+    RunSceneRestoreSelfTests(check);
 
     // ---- 実サービスとの結合 (MYE_TRACK_PROBE があるときだけ) ----
     if (const char* probe = std::getenv("MYE_TRACK_PROBE"); probe != nullptr && probe[0] != '\0') {

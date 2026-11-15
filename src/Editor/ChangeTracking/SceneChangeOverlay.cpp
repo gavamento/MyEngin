@@ -240,6 +240,13 @@ void SceneChangeOverlay::OnNotification(const nlohmann::json& event)
     }
 }
 
+void SceneChangeOverlay::Refresh()
+{
+    if (!documentId_.empty()) {
+        MarkStale(true);
+    }
+}
+
 void SceneChangeOverlay::AcknowledgeUpTo()
 {
     if (documentId_.empty() || latestRevisionId_ <= 0) {

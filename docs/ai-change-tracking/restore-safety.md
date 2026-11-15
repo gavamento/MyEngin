@@ -77,7 +77,9 @@ Hunk は (前の文脈, After 側の本文, 後ろの文脈) の並びとして�
 
 ### 3.3 シーン (Entity / Component / Field / Override)
 
-対象の文書が**今エディタで開いているシーン**なら、ライブの `Scene` に対して照合する。開いていなければ、ディスク上の JSON に対して照合し、§3.1 のファイルの経路で書く。
+Entity / Component / Field / Override の復元は、**今エディタで開いているシーンだけ**が対象で、ライブの `Scene` に対して照合する (M104q)。
+開いていないシーンの文書は、§3.1 / §3.2 のファイル全体・Hunk の経路で戻す。ディスク上の JSON の一部を字句を保って書き換える処理は新しい大きな部品になり、Hunk の復元で代わりが利くので作らない。
+AI Changes 窓は、開いていないシーンの構造の変更の行に「このシーンを開くと項目ごとに戻せます (開かずに戻すなら、ファイルまたは Hunk の復元)」と出して、「シーンの変更を復元...」を押せなくする。
 
 | 単位 | 照合するもの |
 |---|---|
@@ -88,8 +90,12 @@ Hunk は (前の文脈, After 側の本文, 後ろの文脈) の並びとして�
 | Entity (削除を取り消す) | その `fileId` が使われていない。親の `fileId` がいる (いなければ依存の欠落として止める) |
 | Prefab Override | `overrides` の該当キーの有無と値が After と一致 |
 
-- 値は JSON の字句で比べる ([architecture.md](architecture.md) §6.3)。
-- `EntityRef` のフィールドは `fileId` の値で比べる。戻す値が指す `fileId` がシーンにいなければ、依存の欠落として止める。
+- **今の値が記録した After と同じか**は、字句では比べない。記録の値は字句のまま (`1.0`、AI が書いた書き方) で、ライブの値はエンジンの型 (`float` の `1`) なので、字句どうしは合わない。
+  記録の値を**そのフィールドの型で読み** (`FieldFromJson` を作業用の領域へ) `FieldToJson` で書き直した**正規形**と、ライブの値の正規形を比べる。型が合わない記録の値 (`float` に文字列など) は読めないので競合。
+  キーが無い値は、ロードが使う既定値 (コンポーネントを `construct` した値) として比べる。コンポーネントとエンティティは、フィールドごとの正規形の集合で比べる (エンティティは `name` / `parent` / `tagMask` / コンポーネントの集合。兄弟の並び `childIndex` と `overrides` の印は付随するので比べない)。
+  C# コンポーネントは型の表が無いので、managed の `Serialize` の出力 (10 種類の型の数値・数値の配列・真偽値) どうしを JSON として比べる (`1` と `1.0` は同じ数)。
+  戻す値は、記録の Before の字句を同じ規則で読んで書く。
+- `EntityRef` のフィールドは `fileId` の整数で比べる。戻す値が指す `fileId` がシーンにいなければ、依存の欠落として止める (同じ変更で消されて、同じ復元で作り直すエンティティは、いるものとして扱う)。
 - `documentId` は必ず照合する。別のシーンの同じ `fileId` に当てない。
 - プレハブの伝播 (`PrefabPropagation`) は、それ自体を戻す対象にしない。戻すなら原因のプレハブの変更を戻す。画面では原因の変更へ案内する。
 
@@ -137,14 +143,14 @@ Hunk は (前の文脈, After 側の本文, 後ろの文脈) の並びとして�
 - シーンの復元はディスクを書かない。シーンは dirty になり、保存は利用者がする。
 - 復元の `restore_operations` には、Undo で戻されたかどうかは記録しない (Undo スタックは Editor の再起動で消える)。対象の状態は、次に追跡が観測した内容で決まる。
 
-**確認済み** (試作 4、2026-11-14。コードを読んで確定。[prototype-results.md](prototype-results.md)): C# コンポーネントのフィールドは `FieldFromJson` では**書けない**。ECS の中身は managed のハンドル (int32) だけで、`FieldDesc` を持たない。`FieldFromJson` は `FieldDesc` の `offset` へ書くので、呼べばハンドルを壊す。
+**確認済み** (試作 4、2026-11-14。コードを読んで確定。[prototype-results.md](prototype-results.md)。M104q で実走して確かめた結果は §8.3): C# コンポーネントのフィールドは `FieldFromJson` では**書けない**。ECS の中身は managed のハンドル (int32) だけで、`FieldDesc` を持たない。`FieldFromJson` は `FieldDesc` の `offset` へ書くので、呼べばハンドルを壊す。
 Inspector の `DrawManagedComponentFields` も別経路で (`ManagedHost::SetFieldValue`)、Undo を記録しない。
 
 **決定**: C# コンポーネントは次のとおり扱う。Entity / Component の復元は、そのまま `SceneSerializer::ApplyPartial` が `DeserializeComponent` を通る。
 Field の復元は `FieldFromJson` を使わず、C# コンポーネントだけ別の分岐にして `ManagedHost::DeserializeComponent` へ**戻したいフィールドだけの JSON** を渡す (managed の `ApplyJson` は JSON にあるキーだけを書く)。
 C# のフィールドは 10 種類 (float / int / uint / ulong・long / bool / Vec2 / Vec3 / Vec4 / Quat / Color) だけなので、Field 差分の値もこの範囲に収まる。除外は要らない。
 
-**未検証**: 上の Field の復元の実走 (1 キーの JSON で他のフィールドが変わらないこと)、`UndoStack::Record` 経由で C# の値が Undo で戻ること、プレハブ上書き (override) の記録が C# コンポーネントでどう働くか。sub-16 (M104q) でテストを足して確かめる。戻らなければ、C# コンポーネントは Entity 単位の復元だけにする。
+**実走の結果** (M104q): 上の 3 点は成り立った (§8.3)。C# コンポーネントも Field 単位で戻せる。
 
 ## 5. 復元ジャーナル
 
@@ -235,6 +241,35 @@ prepared ──► applying ──► committed
 - **サービス側の記録**: `restore_expect` (書く前) と `restore_record` (`applying` / `committed` / `rolling_back` / `rolled_back` / `recovery_required` / `recovered`)。送れなかった `restore_record` は残して送り直し、結果の画面に「履歴をまだ送れていない」と出す。`restore_expect` が届いていない書き込みは「行為者が分からない変更」になる (制限)。
 - **削除の取り消し・追加の取り消し**: `EndBatch` の変更集合に `Added` / `Deleted` を載せる。`ReloadHub` は `Deleted` を扱わない (既存の仕様) ので、削除したアセットの登録は残る。段階 B / C (スクリプトの再コンパイル・再起動) の自動の作り直しはしない: プレビューの注記が出した見込みのとおり、利用者がする。
 - **未検証**: 実 Editor の GUI 操作 (押す・取り消す・回復の選択・見た目)、`ReloadHub` が実際に開いているシーンへ差分を当てる経路 (`EndBatch` が `Modified` を流すところまで)、stage 済みの判定の実走、複数ファイルの計画 (計画の作り手が 2 ファイルまでなので、3 ファイルはジャーナルの手組みで巻き戻しだけを確かめた)。
+
+## 8.3 ライブのシーンの復元で決めた細部 (M104q)
+
+World を書き換える唯一の復元 (`src\Editor\ChangeTracking\SceneRestorePlan.*` (照合。World を書かない純関数)、`SceneRestoreRunner.*` (Undo に積んで書き、読み直す)、`SceneRestoreFormat.*` (文面)、`src\Editor\Windows\Project\SceneRestoreWindow.*` (プレビューと結果の画面))。**ディスクは書かない**: ジャーナルも `restore_expect` も使わない。シーンは dirty になり (`UndoStack::StateSerial` が変わる)、保存は利用者がする (保存すると `editor_saved` で Editor の利用者の変更として記録される)。
+
+- **対象**: 今エディタで開いているシーン (§3.3)。範囲は 4 つ (フィールド / コンポーネント / エンティティ (その変更の中のそのエンティティの全部) / 変更全体)。レビューの範囲 (`SceneReviewOptions`) と同じ並びで、「シーンの変更を復元...」は選んだ行とその範囲で開く。範囲の行は 4096 件まで (`restore_record` の上限)。
+- **行の種類と戻し方**:
+
+  | 行 | 戻し方 | 照合 |
+  |---|---|---|
+  | `FieldModified` / 値のある `PrefabOverrideChanged` (コンポーネントとフィールドがある) | フィールドを書く (通常は `FieldFromJson`、`EntityRef` は `fileId` から解決、C# は `DeserializeComponent` へ 1 キーの JSON) | 今の正規形 = After の正規形。今が Before なら復元済み |
+  | `EntityModified` (`name` / `tagMask`)、`HierarchyChanged` (`parent` / `childIndex`) | エンティティの JSON を直して `ApplyPartial` (Undo の復元と同じ経路) | 同上。親の復元は、親がいて輪にならないこと |
+  | `ComponentAdded` | コンポーネントを外す (`ApplyPartial`) | 全フィールドが After と同じ。必須の `LocalTransform` と隠しコンポーネントは戻せない |
+  | `ComponentRemoved` | Before の JSON でコンポーネントを付ける | エンティティがいて、同じコンポーネントが無い。`EntityRef` の先がいる |
+  | `EntityAdded` | 根のサブツリーを消す (`DestroyEntity`) | 全員が After のままで、After に無い子孫がいない |
+  | `EntityRemoved` | Before の JSON で作る (同じ変更で消えた子孫と一緒に、根ごと。`PeekNextFileId` を戻した fileId の先へ進める) | その fileId が使われていない。親と `EntityRef` の先がいる (同じ復元で作るものはいる) |
+  | `PrefabOverrideChanged` の印だけの行 (`overrides` の要素) | 値の行に連動して変わるので戻さない (`derived`)。印だけが残る行は「戻せない」 | — |
+  | `PrefabInstanceChanged` / `PrefabAssetChanged` / `PrefabPropagation` / 文書全体の値 / `unparsed` | 戻せない (理由を出す)。プレハブのアセットはファイル・Hunk の経路 | — |
+
+- **1 つでも戻せない・競合なら、何も当てない** (ファイルの復元と同じ)。実行の直前にゲートと計画をもう一度作り、プレビューのときの `ops` と違えば書かない (`PlanChanged`)。
+- **必ず `UndoStack::Record` の中で書く**。`StructuralChanges::Apply`、`fids` は操作が触るエンティティ (作る・消すものは根)。`Record` の `CaptureAfter` がプレハブの上書きの記録を取り直すので、上書き済みフィールドを戻すと、記録から該当キーが消える (取りこぼしも、余分な残りも無い。保存して読み直しても同じ)。ラベルは「AI の変更を復元」(英日)。Undo のエントリは 1 件で、前後で何も変わらなければ積まれない (`UndoStack::EndRecord` の既存の規則)。
+- **書いた後に読み直す**: 同じ行から計画をもう一度作り、全部が「復元済み」になることを確かめる。合わなければ、`Record` の中で自分が書いた分 (作ったエンティティを消し、書く前のサブツリーを `ApplyPartial` で当て直す) を戻して抜ける。前後が同じになるので Undo には何も積まれず、`rolled_back` を記録する。
+- **選択**: 消したエンティティは選択から外す (`Record` の `EndRecord` が書く選択へ反映される)。
+- **ゲート** (§2 の右の列): Play 中・ネットセッション中・ミニシーンの編集中を止める。ビルド中・git の書き込み中・マージ中・シーンが未保存・各窓の未保存は止めない (ファイルを書かない)。追跡サービスの未接続、進行中・回復待ちの復元、外部の変更の確認の保留中 (ライブのシーンとディスクが食い違い、照合が合わないため。先に読み込むか決める) も止める。ミニシーンの編集中は、対象がそのアセットでも止める (ミニシーンの `fileId` と今のシーンの対応は保証しない。シーンの文書だけを対象にする)。理由は全部並べ、実行の直前にもう一度判定する。
+- **サービスへの記録**: 書いて確かめたあとの `committed` (対象 = `{ revisionId, scope: scene, sceneChangeIds, paths: [シーンのパス] }`)、読み直しが合わなかったときの `rolled_back` (`error`)。`restore_record` は `RestoreRunner::QueueRecord` で順番待ちに積み (切断・時間切れなら送り直す)、受け取られたら `ChangeTrackingSession` が一覧と強調の表を取り直す (記録は通知を出さないため)。サービスは `scene_changes.state` を `restored` にし、`scene_overlay` は `active` の行だけを返すので、戻した項目は強調から消える。Undo で戻した場合は何も記録しない (§4.2)。
+- **C# コンポーネント** (試作 4 の残り。M104q の実走で確かめた): (a) `DeserializeComponent` へ渡した 1 キーの JSON は、そのフィールドだけを変え、他は変えない。(b) `Record` 経由の復元は Undo で戻り、Redo でもう一度当たる (スナップショットに managed の値が入っている)。(c) プレハブのインスタンスでは、C# のフィールドは `FieldDesc` を持たないので、エンジンの上書きのライブ diff が記録しない (既存の仕様。M104q 前から同じ)。復元しても上書きの記録は壊れず、保存して読み直しても同じ。以上が成り立ったので、C# も Field 単位で戻せる。.NET ランタイムか `MyeScripting.dll` が無い環境では、この試験は SKIP と明記して成功とは数えない。
+- **正規形の限界**: 比べるのは `FieldDesc` のあるフィールドだけ。ファイルにあってエンジンが知らないキー (古いフィールドなど) は、ロードで捨てられるので比べない。キーが無い側は既定値として比べるので、AI が既定値のキーを消しただけの変更は「同じ値」とみなされて戻す操作が空になる (復元済みと表示)。エンティティの照合は `childIndex` と `overrides` の印を見ない。
+- **削除を含むファイルの復元のあとのアセットの登録** (sub-27 からの持ち越し): `ReloadHub::EndBatch` は削除を扱わず、新しいファイルも登録しない。Editor の復元のフック (`EditorApp`) が `EndBatch` のあとに `SyncAssetRegistry` (`AssetRegistrySync.*`) を呼び、削除は `AssetDatabase::MoveAsset(path, path)` (Asset Browser の削除と同じ経路で旧キーを外す)、追加は `GuidForPath(path, true)` (git の `RegisterAdded` と同じ)、名前の変更は `MoveAsset(旧, 新)` を行う。`assets\` の外は触らない。Asset Browser の一覧は、ファイルシステムを見る画面なので別 (必要なら更新する)。段階 B / C (再コンパイル・再起動) は自動にしない (プレビューの注記のまま)。
+- **限界**: 開いていないシーンは項目ごとには戻せない (ファイル・Hunk の経路)。プレハブのアセットそのものと、`PrefabPropagation` は戻さない (後者は sub-19 で表示される)。Entity の `fileId` の無い (採番されていない) 子孫は「After に無い子孫」として扱う。C# のフィールドが追加・削除された変更は戻せない (既定値が分からない)。
 
 ## 9. 受け入れ条件との対応
 

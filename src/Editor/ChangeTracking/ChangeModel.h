@@ -115,6 +115,7 @@ struct TrackSceneChange {
     int64_t beforeBytes = 0;
     int64_t afterBytes = 0;
     std::string review; // 今のレビューの状態 (pending / approved / rejected / needs_review)
+    std::string state;  // active / restored (ライブのシーンの復元で戻した行)
 };
 
 struct TrackListFilter {

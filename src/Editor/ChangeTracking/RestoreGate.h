@@ -40,6 +40,8 @@ enum class RestoreBlockKind : uint8_t {
     TrackUnavailable, // 追跡サービスに接続できていない (Before の内容を取れない)
     JournalPending,   // 進行中・回復待ちの復元がある
     BlobMissing,      // 対象の Blob が欠けている
+    ExternalChangePending, // 開いているシーンへの外部の変更を読み込むか決めていない (ライブのシーンの復元のとき)
+    NoScene,          // 書き込む先のシーンが無い (ライブのシーンの復元のとき)
 };
 
 struct RestoreBlock {
@@ -50,13 +52,18 @@ struct RestoreBlock {
     bool operator==(const RestoreBlock&) const = default;
 };
 
+// 復元の対象。ライブのシーンの復元は、ファイルを書かないので止める理由が少ない (restore-safety.md §2 の表の右の列)
+enum class RestoreGateTarget : uint8_t { Files, LiveScene };
+
 struct RestoreGateInput {
+    RestoreGateTarget target = RestoreGateTarget::Files;
     GateInputs gate;            // EditorApp::BuildGateInputs の結果
     EditedDocuments documents;
     std::vector<std::string> targetPaths; // 復元が触るパス (プロジェクトからの相対)
     bool trackConnected = false;
     bool journalPending = false;
     bool blobMissing = false;
+    bool externalChangePending = false; // LiveScene のとき止める
 };
 
 // 止める理由を、ゲートの列挙順 → 追跡に固有の順で全部返す。**純関数**。空 = 止めない

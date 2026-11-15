@@ -201,7 +201,7 @@ CREATE TABLE events (
 ### 3.1 形の理由
 
 - **Change と Revision を分ける。** 同じファイルへの変更を 1 つの Change にまとめ、観測ごとに Revision を足す。レビューと復元は Revision を指す。Revision が増えても過去のレビューは動かない (仕様書 §10.3)。
-- **レビュー状態と復元状態を別の列に置く。** レビューは `reviews` の追記、復元は `changes.state` / `change_hunks.state` / `scene_changes.state`。承認済みの Revision を後で復元しても、承認の記録はそのまま残る (仕様書 §10.5)。
+- **レビュー状態と復元状態を別の列に置く。** レビューは `reviews` の追記、復元は `changes.state` / `change_hunks.state` / `scene_changes.state`。承認済みの Revision を後で復元しても、承認の記録はそのまま残る (仕様書 §10.5)。`scene_changes.state` は `active` か `restored` で、ライブのシーンの復元 (M104q) の `restore_record` (`scope = scene`、`committed`) が、戻した行 (`sceneChangeIds`) だけを `restored` にする。`scene_overlay` は `active` の行だけを返す。スキーマは変えない (列は版 1 から `state` がある)。
 - **`reviews` は追記だけ。** 今の状態は「その範囲の最新の行」。Reopen は `reopened` の行を足すことで表し、過去の行を書き換えない (仕様書 §10.1)。
 - **親の集約状態は保存しない。** セッション・操作・ファイルの承認状態は、子の最新の状態から問い合わせのたびに計算する。保存すると子とずれる。部分承認は計算結果として出す。
 - **帰属の候補は複数持てる。** `attribution_evidence` は 1 つの Revision に何行でも付く。`change_revisions.attribution` は根拠から決めた現在の結論で、根拠が増えたら計算し直す (仕様書 §4.4)。

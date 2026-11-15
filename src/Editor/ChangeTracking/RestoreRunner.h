@@ -163,6 +163,12 @@ public:
     bool HistoryPending() const { return historyPending_; }
     size_t PendingRecordCount() const { return records_.size(); }
 
+    // ---- 復元の記録 (ライブのシーンの復元など、ジャーナルを作らない復元が使う) ----
+    // restore_record の引数を送り先の順番待ちに積む (切断・時間切れなら、つながり直したら送り直す)
+    void QueueRecord(nlohmann::json args);
+    // 記録がサービスに受け取られたとき (画面の取り直しなど。ファイル・Hunk の復元の記録でも呼ぶ)
+    void SetOnRecorded(std::function<void()> callback) { onRecorded_ = std::move(callback); }
+
 private:
     struct Touched {
         std::string rel;
@@ -259,6 +265,7 @@ private:
 
     std::vector<RestoreJournalStore::Entry> recoveries_;
     std::vector<nlohmann::json> records_; // まだ送れていない restore_record の引数
+    std::function<void()> onRecorded_;
     bool recordInFlight_ = false;
     int64_t recordRetryAtMs_ = 0;
     std::vector<nlohmann::json> history_;

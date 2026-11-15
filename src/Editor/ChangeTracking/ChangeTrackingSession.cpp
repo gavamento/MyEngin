@@ -68,6 +68,11 @@ void ChangeTrackingSession::Wire()
         model_.OnNotification(event);
         overlay_.OnNotification(event);
     });
+    // 復元の記録が受け取られると、戻した行は強調から外れ、一覧の状態も変わる (記録は通知を出さないので、自分で取り直す)
+    restore_.SetOnRecorded([this]() {
+        model_.Refresh();
+        overlay_.Refresh();
+    });
     client_.SetStateHandler([this](TrackState state) {
         if (state == TrackState::Ready && client_.GetStats().connects != seenConnects_) {
             // 新しい接続が通った (DbDegraded から戻っただけのときは、購読も取り直しもそのまま)

@@ -5,8 +5,11 @@
 //====================================================================================
 #pragma once
 #include <functional>
+#include <string>
 
 namespace mye {
+
+class ChangeTrackingSession;
 
 // AI Change Tracking の Editor 側 (M104j) の回帰テスト。**サービスなしで動く** (偽の I/O と、流し込む行だけ)。
 // 検査: projectId の固定表 / 応答の解釈 (順不同・分割・複数行・不正行・上限超え) / hello の失敗ごとの状態 /
@@ -36,6 +39,16 @@ void RunRestoreSelfTests(const std::function<void(bool, const char*)>& check);
 // 削除の取り消し・名前の戻し) / 書く前に止まる (競合・ゲート・パスの差し替え) / 失敗 → 巻き戻し・他者の書き込みの保護 / 起動時の回復 / 内容の取得の失敗 /
 // .git\index が変わらず git を起動しない / 8 MiB 超 / 記録の送り直し / 窓。RunChangeTrackingSelfTest の末尾から呼ぶ
 void RunRestoreApplySelfTests(const std::function<void(bool, const char*)>& check);
+
+// ライブのシーンの復元 (M104q。World を Undo の 1 エントリで書き換え、ファイルは書かない) の回帰テスト (SceneRestoreSelfTest.cpp)。**ライブの Scene を作って**行う。
+// 正規形での照合 (1.0 と 1・型違い・EntityRef) / Field・Component・Entity (子孫つき)・name・親子の適用と Undo・Redo / 競合で World が変わらない /
+// 別のシーンに当たらない / 読み直しが合わなければ戻す / プレハブの上書きの記録 / C# コンポーネント (MyeScripting.dll と .NET が無ければ SKIP と明記) /
+// ゲート / 窓 (偽のサービス。ファイルを書かない・ジャーナルを作らない・記録を送る) / アセットの登録の後始末。RunChangeTrackingSelfTest の末尾から呼ぶ
+void RunSceneRestoreSelfTests(const std::function<void(bool, const char*)>& check);
+
+// 実サービスとの結合 (RunProbe から呼ぶ。MYE_TRACK_PROBE=1)。root = 一時プロジェクト。pump(条件, 上限ms) はセッションを回して条件を待つ
+void RunSceneRestoreProbe(ChangeTrackingSession& session, const std::wstring& root, const std::function<bool(const std::function<bool()>&, int)>& pump,
+                          const std::function<void(bool, const char*)>& check);
 
 // 描画バックエンドの無い ImGui の文脈を 1 つ作り、フレームを 1 つ回して捨てる (frame の中で窓を描く試験用)。
 // 既にある文脈 (Editor 本体) には触らず、終わったら元へ戻す

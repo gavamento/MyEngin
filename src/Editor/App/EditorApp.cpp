@@ -11,6 +11,7 @@
 #include <commdlg.h>
 #include <shellapi.h>
 
+#include "Editor/ChangeTracking/AssetRegistrySync.h"
 #include "Editor/Asset/AssetOps.h"
 #include "Editor/App/ChildProcess.h"
 #include "Editor/App/DeviceLostRescue.h"
@@ -278,6 +279,10 @@ void EditorApp::OnStart(EngineContext& ctx)
         hooks.endBatch = [&ctx](const std::vector<BatchChange>& changes) {
             if (ctx.reloadHub != nullptr) {
                 ctx.reloadHub->EndBatch(changes);
+            }
+            // ReloadHub は削除を扱わず、新しいファイルも登録しない。アセットの登録を、復元が書いた結果に合わせる
+            if (ctx.assetDb != nullptr) {
+                SyncAssetRegistry(*ctx.assetDb, ctx.projectRoot, changes);
             }
         };
         changeTracking_.Restore().SetHooks(std::move(hooks));
@@ -1123,6 +1128,18 @@ void EditorApp::OnImGui(EngineContext& ctx)
         host.restoreJournalPending = [this]() { return changeTracking_.Restore().RecoveryPending(); };
         host.openRestoreRecovery = [this]() { restoreRun_.OpenRecovery(); };
         host.openRestoreHistory = [this]() { restoreRun_.OpenHistory(changeTracking_); };
+        // ライブのシーンの復元 (M104q)。ミニシーン編集中は ctx.scene が差し替わっているので、ゲートが止める
+        host.sceneRestoreEnv = [this, &ctx]() {
+            SceneRestoreEnv env;
+            env.scene = ctx.scene;
+            env.undo = &undo_;
+            env.selection = &selection_;
+            env.managed = ctx.managedHost;
+            return env;
+        };
+        host.openSceneRestore = [this, &host](SceneRestoreScope scope, const TrackSceneChange& anchor) {
+            sceneRestore_.Open(changeTracking_, host, scope, anchor);
+        };
         host.stagedState = [this](const std::string& rel) {
             // Source Control の status モデルの読み取りだけ (git を起動しない・Index に触れない)。使えなければ「分からない」
             if (scm_.State() != Unavailable::None || !scm_.Model().valid) {
@@ -1134,6 +1151,7 @@ void EditorApp::OnImGui(EngineContext& ctx)
         };
         aiChanges_.OnImGui(changeTracking_, host);
         restoreRun_.OnImGui(changeTracking_, host);
+        sceneRestore_.OnImGui(changeTracking_, host);
     }
     if (sourceControl_.TakeAdoptCanonicalRoot()) {
         const bool adopted = scm_.AdoptCanonicalRoot();

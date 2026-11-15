@@ -10,6 +10,7 @@
 
 #include "Editor/ChangeTracking/ChangeFormat.h"
 #include "Editor/ChangeTracking/RestoreFormat.h"
+#include "Editor/ChangeTracking/SceneRestoreFormat.h"
 #include "Engine/Core/Localization/Localization.h"
 
 namespace mye {
@@ -207,6 +208,9 @@ std::vector<RestoreHistoryRow> BuildHistoryRows(const std::vector<nlohmann::json
                     if (p.is_string()) {
                         target += (target.empty() ? "" : ", ") + p.get<std::string>();
                     }
+                }
+                if (const std::string mark = SceneRestoreHistoryMark(t); !mark.empty()) {
+                    target += " " + mark; // ライブのシーンの復元 (戻した項目の数)
                 }
             }
         }
