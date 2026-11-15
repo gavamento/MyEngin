@@ -3,7 +3,7 @@
 - 依頼原文: この間計画作成した差分表示のやつ実装したい
 - 司会が付けた補足 (/harness の引数): M104 AI Change Tracking を M104b から実装する。計画は `plans\m104-ai-change-tracking.md` (進捗表・試作項目・未決事項)、要求の正本は `docs\ai-change-tracking\spec-v1.1.md`、設計は同ディレクトリの 5 本と `docs\adr\ADR-039-ai-change-tracking.md`。M104a (設計文書) は `ca6a3991` で完了済み。サブ分割は計画の進捗表 (M104b〜M104t、Phase 0〜6) を踏襲し、Phase をまたいで先へ進まない。
 - 開始: 2026-11-14 / 基点コミット: ca6a3991ac6ea6bd217d3a3290aab24291b73a4a
-- フェーズ: レビュー
+- フェーズ: 完了
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -35,12 +35,13 @@
 | sub-18 (M104s) Before / After のプレビュー、左右の 3D 比較 | OK | 0 | 28c87fb9 | round 1 で OK。プレビュー専用のシーンと RT で比較。規則 16 の許可リストに ScenePreviewWindow.cpp。Debug のスタックの件は sub-19 の A (D43) |
 | sub-19 (M104t) プレハブ伝播の表示、大きいシーンの計測 | OK | 0 | ccfeac5e | round 1 で OK。D38 解消 (EditorApp をヒープへ。Debug の physics が通る)。プレハブ伝播。replay_verify は MYE_REPLAY_JOBS=3 で PASS (既定の並列度の demo の失敗と imgui.ini の書き換えは bat の既存の性質、D44) |
 | sub-20 (M104u) エンジン配布物へのサービス同梱 | OK | 0 | 3995eda6 | round 1 で OK。全サブ OK。release.yml の実走と展開先 Editor からの接続は push 後 / 手動 (未確認) |
-| sub-28 (M104v) 閉じられない操作の窓で人の編集を AI のものにしない | OK | 0 | (このコミット) | round 1 で OK。窓の根拠は ok で閉じた操作だけ数える (D46)。post-failure / denied / turn-end を追加。review-1 #1〜#4 を解消 |
+| sub-28 (M104v) 閉じられない操作の窓で人の編集を AI のものにしない | OK | 0 | 9aad35e7 | round 1 で OK。窓の根拠は ok で閉じた操作だけ数える (D46)。post-failure / denied / turn-end を追加。review-1 #1〜#4 を解消 |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3/4/4/4 | major 1 (op_end の来ない窓が 10 分開いたまま → 人の編集が ai/claimed。planner 宛)、minor 4 (coder 宛)。全文は review-1.md |
+| 2 | PASS | 4/4/4/4 | 0 (#1〜#4 解消、#5 は申し送り)。新しい minor 2 件 (#6 coder 宛、#7 planner 宛) は申し送りへ。全文は review-2.md |
 
 ## ユーザー判断
 - Notion の質問表: https://app.notion.com/p/41802024a4d481ac9376f3ebae2ee055 (Q-1 セッションの基準、Q-2 worktree の Verified 条件、Q-3 Phase 6 へ進むか。すべて推奨で進行中)
@@ -85,3 +86,5 @@
 - planner (2026-11-16、REVIEW round 1 への応答): sub-28 (M104v) を足した (review-1 #1 = major、#2〜#4 = minor をまとめて直す)。**review-1 #5 (minor、申し送り)**: Scene View のゴーストのラベルが重なる (`cache\m104r_shots\1_scene_ja.png`)。大きいファイル (`AiChangesWindow.cpp` 約 2021 行、`RestoreRunner.cpp` 約 1208 行、`SceneRestorePlan.cpp` 約 984 行) は、次にその機能を触るときに分ける。ほかの既知の nit: 伝播の行に承認・却下のボタンが出る (sub-19)、一覧の削除の行の注記の重なり (sub-17)、アセットの注記の「引けなかった」件数 (sub-18)。
 - planner (2026-11-16、sub-28 の VERDICT): 既知の nit に追加: Editor の根拠の一覧で `op_closed` (操作が成功で閉じて結論が変わった印) が生の文字列で出る (`src\Editor\ChangeTracking\ChangeFormat.cpp` の表に名前が無い)。
 - planner: `src\` を触らないサブ (sub-01〜08) は selftest / replay_verify を回さなくてよい。回していないことを SELF_EVAL に書かせる。
+
+- 司会 (2026-11-16、REVIEW round 2 PASS): 残った minor を申し送りへ。#6 [coder 宛] `hook pre --project <存在しないパス>` が 5 秒の上限まで待ってから 0 で返る (#2 の修正の副作用。フックが起動の前に --project がディレクトリかを確かめ、無ければ 1 行で即座に 0 を返すのが期待)。#7 [planner 宛] 結論に数えない窓の根拠 (開いたまま / failed / denied / abandoned の op_window・before_match) が describe と Editor の詳細に印なしで並び、区分 unknown と矛盾して見える (describe に「数えていない」の印を足すか、Editor が操作の結果を添えるかを仕様で決める)。M104 の外の別件: D44 (replay_verify.bat の imgui.ini と並列の競合、FindByFileId の線形走査)、D45 (Launcher の文面)。
