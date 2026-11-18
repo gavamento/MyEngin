@@ -1,8 +1,8 @@
 # sub-02: ドック可能な「ブラウザ」窓 (追従・airspace・フォーカス・設定)
 
 - 依存: sub-01
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (round 2。コミット待ち)
+- 往復: 2
 - **着手条件 (sub-01 round 1 で追加)**: 人の手による O4 (埋め込んだ Chrome / Edge でのキー・IME 入力) が「打てる」と確認されていること。打てなければ撤退条件 E1 に当たるので着手せず planner へ戻す
 
 ## やること
@@ -60,4 +60,11 @@ spec 4.1.5 (ImGui からの収集と適用)、4.1.6、4.2、4.3 (Idle / Launchin
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-02 (round 1)
+要約: BrowserWindow (src/Editor/Windows/Project/BrowserWindow.h/.cpp) を新設し EditorApp に配線。OnImGui でパネルを描き内容矩形を記録、OnImGui 末尾の ApplyToHost で imgui_internal から見せる条件 (MovingWindow / モーダル / 表示順で手前の窓) を集め、sub-01 の純関数 EvaluateBrowserVisibility → BrowserHost::Update へ毎フレーム渡す (パネル非表示でも呼ぶ)。設定 3 点 (editor_global.json)、ja/en 文字列、マウス押下でのフォーカス返し (BrowserHost::ReturnFocusToMain)、--browser-window、probe の BrowserWindow 経由化。
+検証: browserembed (設定の往復 + 頭なし ImGui での airspace 収集 9 件を追加) PASS / browserembedproc PASS / --selftest (Fast) 113 suites 0 failed / check_rules 0 error / check_rules_selftest PASS / ja・en スクショ / 実ブラウザ probe は Brave・Edge・Vivaldi・Opera GX が exit 0、Chrome は初回 exit 0 (その後は残った Chrome のプロファイル選択窓が単一インスタンスで --new-window を吸収し TimedOut = 環境要因)。メニュー表示中は隠れ、閉じると戻る絵を Edge で撮影 (scratchpad の air_edge_2 / 3)。
+未検証 (手動): IME・スクロール・拡張・右クリック・新タブ (受け入れ 2)、ドック移動・リサイズ・タブ切替・最小化・浮動化の追従 (3)、Hierarchy クリック後の Ctrl+S・Play 中のキー・マウスルック R4 (4)、再起動後の設定復元 (5)。
+
 ## フィードバック履歴
+- round 1: VERDICT REWORK (planner, 2026-11-19)。must 2 件: (1) ダミー窓プロセスの寿命上限と selftest の失敗経路での後始末 (残ったダミーが Editor.exe を掴みビルドの post-build copy を壊した)、(2) ToastCenter の通知を重なり判定から除外 (spec 4.1.5 条件 6 を変更)。仕様変更: 4.1.6 フォーカス返しの条件 (coder の逸脱を採用)、4.5 ダミーの寿命、7. R3 確認済み・R13 追加。[追加] の結果文言 4 つと浮動 880x620 の既定は採用。手動の受け入れ 2〜5 は人の手の確認として司会に依頼 (sub-02 のコミットはこれを待たない。不合格が出たら FIX で戻す)
+- round 2: VERDICT OK (planner, 2026-11-19)。must #1 解消 (ダミー窓の寿命 `kBrowserDummyLifetimeMs` = 120 s の自己終了 + `browserembedproc` の `DummyReaper` (RAII、PID の実行ファイルが自分と同じものだけ終了) + 特定待ちを 1 ms にした一時変更で失敗経路でも新規の残留なしを実測)、must #2 解消 (ToastCenter が Begin した窓の ImGuiID を毎フレーム公開し、BrowserWindow が重なり判定から除外。名前の文字列に依存しない。対照と除外の 2 件をテストに追加)。coder は実装メモ節へ round 2 の写しを追記していないため、要点をこの履歴に残す。手動の受け入れ 2〜5 と R4 は司会経由でユーザー確認待ち (不合格なら FIX)。Q-7 (通知の扱い) は Notion で回答待ち・推奨 (除外) で仮決定

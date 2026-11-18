@@ -6,6 +6,7 @@
 #include "Engine/Renderer/ImGui/ImGuiTheme.h" // themeColor (意味色)
 
 #include "imgui.h"
+#include "imgui_internal.h" // 通知窓の ID を公開するため (GetCurrentWindow)
 
 #include "fontawesome/IconsFontAwesome6.h"
 
@@ -90,6 +91,7 @@ void ToastCenter::CollectLogs()
 void ToastCenter::OnImGui(float anchorRight, float anchorBottom)
 {
     CollectLogs();
+    windowIds_.clear();
     if (toasts_.empty()) {
         return;
     }
@@ -113,6 +115,7 @@ void ToastCenter::OnImGui(float anchorRight, float anchorBottom)
                          ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
                              | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing
                              | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking)) {
+            windowIds_.push_back(ImGui::GetCurrentWindow()->ID);
             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
             ImGui::TextColored(LevelColor(t.level), "%s", LevelIcon(t.level));
             ImGui::SameLine();

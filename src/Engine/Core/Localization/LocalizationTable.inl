@@ -3640,3 +3640,31 @@ MYE_STR(ScPv_NoteUnsaved, "Only the recorded content and the file on disk can be
 MYE_STR(ScPv_NoteRemoved, "Removed entities are marked where they were before the removal (not drawn as meshes).", "削除されたエンティティは、削除の前の位置に印だけを出します (メッシュは描きません)。")
 MYE_STR(ScPv_NoteMarkersOmitted, "Markers not drawn (over the limit):", "印を描いていない数 (上限を超えた分):")
 MYE_STR(ScPv_MarkerRemoved, "(removed)", "(削除)")
+
+// ---- ブラウザ窓 (M105b) ----
+// 数や名前を文の途中へ差し込む文面は持たない。「ラベル: 値」の形で、値はコードが足す
+MYE_STR(Win_Browser,          "Browser###Browser",                     "ブラウザ###Browser")
+MYE_STR(Browser_Combo,        "Browser",                               "ブラウザ")
+MYE_STR(Browser_DefaultMark,  "(default)",                             "(既定)")
+MYE_STR(Browser_Other,        "Other (choose exe)...",                 "その他 (exe を指定)...")
+MYE_STR(Browser_Redetect,     "Re-detect",                             "再検出")
+MYE_STR(Browser_CustomExe,    "Executable",                            "実行ファイル")
+MYE_STR(Browser_NoExe,        "(not chosen)",                          "(未選択)")
+MYE_STR(Browser_Browse,       "Browse...",                             "参照...")
+MYE_STR(Browser_StartUrl,     "Start URL",                             "開始 URL")
+MYE_STR(Browser_StartUrlHint, "(empty = browser default)",             "(空 = ブラウザの既定)")
+MYE_STR(Browser_Launch,       "Launch",                                "起動")
+MYE_STR(Browser_NoneFound,    "No browser was found. Choose an executable with \"Other\".",
+                              "ブラウザが見つかりません。「その他」で実行ファイルを指定してください。")
+MYE_STR(Browser_Launching,    "Launching...",                          "起動中...")
+MYE_STR(Browser_SecondsSuffix, "s",                                    "秒")
+MYE_STR(Browser_Cancel,       "Cancel",                                "中止")
+MYE_STR(Browser_Detach,       "Detach",                                "切り離す")
+MYE_STR(Browser_Close,        "Close",                                 "閉じる")
+MYE_STR(Browser_HiddenByOverlap, "Hidden while a menu or another window overlaps this panel.",
+                              "メニューや他の窓が重なっているため、ブラウザを隠しています。")
+MYE_STR(Browser_ResultClosed, "The browser window was closed.",        "ブラウザの窓が閉じられました。")
+MYE_STR(Browser_ResultLost,   "The browser exited (it may have crashed).",
+                              "ブラウザが終了しました (落ちた可能性があります)。")
+MYE_STR(Browser_ResultTimedOut, "No browser window was found in time.", "時間内にブラウザの窓が見つかりませんでした。")
+MYE_STR(Browser_ResultFailed, "Could not embed the browser:",          "ブラウザを埋め込めませんでした:")

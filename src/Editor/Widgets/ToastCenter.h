@@ -17,6 +17,8 @@ class ToastCenter {
 public:
     void Notify(LogLevel level, std::string text, float seconds = 4.0f);
     void OnImGui(float anchorRight, float anchorBottom);
+    // 直近の OnImGui で出した通知窓の ImGui ウィンドウ ID。ブラウザの重なり判定が「入力を取らない一時表示」として除外するのに使う (名前の文字列には頼らない)
+    const std::vector<unsigned int>& WindowIds() const { return windowIds_; }
 
 private:
     struct Toast {
@@ -29,6 +31,7 @@ private:
     void CollectLogs();
 
     std::vector<Toast> toasts_;
+    std::vector<unsigned int> windowIds_;
     uint64_t logCursor_ = 0;
 };
 

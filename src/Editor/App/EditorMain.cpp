@@ -122,6 +122,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     int browserDummyHangMs = 0;           // --browser-dummy-hang-after-ms N
     int browserDummyUnparentMs = 0;       // --browser-dummy-unparent-after-ms N
     mye::BrowserProbeOptions browserProbe; // --browser-embed-probe ID (M105a: 実ブラウザの埋め込みの検証)
+    bool browserWindow = false;           // --browser-window (M105b: ブラウザ窓を開く。ブラウザは起動しない。--screenshot で UI を撮る)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -283,6 +284,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 managerFrames = _wtoi(argv[++i]);
             } else if (arg == L"--manager-shot" && i + 1 < argc) {
                 managerShot = argv[++i];
+            } else if (arg == L"--browser-window") {
+                browserWindow = true;
             } else if (arg == L"--browser-list") {
                 browserList = true;
             } else if (arg == L"--browser-dummy-window") {
@@ -640,6 +643,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.pickTestFrame = pickTestFrame;
     app.sceneOverride = sceneOverride;
     app.browserProbe = browserProbe;
+    app.openBrowserWindow = browserWindow;
     mye::EngineLoop loop;
     const int rc = loop.Run(config, app);
     // --package の成否は終了コードへ載せる (M52b。エンジン自体の失敗が優先)。--browser-embed-probe の成否 (M105a) も同じ

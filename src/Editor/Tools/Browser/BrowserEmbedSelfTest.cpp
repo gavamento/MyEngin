@@ -7,15 +7,27 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include <Windows.h>
 
+#include "imgui.h"
+#include "imgui_internal.h"
+
+#include "Editor/App/EditorGlobalSettings.h"
 #include "Editor/Tools/Browser/BrowserCatalog.h"
 #include "Editor/Tools/Browser/BrowserHost.h"
 #include "Editor/Tools/Browser/BrowserProbe.h"
+#include "Editor/Windows/Project/BrowserWindow.h"
 #include "Engine/Core/Diagnostics/Log.h"
+#include "Engine/Core/Localization/Localization.h"
+#include "Engine/Platform/PathUtil.h"
 
 namespace mye {
 namespace {
@@ -270,6 +282,203 @@ void TestVisibility(const auto& check)
     check(EvaluateBrowserVisibility(v) == BrowserHideReason::PanelNotDrawn, "visible: reasons are reported in condition order");
 }
 
+// editor_global.json の往復 (browserId / browserCustomExe / browserStartUrl)。LOCALAPPDATA を一時ディレクトリへ向けて、本物の設定に触らない
+void TestGlobalSettings(const auto& check)
+{
+    wchar_t* saved = nullptr;
+    size_t savedLen = 0;
+    const bool hadEnv = _wdupenv_s(&saved, &savedLen, L"LOCALAPPDATA") == 0 && saved != nullptr;
+    const std::wstring oldValue = hadEnv ? saved : L"";
+    free(saved);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / (L"mye_browser_settings_" + std::to_wstring(GetCurrentProcessId()));
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / L"MyEngine", ec);
+    _wputenv_s(L"LOCALAPPDATA", root.c_str());
+
+    // キーの無い古いファイル: 既定値で読める (他のキーは読める)
+    {
+        std::ofstream f(root / L"MyEngine" / L"editor_global.json", std::ios::binary);
+        f << "{\"uiLanguage\":\"en\",\"futureKey\":7}";
+    }
+    EditorGlobalSettings old;
+    old.Load();
+    check(old.browserId.empty() && old.browserCustomExe.empty() && old.browserStartUrl.empty(), "settings: an old file without browser keys loads defaults");
+    check(old.uiLanguage == Lang::En, "settings: other keys of an old file still load");
+
+    // 往復 (日本語のパス・URL を含む) と、未知のキーを消さない
+    EditorGlobalSettings w;
+    w.Load();
+    w.browserId = "custom";
+    w.browserCustomExe = WideToUtf8(L"C:\\ユーザー\\あ い\\browser.exe");
+    w.browserStartUrl = WideToUtf8(L"https://example.com/検索?q=テスト&x=1");
+    w.Save();
+    EditorGlobalSettings r;
+    r.Load();
+    check(r.browserId == w.browserId && r.browserCustomExe == w.browserCustomExe && r.browserStartUrl == w.browserStartUrl,
+          "settings: browserId / browserCustomExe / browserStartUrl round-trip (UTF-8)");
+    {
+        std::ifstream in(root / L"MyEngine" / L"editor_global.json", std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        check(text.find("futureKey") != std::string::npos, "settings: save keeps unknown keys");
+    }
+
+    // 窓の側: ApplySettings は変更扱いにならない
+    BrowserWindow win;
+    win.ApplySettings({ "custom", w.browserCustomExe, w.browserStartUrl });
+    BrowserWindowSettings out;
+    check(!win.TakeSettingsChanged(out), "settings: ApplySettings does not mark the window dirty");
+
+    if (hadEnv) {
+        _wputenv_s(L"LOCALAPPDATA", oldValue.c_str());
+    } else {
+        _wputenv_s(L"LOCALAPPDATA", L"");
+    }
+    std::filesystem::remove_all(root, ec);
+}
+
+// ImGui の頭なしの文脈で BrowserWindow を回し、見せる条件の収集 (表示順で手前の窓・ポップアップ・モーダル・ツールチップ除外) を確かめる
+struct AirspaceScenario {
+    // before: パネルより先に提出する窓 / after: 後に提出する窓 (frame = 0 始まり)
+    std::function<void(int frame)> before;
+    std::function<void(int frame)> after;
+    bool panelOpen = true;
+    // 重なり判定から外す窓の ID (通知)。ApplyToHost の前に毎フレーム渡す
+    std::function<std::vector<unsigned int>()> ignoredIds;
+};
+
+BrowserHideReason RunAirspace(const AirspaceScenario& sc, BrowserRect* panelRect = nullptr)
+{
+    ImGuiContext* const previous = ImGui::GetCurrentContext();
+    ImGuiContext* const context = ImGui::CreateContext();
+    ImGui::SetCurrentContext(context);
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(1280.0f, 720.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.IniFilename = nullptr;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+
+    BrowserWindow win;
+    win.open = sc.panelOpen;
+    BrowserWindowHost host;
+    BrowserHideReason reason = BrowserHideReason::None;
+    for (int frame = 0; frame < 6; ++frame) {
+        ImGui::NewFrame();
+        if (sc.before) {
+            sc.before(frame);
+        }
+        win.OnImGui(host);
+        if (sc.after) {
+            sc.after(frame);
+        }
+        if (sc.ignoredIds) {
+            win.SetIgnoredWindowIds(sc.ignoredIds());
+        }
+        win.ApplyToHost(false);
+        reason = win.LastHideReason();
+        ImGui::EndFrame();
+    }
+    if (panelRect != nullptr) {
+        *panelRect = win.ContentRect();
+    }
+    ImGui::DestroyContext(context);
+    ImGui::SetCurrentContext(previous);
+    return reason;
+}
+
+void SubmitBox(const char* name, float x, float y, float w, float h)
+{
+    ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+    ImGui::Begin(name, nullptr, ImGuiWindowFlags_NoSavedSettings);
+    ImGui::End();
+}
+
+void TestWindowAirspace(const auto& check)
+{
+    // パネルの既定位置は (80,60) 大きさ 960x640 (FirstUseEver)
+    BrowserRect rect;
+    AirspaceScenario base;
+    check(RunAirspace(base, &rect) == BrowserHideReason::None && !rect.Empty(), "airspace: a lone panel is shown and has a content rect");
+
+    AirspaceScenario over;
+    over.after = [](int) { SubmitBox("overlay", 300.0f, 300.0f, 200.0f, 150.0f); };
+    check(RunAirspace(over) == BrowserHideReason::Overlapped, "airspace 6: a window drawn after the panel and overlapping it hides the browser");
+
+    AirspaceScenario outside;
+    outside.after = [](int) { SubmitBox("far", 1100.0f, 650.0f, 150.0f, 60.0f); };
+    check(RunAirspace(outside) == BrowserHideReason::None, "airspace 6: a window drawn after the panel but outside it does not");
+
+    AirspaceScenario behind;
+    behind.before = [](int) { SubmitBox("behind", 300.0f, 300.0f, 200.0f, 150.0f); };
+    check(RunAirspace(behind) == BrowserHideReason::None, "airspace 6: a window drawn before (behind) the panel does not");
+
+    // 通知 (ToastCenter 相当): 重なっていても、渡された ID の窓は見せたまま。ID を渡さなければ同じ窓が隠す
+    unsigned int toastId = 0;
+    AirspaceScenario toast;
+    toast.after = [&toastId](int) {
+        ImGui::SetNextWindowPos(ImVec2(300.0f, 300.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(200.0f, 60.0f), ImGuiCond_Always);
+        ImGui::Begin("##toastX", nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+        toastId = ImGui::GetCurrentWindow()->ID;
+        ImGui::End();
+    };
+    check(RunAirspace(toast) == BrowserHideReason::Overlapped, "airspace 6: an unregistered notification-like window hides the browser");
+    toast.ignoredIds = [&toastId]() { return std::vector<unsigned int>{ toastId }; };
+    check(RunAirspace(toast) == BrowserHideReason::None, "airspace 6: a notification window passed as ignored does not hide the browser");
+
+    AirspaceScenario popup;
+    popup.after = [](int frame) {
+        if (frame == 1) {
+            ImGui::OpenPopup("pop");
+        }
+        ImGui::SetNextWindowPos(ImVec2(300.0f, 300.0f), ImGuiCond_Always);
+        if (ImGui::BeginPopup("pop")) {
+            ImGui::TextUnformatted("popup body");
+            ImGui::EndPopup();
+        }
+    };
+    check(RunAirspace(popup) == BrowserHideReason::Overlapped, "airspace 6: a popup / menu / combo window over the panel hides the browser");
+
+    AirspaceScenario tooltip;
+    bool tooltipSeen = false;
+    tooltip.after = [&tooltipSeen](int) {
+        ImGui::SetNextWindowPos(ImVec2(300.0f, 300.0f), ImGuiCond_Always);
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("tip");
+        ImGui::EndTooltip();
+        const ImGuiWindow* tip = ImGui::FindWindowByName("##Tooltip_00");
+        tooltipSeen = tip != nullptr && tip->Active;
+    };
+    check(RunAirspace(tooltip) == BrowserHideReason::None && tooltipSeen, "airspace 6: a tooltip over the panel is ignored");
+
+    AirspaceScenario modal;
+    modal.after = [](int frame) {
+        if (frame == 1) {
+            ImGui::OpenPopup("modal");
+        }
+        if (ImGui::BeginPopupModal("modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted("modal body");
+            ImGui::EndPopup();
+        }
+    };
+    check(RunAirspace(modal) == BrowserHideReason::ModalOpen, "airspace 5: an open modal hides the browser");
+
+    AirspaceScenario closed;
+    closed.panelOpen = false;
+    check(RunAirspace(closed) == BrowserHideReason::PanelNotDrawn, "airspace 1: a closed panel is not drawn (still evaluated every frame)");
+
+    AirspaceScenario moving;
+    moving.after = [](int frame) {
+        if (frame >= 2) {
+            ImGuiContext& g = *ImGui::GetCurrentContext();
+            g.MovingWindow = ImGui::FindWindowByName(Tr(StrId::Win_Browser));
+        }
+    };
+    check(RunAirspace(moving) == BrowserHideReason::WindowDragging, "airspace 4: a window being moved hides the browser");
+}
+
 void TestRateLimiter(const auto& check)
 {
     BrowserRateLimiter lim(10, 1000);
@@ -355,6 +564,37 @@ void TerminatePid(uint32_t pid)
     }
 }
 
+
+// 起動したダミー窓プロセスを、スイートの成否 (途中の失敗・早期 return) に関係なくスコープ終端で終わらせる。
+// PID の再利用で無関係なプロセスを止めないよう、実行ファイルが Editor.exe 自身のときだけ止める
+struct DummyReaper {
+    std::vector<uint32_t> pids;
+
+    void Add(uint32_t pid)
+    {
+        if (pid != 0 && std::find(pids.begin(), pids.end(), pid) == pids.end()) {
+            pids.push_back(pid);
+        }
+    }
+
+    ~DummyReaper()
+    {
+        wchar_t self[MAX_PATH * 2] = {};
+        GetModuleFileNameW(nullptr, self, static_cast<DWORD>(std::size(self)));
+        for (const uint32_t pid : pids) {
+            HANDLE h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+            if (h == nullptr) {
+                continue;
+            }
+            wchar_t image[MAX_PATH * 2] = {};
+            DWORD len = static_cast<DWORD>(std::size(image));
+            if (QueryFullProcessImageNameW(h, 0, image, &len) && _wcsicmp(image, self) == 0) {
+                TerminateProcess(h, 1);
+            }
+            CloseHandle(h);
+        }
+    }
+};
 } // namespace
 
 bool RunBrowserEmbedSelfTest()
@@ -375,6 +615,8 @@ bool RunBrowserEmbedSelfTest()
     TestStateMachine(check);
     TestVisibility(check);
     TestRateLimiter(check);
+    TestGlobalSettings(check);
+    TestWindowAirspace(check);
     MYE_LOG_INFO("BrowserEmbed self test: %s (%d failure(s))", failCount == 0 ? "PASS" : "FAIL", failCount);
     return failCount == 0;
 }
@@ -399,6 +641,7 @@ bool RunBrowserEmbedProcSelfTest()
     }
     Pump();
     const std::wstring exe = SelfExe();
+    DummyReaper reaper;
     const BrowserRect want{ 10, 10, 410, 310 };
     const auto ClientRectOfChild = [&](HWND child) {
         RECT rc = {};
@@ -415,6 +658,7 @@ bool RunBrowserEmbedProcSelfTest()
 
         // 1. 起動 → 差分で特定 → Attach
         check(host.Launch(exe, L"--browser-dummy-window", BrowserNowMs()), "launch dummy window process");
+        reaper.Add(host.LastLaunchPid());
         const int64_t found = drv.Run(15000, [&] { return host.State() != BrowserState::Launching; });
         check(found >= 0 && host.State() == BrowserState::Embedded, "dummy window identified and embedded");
         HWND child = static_cast<HWND>(host.ChildHwnd());
@@ -471,6 +715,7 @@ bool RunBrowserEmbedProcSelfTest()
         host.SetMainWindow(parent);
         ProcDriver drv{ host, want };
         check(host.Launch(exe, L"--browser-dummy-window", BrowserNowMs()), "launch second dummy");
+        reaper.Add(host.LastLaunchPid());
         drv.Run(15000, [&] { return host.State() != BrowserState::Launching; });
         check(host.State() == BrowserState::Embedded, "second dummy embedded");
         if (host.State() == BrowserState::Embedded) {
@@ -486,6 +731,7 @@ bool RunBrowserEmbedProcSelfTest()
         host.SetMainWindow(parent);
         ProcDriver drv{ host, want };
         check(host.Launch(exe, L"--browser-dummy-window --browser-dummy-hang-after-ms 1500", BrowserNowMs()), "launch hanging dummy");
+        reaper.Add(host.LastLaunchPid());
         drv.Run(15000, [&] { return host.State() != BrowserState::Launching; });
         check(host.State() == BrowserState::Embedded, "hanging dummy embedded before it hangs");
         if (host.State() == BrowserState::Embedded) {
@@ -514,6 +760,7 @@ bool RunBrowserEmbedProcSelfTest()
         host.SetMainWindow(parent);
         ProcDriver drv{ host, want };
         check(host.Launch(exe, L"--browser-dummy-window --browser-dummy-unparent-after-ms 1500", BrowserNowMs()), "launch unparenting dummy");
+        reaper.Add(host.LastLaunchPid());
         drv.Run(15000, [&] { return host.State() != BrowserState::Launching; });
         check(host.State() == BrowserState::Embedded, "unparenting dummy embedded first");
         HWND child = static_cast<HWND>(host.ChildHwnd());

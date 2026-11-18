@@ -40,6 +40,7 @@
 #include "Editor/Windows/Project/ProjectSettingsWindow.h"
 #include "Editor/Windows/Scene/SceneViewWindow.h"
 #include "Editor/Windows/Project/AiChangesWindow.h"
+#include "Editor/Windows/Project/BrowserWindow.h"
 #include "Editor/Windows/Project/RestoreRunWindow.h"
 #include "Editor/Windows/Project/SceneRestoreWindow.h"
 #include "Editor/Windows/Project/ScenePreviewWindow.h"
@@ -114,6 +115,8 @@ public:
     int packageExitCode = 0;
     // --browser-embed-probe (M105a): 実ブラウザの埋め込みの検証。id が空なら何もしない。sub-02 で窓に置き換わる薄い配線
     BrowserProbeOptions browserProbe;
+    // --browser-window (M105b): ブラウザ窓を開いて起動する (ブラウザは起動しない。--screenshot で UI を撮る検証用)
+    bool openBrowserWindow = false;
     // プローブの終了コード (0 = 成功 / プローブ無し)。完了前にエディタが閉じられたら 1
     int BrowserProbeExitCode() const { return browserProbe_ ? (browserProbe_->Finished() ? browserProbe_->ExitCode() : 1) : 0; }
 
@@ -209,6 +212,7 @@ private:
     SourceControlWindow sourceControl_;
     // M104j: AI Change Tracking。窓 (M104k) と独立に生きる。設定が無効なら何も起動しない
     ChangeTrackingSession changeTracking_;
+    BrowserWindow browser_; // M105b (既定は閉じている)
     std::unique_ptr<BrowserEmbedProbe> browserProbe_; // M105a: --browser-embed-probe のときだけ作る
     // 自分の保存の直後のファイルの印 (保存の直後に編集を続けたとき、自分の保存の監視イベントを外部変更として確認しない)
     OwnSaveRecord ownSave_;

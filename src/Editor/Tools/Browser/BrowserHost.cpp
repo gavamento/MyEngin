@@ -524,6 +524,22 @@ void BrowserHost::RequestClose()
     }
 }
 
+void BrowserHost::ReturnFocusToMain()
+{
+    if (status_.state != BrowserState::Embedded || childHwnd_ == nullptr || mainHwnd_ == nullptr) {
+        return;
+    }
+    HWND child = AsHwnd(childHwnd_);
+    // SetFocus は旧フォーカス窓へ WM_KILLFOCUS を同期で送る。応答なしの窓には触らない (D12)
+    if (!IsWindow(child) || IsHungAppWindow(child)) {
+        return;
+    }
+    HWND focus = GetFocus();
+    if (focus != nullptr && (focus == child || IsChild(child, focus))) {
+        SetFocus(AsHwnd(mainHwnd_));
+    }
+}
+
 void BrowserHost::Update(const BrowserFrameInput& in)
 {
     switch (status_.state) {

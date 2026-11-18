@@ -43,6 +43,9 @@ void EditorGlobalSettings::Load()
         uiLanguage = LangFromString(root.value("uiLanguage", LangToString(uiLanguage)).c_str());
         autoUpdateCheck = root.value("autoUpdateCheck", autoUpdateCheck);
         lastUpdateCheckUnix = root.value("lastUpdateCheckUnix", lastUpdateCheckUnix);
+        browserId = root.value("browserId", browserId);
+        browserCustomExe = root.value("browserCustomExe", browserCustomExe);
+        browserStartUrl = root.value("browserStartUrl", browserStartUrl);
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_global.json parse error: %s", ex.what());
     }
@@ -65,6 +68,9 @@ void EditorGlobalSettings::Save() const
     root["uiLanguage"] = LangToString(uiLanguage);
     root["autoUpdateCheck"] = autoUpdateCheck;
     root["lastUpdateCheckUnix"] = lastUpdateCheckUnix;
+    root["browserId"] = browserId;
+    root["browserCustomExe"] = browserCustomExe;
+    root["browserStartUrl"] = browserStartUrl;
 
     std::error_code ec;
     std::filesystem::create_directories(MachineLocalDir(), ec);

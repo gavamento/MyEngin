@@ -88,6 +88,20 @@ void NotifyUnknownKept(ToastCenter& toasts, const Scene& scene)
     toasts.Notify(LogLevel::Warn, buf, 8.0f); // 既定 4s だと保存トーストに紛れて読み落とす
 }
 
+// ブラウザの exe を選ぶファイルダイアログ (BrowserWindow のフック)。キャンセルは空
+std::wstring PickBrowserExe(void* ownerHwnd)
+{
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = static_cast<HWND>(ownerHwnd);
+    ofn.lpstrFilter = L"Program (*.exe)\0*.exe\0All (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    return GetOpenFileNameW(&ofn) ? std::wstring(path) : std::wstring();
+}
+
 } // namespace
 
 void EditorApp::OnStart(EngineContext& ctx)
@@ -122,6 +136,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Source Control", &sourceControl_.open },
                     { "Diff", &sourceControl_.diffOpen },
                     { "AI Changes", &aiChanges_.open },
+                    { "Browser", &browser_.open },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -453,9 +468,33 @@ void EditorApp::OnStart(EngineContext& ctx)
         ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
         ChangeWindowMessageFilterEx(hwnd, kCopyGlobalData, MSGFLT_ALLOW, nullptr);
     }
+    // ブラウザ窓 (M105b): 設定の復元。自動起動はしない (「起動」を押すまでブラウザは起動しない)
+    browser_.SetMainWindow(ctx.window->Hwnd());
+    {
+        EditorGlobalSettings globals;
+        globals.Load();
+        browser_.ApplySettings({ globals.browserId, globals.browserCustomExe, globals.browserStartUrl });
+    }
+    if (openBrowserWindow || !browserProbe.id.empty()) {
+        browser_.open = true;
+    }
+    // マウスボタン押下で、子窓 (ブラウザ) がフォーカスを持っていればメイン窓へ戻す。メッセージは消費しない
+    ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t, int64_t, int64_t&) {
+        switch (msg) {
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+        case WM_XBUTTONDOWN:
+            browser_.ReturnFocusToMain();
+            break;
+        default:
+            break;
+        }
+        return false;
+    });
     if (!browserProbe.id.empty()) {
         // M105a: 子窓がフォーカス中でも生マウス (WM_INPUT) が届くかを数える (O8)。メッセージは消費しない
-        browserProbe_ = std::make_unique<BrowserEmbedProbe>(browserProbe);
+        browserProbe_ = std::make_unique<BrowserEmbedProbe>(browserProbe, browser_);
         BrowserEmbedProbe* probe = browserProbe_.get();
         ctx.window->AddMsgHandler([probe](void*, uint32_t msg, uint64_t, int64_t, int64_t&) {
             if (msg == WM_INPUT) {
@@ -605,9 +644,7 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     changeTracking_.Restore().Shutdown(); // 書き込みの途中で終了するなら、ReloadHub が生きているうちに EndBatch を通す
     changeTracking_.Shutdown();
     // 子窓にしたブラウザ窓は、メイン窓の Destroy より前に外へ戻す (Destroy すると子窓も道連れになる)
-    if (browserProbe_) {
-        browserProbe_->Shutdown();
-    }
+    browser_.Shutdown();
 }
 
 void EditorApp::OnDeviceLost(EngineContext& ctx)
@@ -1191,6 +1228,9 @@ void EditorApp::OnImGui(EngineContext& ctx)
             return staged ? StagedState::Staged : StagedState::NotStaged;
         };
         aiChanges_.OnImGui(changeTracking_, host);
+        BrowserWindowHost browserHost;
+        browserHost.pickExe = [&ctx]() { return PickBrowserExe(ctx.window->Hwnd()); };
+        browser_.OnImGui(browserHost);
         restoreRun_.OnImGui(changeTracking_, host);
         sceneRestore_.OnImGui(changeTracking_, host);
         scenePreview_.OnImGui(changeTracking_);
@@ -1360,7 +1400,21 @@ void EditorApp::OnImGui(EngineContext& ctx)
     PollReloadToasts(ctx);
     UpdateWindowTitle(ctx);
     toasts_.OnImGui(toastAnchorRight_, toastAnchorBottom_);
-    // M105a: 全 ImGui 窓の提出が済んだ後にブラウザ窓を合わせる (sub-02 でパネルの描画へ置き換わる)
+    // M105b: 全 ImGui 窓の提出が済んだ後 (メニュー・ポップアップの重なりが分かる) に、ブラウザの子窓を合わせる。
+    // パネルが描かれないフレームも毎フレーム呼ぶ (Closed / Lost の観測と親の喪失の確定がフレームごとの呼び出しに依存する)
+    browser_.SetIgnoredWindowIds(toasts_.WindowIds());
+    browser_.ApplyToHost(IsIconic(static_cast<HWND>(ctx.window->Hwnd())) != FALSE);
+    {
+        BrowserWindowSettings changed;
+        if (browser_.TakeSettingsChanged(changed)) {
+            EditorGlobalSettings globals;
+            globals.Load(); // 他のキーを消さないよう読み直してから保存
+            globals.browserId = changed.id;
+            globals.browserCustomExe = changed.customExe;
+            globals.browserStartUrl = changed.startUrl;
+            globals.Save();
+        }
+    }
     if (browserProbe_) {
         browserProbe_->Frame(ctx.window->Hwnd(), BrowserNowMs());
         if (browserProbe_->Finished()) {
@@ -1894,6 +1948,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
         ImGui::MenuItem(Tr(StrId::Win_Diff), nullptr, &sourceControl_.diffOpen);
         ImGui::MenuItem(Tr(StrId::Win_AiChanges), nullptr, &aiChanges_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Browser), nullptr, &browser_.open);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);

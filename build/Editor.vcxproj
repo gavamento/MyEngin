@@ -177,6 +177,7 @@
     <ClCompile Include="..\src\Editor\Windows\Debug\ProfilerWindowTabs.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Debug\TimelineWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\AiChangesWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\BrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
@@ -340,6 +341,7 @@
     <ClInclude Include="..\src\Editor\Windows\Debug\ProfilerWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Debug\TimelineWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\AiChangesWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\BrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />

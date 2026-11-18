@@ -483,6 +483,9 @@
     <ClCompile Include="..\src\Editor\Windows\Project\AiChangesWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Project\BrowserWindow.cpp">
+      <Filter>Windows\Project</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
@@ -970,6 +973,9 @@
       <Filter>Windows\Debug</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\AiChangesWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Project\BrowserWindow.h">
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h">

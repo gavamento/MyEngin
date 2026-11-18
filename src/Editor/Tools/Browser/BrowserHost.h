@@ -174,6 +174,8 @@ public:
     bool Detach();
     // WM_CLOSE を Post する (閉じたかどうかは Update が窓の消滅で見る)
     void RequestClose();
+    // 子窓 (その子孫を含む) がキーボードフォーカスを持っていればメイン窓へ戻す。応答なしなら何もしない。UI スレッド専用
+    void ReturnFocusToMain();
     // 待つのをやめる (起動したブラウザは閉じない)
     void CancelLaunch();
     // 毎フレーム (全 ImGui 窓の提出が終わった後に呼ぶ)
