@@ -3663,8 +3663,25 @@ MYE_STR(Browser_Detach,       "Detach",                                "切り�
 MYE_STR(Browser_Close,        "Close",                                 "閉じる")
 MYE_STR(Browser_HiddenByOverlap, "Hidden while a menu or another window overlaps this panel.",
                               "メニューや他の窓が重なっているため、ブラウザを隠しています。")
-MYE_STR(Browser_ResultClosed, "The browser window was closed.",        "ブラウザの窓が閉じられました。")
-MYE_STR(Browser_ResultLost,   "The browser exited (it may have crashed).",
-                              "ブラウザが終了しました (落ちた可能性があります)。")
-MYE_STR(Browser_ResultTimedOut, "No browser window was found in time.", "時間内にブラウザの窓が見つかりませんでした。")
-MYE_STR(Browser_ResultFailed, "Could not embed the browser:",          "ブラウザを埋め込めませんでした:")
+MYE_STR(Browser_ResultClosed, "The browser window was closed. Use Launch or Attach existing window to start again.",
+                              "ブラウザの窓が閉じられました。「起動」か「既存の窓を取り込む」でやり直せます。")
+MYE_STR(Browser_ResultLost,   "The browser exited (it may have crashed). Use Launch or Attach existing window to start again.",
+                              "ブラウザが終了しました (落ちた可能性があります)。「起動」か「既存の窓を取り込む」でやり直せます。")
+MYE_STR(Browser_ResultTimedOut, "No browser window was found in time. If the browser is already open, pick its window with \"Attach existing window\".",
+                              "時間内にブラウザの窓が見つかりませんでした。すでに開いている場合は「既存の窓を取り込む」で選べます。")
+MYE_STR(Browser_ResultFailed, "Could not embed the browser:",          "埋め込めませんでした:")
+MYE_STR(Browser_FailMainWindow, "the editor window is not available.",  "エディタの窓がありません。")
+MYE_STR(Browser_FailTargetGone, "the browser window no longer exists.", "ブラウザの窓が見つかりません。")
+MYE_STR(Browser_FailNotResponding, "the browser window is not responding.", "ブラウザの窓が応答していません。")
+MYE_STR(Browser_FailDpi,      "the DPI awareness differs from the editor.", "DPI 設定がエディタと違います。")
+MYE_STR(Browser_FailSetParent, "Windows refused to make it a child window (permissions differ?).",
+                              "Windows が子窓にすることを拒否しました (権限の違いなど)。")
+MYE_STR(Browser_FailParentRemoved, "the browser took the window back out of the editor.",
+                              "ブラウザが窓をエディタから外しました。")
+MYE_STR(Browser_FailLaunch,   "the browser could not be started.",     "ブラウザを起動できませんでした。")
+MYE_STR(Browser_Hung,         "Not responding",                        "応答なし")
+MYE_STR(Browser_HungHint,     "Detach is unavailable while the browser is not responding.",
+                              "ブラウザが応答していない間は切り離せません。")
+MYE_STR(Browser_AttachExisting, "Attach existing window...",           "既存の窓を取り込む...")
+MYE_STR(Browser_AttachNone,   "No windows of this browser were found.", "このブラウザの窓が見つかりません。")
+MYE_STR(Browser_AttachNoTitle, "(no title)",                           "(タイトルなし)")

@@ -13,6 +13,7 @@
 #include "imgui.h"
 #include "imgui_internal.h" // 見せる条件の収集 (g.MovingWindow / g.Windows / モーダル) だけ。ここに閉じる
 
+#include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Platform/PathUtil.h"
 
@@ -175,7 +176,10 @@ void BrowserWindow::Shutdown()
 {
     if (host_.State() == BrowserState::Embedded) {
         host_.ReturnFocusToMain();
-        host_.Detach();
+        if (!host_.Detach()) {
+            // 応答なしの窓は同期で待たされるので触れない。メイン窓の破棄に巻き込まれて消える
+            MYE_LOG_WARN("[browser] shutdown: browser is not responding, left embedded (%s)", host_.Message().c_str());
+        }
     }
 }
 
@@ -294,7 +298,11 @@ void BrowserWindow::DrawIdle(const BrowserWindowHost& host)
     }
     ImGui::EndDisabled();
 
-    // 直前の結果 (詳しい文言と取り込みの導線は後続)
+    // 既存の窓を取り込む (Idle / Closed / Lost / TimedOut / Failed のどれからでも)
+    ImGui::SameLine();
+    DrawAttachExisting(canLaunch);
+
+    // 直前の結果の 1 行
     switch (host_.State()) {
     case BrowserState::Closed:
         ImGui::TextWrapped("%s", Tr(StrId::Browser_ResultClosed));
@@ -306,11 +314,79 @@ void BrowserWindow::DrawIdle(const BrowserWindowHost& host)
         ImGui::TextWrapped("%s", Tr(StrId::Browser_ResultTimedOut));
         break;
     case BrowserState::Failed:
-        ImGui::TextWrapped("%s %s", Tr(StrId::Browser_ResultFailed), host_.Message().c_str());
+        DrawFailedLine();
         break;
     default:
         break;
     }
+}
+
+void BrowserWindow::DrawFailedLine() const
+{
+    const char* reason = nullptr;
+    bool withDetail = false;
+    switch (host_.FailReason()) {
+    case BrowserFailReason::MainWindowMissing: reason = Tr(StrId::Browser_FailMainWindow); break;
+    case BrowserFailReason::TargetGone:        reason = Tr(StrId::Browser_FailTargetGone); break;
+    case BrowserFailReason::NotResponding:     reason = Tr(StrId::Browser_FailNotResponding); break;
+    case BrowserFailReason::DpiMismatch:       reason = Tr(StrId::Browser_FailDpi); break;
+    case BrowserFailReason::SetParentFailed:   reason = Tr(StrId::Browser_FailSetParent); withDetail = true; break;
+    case BrowserFailReason::ParentRemoved:     reason = Tr(StrId::Browser_FailParentRemoved); break;
+    case BrowserFailReason::LaunchFailed:      reason = Tr(StrId::Browser_FailLaunch); withDetail = true; break;
+    case BrowserFailReason::None:              break;
+    }
+    if (reason == nullptr) {
+        ImGui::TextWrapped("%s %s", Tr(StrId::Browser_ResultFailed), host_.Message().c_str());
+    } else if (withDetail) {
+        // 詳細は GetLastError 付きの英語 (診断用。Tr の文言ではない)
+        ImGui::TextWrapped("%s %s (%s)", Tr(StrId::Browser_ResultFailed), reason, host_.Message().c_str());
+    } else {
+        ImGui::TextWrapped("%s %s", Tr(StrId::Browser_ResultFailed), reason);
+    }
+}
+
+void BrowserWindow::DrawAttachExisting(bool canTarget)
+{
+    static const char* const kPopupId = "##browserAttachExisting";
+    ImGui::BeginDisabled(!canTarget);
+    if (ImGui::Button(Tr(StrId::Browser_AttachExisting))) {
+        std::wstring exe;
+        BrowserFamily family = BrowserFamily::Unknown;
+        std::string name;
+        existingWindows_.clear();
+        if (ResolveLaunchTarget(exe, family, name)) {
+            existingWindows_ = EnumerateBrowserWindows(exe);
+        }
+        ImGui::OpenPopup(kPopupId);
+    }
+    ImGui::EndDisabled();
+    if (!ImGui::BeginPopup(kPopupId)) {
+        return;
+    }
+    if (existingWindows_.empty()) {
+        ImGui::TextDisabled("%s", Tr(StrId::Browser_AttachNone));
+    }
+    for (size_t i = 0; i < existingWindows_.size(); ++i) {
+        const BrowserWindowInfo& w = existingWindows_[i];
+        std::string title = WideToUtf8(w.title);
+        if (title.empty()) {
+            title = Tr(StrId::Browser_AttachNoTitle);
+        }
+        title += " (" + std::to_string(w.pid) + ")";
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Selectable(title.c_str())) {
+            std::wstring exe;
+            BrowserFamily family = BrowserFamily::Unknown;
+            std::string name;
+            ResolveLaunchTarget(exe, family, name);
+            if (host_.AttachExisting(w.hwnd)) {
+                embeddedName_ = name;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndPopup();
 }
 
 void BrowserWindow::DrawLaunching()
@@ -329,11 +405,23 @@ void BrowserWindow::DrawEmbedded()
     // 1 行のツールバー: ブラウザ名 + 切り離す / 閉じる
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(embeddedName_.c_str());
+    const bool hung = host_.Hung();
+    if (hung) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.3f, 1.0f), "%s", Tr(StrId::Browser_Hung));
+    }
     const ImGuiStyle& style = ImGui::GetStyle();
     const float detachW = ImGui::CalcTextSize(Tr(StrId::Browser_Detach)).x + style.FramePadding.x * 2.0f;
     const float closeW = ImGui::CalcTextSize(Tr(StrId::Browser_Close)).x + style.FramePadding.x * 2.0f;
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - detachW - closeW - style.ItemSpacing.x);
-    if (ImGui::Button(Tr(StrId::Browser_Detach))) {
+    // 応答なしの間は切り離せない (SetParent / SetWindowPos が同期で待たされる)。閉じるは Post なので押せる
+    ImGui::BeginDisabled(hung);
+    const bool detachPressed = ImGui::Button(Tr(StrId::Browser_Detach));
+    ImGui::EndDisabled();
+    if (hung && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", Tr(StrId::Browser_HungHint));
+    }
+    if (detachPressed) {
         host_.ReturnFocusToMain();
         host_.Detach();
         return;

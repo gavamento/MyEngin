@@ -1,8 +1,8 @@
 # sub-03: 後始末と障害時の表示、取り込み、文書
 
 - 依存: sub-02
-- 状態: 未着手
-- 往復: 0
+- 状態: OK (round 1。コミット待ち)
+- 往復: 1
 
 ## やること
 
@@ -49,4 +49,12 @@ spec 4.1.7〜4.1.9 の UI 側と仕上げ、文書。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-03 (round 1) の要約。全文は司会への返答に添付。
+
+- 実装: BrowserHost に `BrowserFailReason` (Failed の理由の種別) を追加し、BrowserWindow が ja/en の文言を選ぶ。結果の 1 行 (Closed / Lost / TimedOut / Failed) を spec 4.3 の文言に仕上げ、TimedOut から「既存の窓を取り込む」へ案内。ツールバーに「応答なし」(hung 中は「切り離す」を無効化)、「既存の窓を取り込む...」ボタン + 一覧ポップアップ (押したときだけ列挙)。応答なしのままの OnShutdown は Detach せずログ。probe に `dummy-hang` (応答なし表示の確認用)。ADR-040、engine_spec §9.3、test_checklists M105 節。
+- 検証: browserembed / browserembedproc PASS (7b: Lost / Failed からの再開と AttachExisting、FailReason を追加)。`--selftest-full` 127 suites (リポジトリ外 cwd では part / fractureskin / skinbounds が実アセット不在で FAIL = cwd 要因、リポジトリルートで 3 件 PASS)。check_rules 0 error、check_rules_selftest PASS。replay_verify は bat のビルド手順が古い Editor.exe (PID 2412 / 38416 / 14332) の nethost.dll 掴みで失敗するため、Release を手動ビルドして bat の並列検証部分 (24 ジョブ) を同一コマンドで実行 → 全 PASS (583 s)。
+- 実ブラウザ: Edge の probe は exit 0 (O5 切り離しの復元を確認)。Chrome は残存のプロファイル選択窓で TimedOut (R13、環境要因)。「応答なし」表示は `--browser-embed-probe dummy-hang` + `--screenshot` で撮影 (パネルに赤字の「応答なし」、「切り離す」は無効)。
+- 未検証 (手動): 「既存の窓を取り込む」ポップアップのクリック操作、Chrome での Detach / 閉じる / taskkill の表示、エディタ正常終了時の Detach の実ブラウザ確認 (test_checklists M105 節の手順)。
+
 ## フィードバック履歴
+- round 1: VERDICT OK (planner, 2026-11-19)。受け入れ 2 (応答なし: selftest + dummy-hang の目視)、5 (ADR-040 / engine_spec §9.3 / test_checklists M105)、6 (check_rules 0 error) は充足。受け入れ 4 は代替で充足と判定: `--selftest-full` は cwd=TEMP で 127 中 124 PASS + cwd 依存の 3 件をリポジトリルートで PASS、`replay_verify.bat` は残存ダミーの nethost.dll 掴みで bat の Debug ビルド手順が止まったため同じ 24 ジョブを同一引数で回して all PASS。bat 一発と full のルート一発は reviewer に回す (残存プロセスが閉じられた後)。受け入れ 1 / 3 の実機 (Chrome の後始末・取り込みのクリック) は人の手の確認待ち

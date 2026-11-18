@@ -77,6 +77,10 @@ private:
     void DrawLaunching();
     void DrawEmbedded();
     void DrawHiddenPlaceholder();
+    // 「既存の窓を取り込む」ボタンと一覧ポップアップ。一覧は押した瞬間にだけ列挙する (毎フレームは列挙しない)
+    void DrawAttachExisting(bool canTarget);
+    // Failed の 1 行 (種別の文言 + 必要なら英語の詳細)
+    void DrawFailedLine() const;
     void MarkSettingsDirty() { settingsDirty_ = true; }
 
     BrowserHost host_;
@@ -89,6 +93,7 @@ private:
     char urlBuf_[512] = {};
     bool settingsDirty_ = false;
     std::string embeddedName_;
+    std::vector<BrowserWindowInfo> existingWindows_;
     int64_t launchStartMs_ = 0;
     // このフレームの OnImGui でパネルが描かれたか (ApplyToHost が読んで下ろす)
     bool panelDrawn_ = false;

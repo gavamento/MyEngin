@@ -204,6 +204,7 @@ Closed / Lost / TimedOut / Failed ──「起動」/「既存の窓を取り込
 - `Editor.exe --browser-list`: 候補の一覧 (id / 表示名 / exe / 系統 / 既定の印) をログに出して終了 (exit 0)。エンジンを初期化しない早期分岐。
 - `Editor.exe --browser-dummy-window [--browser-dummy-hang-after-ms N]`: selftest 専用。タイトル固定の普通のトップレベル窓を 1 枚出してメッセージを回すだけのプロセス。N ms 後に UI スレッドを 30 秒止める (応答なしの再現用)。エンジンを初期化しない早期分岐。**寿命の上限を持つ** (既定 120 秒で自分で終了。テストの失敗経路や親プロセスの異常終了で残っても Editor.exe を掴み続けない。sub-02 round 1 で追加)。
 - `Editor.exe --browser-embed-probe <id> [--browser-probe-url URL] [--browser-probe-hold-ms N]`: 通常起動したエディタでパネルを開き、id のブラウザを起動して埋め込み、観測 (特定までの時間、`GetParent`、スタイル、矩形一致、DPI) をログに出し、N ms (既定 5000) 保持してから Detach して終了。exit 0 = 埋め込みと切り離しが成功。デスクトップキャプチャは外側のスクリプト (PowerShell) で保持中に撮る。
+- probe の id `dummy` / `dummy-hang` (sub-01 / sub-03 で追加): 実ブラウザの代わりにダミー窓を埋め込む。`dummy-hang` は 1.5 秒後に応答なしにし、切り離しが拒否されることと、パネルの「応答なし」表示を `--screenshot` で撮るために使う。ダミーは 120 秒で自己終了する。
 - selftest:
   - `browserembed` (Fast): カタログの解析・重複除去・並び・除外、exe 抽出、引数の系統、窓特定の純関数、表示切替の純関数、状態機械の遷移、設定の往復。
   - `browserembedproc` (Full): ダミー窓プロセスを起動し、差分で特定 → テスト用の親窓へ Attach → 矩形・`GetParent`・`WS_CHILD` を確認 → Detach で元のスタイル・親なし・可視を確認 → 再 Attach → ダミーの終了で Lost / WM_CLOSE で Closed を 1 秒以内に検出 → hang 版で応答なしの印と 1 フレーム 50 ms 以内を確認。
@@ -265,3 +266,4 @@ Closed / Lost / TimedOut / Failed ──「起動」/「既存の窓を取り込
   - 7. に sub-01 の観測結果 (R2 / R4 / R5 / R7) と R9〜R11 を足した。
 - 2026-11-18 sub-01 round 2 (coder SELF_EVAL): 4.1.7 に親の喪失の確定時間 150 ms (`kBrowserParentLostConfirmMs`) と「Update はパネル非表示のフレームでも呼ぶ」を書き足した (coder の [追加] を採用。強制終了の競合の実測による)。7. に R12 を足した。
 - 2026-11-19 sub-02 round 1 (coder SELF_EVAL / planner): 4.1.5 条件 6 で ToastCenter の通知を重なり判定から除外、4.1.6 のフォーカス返しを「子窓かその子孫にフォーカスがあるとき」に限定 (coder の逸脱を採用)、4.5 のダミー窓に寿命の上限、7. R3 を確認済みに、R13 を追加。O4 は 2026-11-19 にユーザーが確認済み (Chrome / Edge で英字・日本語 IME を入力できた。E1 非該当)。
+- 2026-11-19 sub-03 round 1 (coder SELF_EVAL): 失敗理由を種別 (`BrowserFailReason`) で持って ja/en の文言を選ぶ形を採用。4.5 に probe id `dummy` / `dummy-hang` を追記。結果行の文言の逸脱 (Closed / Lost にやり直しの案内、TimedOut は秒数を書かない) を採用 — 4.3 の例文は例示であり、定数と文言の数字がずれるのを避ける方が正しい。

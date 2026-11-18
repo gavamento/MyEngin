@@ -1592,6 +1592,41 @@ confirmation.
 - *Open file* uses the existing external-editor path (`externalEditorCmd`) at the first line of the selected hunk; *Show in Explorer*
   opens the folder.
 
+### 9.3 Browser window (M105)
+
+*Window > Browser* hosts a browser that is **already installed** (Chrome, Edge, Brave, Vivaldi, Opera GX, Firefox, ...) inside a dockable panel, so the
+user's own profile, extensions, logins and IME work as usual ([ADR-040](docs/adr/ADR-040-embedded-browser.md)). The browser is an ordinary separate
+process; the editor makes its top-level window a child of the editor's main window (`SetParent`) and keeps it on the panel's content rectangle.
+It is closed by default and an Editor-layer feature only (`src/Editor/Tools/Browser/`, `src/Editor/Windows/Project/BrowserWindow.*`; `check_rules` rule 20).
+Runtime / GameLogic / Server never see it and the simulation, replay and `SimSnapshot` are untouched.
+
+- **Choosing and starting.** The combo lists the installed browsers found under `StartMenuInternet` (HKCU, HKLM, HKLM\WOW6432Node; de-duplicated by exe path, `iexplore.exe`
+  excluded, the default browser marked) plus *Other (choose exe)...*. Detection runs when the panel opens and on *Re-detect*, never per frame.
+  *Launch* starts the browser in a new window with the normal profile (`--new-window` [+ start URL] for Chromium-family, `-new-window` for Firefox-family) and
+  finds the new window by diffing the top-level windows before and after the launch (the exe of the window's process must have the registered exe's file name
+  under the registered exe's directory; 15 s limit). Nothing is ever started automatically, and automated launches (`--selftest`, `--screenshot`, replay) never start a browser.
+- **Attach existing window...** (from Idle / Closed / Lost / TimedOut / Failed) lists the selected browser's current windows as "title (PID)" — enumerated only when the
+  button is pressed — and embeds the chosen one. It is the way out when the automatic search times out (for example a single-instance window such as Chrome's
+  profile picker swallows `--new-window`).
+- **Following the dock.** The child follows moving, resizing, tab switching (hidden while the tab is not selected), minimizing and floating. Because a child HWND is always drawn above
+  everything ImGui draws, the child is **hidden while anything overlaps it**: menus, popups, combos, context menus, floating windows over the panel, a modal,
+  or an ImGui window / docking drag in progress (toast notifications are ignored). A frame and one line mark the hidden panel.
+  If the browser resizes itself (full screen, maximize) the editor puts it back, at most 10 times per second.
+- **Focus.** Clicking the browser gives it the keyboard: editor shortcuts do not work while it has focus. A mouse press anywhere else in the editor window takes the focus back
+  (only when the browser had it), and hiding the child also returns it.
+- **Detach / Close / × / exit.** *Detach*, the panel's × and a normal editor exit return the window to an ordinary top-level window with its original style at its current screen position (tabs are kept).
+  *Close* posts `WM_CLOSE` to the browser. After a crash of the editor the child window dies with it (tabs lost) — nothing on the editor side can prevent that.
+- **Failures never stop the editor.** One result line is shown with the *Launch* / *Attach existing window...* buttons: the browser window was closed (Closed), the browser exited (Lost: window gone and the process
+  exited with a non-zero code), no window was found in time (TimedOut), or it could not be embedded (Failed: DPI awareness differs, `SetParent` refused — for example a permission
+  difference — or the browser took the window back out; the window is then left as an ordinary window). While the browser does not respond the toolbar shows *Not responding*, the
+  editor stops touching the window (no repositioning, *Detach* disabled), and an editor exit in that state skips the detach and only logs it.
+- **Settings** (`%LOCALAPPDATA%\MyEngine\editor_global.json`, written only when changed): `browserId` (the chosen browser's id, `"custom"` for *Other*), `browserCustomExe`, `browserStartUrl`.
+- **Limits.** Only a browser with the editor's DPI awareness (Per-Monitor V2) and the editor's privilege level can be embedded. Browser full screen is not supported; new windows and tabs dragged out
+  stay outside (use *Attach existing window...*). Parent and child share one input queue, so while the editor frame is long (synchronous scene load, shader compile) the browser's input also pauses.
+  Opera GX is best effort (the browser may take its window back, which is detected and reported as Failed). Whether raw mouse input reaches the editor while the child has focus (Play-mode mouse look) is unverified.
+- **Verification hooks.** `--browser-list`, `--browser-window` (open the panel, start nothing), `--browser-embed-probe <id>` (`dummy` / `dummy-hang` use the editor itself as a stand-in window; the dummy exits by itself after 120 s),
+  `--browser-dummy-window`; self tests `browserembed` (fast) and `browserembedproc` (full). The embedded browser is not in `--screenshot` output (child HWND); use a desktop capture.
+
 ---
 
 ## 10. Asset Pipeline

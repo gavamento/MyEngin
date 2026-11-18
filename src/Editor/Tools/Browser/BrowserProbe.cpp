@@ -25,6 +25,8 @@ constexpr UINT_PTR kDummyLifetimeTimer = 3;
 constexpr int kProbeWarmupFrames = 60;
 constexpr int64_t kProbeOverallTimeoutMs = 60000;
 constexpr int64_t kProbeVisibleWaitMs = 15000;
+// この id は "dummy" と同じダミー窓を、1.5 秒後に応答なしにして起動する (応答なしの表示の確認用)
+const std::wstring kProbeDummyHangId = L"dummy-hang";
 
 LRESULT CALLBACK DummyWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
@@ -202,10 +204,11 @@ void BrowserEmbedProbe::Frame(void* mainHwnd, int64_t nowMs)
             return;
         }
         startMs_ = nowMs;
-        if (options_.id == L"dummy") {
+        if (options_.id == L"dummy" || options_.id == kProbeDummyHangId) {
             std::printf("[browser-probe] launch dummy (this exe)\n");
             std::fflush(stdout);
-            if (!window_.Host().Launch(SelfExePath(), L"--browser-dummy-window", nowMs)) {
+            const bool hang = options_.id == kProbeDummyHangId;
+            if (!window_.Host().Launch(SelfExePath(), hang ? L"--browser-dummy-window --browser-dummy-hang-after-ms 1500" : L"--browser-dummy-window", nowMs)) {
                 Finish(false, window_.Host().Message().c_str());
                 return;
             }
@@ -262,6 +265,16 @@ void BrowserEmbedProbe::Frame(void* mainHwnd, int64_t nowMs)
                 static_cast<unsigned long long>(rawInputCount_ - rawInputAtHoldStart_));
     HWND child = static_cast<HWND>(window_.Host().ChildHwnd());
     const bool detached = window_.Host().Detach();
+    if (options_.id == kProbeDummyHangId) {
+        // 応答なしのダミーは切り離せないのが正しい (パネルの「応答なし」表示を撮る用)。終わらせて抜ける
+        const bool ok = !detached && window_.Host().Hung();
+        if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, window_.Host().ChildPid())) {
+            TerminateProcess(h, 1);
+            CloseHandle(h);
+        }
+        Finish(ok, "hung dummy: detach refused while not responding");
+        return;
+    }
     if (!detached) {
         Finish(false, "detach refused");
         return;

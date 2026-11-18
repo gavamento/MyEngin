@@ -307,6 +307,9 @@ void BrowserHost::SetResult(BrowserState state, std::string message)
     status_.state = state;
     status_.hung = false;
     message_ = std::move(message);
+    if (state != BrowserState::Failed) {
+        failReason_ = BrowserFailReason::None; // Failed の理由は呼び出し側が SetResult の前に入れる
+    }
 }
 
 bool BrowserHost::Launch(const std::wstring& exePath, const std::wstring& args, int64_t nowMs)
@@ -335,6 +338,7 @@ bool BrowserHost::Launch(const std::wstring& exePath, const std::wstring& args, 
     PROCESS_INFORMATION pi = {};
     if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, workDir.empty() ? nullptr : workDir.c_str(),
                         &si, &pi)) {
+        failReason_ = BrowserFailReason::LaunchFailed;
         SetResult(BrowserState::Failed, ErrorText("CreateProcess failed", GetLastError()));
         MYE_LOG_WARN("[browser] %s", message_.c_str());
         return false;
@@ -377,19 +381,23 @@ bool BrowserHost::AttachWindow(void* hwndRaw)
     lastTargetHwnd_ = hwndRaw;
     if (main == nullptr || !IsWindow(main)) {
         message_ = "main window is not set";
+        failReason_ = BrowserFailReason::MainWindowMissing;
         return false;
     }
     if (!IsWindow(child) || child == main) {
         message_ = "target window does not exist";
+        failReason_ = BrowserFailReason::TargetGone;
         return false;
     }
     if (IsHungAppWindow(child)) {
         message_ = "target window is not responding";
+        failReason_ = BrowserFailReason::NotResponding;
         return false;
     }
     // 親子にするとブラウザ側の DPI 認識が強制的に直されることがあるため、違うなら外に置いたままにする
     if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(child), GetWindowDpiAwarenessContext(main))) {
         message_ = "DPI awareness differs from the editor";
+        failReason_ = BrowserFailReason::DpiMismatch;
         return false;
     }
 
@@ -425,6 +433,7 @@ bool BrowserHost::AttachWindow(void* hwndRaw)
             CloseHandle(proc);
         }
         message_ = ErrorText("SetParent failed", err);
+        failReason_ = BrowserFailReason::SetParentFailed;
         return false;
     }
     if (clipChildren_) {
@@ -446,6 +455,7 @@ bool BrowserHost::AttachWindow(void* hwndRaw)
             CloseHandle(proc);
         }
         message_ = "browser did not accept the embedding (parent was removed)";
+        failReason_ = BrowserFailReason::ParentRemoved;
         return false;
     }
 
@@ -629,6 +639,7 @@ void BrowserHost::UpdateEmbedded(const BrowserFrameInput& in)
             RestoreTopLevel(child, saved_);
         }
         ReleaseChild();
+        failReason_ = BrowserFailReason::ParentRemoved;
         SetResult(BrowserState::Failed, "browser removed the embedded window from the editor (parent was removed)");
         MYE_LOG_WARN("[browser] %s", message_.c_str());
         return;

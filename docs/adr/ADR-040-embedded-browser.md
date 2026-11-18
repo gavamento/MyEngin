@@ -1,0 +1,93 @@
+# ADR-040: 外部ブラウザの窓を、エディタのドック窓の子窓として埋め込む (SetParent 方式)
+
+- 状態: 実装済み (2026-11-19、M105a〜c)。方式は 2026-11-18 にユーザーと合意
+- 出所: [plans\m105-embedded-browser\spec.md](../../plans/m105-embedded-browser/spec.md) (D1〜D22 が疑った点と結論、7. が未決とリスク)
+
+## 背景
+
+エディタで作業しながら、資料・AI チャット・タスク管理などの Web ページを、エディタの外へ切り替えずに見て操作したい。
+必要なのは「普段使っているブラウザそのもの」(拡張機能・ログイン状態・IME・ショートカット) で、組み込みの簡易ブラウザではない。
+エンジン内の Web 関連は `ShellExecuteW` で既定ブラウザへ URL を渡す 2 箇所だけで、同等の機能は無かった。
+
+## 決定
+
+1. **別プロセスのブラウザのトップレベル窓を、`SetParent` でエディタのメイン窓の子窓にする。** ドック窓 (*Window > Browser*) の内容矩形に子窓を合わせる。
+   インストール済みのブラウザの exe は `StartMenuInternet` (HKCU → HKLM → WOW6432Node) から検出し、「その他 (exe を指定)」も持つ。
+2. **窓の特定は PID ではなく、起動前後のトップレベル窓の差分で行う。** Chromium 系・Firefox は既に起動中だと新プロセスが既存プロセスへ依頼して終わり、
+   窓は既存プロセスが作る。Opera GX はレジストリの exe がランチャーで、実体は版ディレクトリ配下。窓の所有プロセスの exe が登録 exe と同名で、
+   登録 exe のディレクトリの配下にあるものだけを候補にする。自動特定に失敗したときの逃げ道として「既存の窓を取り込む」を持つ。
+3. **airspace は「重なる間は子窓を隠す」で避ける。** 子 HWND は ImGui (ビューポート無効 = メニュー・ポップアップも全部メイン HWND の中) より常に手前に出る。
+   パネルより手前に描かれる窓・モーダル・ウィンドウのドラッグ中・最小化などの条件を毎フレーム集め (`EvaluateBrowserVisibility`)、1 つでも当たれば隠す。
+   通知 (`ToastCenter`) は入力を取らず、保存のたびに出てブラウザが点滅するので、ImGui の窓 ID で除外する。
+4. **ブラウザを閉じるのは「閉じる」ボタン (`PostMessage(WM_CLOSE)`) だけ。** 「切り離す」・パネルの ×・エディタの正常終了 (`EditorApp::OnShutdown`) は、
+   元のスタイル・画面上の今の位置の普通の窓へ戻す (`SetParent(nullptr)` → スタイル復元の順。タブは失われない)。
+5. **エディタをブラウザの障害に巻き込まない。** ブラウザ窓へ同期メッセージを投げない (表示は `ShowWindowAsync`、閉じるは Post、`SetWindowPos` は矩形が変わったときだけ)。
+   `SetParent` / `SetWindowPos` / `SetFocus` の直前に `IsWindow` と `IsHungAppWindow` を見て、応答なしなら触らない。
+   応答なしの間はパネルに「応答なし」を出し、「切り離す」を無効にする (閉じるは Post なので押せる)。応答なしのままエディタを終了するときは Detach せずログだけ残す。
+   窓が消えたとき、所有プロセスが 0 以外で終了していれば Lost (落ちた)、そうでなければ Closed。どちらの結果からも「起動」「既存の窓を取り込む」で再開できる。
+6. **Editor 層に閉じ込める。** `src\Editor\Tools\Browser\` を Engine / Runtime / GameLogic / Shared / Server から include させない (`check_rules` 規則 20)。
+   ABI・SimSnapshot・TypeId・シーン形式は変えない。設定 3 点 (`browserId` / `browserCustomExe` / `browserStartUrl`) は `editor_global.json`。
+   自動化起動 (`--selftest` / `--screenshot` / replay) でブラウザを起動しない。
+
+## 却下した案
+
+- **WebView2 / CEF / CDP の画面配信。** ユーザーが「WebView 以外で」を明示。いずれも「普段のブラウザそのもの」ではなく、拡張機能・ログインを共有できない。
+  CEF のオフスクリーン描画 (UE の Web Browser plugin など) は airspace が起きないが、同じ理由で外した。
+- **専用の `--user-data-dir` で別プロセスを強制する。** PID で窓を特定できるが、普段の拡張・ログイン・タブが使えず目的に反する。
+- **`--app=URL` モード。** タブ・アドレスバー・拡張ボタンが消え「普段どおり」でない。
+- **`SetWindowRgn` で子窓に穴を開けて ImGui を見せる。** 他プロセスの窓の領域を書き換える。ブラウザ側が戻す可能性があり脆い。
+- **隠している間に `PrintWindow` で撮った静止画を出す。** D3D テクスチャ経路が要り重い。後回し (プレースホルダーは枠と 1 行のみ)。
+- **追従する独立トップレベル窓 (親子・所有関係にしない)。** 入力キューは結合しないが、Z 順・最小化の同期が自前になり、Alt+Tab に別窓として出る。
+  撤退条件 E1〜E3 (下) に当たらなかったので作っていない。
+- **`IEXPLORE.EXE` を候補に出す。** Windows 11 では Edge へ転送され、起動した exe と窓の所有プロセスが一致せず特定に失敗する。候補から外した。
+
+## 入力キュー結合という既知の制限
+
+別プロセスの親子窓は、両スレッドの入力キューを暗黙に結合する (推移的)。Microsoft は勧めていない
+([Raymond Chen, "Is it legal to have a cross-process parent/child or owner/owned window relationship?"](https://devblogs.microsoft.com/oldnewthing/20130412-00/?p=4683)、
+[SetParent](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent) の注意書き)。受け入れている結果は次のとおり。
+
+- エディタのフレームが長く止まる間 (同期のシーン読み込み・シェーダコンパイルなど)、ブラウザの入力も止まる。
+- ブラウザの UI スレッドが止まると、エディタからの同期操作が待たされる。`SWP_ASYNCWINDOWPOS` は「異なる入力キューのとき」だけ非同期なので、結合後は効かない
+  ([SetWindowPos](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos))。決定 5 の規則で、同期で待たされうる呼び出しを最小にした。
+  `IsHungAppWindow` は 5 秒無応答で初めて真になる ([IsHungAppWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-ishungappwindow))
+  ので、止まってから最初の 5 秒は待たされうる (矩形が変わったときだけ呼ぶので頻度は低い)。
+- DPI 認識が違うブラウザは、親子にするとブラウザ側が強制的にリセットされる (SetParent の注意書き)。エディタと同じ Per-Monitor V2 でなければ埋め込まず、理由を出す。
+- 管理者権限のエディタから普通権限のブラウザ窓は SetParent できない (UIPI)。失敗の理由を出し、窓は外に置いたまま。
+
+## 観測結果 (sub-01 / sub-02 の実機。Windows 11、Debug)
+
+実ブラウザはこの PC の Brave / Google Chrome / Microsoft Edge / Opera GX / Vivaldi。
+
+- **O1 特定と埋め込み**: 特定までの時間は 40〜310 ms 程度。Attach 自体は 1 回の同期処理で 52〜337 ms (撤退条件 E2 の 1 秒には届かないが、そのフレームは引っかかる)。
+  `GetParent` はメイン窓、DPI は 4 ブラウザとも一致。
+- **O2 描画 (R3)**: Brave / Chrome / Edge / Vivaldi とも、フリップモデルのスワップチェーン (`DXGI_SWAP_EFFECT_FLIP_DISCARD`) を持つ親窓の上の子窓として描かれる
+  (タブストリップとキャプションボタンはブラウザ自身の描画のまま子窓の内側に出る)。メニューで隠して戻す動作もキャプチャで確認した。
+- **O3 既に起動中**: Edge が起動中でも新しい窓を特定できた (起動した PID と窓の PID が違う)。Chrome のプロファイル選択窓のような単一インスタンスの窓が開いていると、
+  `--new-window` が新しい窓を作らず TimedOut になる (R13)。その場合は「既存の窓を取り込む」を使う。
+- **O4 キー・IME 入力**: 2026-11-19 にユーザーが Chrome / Edge で英字・日本語 IME の入力を確認した (撤退条件 E1 非該当)。自動の `SendInput` は埋め込まない単体の Chrome にも届かず、検証手段にならなかった。
+- **O5 切り離し**: 元のスタイル・親なし・可視の普通の窓へ戻り、タブは残る (Edge / Chrome のプローブで確認。撤退条件 E3 非該当)。
+- **O6 `WS_CLIPCHILDREN`**: 付けない状態でも静止キャプチャでは欠けが無かったが、ちらつきは静止画で判定できないので、安全側でメイン窓に付けたまま。要否は未決
+  (Runtime には影響しない。Editor 層からメイン窓へ足している)。
+- **O7 エディタが強制終了したとき**: 埋め込み中の窓は道連れで破棄される (ダミーは窓だけ消えてプロセスは残り、Chrome は最後の窓だったのでプロセスごと終了。タブは失われる)。
+  エディタ側にできる対策は無い。だから正常終了では必ず Detach する (決定 4)。
+- **O8 / R4 子窓がフォーカス中の `WM_INPUT` (生マウス)**: 自動計測は基線が無く結論なし。**未確定**。届くなら Play 中のマウスルックが動く可能性があるが、対処は別件。
+  キーは `WM_KILLFOCUS` で離されるのでゲームへ入らない想定 (手動確認)。
+- **O9 Opera GX**: ランチャーは `--new-window` を本体 (版ディレクトリ配下) へ渡し、配下判定で特定できた。ただし埋め込みは初回のみ成功し、その後はブラウザ側が親をデスクトップへ戻した (原因未特定)。
+  ベストエフォート扱い。親の喪失を検出して (`GetParent` がメイン窓でない状態が 150 ms 続いたら確定)、元のスタイルへ戻して Failed にし、`WS_CHILD` のまま取り残さない。
+
+撤退条件 (E1: Chrome と Edge の両方で描画かキー入力が効かない / E2: ブラウザが正常なのにエディタが 1 秒以上固まる / E3: Detach 後に窓が壊れる) にはどれも当たらなかった。
+
+## 影響
+
+- ABI・SimSnapshot・TypeId・シーン形式・Replay は変えない。`Runtime.exe` / `Server.exe` / `GameLogic` は関わらない。
+- 新しい `check_rules` の規則 20 (ブラウザ埋め込みの封じ込め)。`BrowserWindow.h` は `Windows.h` を include しない (HWND は `void*`)。
+- 検証用の口: `--browser-list` / `--browser-window` / `--browser-embed-probe <id>` / `--browser-dummy-window`。selftest は `browserembed` (Fast) と `browserembedproc` (Full、
+  `Editor.exe` 自身をダミー窓プロセスとして起動する。ダミーは 120 秒の寿命上限を持つ)。
+- 実プロセス間の挙動は実ブラウザの版に依存する (Chromium の窓のクラスやスタイルの扱いが変わると、特定や親の喪失の挙動が変わりうる)。
+
+## 未決のまま残したもの
+
+- O8 / R4 (子窓フォーカス中の生マウス) と、Opera GX の再埋め込みで親を外される原因。
+- ユーザー判断の保留 (推奨で仮決定し、Notion「M105 埋め込みブラウザ: ハーネスの保留質問」で回答待ち): IE を候補から外す、× とエディタ終了は切り離して残す、パネルは 1 つ、
+  自動起動しない、Opera GX はベストエフォート、通知は重なり判定から除外する。

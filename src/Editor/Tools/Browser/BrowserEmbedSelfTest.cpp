@@ -723,6 +723,36 @@ bool RunBrowserEmbedProcSelfTest()
             const int64_t lost = drv.Run(1500, [&] { return host.State() != BrowserState::Embedded; });
             check(lost >= 0 && lost <= 1000 && host.State() == BrowserState::Lost, "TerminateProcess -> Lost within 1 s");
         }
+
+        // 7b. Lost / Failed のあとでも、取り込み (存在しない窓は理由付きで Failed) と再起動で再開できる
+        check(!host.AttachExisting(nullptr) && host.State() == BrowserState::Failed &&
+                  host.FailReason() == BrowserFailReason::TargetGone,
+              "AttachExisting on a missing window -> Failed (TargetGone)");
+        check(host.Launch(exe, L"--browser-dummy-window", BrowserNowMs()), "Launch is accepted again from Failed");
+        reaper.Add(host.LastLaunchPid());
+        drv.Run(15000, [&] { return host.State() != BrowserState::Launching; });
+        check(host.State() == BrowserState::Embedded && host.FailReason() == BrowserFailReason::None,
+              "relaunch from Failed embeds again (reason cleared)");
+        if (host.State() == BrowserState::Embedded) {
+            const uint32_t pid = host.ChildPid();
+            TerminatePid(pid);
+            drv.Run(1500, [&] { return host.State() != BrowserState::Embedded; });
+            check(host.State() == BrowserState::Lost, "relaunched dummy killed -> Lost");
+            // Lost からの取り込み: 別のダミーを起動して今ある窓を AttachExisting する
+            BrowserHost other;
+            other.SetMainWindow(parent);
+            check(other.Launch(exe, L"--browser-dummy-window", BrowserNowMs()), "launch a dummy for AttachExisting");
+            reaper.Add(other.LastLaunchPid());
+            ProcDriver drvOther{ other, want };
+            drvOther.Run(15000, [&] { return other.State() != BrowserState::Launching; });
+            HWND w = static_cast<HWND>(other.ChildHwnd());
+            if (other.State() == BrowserState::Embedded && w != nullptr) {
+                check(other.Detach(), "detach the helper dummy");
+                check(host.AttachExisting(w) && host.State() == BrowserState::Embedded, "AttachExisting from Lost embeds a live window");
+                host.Detach();
+                PostMessageW(w, WM_CLOSE, 0, 0);
+            }
+        }
     }
 
     {
@@ -768,6 +798,7 @@ bool RunBrowserEmbedProcSelfTest()
             const uint32_t pid = host.ChildPid();
             const int64_t failed = drv.Run(6000, [&] { return host.State() != BrowserState::Embedded; });
             check(failed >= 0 && host.State() == BrowserState::Failed, "parent removed by the browser -> Failed");
+            check(host.FailReason() == BrowserFailReason::ParentRemoved, "Failed reason is ParentRemoved");
             const LONG_PTR style = GetWindowLongPtrW(child, GWL_STYLE);
             check((style & WS_CHILD) == 0 && (style & WS_CAPTION) == WS_CAPTION, "after parent loss: WS_CHILD removed, original style restored");
             check(GetParent(child) == nullptr && GetAncestor(child, GA_PARENT) == GetDesktopWindow(), "after parent loss: no parent");

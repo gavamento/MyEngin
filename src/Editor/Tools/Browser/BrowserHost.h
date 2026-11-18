@@ -146,6 +146,18 @@ struct BrowserWindowInfo {
     uint32_t pid = 0;
 };
 
+// Failed の理由の種別 (UI が ja/en の文言を選ぶ用。詳細は BrowserHost::Message の英語)
+enum class BrowserFailReason {
+    None,
+    MainWindowMissing,
+    TargetGone,       // 取り込もうとした窓が無い
+    NotResponding,    // 取り込もうとした窓が応答なし
+    DpiMismatch,
+    SetParentFailed,  // Message に GetLastError 付き
+    ParentRemoved,    // ブラウザ側が親を外した
+    LaunchFailed,     // Message に GetLastError 付き
+};
+
 // 単調増加の現在時刻 (ms)。Editor の UI 状態にだけ使う (sim には持ち込まない)
 int64_t BrowserNowMs();
 
@@ -186,6 +198,8 @@ public:
     bool Hung() const { return status_.hung; }
     // 直前の結果の理由 (英語。UI の文字列は sub-02)
     const std::string& Message() const { return message_; }
+    // State() == Failed のときの理由の種別。それ以外は None
+    BrowserFailReason FailReason() const { return failReason_; }
     void* ChildHwnd() const { return childHwnd_; }
     // 観測・検証用
     uint32_t LastLaunchPid() const { return launchPid_; }
@@ -222,6 +236,7 @@ private:
     bool clipChildren_ = true;
     BrowserStatus status_;
     std::string message_;
+    BrowserFailReason failReason_ = BrowserFailReason::None;
     std::wstring launchExe_;
     std::vector<void*> snapshot_;
     int64_t launchedAtMs_ = 0;
