@@ -133,6 +133,14 @@ bool BrowserWindow::ResolveLaunchTarget(std::wstring& exe, BrowserFamily& family
     return !exe.empty();
 }
 
+BrowserImageMatch BrowserWindow::SelectedImageMatch() const
+{
+    // 「その他 (exe を指定)」はランチャー型 (別名の実体が窓を作る) があり得るので、ファイル名を問わず配下で絞る。
+    // 検出したブラウザは同名に限る (同じフォルダの更新プログラム等の窓を拾わない)
+    return ResolveSelectedIndex() < candidates_.size() ? BrowserImageMatch::SameFileName
+                                                       : BrowserImageMatch::AnyFileNameUnderDir;
+}
+
 bool BrowserWindow::StartLaunch()
 {
     if (!detected_) {
@@ -145,7 +153,7 @@ bool BrowserWindow::StartLaunch()
         return false;
     }
     const int64_t now = BrowserNowMs();
-    if (!host_.Launch(exe, BuildBrowserLaunchArgs(family, Utf8ToWide(urlBuf_)), now)) {
+    if (!host_.Launch(exe, BuildBrowserLaunchArgs(family, Utf8ToWide(urlBuf_)), now, SelectedImageMatch())) {
         return false;
     }
     embeddedName_ = name;
@@ -355,7 +363,7 @@ void BrowserWindow::DrawAttachExisting(bool canTarget)
         std::string name;
         existingWindows_.clear();
         if (ResolveLaunchTarget(exe, family, name)) {
-            existingWindows_ = EnumerateBrowserWindows(exe);
+            existingWindows_ = EnumerateBrowserWindows(exe, SelectedImageMatch());
         }
         ImGui::OpenPopup(kPopupId);
     }
@@ -462,6 +470,11 @@ void BrowserWindow::ApplyToHost(bool mainMinimized)
     if (!open && host_.State() == BrowserState::Embedded) {
         host_.ReturnFocusToMain();
         host_.Detach();
+    }
+    // 起動待ちなら待つのをやめるだけ。続けると、窓が見つかった瞬間に子窓化 (クライアント原点へ移動) してから
+    // 次のフレームで切り離すことになり、窓がエディタの左上に出て 1 フレームだけメニューに重なる
+    if (!open && host_.State() == BrowserState::Launching) {
+        host_.CancelLaunch();
     }
     BrowserVisibilityInput in;
     in.panelDrawn = panelDrawn_;

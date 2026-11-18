@@ -94,7 +94,8 @@
   1. snapshot に無い HWND
   2. `IsWindowVisible`、所有者なし (`GetWindow(GW_OWNER) == nullptr`)、`WS_EX_TOOLWINDOW` でない
   3. 窓の大きさが 200 x 150 px 以上 (起動途中の小窓・スプラッシュを除く)
-  4. 所有プロセスの実行ファイル (`QueryFullProcessImageNameW`) のファイル名が登録 exe と同じで、かつ**登録 exe のディレクトリの配下** (大文字小文字無視。Opera GX の版ディレクトリ対策 D5)
+  4. 所有プロセスの実行ファイル (`QueryFullProcessImageNameW`) のファイル名が登録 exe と同じで、かつ**登録 exe のディレクトリの配下** (大文字小文字無視。Opera GX の版ディレクトリ対策 D5)。
+     「その他 (exe を指定)」のときだけファイル名の一致は求めず、配下であることだけを見る (`BrowserImageMatch::AnyFileNameUnderDir`。別名の実体に窓を作らせるランチャー型 = ポータブル版への対策。review-1 #3)
 - 候補が 1 つ以上 → Z 順で最上位のもの (列挙順の先頭) を採る。採ったら 4.1.4 へ。
 - 15 秒たっても候補が無い → `TimedOut`。起動したブラウザの窓は外にあるまま。パネルは「見つけられなかった。既存の窓を取り込むで選べる」を出す。
 - 判定ロジック (1〜4 と選び方) は Win32 を呼ばない純関数に切り出し、selftest で通す。
@@ -110,6 +111,7 @@
   5. `SetWindowPos(... SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER)` でパネルの内容矩形 (メイン窓のクライアント座標) へ合わせる。
   6. UISTATE を同期する (`WM_CHANGEUISTATE` を Post。SetParent 公式の注意)。
 - Detach の順: `SetParent(child, nullptr)` → 元のスタイルへ戻す (SetParent 公式: 親を NULL にした**後**で WS_CHILD を外し WS_POPUP 等を戻す。sub-01 round 1 で修正) → 画面上の**今の位置** (パネルがあった場所) に控えたサイズで置き直し、表示・前面化。応答なしなら Detach をしない (同期で待たされるため。D12)。
+  置き直す矩形は、その矩形が乗るモニタ (`MonitorFromRect` + `MONITOR_DEFAULTTONEAREST`) の作業領域 (`GetMonitorInfo` の `rcWork`) に収める。はみ出す分は位置をずらし、それでも入らない辺だけ作業領域の大きさへ縮める (純関数 `FitBrowserRectToWorkArea`。review-1 #2: Edge の背の高い窓が下へ 320 px はみ出した)。親の喪失で戻すとき (4.1.7) も同じ。
 - エディタのメイン窓には埋め込み時に `WS_CLIPCHILDREN` を足す (Editor 層から `SetWindowLongPtrW`。Runtime には影響しない)。要否は sub-01 で観測し、不要なら足さない (結果を ADR-040 に残す)。
 
 #### 4.1.5 追従と表示切替 (airspace)
@@ -154,13 +156,15 @@ Closed / Lost / TimedOut / Failed ──「起動」/「既存の窓を取り込
 
 #### 4.1.8 既存の窓を取り込む
 
-- 選んだブラウザ (4.1.3 の 2〜4 を満たす、snapshot 条件なし) の今ある窓を「タイトル (PID)」で並べ、選んだものを Attach する。
+- 選んだブラウザ (4.1.3 の 2〜4 を満たす、snapshot 条件なし) の今ある窓を「タイトル (PID)」で並べ、選んだものを Attach する。「その他」のときの exe の突き合わせ (配下ならファイル名を問わない) も 4.1.3 の 4 と同じ。
+- タイトルは `GetWindowTextW` で読む (他プロセスの窓へ `WM_GETTEXT` を送らないので、忙しい・応答なしの窓でも待たされない。review-1 #5)。
 - 自動特定が TimedOut のとき、および Idle のときに使える。
 
 #### 4.1.9 エディタ終了・パネルの ×
 
 - `EditorApp::OnShutdown` (メイン窓の `Destroy` より前。`src/Engine/Engine/Loop/EngineLoop.cpp:3632` → `:3659`) で Embedded なら Detach する (D14)。
 - パネルの × (閉じる) も Detach。ブラウザを閉じるのは「閉じる」ボタンだけ。
+- 起動待ち (Launching) 中のパネルの × は `CancelLaunch` (待つのをやめるだけ。ブラウザは閉じず、後から出た窓は普通のトップレベル窓のまま)。待ち続けると、窓が見つかった瞬間に子窓化してから次のフレームで切り離すことになり、窓がエディタの左上へ動いて 1 フレームだけメニューに重なる (review-1 #1)。
 - エディタがクラッシュしたときの子窓の運命は sub-01 で観測し、ADR-040 と 7. に記録する (エディタ側で対策できる範囲は無い)。
 
 ### 4.2 データ・保存形式・互換性
@@ -266,4 +270,5 @@ Closed / Lost / TimedOut / Failed ──「起動」/「既存の窓を取り込
   - 7. に sub-01 の観測結果 (R2 / R4 / R5 / R7) と R9〜R11 を足した。
 - 2026-11-18 sub-01 round 2 (coder SELF_EVAL): 4.1.7 に親の喪失の確定時間 150 ms (`kBrowserParentLostConfirmMs`) と「Update はパネル非表示のフレームでも呼ぶ」を書き足した (coder の [追加] を採用。強制終了の競合の実測による)。7. に R12 を足した。
 - 2026-11-19 sub-02 round 1 (coder SELF_EVAL / planner): 4.1.5 条件 6 で ToastCenter の通知を重なり判定から除外、4.1.6 のフォーカス返しを「子窓かその子孫にフォーカスがあるとき」に限定 (coder の逸脱を採用)、4.5 のダミー窓に寿命の上限、7. R3 を確認済みに、R13 を追加。O4 は 2026-11-19 にユーザーが確認済み (Chrome / Edge で英字・日本語 IME を入力できた。E1 非該当)。
+- 2026-11-19 review round 1 の minor をメインセッションで修正 (ユーザー指示「直して」): #1 4.1.9 に Launching 中の × = CancelLaunch、#2 4.1.4 に切り離し矩形の作業領域への収め、#3 4.1.3 の 4 / 4.1.8 に「その他」のときのファイル名を問わない配下判定、#5 4.1.8 にタイトルの読み方。#4 はコメントだけ。
 - 2026-11-19 sub-03 round 1 (coder SELF_EVAL): 失敗理由を種別 (`BrowserFailReason`) で持って ja/en の文言を選ぶ形を採用。4.5 に probe id `dummy` / `dummy-hang` を追記。結果行の文言の逸脱 (Closed / Lost にやり直しの案内、TimedOut は秒数を書かない) を採用 — 4.3 の例文は例示であり、定数と文言の数字がずれるのを避ける方が正しい。

@@ -29,12 +29,12 @@
 - 事前調査: エンジン内に Web 表示は無い (ShellExecuteW で既定ブラウザに URL を渡すだけ: src/Editor/App/EditorApp.cpp:991, src/Editor/Update/UpdateWindow.cpp:64)。ImGui は DockingEnable のみ、ViewportsEnable 無効 (src/Engine/Renderer/ImGui/ImGuiRenderer.cpp:28)
 - planner (2026-11-18): spec.md / sub-01〜03 を作成 (ユーザーへの直接質問なし、裁定と `[ユーザーに聞ける]` は spec 2. の D3/D7/D14/D16/D17)。sub-01 は撤退条件 E1〜E3 付きの実現性試作 — 当たったら sub-02 へ進まず planner へ戻す。番号: ADR-040、check_rules 規則 20 を使う予定 (ABI / SimSnapshot / TypeId は変更なし)
 - 完了 (2026-11-19、review round 1 PASS)。コミット 9b373892 / cb0aa48f / acdd0a3f、未 push。ABI / SimSnapshot / TypeId 変更なし、ADR-040、check_rules 規則 20
-- 残った minor (review-1.md):
+- 残った minor (review-1.md) → **2026-11-19 メインセッションで 5 件とも修正** (ユーザー指示「直して」。harness 外。spec 8. 変更履歴に記録)。Edge の実測で切り離し後の矩形 (332,151,1426,1392) = 作業領域の下端ちょうど (修正前は 320 px はみ出し):
   1. [planner] Launching 中のパネル × の振る舞いが仕様に無い (spec 4.1.9 に CancelLaunch を足す)
   2. [planner] 切り離し時の矩形をモニタ作業領域に収めていない (Edge で下端 320 px はみ出し実測。MonitorFromRect + rcWork)
   3. [planner] 「その他 (exe)」がランチャー型だと自動特定も取り込みも不可 (取り込み一覧に「すべての窓」等)
   4. [coder] 古い申し送りコメント 2 件 (EditorApp.h:116、BrowserHost.h:199)
   5. [coder] WindowTitleNoBlock のコメントが公式と逆。GetWindowTextW へ替える (BrowserHost.cpp:127-137)
-- 未取得: tools\replay_verify.bat の通し exit 0 (残存プロセス 2412/14332/38416 = 旧 Editor.locked1.exe と Chrome 8540 が nethost.dll を掴む。同じ 24 ジョブは手動で all PASS)。--selftest-full はリポジトリルートで 127 suites 0 failed 取得済み
+- tools\replay_verify.bat の通し: **2026-11-19 minor 修正後に exit 0** (MYE_REPLAY_JOBS=3、24 ジョブ all PASS、531.6 s。残存プロセスは消えていた)。--selftest-full はリポジトリルートで 127 suites 0 failed 取得済み (minor 修正前)。修正後は browserembed / browserembedproc を個別に PASS
 - 人の手の確認待ち: spec 5-7〜5-10、5-11/5-12 の実ブラウザ・再起動部分、sub-03 受け入れ 1/3 (取り込みの実走はこれだけ)、R4 (O8)。手順は docs/test_checklists.md の M105 節
 - Notion 保留質問 Q-1〜Q-7 回答待ち (推奨で仮決定、ADR-040 の未決に記載)

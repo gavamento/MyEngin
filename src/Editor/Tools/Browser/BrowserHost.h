@@ -31,6 +31,10 @@ struct BrowserRect {
     }
 };
 
+// r を work (モニタの作業領域) に収める。はみ出す分は位置をずらし、それでも入らない辺だけ work の大きさへ縮める。
+// 切り離した窓が画面外へ出て、タイトルバーに手が届かなくなるのを防ぐ。work が空なら r をそのまま返す
+BrowserRect FitBrowserRectToWorkArea(const BrowserRect& r, const BrowserRect& work);
+
 // ---- 窓の特定 (Win32 を呼ばない純関数) ----
 
 // トップレベル窓 1 枚の観測。EnumWindows の列挙順 (Z 順の上から) で並べて渡す
@@ -47,18 +51,29 @@ struct BrowserWindowObservation {
 constexpr int kBrowserMinWindowWidth = 200;
 constexpr int kBrowserMinWindowHeight = 150;
 
-// 所有プロセスの exe が登録 exe と同じファイル名で、登録 exe のディレクトリの配下か (大文字小文字無視)。
+// 窓の所有プロセスの exe を、登録 exe とどう突き合わせるか
+enum class BrowserImageMatch {
+    // 同じファイル名で、登録 exe のディレクトリの配下 (検出したブラウザ。別名の exe を巻き込まない)
+    SameFileName,
+    // 登録 exe のディレクトリの配下ならファイル名は問わない (「その他 (exe を指定)」用。
+    // 別名の実体に窓を作らせるランチャー型 = ポータブル版の FirefoxPortable.exe → App\Firefox64\firefox.exe 等)
+    AnyFileNameUnderDir,
+};
+
+// 所有プロセスの exe が登録 exe のディレクトリの配下か (大文字小文字無視)。SameFileName ならファイル名も一致を求める。
 // Opera GX のランチャー (...\Opera GX\opera.exe) の実体 (...\Opera GX\<版>\opera.exe) を同一視するための配下判定
-bool BrowserImageMatchesRegistered(const std::wstring& registeredExe, const std::wstring& processImage);
+bool BrowserImageMatchesRegistered(const std::wstring& registeredExe, const std::wstring& processImage,
+                                   BrowserImageMatch match = BrowserImageMatch::SameFileName);
 
 // 窓の候補条件 (snapshot に無い / 可視・所有者なし・ツール窓でない / 200x150 以上 / exe 一致) を全部満たす観測の添字を、
 // 入力順 (= Z 順の上から) に返す。snapshot が nullptr のとき 1 つ目の条件は見ない (既存の窓を取り込む用)
 std::vector<size_t> FilterBrowserWindows(const std::vector<BrowserWindowObservation>& zOrdered,
-                                         const std::vector<void*>* snapshot, const std::wstring& registeredExe);
+                                         const std::vector<void*>* snapshot, const std::wstring& registeredExe,
+                                         BrowserImageMatch match = BrowserImageMatch::SameFileName);
 
 // FilterBrowserWindows の先頭 (Z 順で最上位)。候補なしは -1
 int PickBrowserWindow(const std::vector<BrowserWindowObservation>& zOrdered, const std::vector<void*>* snapshot,
-                      const std::wstring& registeredExe);
+                      const std::wstring& registeredExe, BrowserImageMatch match = BrowserImageMatch::SameFileName);
 
 // ---- 状態機械 (純関数) ----
 
@@ -162,7 +177,8 @@ enum class BrowserFailReason {
 int64_t BrowserNowMs();
 
 // 登録 exe の今ある窓 (取り込み用。snapshot 条件なし)
-std::vector<BrowserWindowInfo> EnumerateBrowserWindows(const std::wstring& registeredExe);
+std::vector<BrowserWindowInfo> EnumerateBrowserWindows(const std::wstring& registeredExe,
+                                                       BrowserImageMatch match = BrowserImageMatch::SameFileName);
 
 // 別プロセスのブラウザ窓を 1 枚だけメイン窓の子にする。UI スレッド専用。
 // SendMessage 系の同期呼び出しをブラウザ窓へ投げない (入力キューが結合するため。応答なしなら SetParent / SetWindowPos も呼ばない)
@@ -178,8 +194,10 @@ public:
     // true = 埋め込み時に親へ WS_CLIPCHILDREN を足す (既定 true。要否の観測用に切れる)
     void SetClipChildren(bool on) { clipChildren_ = on; }
 
-    // exe を args (exe を除く) で起動し、窓の特定を始める。Idle / Closed / Lost / TimedOut / Failed からだけ
-    bool Launch(const std::wstring& exePath, const std::wstring& args, int64_t nowMs);
+    // exe を args (exe を除く) で起動し、窓の特定を始める。Idle / Closed / Lost / TimedOut / Failed からだけ。
+    // match は特定のときの exe の突き合わせ方
+    bool Launch(const std::wstring& exePath, const std::wstring& args, int64_t nowMs,
+                BrowserImageMatch match = BrowserImageMatch::SameFileName);
     // 既存の窓を Attach する。Idle / Closed / Lost / TimedOut / Failed からだけ
     bool AttachExisting(void* hwnd);
     // 元のスタイル・画面上の今の位置に戻して外へ出す。応答なしなら何もせず false
@@ -188,7 +206,7 @@ public:
     void RequestClose();
     // 子窓 (その子孫を含む) がキーボードフォーカスを持っていればメイン窓へ戻す。応答なしなら何もしない。UI スレッド専用
     void ReturnFocusToMain();
-    // 待つのをやめる (起動したブラウザは閉じない)
+    // 待つのをやめる (起動したブラウザは閉じない。後から出た窓は普通のトップレベル窓のまま)
     void CancelLaunch();
     // 毎フレーム (全 ImGui 窓の提出が終わった後に呼ぶ)
     void Update(const BrowserFrameInput& in);
@@ -196,7 +214,7 @@ public:
     const BrowserStatus& Status() const { return status_; }
     BrowserState State() const { return status_.state; }
     bool Hung() const { return status_.hung; }
-    // 直前の結果の理由 (英語。UI の文字列は sub-02)
+    // 直前の結果の理由 (英語。ログと診断用。UI は FailReason から Tr の文言を選ぶ)
     const std::string& Message() const { return message_; }
     // State() == Failed のときの理由の種別。それ以外は None
     BrowserFailReason FailReason() const { return failReason_; }
@@ -222,7 +240,8 @@ private:
     void UpdateEmbedded(const BrowserFrameInput& in);
     bool AttachWindow(void* hwnd);
     // 子窓化した窓を元のスタイルの普通のトップレベル窓へ戻す (Detach と、親を失ったときの Failed で共有)。
-    // 親がデスクトップのまま (ブラウザ側が外した) なら SetParent はしない。位置は今の画面位置、大きさは saved の通常時
+    // 親がデスクトップのまま (ブラウザ側が外した) なら SetParent はしない。位置は今の画面位置、大きさは saved の通常時で、
+    // 窓の乗るモニタの作業領域に収める
     static void RestoreTopLevel(void* childHwnd, const SavedWindow& saved);
     void ReleaseChild();
     void SetResult(BrowserState state, std::string message);
@@ -238,6 +257,7 @@ private:
     std::string message_;
     BrowserFailReason failReason_ = BrowserFailReason::None;
     std::wstring launchExe_;
+    BrowserImageMatch launchMatch_ = BrowserImageMatch::SameFileName;
     std::vector<void*> snapshot_;
     int64_t launchedAtMs_ = 0;
     int64_t nextPollMs_ = 0;

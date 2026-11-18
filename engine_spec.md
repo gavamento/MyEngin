@@ -1604,7 +1604,8 @@ Runtime / GameLogic / Server never see it and the simulation, replay and `SimSna
   excluded, the default browser marked) plus *Other (choose exe)...*. Detection runs when the panel opens and on *Re-detect*, never per frame.
   *Launch* starts the browser in a new window with the normal profile (`--new-window` [+ start URL] for Chromium-family, `-new-window` for Firefox-family) and
   finds the new window by diffing the top-level windows before and after the launch (the exe of the window's process must have the registered exe's file name
-  under the registered exe's directory; 15 s limit). Nothing is ever started automatically, and automated launches (`--selftest`, `--screenshot`, replay) never start a browser.
+  under the registered exe's directory — for *Other* any file name under that directory, so launcher-type exes such as portable builds work; 15 s limit).
+  Closing the panel while it is still waiting only cancels the wait; the browser window that appears later stays an ordinary window. Nothing is ever started automatically, and automated launches (`--selftest`, `--screenshot`, replay) never start a browser.
 - **Attach existing window...** (from Idle / Closed / Lost / TimedOut / Failed) lists the selected browser's current windows as "title (PID)" — enumerated only when the
   button is pressed — and embeds the chosen one. It is the way out when the automatic search times out (for example a single-instance window such as Chrome's
   profile picker swallows `--new-window`).
@@ -1614,7 +1615,7 @@ Runtime / GameLogic / Server never see it and the simulation, replay and `SimSna
   If the browser resizes itself (full screen, maximize) the editor puts it back, at most 10 times per second.
 - **Focus.** Clicking the browser gives it the keyboard: editor shortcuts do not work while it has focus. A mouse press anywhere else in the editor window takes the focus back
   (only when the browser had it), and hiding the child also returns it.
-- **Detach / Close / × / exit.** *Detach*, the panel's × and a normal editor exit return the window to an ordinary top-level window with its original style at its current screen position (tabs are kept).
+- **Detach / Close / × / exit.** *Detach*, the panel's × and a normal editor exit return the window to an ordinary top-level window with its original style at its current screen position, moved (and if needed shrunk) into the work area of the monitor it lands on (tabs are kept).
   *Close* posts `WM_CLOSE` to the browser. After a crash of the editor the child window dies with it (tabs lost) — nothing on the editor side can prevent that.
 - **Failures never stop the editor.** One result line is shown with the *Launch* / *Attach existing window...* buttons: the browser window was closed (Closed), the browser exited (Lost: window gone and the process
   exited with a non-zero code), no window was found in time (TimedOut), or it could not be embedded (Failed: DPI awareness differs, `SetParent` refused — for example a permission

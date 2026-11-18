@@ -134,6 +134,19 @@ void TestWindowPicker(const auto& check)
     check(!BrowserImageMatchesRegistered(reg, L""), "image: unknown process image");
     check(!BrowserImageMatchesRegistered(L"", reg), "image: empty registered exe");
 
+    // 「その他 (exe を指定)」: ランチャー型 (別名の実体が窓を作る) はファイル名を問わず配下で一致
+    const std::wstring portable = L"D:\\Tools\\FirefoxPortable\\FirefoxPortable.exe";
+    const std::wstring portableReal = L"D:\\Tools\\FirefoxPortable\\App\\Firefox64\\firefox.exe";
+    const BrowserImageMatch anyName = BrowserImageMatch::AnyFileNameUnderDir;
+    check(!BrowserImageMatchesRegistered(portable, portableReal), "image: launcher's real exe does not match by default (same file name)");
+    check(BrowserImageMatchesRegistered(portable, portableReal, anyName), "image: launcher's real exe under the directory matches (any file name)");
+    check(BrowserImageMatchesRegistered(portable, portable, anyName), "image: the launcher itself matches (any file name)");
+    check(!BrowserImageMatchesRegistered(portable, L"D:\\Tools\\FirefoxPortable2\\firefox.exe", anyName),
+          "image: any file name still requires a real subdirectory (no prefix match)");
+    check(!BrowserImageMatchesRegistered(portable, L"C:\\Program Files\\Mozilla Firefox\\firefox.exe", anyName),
+          "image: any file name rejects images outside the directory");
+    check(!BrowserImageMatchesRegistered(portable, L"", anyName), "image: any file name rejects an unknown image");
+
     const std::wstring chrome = L"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
     const std::wstring edge = L"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
     void* const a = reinterpret_cast<void*>(0x10);
@@ -163,6 +176,35 @@ void TestWindowPicker(const auto& check)
     const std::vector<BrowserWindowObservation> edge200 = { Win(a, 200, 150, chrome.c_str()) };
     check(PickBrowserWindow(edge200, nullptr, chrome) == 0, "pick: 200x150 is accepted (boundary)");
     check(PickBrowserWindow({}, nullptr, chrome) == -1, "pick: empty list");
+
+    const std::vector<BrowserWindowObservation> launcher = {
+        Win(a, 1000, 700, chrome.c_str()),
+        Win(b, 1000, 700, portableReal.c_str()),
+    };
+    check(PickBrowserWindow(launcher, nullptr, portable) == -1, "pick: launcher-type exe finds nothing by file name");
+    check(PickBrowserWindow(launcher, nullptr, portable, anyName) == 1, "pick: launcher-type exe finds the real window under its directory");
+    check(FilterBrowserWindows(launcher, nullptr, portable, anyName).size() == 1, "filter: any file name does not pick other browsers");
+}
+
+void TestFitToWorkArea(const auto& check)
+{
+    const BrowserRect work{ 0, 0, 2560, 1392 };
+    // 実測の再現: Edge (1094x1241) をパネル位置 (410, 471) に置くと下端が 320 px はみ出す
+    const BrowserRect edge{ 410, 471, 410 + 1094, 471 + 1241 };
+    const BrowserRect fitEdge = FitBrowserRectToWorkArea(edge, work);
+    check(fitEdge == BrowserRect{ 410, 151, 1504, 1392 }, "fit: overflowing bottom is shifted up, size kept");
+    const BrowserRect inside{ 100, 100, 900, 700 };
+    check(FitBrowserRectToWorkArea(inside, work) == inside, "fit: a rect already inside is unchanged");
+    check(FitBrowserRectToWorkArea(BrowserRect{ -300, -50, 500, 550 }, work) == BrowserRect{ 0, 0, 800, 600 },
+          "fit: overflowing top-left is shifted in");
+    check(FitBrowserRectToWorkArea(BrowserRect{ 2400, 1300, 3200, 1900 }, work) == BrowserRect{ 1760, 792, 2560, 1392 },
+          "fit: overflowing bottom-right is shifted in");
+    check(FitBrowserRectToWorkArea(BrowserRect{ 100, 100, 3100, 2100 }, work) == work, "fit: larger than the work area shrinks to it");
+    // 2 枚目のモニタ (左側、負の座標) でも同じ
+    const BrowserRect left{ -1920, 0, 0, 1040 };
+    check(FitBrowserRectToWorkArea(BrowserRect{ -800, 600, 200, 1300 }, left) == BrowserRect{ -1000, 340, 0, 1040 },
+          "fit: works on a monitor with negative coordinates");
+    check(FitBrowserRectToWorkArea(inside, BrowserRect{}) == inside, "fit: empty work area leaves the rect as is");
 }
 
 void TestStateMachine(const auto& check)
@@ -612,6 +654,7 @@ bool RunBrowserEmbedSelfTest()
     TestExtractAndFamily(check);
     TestCandidates(check);
     TestWindowPicker(check);
+    TestFitToWorkArea(check);
     TestStateMachine(check);
     TestVisibility(check);
     TestRateLimiter(check);
@@ -696,6 +739,14 @@ bool RunBrowserEmbedProcSelfTest()
             GetWindowRect(child, &rc);
             check(rc.right - rc.left == 800 && rc.bottom - rc.top == 600, "after Detach: original size restored");
             check(IsWindowVisible(child) != FALSE, "after Detach: visible");
+            {
+                MONITORINFO mi = {};
+                mi.cbSize = sizeof(mi);
+                const bool gotMonitor = GetMonitorInfoW(MonitorFromWindow(child, MONITOR_DEFAULTTONEAREST), &mi) != FALSE;
+                check(gotMonitor && rc.left >= mi.rcWork.left && rc.top >= mi.rcWork.top && rc.right <= mi.rcWork.right &&
+                          rc.bottom <= mi.rcWork.bottom,
+                      "after Detach: window lies inside its monitor's work area");
+            }
 
             // 5. 再 Attach
             check(host.AttachExisting(child) && host.State() == BrowserState::Embedded, "AttachExisting re-embeds the detached window");
@@ -808,6 +859,39 @@ bool RunBrowserEmbedProcSelfTest()
             check(rc.right - rc.left == 800 && rc.bottom - rc.top == 600, "after parent loss: original size restored");
             check(host.ChildHwnd() == nullptr, "after parent loss: host lets go of the window");
             TerminatePid(pid);
+        }
+    }
+
+    {
+        // 10. 起動待ち中にパネルを閉じた: 待つのをやめるだけ。後から出た窓は子窓化されず、普通のトップレベル窓のまま
+        BrowserWindow win;
+        win.SetMainWindow(parent);
+        check(win.Host().Launch(exe, L"--browser-dummy-window", BrowserNowMs()), "launch a dummy, then close the panel while launching");
+        const uint32_t pid = win.Host().LastLaunchPid();
+        reaper.Add(pid);
+        win.open = false;
+        win.ApplyToHost(false);
+        check(win.Host().State() == BrowserState::Idle, "panel closed while Launching -> launch canceled (Idle)");
+        HWND dummy = nullptr;
+        const int64_t t0 = BrowserNowMs();
+        while (dummy == nullptr && BrowserNowMs() - t0 < 15000) {
+            Pump();
+            win.ApplyToHost(false);
+            for (const BrowserWindowInfo& w : EnumerateBrowserWindows(exe)) {
+                if (w.pid == pid) {
+                    dummy = static_cast<HWND>(w.hwnd);
+                }
+            }
+            Sleep(16);
+        }
+        check(dummy != nullptr, "the canceled dummy still opens its window");
+        if (dummy != nullptr) {
+            win.ApplyToHost(false);
+            const LONG_PTR style = GetWindowLongPtrW(dummy, GWL_STYLE);
+            check(win.Host().State() == BrowserState::Idle && win.Host().ChildHwnd() == nullptr,
+                  "canceled launch never embeds the window that appears later");
+            check(GetParent(dummy) == nullptr && (style & WS_CHILD) == 0, "the late window stays a normal top-level window");
+            PostMessageW(dummy, WM_CLOSE, 0, 0);
         }
     }
 

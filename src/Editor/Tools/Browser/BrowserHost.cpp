@@ -126,14 +126,12 @@ std::vector<BrowserWindowObservation> ObserveTopLevelWindows(HWND main, const st
 
 std::wstring WindowTitleNoBlock(HWND hwnd)
 {
-    // GetWindowText は他プロセスの窓だと同期メッセージになる。応答なしの窓で固まらないよう打ち切り付きで取る
+    // GetWindowTextW は他プロセスの窓へ WM_GETTEXT を送らず、窓のキャプションを内部から読む (公式の Remarks:
+    // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowtextw)。
+    // 応答なし・忙しいブラウザ窓でも UI スレッドが待たされない。WM_GETTEXT を自前で送る SendMessageTimeout は待ちうるので使わない
     wchar_t buf[256] = {};
-    DWORD_PTR len = 0;
-    if (SendMessageTimeoutW(hwnd, WM_GETTEXT, static_cast<WPARAM>(std::size(buf)), reinterpret_cast<LPARAM>(buf),
-                            SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &len) == 0) {
-        return std::wstring();
-    }
-    return std::wstring(buf);
+    const int len = GetWindowTextW(hwnd, buf, static_cast<int>(std::size(buf)));
+    return std::wstring(buf, len > 0 ? static_cast<size_t>(len) : 0);
 }
 
 // 窓の画面座標の矩形をメイン窓のクライアント座標へ
@@ -152,7 +150,20 @@ constexpr LONG_PTR kTopLevelStyleBits = WS_POPUP | WS_CAPTION | WS_THICKFRAME | 
 
 // ---- 純関数 ----
 
-bool BrowserImageMatchesRegistered(const std::wstring& registeredExe, const std::wstring& processImage)
+BrowserRect FitBrowserRectToWorkArea(const BrowserRect& r, const BrowserRect& work)
+{
+    if (work.Empty()) {
+        return r;
+    }
+    const int width = (std::min)((std::max)(r.Width(), 0), work.Width());
+    const int height = (std::min)((std::max)(r.Height(), 0), work.Height());
+    // 右下を先に押し戻し、次に左上を押し戻す (左上 = タイトルバー側を必ず作業領域の中に置く)
+    const int left = (std::max)((std::min)(r.left, work.right - width), work.left);
+    const int top = (std::max)((std::min)(r.top, work.bottom - height), work.top);
+    return BrowserRect{ left, top, left + width, top + height };
+}
+
+bool BrowserImageMatchesRegistered(const std::wstring& registeredExe, const std::wstring& processImage, BrowserImageMatch match)
 {
     if (registeredExe.empty() || processImage.empty()) {
         return false;
@@ -160,7 +171,7 @@ bool BrowserImageMatchesRegistered(const std::wstring& registeredExe, const std:
     std::wstring regDir, regName, imgDir, imgName;
     SplitPath(registeredExe, regDir, regName);
     SplitPath(processImage, imgDir, imgName);
-    if (regName != imgName) {
+    if (match == BrowserImageMatch::SameFileName && regName != imgName) {
         return false;
     }
     if (imgDir == regDir) {
@@ -171,7 +182,8 @@ bool BrowserImageMatchesRegistered(const std::wstring& registeredExe, const std:
 }
 
 std::vector<size_t> FilterBrowserWindows(const std::vector<BrowserWindowObservation>& zOrdered,
-                                         const std::vector<void*>* snapshot, const std::wstring& registeredExe)
+                                         const std::vector<void*>* snapshot, const std::wstring& registeredExe,
+                                         BrowserImageMatch match)
 {
     std::vector<size_t> out;
     for (size_t i = 0; i < zOrdered.size(); ++i) {
@@ -185,7 +197,7 @@ std::vector<size_t> FilterBrowserWindows(const std::vector<BrowserWindowObservat
         if (o.width < kBrowserMinWindowWidth || o.height < kBrowserMinWindowHeight) {
             continue;
         }
-        if (!BrowserImageMatchesRegistered(registeredExe, o.imagePath)) {
+        if (!BrowserImageMatchesRegistered(registeredExe, o.imagePath, match)) {
             continue;
         }
         out.push_back(i);
@@ -194,9 +206,9 @@ std::vector<size_t> FilterBrowserWindows(const std::vector<BrowserWindowObservat
 }
 
 int PickBrowserWindow(const std::vector<BrowserWindowObservation>& zOrdered, const std::vector<void*>* snapshot,
-                      const std::wstring& registeredExe)
+                      const std::wstring& registeredExe, BrowserImageMatch match)
 {
-    const std::vector<size_t> all = FilterBrowserWindows(zOrdered, snapshot, registeredExe);
+    const std::vector<size_t> all = FilterBrowserWindows(zOrdered, snapshot, registeredExe, match);
     return all.empty() ? -1 : static_cast<int>(all.front());
 }
 
@@ -275,11 +287,11 @@ int64_t BrowserNowMs()
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-std::vector<BrowserWindowInfo> EnumerateBrowserWindows(const std::wstring& registeredExe)
+std::vector<BrowserWindowInfo> EnumerateBrowserWindows(const std::wstring& registeredExe, BrowserImageMatch match)
 {
     const std::vector<BrowserWindowObservation> obs = ObserveTopLevelWindows(nullptr, nullptr, true);
     std::vector<BrowserWindowInfo> out;
-    for (size_t i : FilterBrowserWindows(obs, nullptr, registeredExe)) {
+    for (size_t i : FilterBrowserWindows(obs, nullptr, registeredExe, match)) {
         BrowserWindowInfo info;
         info.hwnd = obs[i].hwnd;
         info.title = WindowTitleNoBlock(AsHwnd(obs[i].hwnd));
@@ -312,13 +324,14 @@ void BrowserHost::SetResult(BrowserState state, std::string message)
     }
 }
 
-bool BrowserHost::Launch(const std::wstring& exePath, const std::wstring& args, int64_t nowMs)
+bool BrowserHost::Launch(const std::wstring& exePath, const std::wstring& args, int64_t nowMs, BrowserImageMatch match)
 {
     if (status_.state == BrowserState::Launching || status_.state == BrowserState::Embedded) {
         return false;
     }
     ReleaseChild();
     launchExe_ = exePath;
+    launchMatch_ = match;
     findElapsedMs_ = -1;
     // 起動の直前に、可視・所有者なしのトップレベル窓を控える (差分で新しい窓を特定する)
     snapshot_.clear();
@@ -488,8 +501,16 @@ void BrowserHost::RestoreTopLevel(void* childHwnd, const SavedWindow& saved)
     // 子窓のうちに、今ある画面上の位置を控える (パネルがあった場所)。親がデスクトップなら窓の座標がそのまま画面座標
     RECT screen = {};
     GetWindowRect(child, &screen);
-    const BrowserRect target{ screen.left, screen.top, screen.left + saved.normalRect.Width(),
-                              screen.top + saved.normalRect.Height() };
+    BrowserRect target{ screen.left, screen.top, screen.left + saved.normalRect.Width(),
+                        screen.top + saved.normalRect.Height() };
+    // 背の高い窓をパネルの位置に置くと画面の下へはみ出す (Edge で 320 px を実測)。乗るモニタの作業領域
+    // (タスクバーを除く) に収める。モニタの判定は置こうとする矩形で行い、どのモニタにも掛からなければ最寄りのモニタ
+    const RECT targetRc{ target.left, target.top, target.right, target.bottom };
+    MONITORINFO mi = {};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(MonitorFromRect(&targetRc, MONITOR_DEFAULTTONEAREST), &mi)) {
+        target = FitBrowserRectToWorkArea(target, ToBrowserRect(mi.rcWork));
+    }
     // 公式の注意: SetParent(NULL) の後で WS_CHILD を外し WS_POPUP 等を戻す。親が既にデスクトップなら付け替えない
     if (GetAncestor(child, GA_PARENT) != GetDesktopWindow()) {
         SetParent(child, nullptr);
@@ -572,7 +593,7 @@ void BrowserHost::UpdateLaunching(int64_t nowMs)
         nextPollMs_ = nowMs + kBrowserLaunchPollMs;
         const std::vector<BrowserWindowObservation> windows =
             ObserveTopLevelWindows(AsHwnd(mainHwnd_), &snapshot_, true);
-        const int idx = PickBrowserWindow(windows, &snapshot_, launchExe_);
+        const int idx = PickBrowserWindow(windows, &snapshot_, launchExe_, launchMatch_);
         if (idx >= 0) {
             obs.candidateFound = true;
             obs.attachFailed = !AttachWindow(windows[static_cast<size_t>(idx)].hwnd);

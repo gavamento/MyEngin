@@ -113,7 +113,7 @@ public:
     // パイプラインの成否 (M52b)。EditorMain がプロセスの終了コードへ載せる —
     // CI は「dist が出来たか」ではなく exit code で機械判定する
     int packageExitCode = 0;
-    // --browser-embed-probe (M105a): 実ブラウザの埋め込みの検証。id が空なら何もしない。sub-02 で窓に置き換わる薄い配線
+    // --browser-embed-probe (M105a): 実ブラウザ / ダミー窓の埋め込みを BrowserWindow 経由で実走する検証。id が空なら何もしない
     BrowserProbeOptions browserProbe;
     // --browser-window (M105b): ブラウザ窓を開いて起動する (ブラウザは起動しない。--screenshot で UI を撮る検証用)
     bool openBrowserWindow = false;

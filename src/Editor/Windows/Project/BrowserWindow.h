@@ -73,6 +73,8 @@ private:
     // 選択中の候補の添字。candidates_.size() = 「その他」
     size_t ResolveSelectedIndex() const;
     bool ResolveLaunchTarget(std::wstring& exe, BrowserFamily& family, std::string& name) const;
+    // 選択中の起動対象で、窓の exe をどう突き合わせるか (自動特定と「既存の窓を取り込む」の一覧で共通)
+    BrowserImageMatch SelectedImageMatch() const;
     void DrawIdle(const BrowserWindowHost& host);
     void DrawLaunching();
     void DrawEmbedded();
