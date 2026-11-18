@@ -129,6 +129,10 @@
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\SourceControlState.cpp" />
     <ClCompile Include="..\src\Editor\SourceControl\StageClassifier.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserCatalog.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserEmbedSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserHost.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserProbe.cpp" />
     <ClCompile Include="..\src\Editor\Tools\EngineIndexDump.cpp" />
     <ClCompile Include="..\src\Editor\Tools\EngineIndexDumpSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\FractureBakeCommit.cpp" />
@@ -288,6 +292,10 @@
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlSelfTest.h" />
     <ClInclude Include="..\src\Editor\SourceControl\SourceControlState.h" />
     <ClInclude Include="..\src\Editor\SourceControl\StageClassifier.h" />
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserCatalog.h" />
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserEmbedSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserHost.h" />
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserProbe.h" />
     <ClInclude Include="..\src\Editor\Tools\EngineIndexDump.h" />
     <ClInclude Include="..\src\Editor\Tools\EngineIndexDumpSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\FractureBakeCommit.h" />

@@ -18,6 +18,7 @@
 #include "Editor/Update/UpdateWindow.h"
 #include "Editor/Widgets/ToastCenter.h"
 #include "Editor/Tools/VisualStudioLauncher.h"
+#include "Editor/Tools/Browser/BrowserProbe.h"
 #include "Editor/Undo/UndoStack.h"
 #include "Editor/Windows/Animation/AnimationWindow.h"
 #include "Editor/Windows/Animation/AnimationPreviewWindow.h"
@@ -111,6 +112,10 @@ public:
     // パイプラインの成否 (M52b)。EditorMain がプロセスの終了コードへ載せる —
     // CI は「dist が出来たか」ではなく exit code で機械判定する
     int packageExitCode = 0;
+    // --browser-embed-probe (M105a): 実ブラウザの埋め込みの検証。id が空なら何もしない。sub-02 で窓に置き換わる薄い配線
+    BrowserProbeOptions browserProbe;
+    // プローブの終了コード (0 = 成功 / プローブ無し)。完了前にエディタが閉じられたら 1
+    int BrowserProbeExitCode() const { return browserProbe_ ? (browserProbe_->Finished() ? browserProbe_->ExitCode() : 1) : 0; }
 
 private:
     // 未保存変更ガード (M27b): dirty なら確認モーダルを経由して実行する
@@ -204,6 +209,7 @@ private:
     SourceControlWindow sourceControl_;
     // M104j: AI Change Tracking。窓 (M104k) と独立に生きる。設定が無効なら何も起動しない
     ChangeTrackingSession changeTracking_;
+    std::unique_ptr<BrowserEmbedProbe> browserProbe_; // M105a: --browser-embed-probe のときだけ作る
     // 自分の保存の直後のファイルの印 (保存の直後に編集を続けたとき、自分の保存の監視イベントを外部変更として確認しない)
     OwnSaveRecord ownSave_;
     AiChangesWindow aiChanges_; // M104k (既定は閉じている)

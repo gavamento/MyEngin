@@ -18,6 +18,8 @@
 #include "Editor/Project/ProjectRegistry.h"
 #include "Editor/Project/ProjectTemplates.h"
 #include "Editor/Tools/ModalTools.h" // M76b: --modal-voxelize
+#include "Editor/Tools/Browser/BrowserCatalog.h" // M105a: --browser-list
+#include "Editor/Tools/Browser/BrowserProbe.h"   // M105a: --browser-dummy-window / --browser-embed-probe
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
@@ -115,6 +117,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::wstring perfBenchOutput;         // --perf-bench FILE
     std::wstring dumpIndexPath;           // --dump-index FILE (M87a: エンジン索引を JSON へ書いて終了)
     std::string perfBenchCommit;           // --perf-commit SHA
+    bool browserList = false;             // --browser-list (M105a: 検出したブラウザを出して終了)
+    bool browserDummy = false;            // --browser-dummy-window (M105a: selftest 用のダミー窓プロセス)
+    int browserDummyHangMs = 0;           // --browser-dummy-hang-after-ms N
+    int browserDummyUnparentMs = 0;       // --browser-dummy-unparent-after-ms N
+    mye::BrowserProbeOptions browserProbe; // --browser-embed-probe ID (M105a: 実ブラウザの埋め込みの検証)
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -276,6 +283,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 managerFrames = _wtoi(argv[++i]);
             } else if (arg == L"--manager-shot" && i + 1 < argc) {
                 managerShot = argv[++i];
+            } else if (arg == L"--browser-list") {
+                browserList = true;
+            } else if (arg == L"--browser-dummy-window") {
+                browserDummy = true;
+            } else if (arg == L"--browser-dummy-hang-after-ms" && i + 1 < argc) {
+                browserDummyHangMs = _wtoi(argv[++i]);
+            } else if (arg == L"--browser-dummy-unparent-after-ms" && i + 1 < argc) {
+                browserDummyUnparentMs = _wtoi(argv[++i]);
+            } else if (arg == L"--browser-embed-probe" && i + 1 < argc) {
+                browserProbe.id = argv[++i];
+            } else if (arg == L"--browser-probe-url" && i + 1 < argc) {
+                browserProbe.url = argv[++i];
+            } else if (arg == L"--browser-probe-hold-ms" && i + 1 < argc) {
+                browserProbe.holdMs = _wtoi(argv[++i]);
+            } else if (arg == L"--browser-probe-clip" && i + 1 < argc) {
+                browserProbe.clipChildren = _wtoi(argv[++i]) != 0;
             } else if (arg == L"--lang" && i + 1 < argc) {
                 langOverride = argv[++i]; // M47a: UI 言語を明示指定 (検証用の A/B)
             }
@@ -303,7 +326,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                             || !config.replayRecordPath.empty() || !config.replayVerifyPath.empty()
                             || !sceneOverride.empty() || autoPlay || saveSceneOnStart
                             || pickTestFrame >= 0 || !selectName.empty() || perfRate > 0.0f
-                            || !editActorPath.empty() || !packageDir.empty()
+                            || !editActorPath.empty() || !packageDir.empty() || !browserProbe.id.empty()
                             || !config.hashDumpPath.empty() || config.crashTest != 0
                             || config.netRole != 0; // M52h: ネット起動もレガシー経路で回す
 
@@ -331,6 +354,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             std::fprintf(stderr, "create-project failed: %s\n", err.c_str());
         }
         return ok ? 0 : 1;
+    }
+
+    // --browser-list / --browser-dummy-window (M105a): ウィンドウも D3D も作らない早期分岐
+    if (browserList) {
+        return mye::RunBrowserListCli();
+    }
+    if (browserDummy) {
+        return mye::RunBrowserDummyWindow(browserDummyHangMs, browserDummyUnparentMs);
     }
 
     // --fracture-bench (M80k): ウィンドウも D3D も作らず World を直接操作するヘッドレス計測。
@@ -608,8 +639,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     app.selectName = selectName;
     app.pickTestFrame = pickTestFrame;
     app.sceneOverride = sceneOverride;
+    app.browserProbe = browserProbe;
     mye::EngineLoop loop;
     const int rc = loop.Run(config, app);
-    // --package の成否は終了コードへ載せる (M52b。エンジン自体の失敗が優先)
-    return rc != 0 ? rc : app.packageExitCode;
+    // --package の成否は終了コードへ載せる (M52b。エンジン自体の失敗が優先)。--browser-embed-probe の成否 (M105a) も同じ
+    return rc != 0 ? rc : (app.packageExitCode != 0 ? app.packageExitCode : app.BrowserProbeExitCode());
 }

@@ -25,6 +25,9 @@
     <Filter Include="Tools">
       <UniqueIdentifier>{FAC517FC-5616-64EF-269E-F088212737A0}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Tools\Browser">
+      <UniqueIdentifier>{80B4F782-97D0-0606-BEC5-4807B880253C}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Undo">
       <UniqueIdentifier>{C45724AD-B67D-BA3E-BE10-0FFAC17BD3A6}</UniqueIdentifier>
     </Filter>
@@ -335,6 +338,18 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\SourceControl\StageClassifier.cpp">
       <Filter>SourceControl</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserCatalog.cpp">
+      <Filter>Tools\Browser</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserEmbedSelfTest.cpp">
+      <Filter>Tools\Browser</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserHost.cpp">
+      <Filter>Tools\Browser</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Browser\BrowserProbe.cpp">
+      <Filter>Tools\Browser</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\EngineIndexDump.cpp">
       <Filter>Tools</Filter>
@@ -812,6 +827,18 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\SourceControl\StageClassifier.h">
       <Filter>SourceControl</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserCatalog.h">
+      <Filter>Tools\Browser</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserEmbedSelfTest.h">
+      <Filter>Tools\Browser</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserHost.h">
+      <Filter>Tools\Browser</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Browser\BrowserProbe.h">
+      <Filter>Tools\Browser</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\EngineIndexDump.h">
       <Filter>Tools</Filter>

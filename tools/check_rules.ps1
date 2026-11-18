@@ -1498,6 +1498,19 @@ foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extens
     }
 }
 
+# 規則 20: 埋め込みブラウザ (M105) は Editor 層に閉じ込める
+# 別プロセスのブラウザ窓をメイン窓の子にする機能 (入力キューが結合する) は、エディタの UI 状態であって sim の入力ではない。
+# Engine / Runtime / GameLogic / Shared / Server から Editor\Tools\Browser\ を include した瞬間に、ゲーム側が他プロセスの窓と結合する。
+# 静的に見えるのは include だけなので、そこを機械検査する (規則 19 と同じ作り。-SourceRoot でフィクスチャを差し替えて自己検査できる)
+$browserRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
+foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    $rel = $f.FullName.Substring($srcRootFull.Length).TrimStart([char]92)
+    $top = ($rel -split '[\\/]')[0]
+    if ($browserRoots -contains $top) {
+        Test-CodeLines $f '#\s*include\s*[<"][^>"]*Editor[\\/]Tools[\\/]Browser[\\/]' 'rule 20' 'the embedded browser is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

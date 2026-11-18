@@ -12,6 +12,7 @@
 #include "Editor/Asset/AssetOpsSelfTest.h"
 #include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/Scene/CameraPilotSelfTest.h"
+#include "Editor/Tools/Browser/BrowserEmbedSelfTest.h"
 #include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
 #include "Editor/SelfTest/ComputeInspectorSelfTest.h"
@@ -267,6 +268,8 @@ const SelfTestSuite kSuites[] = {
     { "update", mye::RunUpdateSelfTest, SelfTestTier::Fast, "M98a: 版の比較 / Release JSON / SHA-256 / zip の安全な展開 / ローカル取得元" },
     { "editorupdate", mye::RunUpdateWindowSelfTest, SelfTestTier::Fast, "M98d: 自動確認の間隔 / Launcher の探し方 / 開発ビルドの判定 / 更新文字列" },
     { "changetracking", mye::RunChangeTrackingSelfTest, SelfTestTier::Fast, "M104j" },
+    { "browserembed", mye::RunBrowserEmbedSelfTest, SelfTestTier::Fast, "M105a: ブラウザ候補の解析 / 窓の特定 / 状態機械 / 見せる条件 (純関数)" },
+    { "browserembedproc", mye::RunBrowserEmbedProcSelfTest, SelfTestTier::Full, "M105a: ダミー窓プロセスの Attach / Detach / Closed / Lost / 応答なし" },
 };
 
 const SelfTestAlias kAliases[] = {

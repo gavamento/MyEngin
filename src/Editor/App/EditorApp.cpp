@@ -453,6 +453,17 @@ void EditorApp::OnStart(EngineContext& ctx)
         ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
         ChangeWindowMessageFilterEx(hwnd, kCopyGlobalData, MSGFLT_ALLOW, nullptr);
     }
+    if (!browserProbe.id.empty()) {
+        // M105a: 子窓がフォーカス中でも生マウス (WM_INPUT) が届くかを数える (O8)。メッセージは消費しない
+        browserProbe_ = std::make_unique<BrowserEmbedProbe>(browserProbe);
+        BrowserEmbedProbe* probe = browserProbe_.get();
+        ctx.window->AddMsgHandler([probe](void*, uint32_t msg, uint64_t, int64_t, int64_t&) {
+            if (msg == WM_INPUT) {
+                probe->OnRawInput();
+            }
+            return false;
+        });
+    }
     // × ボタン (WM_CLOSE) の横取り + WM_DROPFILES の受信。ハンドラは DefWindowProc より先に走る
     ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t wparam, int64_t, int64_t& result) {
         if (msg == WM_CLOSE) {
@@ -593,6 +604,10 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     // 接続を閉じるだけ。サービスは止めない (Editor を閉じても記録が続く)
     changeTracking_.Restore().Shutdown(); // 書き込みの途中で終了するなら、ReloadHub が生きているうちに EndBatch を通す
     changeTracking_.Shutdown();
+    // 子窓にしたブラウザ窓は、メイン窓の Destroy より前に外へ戻す (Destroy すると子窓も道連れになる)
+    if (browserProbe_) {
+        browserProbe_->Shutdown();
+    }
 }
 
 void EditorApp::OnDeviceLost(EngineContext& ctx)
@@ -1345,6 +1360,13 @@ void EditorApp::OnImGui(EngineContext& ctx)
     PollReloadToasts(ctx);
     UpdateWindowTitle(ctx);
     toasts_.OnImGui(toastAnchorRight_, toastAnchorBottom_);
+    // M105a: 全 ImGui 窓の提出が済んだ後にブラウザ窓を合わせる (sub-02 でパネルの描画へ置き換わる)
+    if (browserProbe_) {
+        browserProbe_->Frame(ctx.window->Hwnd(), BrowserNowMs());
+        if (browserProbe_->Finished()) {
+            ctx.requestExit = true;
+        }
+    }
 }
 
 void EditorApp::DrawMainMenuBar(EngineContext& ctx)

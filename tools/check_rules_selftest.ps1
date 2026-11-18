@@ -1,7 +1,7 @@
 # check_rules_selftest.ps1 — check_rules.ps1 の規則自身の自己検査
 # 実行: pwsh -File tools\check_rules_selftest.ps1  (期待どおりでなければ exit 1)
 # 違反を仕込んだ一時ファイルを -SourceRoot で読ませ、規則が実際に error を出す (当たらない正規表現のまま
-# 0 件を返し続けない) ことと、正当なコードに誤検出しないことを確かめる。今は規則 18 (M96) と規則 19 (M104)
+# 0 件を返し続けない) ことと、正当なコードに誤検出しないことを確かめる。今は規則 18 (M96)・規則 19 (M104)・規則 20 (M105)
 $ErrorActionPreference = 'Stop'
 $checker = Join-Path $PSScriptRoot 'check_rules.ps1'
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ("mye_rules_selftest_" + [Guid]::NewGuid().ToString('N'))
@@ -41,6 +41,19 @@ try {
         '#include "Editor/ChangeTracking/ChangeTrackingSession.h"',
         '#include "Editor/SourceControl/SourceControlState.h"'
     ) -Encoding UTF8
+    # 規則 20 (M105): 埋め込みブラウザ (Editor\Tools\Browser) を下位層から include しない。Editor 側と、コメント内の言及は通す
+    $browserBadDir = Join-Path $root 'Server'
+    New-Item -ItemType Directory -Force $browserBadDir | Out-Null
+    Set-Content -Path (Join-Path $browserBadDir 'Bad20.cpp') -Value @(
+        '#include "Editor/Tools/Browser/BrowserHost.h"',
+        '#  include <Editor\Tools\Browser\BrowserCatalog.h>',
+        '// #include "Editor/Tools/Browser/Commented.h" はコメントの中なので許容'
+    ) -Encoding UTF8
+    Set-Content -Path (Join-Path $trackRuntimeDir 'Bad20Runtime.h') -Value @('#include "../Editor/Tools/Browser/BrowserProbe.h"') -Encoding UTF8
+    Set-Content -Path (Join-Path $trackEditorDir 'Good20.cpp') -Value @(
+        '#include "Editor/Tools/Browser/BrowserHost.h"',
+        '#include "Editor/Tools/ModalTools.h"'
+    ) -Encoding UTF8
     $out = & pwsh -NoProfile -File $checker -SourceRoot $root 2>&1 | Out-String
     $rule18 = @($out -split "`n" | Where-Object { $_ -match '\[rule 18\]' })
     $fail = 0
@@ -58,6 +71,15 @@ try {
     if ($rule19.Count -ne 3) { Write-Host "FAIL: expected exactly 3 rule 19 errors in total, got $($rule19.Count)"; $fail19++ }
     if ($fail19 -eq 0) { Write-Host 'PASS: rule 19 flags includes of ChangeTracking from Engine / Runtime (3), spares the Editor layer and comments' }
     $fail += $fail19
+
+    $rule20 = @($out -split "`n" | Where-Object { $_ -match '\[rule 20\]' })
+    $fail20 = 0
+    if (@($rule20 | Where-Object { $_ -match 'Bad20\.cpp' }).Count -ne 2) { Write-Host "FAIL: expected 2 rule 20 errors in Bad20.cpp (comment excluded), got $(@($rule20 | Where-Object { $_ -match 'Bad20\.cpp' }).Count)"; $fail20++ }
+    if (@($rule20 | Where-Object { $_ -match 'Bad20Runtime\.h' }).Count -ne 1) { Write-Host 'FAIL: Runtime must not include Editor\Tools\Browser'; $fail20++ }
+    if (@($rule20 | Where-Object { $_ -match 'Good20\.cpp' }).Count -ne 0) { Write-Host 'FAIL: an Editor file including Tools\Browser must not be flagged'; $fail20++ }
+    if ($rule20.Count -ne 3) { Write-Host "FAIL: expected exactly 3 rule 20 errors in total, got $($rule20.Count)"; $fail20++ }
+    if ($fail20 -eq 0) { Write-Host 'PASS: rule 20 flags includes of Editor\Tools\Browser from Server / Runtime (3), spares the Editor layer and comments' }
+    $fail += $fail20
     exit $(if ($fail -eq 0) { 0 } else { 1 })
 }
 finally {
