@@ -28,6 +28,8 @@
 - 連携: AI 変更追跡との紐付け / VS 開発者環境の読み込み / エンジン環境変数と tools/ の PATH。git 実行後の SCM 窓更新は対象外
 - (2026-11-19 planner 裁定をユーザー承認) AI 追跡: sessions.host_terminal 列追加 (スキーマ v4)、source は "terminal" のまま / VS 環境: 読み込み完了を待って起動、30 秒タイムアウトで素の環境 / 既定レイアウト: 下段 Console のドックにタブ / IME: 確定文字のみ送信
 - (2026-11-19) 仕様確定: 受け入れ条件 1〜11 で実装へ
+- (2026-11-19 ユーザー判断) 版は 0.88.3 (0.88.0〜0.88.2 を飛ばすことを確認済み)。PR は reviewer PASS 後に版を上げてから master 向けに出す。タグ v0.88.3 はマージ後に master のマージコミットへ付ける (docs/release.md の手順。push で即公開)。
+- (2026-11-19) コンテナ再起動で sub-05 coder が中断。途中成果を引き継いで新しい coder で再開した。
 
 ## 申し送り (セッション跨ぎ)
 - 実行環境は Linux のクラウドコンテナ。MSVC ビルド・Editor.exe --selftest・check_rules.ps1・ConPTY・実画面確認はできない (Windows 側で要確認)。
