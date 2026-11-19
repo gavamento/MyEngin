@@ -3,7 +3,7 @@
 - 依頼原文: このエンジンでターミナルが開けるようにしたい
   - 追加指示: 「ConPTY+ImGui描画 は？」「vimやCLIなどにも対応させたい」「vimは対応対象外でいいけどclaudecodeCLIなどは対象に入れて」「git・ビルド・Claude Code CLIなども使えるMyEngin統合ターミナルにするなら」
 - 開始: 2026-11-19 / 基点コミット: 9e44a4bb69201beca557be445dae13290658f324 / ブランチ: claude/nice-goodall-kwzmxi
-- フェーズ: レビュー
+- フェーズ: 完了 (PR 待ち)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -19,6 +19,7 @@
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
 |---|---|---|---|
 | 1 | FAIL | 3/4/N/A/4 | #1 major (planner) 貼付本文の ESC[201~ 未消毒 / #2 minor (coder) libvterm -O1 警告の注記 |
+| 2 | PASS | 4/4/N/A/4 | なし (planner nit 2 件は申し送り) |
 
 ## ユーザー判断
 - 質問の運用: その場で聞く
