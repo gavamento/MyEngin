@@ -57,7 +57,7 @@ void ProjectEffectRunner::SetPasses(std::vector<ProjectPostPassDesc> newDescs)
         bool found = false;
         for (auto& cp : passes_)
         {
-            if (cp.desc.shaderName == nd.shaderName &&
+            if (cp.desc.id == nd.id && cp.desc.shaderName == nd.shaderName &&
                 cp.desc.insertion  == nd.insertion)
             {
                 // プロパティ値と priority/enabled だけ更新してキャッシュを維持
@@ -318,6 +318,18 @@ ID3D11ShaderResourceView* ProjectEffectRunner::RunPasses(
 
         // シェーダ / スキーマのキャッシュ更新
         EnsureCached(cp, device, shaders);
+        CameraFxPassState* dynamicPass = nullptr;
+        if (cameraState_ && !cp.desc.id.empty()) {
+            dynamicPass = &cameraState_->passes[cp.desc.id];
+            dynamicPass->seen = true;
+            if (dynamicPass->schema.properties.empty() || dynamicPass->schemaSource != cp.builtFromGeneration ||
+                dynamicPass->shaderName != cp.desc.shaderName) {
+                dynamicPass->RefreshSchema(cp.schema);
+                dynamicPass->schemaSource = cp.builtFromGeneration;
+                dynamicPass->shaderName = cp.desc.shaderName;
+            }
+        }
+
 
         // 書き先 RTV の決定
         ID3D11RenderTargetView* dstRTV = nullptr;
@@ -356,7 +368,14 @@ ID3D11ShaderResourceView* ProjectEffectRunner::RunPasses(
             if (cp.userCB && cp.schema.ok && cp.schema.cbSizeBytes > 0)
             {
                 std::vector<uint8_t> cbData;
-                if (PackProperties(cp.schema, cp.desc.propertyValues, cbData) &&
+                const auto* values = &cp.desc.propertyValues;
+            decltype(cp.desc.propertyValues) merged;
+            if (dynamicPass && !dynamicPass->overrides.empty()) {
+                merged = *values;
+                for (const auto& kv : dynamicPass->overrides) merged[kv.first] = kv.second;
+                values = &merged;
+            }
+            if (PackProperties(cp.schema, *values, cbData) &&
                     !cbData.empty())
                 {
                     D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -402,6 +421,7 @@ ID3D11ShaderResourceView* ProjectEffectRunner::RunPasses(
                 }
             }
 
+            if (dynamicPass) dynamicPass->drawn = true;
             DrawFullscreen(dc, prog->vs.Get(), prog->ps.Get(),
                            curSRV, depthSRV,
                            cp.engineCB.Get(), cp.userCB.Get(),

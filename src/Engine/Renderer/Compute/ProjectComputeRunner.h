@@ -3,6 +3,7 @@
  作成者: 秋田蓮音                                09/22/2026
 ----*/
 #pragma once
+#include "Engine/Renderer/PostFx/CameraFxState.h"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -40,6 +41,8 @@ struct ProjectComputePassDesc
     uint32_t             groupsX        = 0;
     uint32_t             groupsY        = 0;
     uint32_t             groupsZ        = 0;
+    bool                 writesSceneColor = false;
+    std::string id;
 };
 
 // "BeforePost" 等の文字列 ↔ ComputeDispatchPoint の相互変換
@@ -52,6 +55,7 @@ ComputeDispatchPoint DispatchPointFromString(const std::string& s); // 未知は
 class ProjectComputeRunner
 {
 public:
+    void SetCameraState(CameraFxState* state) { cameraState_ = state; }
     // スタック駆動パスの上限 (spec §4.4 性能制約)
     static constexpr int kMaxComputePasses = 8;
     // デフォルトのスレッドグループサイズ (HLSL の [numthreads(8,8,1)] と対応)
@@ -68,7 +72,7 @@ public:
     // sceneSRV: t0 へバインドする入力 SRV (null 可)
     // depthSRV: t1 へバインドする深度 SRV (null 可)
     // 実行後は必ず UAV / SRV / CB スロットを unbind する
-    void RunDispatch(
+    ID3D11ShaderResourceView* RunDispatch(
         ComputeDispatchPoint      point,
         GraphicsDevice&           device,
         ShaderManager&            shaders,
@@ -86,6 +90,7 @@ public:
     void ReleaseBuffers();
 
 private:
+    CameraFxState* cameraState_ = nullptr;
     // エンジン共通定数バッファ (b0: 画面サイズ)
     struct EngineComputeCB
     {

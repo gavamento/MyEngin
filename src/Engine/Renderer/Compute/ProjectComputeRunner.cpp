@@ -72,13 +72,14 @@ void ProjectComputeRunner::SetPasses(std::vector<ProjectComputePassDesc> newDesc
         bool found = false;
         for (auto& cp : passes_)
         {
-            if (cp.desc.shader == nd.shader &&
+            if (cp.desc.id == nd.id && cp.desc.shader == nd.shader &&
                 cp.desc.dispatchPoint == nd.dispatchPoint)
             {
                 // プロパティ値と priority / enabled だけ更新してキャッシュを維持
                 cp.desc.propertyValues = std::move(nd.propertyValues);
                 cp.desc.priority       = nd.priority;
                 cp.desc.enabled        = nd.enabled;
+                cp.desc.writesSceneColor = nd.writesSceneColor;
                 next.push_back(std::move(cp));
                 found = true;
                 break;
@@ -190,7 +191,7 @@ void ProjectComputeRunner::EnsureCached(CachedComputePass& cp, GraphicsDevice& d
 // コンピュートパス実行
 // ---------------------------------------------------------------------------
 
-void ProjectComputeRunner::RunDispatch(
+ID3D11ShaderResourceView* ProjectComputeRunner::RunDispatch(
     ComputeDispatchPoint      point,
     GraphicsDevice&           device,
     ShaderManager&            shaders,
@@ -207,7 +208,7 @@ void ProjectComputeRunner::RunDispatch(
             active.push_back(&cp);
     }
     if (active.empty())
-        return;
+        return sceneSRV;
 
     std::stable_sort(active.begin(), active.end(),
                      [](const CachedComputePass* a, const CachedComputePass* b)
@@ -221,6 +222,18 @@ void ProjectComputeRunner::RunDispatch(
 
         // シェーダ / スキーマ / CB / UAV テクスチャのキャッシュ更新
         EnsureCached(cp, device, shaders, width, height);
+        CameraFxPassState* dynamicPass = nullptr;
+        if (cameraState_ && !cp.desc.id.empty()) {
+            dynamicPass = &cameraState_->passes[cp.desc.id];
+            dynamicPass->seen = true;
+            if (dynamicPass->schema.properties.empty() || dynamicPass->schemaSource != cp.builtFromGeneration ||
+                dynamicPass->shaderName != cp.desc.shader) {
+                dynamicPass->RefreshSchema(cp.schema);
+                dynamicPass->schemaSource = cp.builtFromGeneration;
+                dynamicPass->shaderName = cp.desc.shader;
+            }
+        }
+
 
         // CS の取得と有効性チェック
         ShaderProgram* prog  = shaders.Get(cp.shaderID);
@@ -259,7 +272,14 @@ void ProjectComputeRunner::RunDispatch(
         if (cp.userCB && cp.schema.ok && cp.schema.cbSizeBytes > 0)
         {
             std::vector<uint8_t> cbData;
-            if (PackProperties(cp.schema, cp.desc.propertyValues, cbData) &&
+            const auto* values = &cp.desc.propertyValues;
+            decltype(cp.desc.propertyValues) merged;
+            if (dynamicPass && !dynamicPass->overrides.empty()) {
+                merged = *values;
+                for (const auto& kv : dynamicPass->overrides) merged[kv.first] = kv.second;
+                values = &merged;
+            }
+            if (PackProperties(cp.schema, *values, cbData) &&
                 !cbData.empty())
             {
                 D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -295,6 +315,7 @@ void ProjectComputeRunner::RunDispatch(
                         ? cp.desc.groupsY
                         : CalcGroups(height, kDefaultGroupSize);
         const UINT gz = (cp.desc.groupsZ > 0) ? cp.desc.groupsZ : 1u;
+        if (dynamicPass) dynamicPass->drawn = true;
         dc->Dispatch(gx, gy, gz);
 
         // 必ず unbind する (後続の描画パスが同スロットを安全に使えるようにする)
@@ -306,7 +327,10 @@ void ProjectComputeRunner::RunDispatch(
         dc->CSSetShaderResources(0, 2, nullSrv);
         ID3D11Buffer* nullCb[2] = { nullptr, nullptr };
         dc->CSSetConstantBuffers(0, 2, nullCb);
+        if (point == ComputeDispatchPoint::AfterTonemap && cp.desc.writesSceneColor)
+            sceneSRV = cp.outputTex.SRV();
     }
+    return sceneSRV;
 }
 
 // ---------------------------------------------------------------------------

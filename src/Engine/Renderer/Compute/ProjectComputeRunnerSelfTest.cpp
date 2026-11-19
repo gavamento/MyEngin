@@ -180,6 +180,37 @@ void TestClearPasses()
 // ---------------------------------------------------------------------------
 // テスト 7: DispatchPoint 定数値
 // ---------------------------------------------------------------------------
+void TestCameraPassProperties()
+{
+    CameraFxState left, right;
+    PropertySchema tint;
+    tint.name = "_Tint";
+    tint.type = PropType::Color;
+    PropertySchema amount;
+    amount.name = "_Amount";
+    amount.type = PropType::Range;
+    amount.attr.hasRange = true;
+    amount.attr.rangeMax = 1.0f;
+    PropertyParseResult schema;
+    schema.ok = true;
+    schema.properties = {tint, amount};
+    for (auto* camera : {&left, &right}) {
+        camera->passes["front"].RefreshSchema(schema);
+        camera->passes["back"].RefreshSchema(schema);
+    }
+    auto& front = left.passes["front"];
+    CS_CHECK(front.Set("_Tint", std::array<float,4>{0, 1, 0, 1}));
+    CS_CHECK(front.Set("_Amount", 7.0f));
+    CS_CHECK(std::get<float>(front.overrides.at("_Amount")) == 1.0f);
+    CS_CHECK(!front.Set("_Tint", 1.0f));
+    CS_CHECK(!front.Set("_Unknown", 1.0f));
+    CS_CHECK(left.passes["back"].overrides.empty());
+    CS_CHECK(right.passes["front"].overrides.empty());
+    schema.properties.erase(schema.properties.begin());
+    front.RefreshSchema(schema);
+    CS_CHECK(front.overrides.size() == 1 && front.overrides.count("_Amount") == 1);
+}
+
 void TestDispatchPointConstants()
 {
     MYE_LOG_INFO("[selftest] ProjectComputeRunner: DispatchPoint 定数値");
@@ -206,6 +237,7 @@ bool RunProjectComputeRunnerSelfTest()
     TestHardLimit();
     TestGroupCalc();
     TestClearPasses();
+    TestCameraPassProperties();
     TestDispatchPointConstants();
 
     if (g_failCount == 0)

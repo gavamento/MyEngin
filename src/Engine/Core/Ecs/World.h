@@ -1,4 +1,5 @@
 #pragma once
+#include "Engine/Renderer/PostFx/CameraFxState.h"
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -125,6 +126,11 @@ public:
     // generation は保持・加算されるため、古いハンドルが誤って新エンティティに
     // 一致することはない
     void Clear();
+    CameraFxState& CameraFx(EntityID e, AssetID stack) {
+        auto& state = cameraFx_[e.index];
+        if (state.stack != stack) { state = {}; state.stack = stack; }
+        return state;
+    }
 
     // GameLogic.dll リロード時のスクリプト状態移行 (engine_spec.md 8.4)。
     // 旧レイアウトのカラムを新レイアウトに差し替える:
@@ -154,6 +160,7 @@ public:
     const char* GetName(EntityID e); // NameComponent (無ければ "")
 
 private:
+    std::unordered_map<uint32_t, CameraFxState> cameraFx_;
     struct EntityRecord {
         uint32_t generation = 0;
         Archetype* archetype = nullptr; // null = 未使用スロット

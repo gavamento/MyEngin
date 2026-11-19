@@ -591,6 +591,22 @@ void FillDisturbanceSlots(MyeEngineApi& out)
 
 // engine ポインタは常に ScriptApiContext*。キャプチャなしラムダ → 関数ポインタ変換で
 // extern "C" スタイルのテーブルを埋める (C++ ScriptHost / C# ManagedHost が共用)
+
+
+static CameraFxState* CameraEffectState(void* engine, MyeEntityId camera)
+{
+    auto& world = Sc(engine)->GetWorld();
+    const auto id = ToEngine(camera);
+    const auto* fx = world.GetComponent<CameraPostFxComponent>(id);
+    if (!fx || fx->fxStack.IsNull()) return nullptr;
+    return &world.CameraFx(id, fx->fxStack);
+}
+
+static CameraFxPassState* CameraEffectPass(void* engine, MyeEntityId camera, const char* pass)
+{
+    auto* state = CameraEffectState(engine, camera);
+    return state ? state->Find(pass) : nullptr;
+}
 void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
 {
     out = {};
@@ -1595,6 +1611,25 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
     };
     // v36 (M101): レーン別。InputActions が tick 頭に全レーンの入力から写した値を返す。
     // アクションマップが無い構成 (null) ではレーン 0 だけ GetMouseDelta と同じ値を返す
+    out.SetCameraFxFloat = [](void* e, MyeEntityId c, const char* id, const char* name, float v) -> int {
+        auto* p = CameraEffectPass(e, c, id); return p && p->Set(name, v);
+    };
+    out.SetCameraFxVector = [](void* e, MyeEntityId c, const char* id, const char* name, MyeVec4 v) -> int {
+        auto* p = CameraEffectPass(e, c, id); return p && p->Set(name, std::array<float,4>{v.x,v.y,v.z,v.w});
+    };
+    out.ClearCameraFxProperty = [](void* e, MyeEntityId c, const char* id, const char* name) -> int {
+        auto* p = CameraEffectPass(e,c,id); if (!p || !name) return 0; p->overrides.erase(name); return 1;
+    };
+    out.ClearCameraFxPass = [](void* e, MyeEntityId c, const char* id) -> int {
+        auto* p = CameraEffectPass(e,c,id); if (!p) return 0; p->overrides.clear(); return 1;
+    };
+    out.ClearCameraFxOverrides = [](void* e, MyeEntityId c) -> int {
+        auto* s = CameraEffectState(e,c); if (!s) return 0;
+        for (auto& kv : s->passes) kv.second.overrides.clear(); return 1;
+    };
+    out.WasCameraFxPassDrawn = [](void* e, MyeEntityId c, const char* id) -> int {
+        auto* p = CameraEffectPass(e,c,id); return p && p->drawn;
+    };
     out.GetMouseDeltaFor = [](void* engine, uint32_t player, int32_t* outDx, int32_t* outDy) {
         int32_t dx = 0, dy = 0;
         const ScriptApiContext* c = Ctx(engine);
