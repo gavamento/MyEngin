@@ -152,6 +152,16 @@ void ModelCookData::AddSkin(std::string key, const SkinnedModel& model)
     skins.push_back(CookedSkin{ std::move(key), model });
 }
 
+void ModelCookData::SetMeshSkin(const std::string& meshKey, const std::string& skinKey)
+{
+    for (CookedMesh& m : meshes) {
+        if (m.key == meshKey) {
+            m.skinKey = skinKey;
+            return;
+        }
+    }
+}
+
 std::vector<std::wstring> ModelCookData::ExternalDeps() const
 {
     std::vector<std::wstring> deps;
@@ -185,6 +195,7 @@ void Serialize(const ModelCookData& d, std::vector<uint8_t>& out)
         AppendVec(out, m.indices);
         AppendVec(out, m.lodIndices);
         AppendVec(out, m.lods);
+        AppendStr(out, m.skinKey);
     }
     AppendPod(out, static_cast<uint32_t>(d.materials.size()));
     for (const CookedMaterial& m : d.materials) {
@@ -228,7 +239,7 @@ bool Deserialize(const std::vector<uint8_t>& in, ModelCookData& out)
         return false;
     }
 
-    // 最小直列化サイズ: texture = kind1+srgb1+key4+path4+bytes4 / mesh = key4+verts4+idx4+lodIdx4+lods4 /
+    // 最小直列化サイズ: texture = kind1+srgb1+key4+path4+bytes4 / mesh = key4+verts4+idx4+lodIdx4+lods4+skinKey4 /
     // material = key4+Material / skin = key4+joints4+clips4 / joint = parent4+name4+行列+TRS /
     // clip = name4+dur4+tracks4 / track = 6 配列の長さ 4×6
     uint32_t n = 0;
@@ -244,13 +255,13 @@ bool Deserialize(const std::vector<uint8_t>& in, ModelCookData& out)
         }
         t.path = Utf8ToWide(pathUtf8);
     }
-    if (!r.Count(n, 20)) {
+    if (!r.Count(n, 24)) {
         return false;
     }
     out.meshes.resize(n);
     for (CookedMesh& m : out.meshes) {
         if (!r.Str(m.key) || !r.Vec(m.vertices) || !r.Vec(m.indices) || !r.Vec(m.lodIndices)
-            || !r.Vec(m.lods)) {
+            || !r.Vec(m.lods) || !r.Str(m.skinKey)) {
             return false;
         }
     }
@@ -329,14 +340,32 @@ void Replay(RenderResources& resources, ShaderManager& shaders, const ModelCookD
             resources.textures.LoadFile(p, t.srgb != 0);
         }
     }
+    std::vector<AssetID> meshIds;
+    meshIds.reserve(d.meshes.size());
     for (const CookedMesh& m : d.meshes) {
-        resources.meshes.Register(m.key, m.vertices, m.indices, m.lodIndices, m.lods);
+        meshIds.push_back(resources.meshes.Register(m.key, m.vertices, m.indices, m.lodIndices, m.lods));
     }
     for (const CookedMaterial& m : d.materials) {
         resources.materials.Register(m.key, m.mat);
     }
+    std::vector<AssetID> skinIds;
+    skinIds.reserve(d.skins.size());
     for (const CookedSkin& s : d.skins) {
-        resources.skinnedModels.Register(s.key, s.model); // 値渡し = コピーが登録される
+        skinIds.push_back(resources.skinnedModels.Register(s.key, s.model)); // 値渡し = コピーが登録される
+    }
+    // メッシュとスキンの結び付き (FbxLoader の SetSkinModel と同じ結果にする)。
+    // Register はメッシュを作り直すので、両方を登録し終えてから結ぶ
+    for (size_t i = 0; i < d.meshes.size(); ++i) {
+        const std::string& skinKey = d.meshes[i].skinKey;
+        if (skinKey.empty()) {
+            continue;
+        }
+        for (size_t k = 0; k < d.skins.size(); ++k) {
+            if (d.skins[k].key == skinKey) {
+                resources.meshes.SetSkinModel(meshIds[i], skinIds[k]);
+                break;
+            }
+        }
     }
 }
 

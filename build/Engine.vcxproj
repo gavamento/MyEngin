@@ -217,6 +217,7 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshShapeSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\SpriteShapeCollider.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.cpp" />
@@ -358,6 +359,7 @@
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Mesh\MeshInstancing.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Mesh\MeshShape.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Mesh\Skeleton.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Mesh\SkinBounds.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.cpp" />
@@ -616,6 +618,7 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexHull.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\ConvexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.h" />
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshShapeSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\SpriteShapeCollider.h" />
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\TerrainColliderLibrary.h" />
@@ -768,6 +771,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshBind.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshInstancing.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshLod.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshShape.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h" />
     <ClInclude Include="..\src\Engine\Renderer\Mesh\SkinBounds.h" />
     <ClInclude Include="..\src\Engine\Renderer\Passes\AcousticVolumePass.h" />

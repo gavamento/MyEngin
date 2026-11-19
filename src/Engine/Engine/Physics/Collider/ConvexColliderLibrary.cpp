@@ -8,6 +8,7 @@
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/MeshShape.h"
 
 using namespace DirectX;
 
@@ -132,6 +133,13 @@ const ConvexHullData* ConvexColliderLibrary::Get(AssetID meshAsset)
     if (!mesh || mesh->positions.empty()) {
         return nullptr; // 未登録 / CPU 頂点なし。キャッシュしない (後からロードされ得る)
     }
+    // スキン付き (FBX) は描画のバインドポーズと同じ頂点で包む。スキン未登録はキャッシュしない
+    std::vector<XMFLOAT3> skinnedScratch;
+    const std::vector<XMFLOAT3>* shapePositions =
+        MeshShapePositions(resources_->skinnedModels, *mesh, skinnedScratch);
+    if (shapePositions == nullptr) {
+        return nullptr;
+    }
     const std::string* name = resources_->meshes.NameOf(meshAsset);
     const std::wstring srcPath = name ? ConvexCookSourcePath(*name) : std::wstring{};
 
@@ -149,12 +157,12 @@ const ConvexHullData* ConvexColliderLibrary::Get(AssetID meshAsset)
             fromCook = true;
         } else {
             // 生成してから表へ挿す。key 昇順を保つのは blob を決定的にするため
-            BuildConvexHull(mesh->positions, *hull);
+            BuildConvexHull(*shapePositions, *hull);
             table.emplace(hit, *name, *hull);
             SaveTable(srcPath, table);
         }
     } else {
-        BuildConvexHull(mesh->positions, *hull);
+        BuildConvexHull(*shapePositions, *hull);
     }
     if (!fromCook) {
         MYE_LOG_INFO("[phys] convex hull built: %zu verts / %zu faces (%s)", hull->verts.size(),

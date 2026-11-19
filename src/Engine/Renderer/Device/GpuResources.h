@@ -85,6 +85,11 @@ struct Mesh {
     // M88: デバイス復旧で vb を作り直す素材。positions / normals / uvs と合わせて MeshVertex 列を復元する。
     // スキンの属性が全頂点で 0 のメッシュ (非スキン) は空のまま (頂点あたり 20B を持たない)
     std::vector<MeshSkinVertex> skin;
+    // このメッシュを描画で変形するスキン (SkinnedModelLibrary のキー)。空 = 結ばれていない。
+    // FBX のローダとクックの再生だけが MeshLibrary::SetSkinModel で入れる (FBX は 1 メッシュ = 1 スキン)。
+    // 物理・音が形を作るときにバインドポーズのパレットを掛けるのに使う (MeshShape.h)。
+    // glTF は 1 メッシュを別のスキンで使い回せるうえ、非ジョイントの祖先をエンティティが持つので入れない
+    AssetID skinModel = {};
     // MeshLibrary::Register が振る登録の通番 (再登録で変わる。GPU の作り直しでは変わらない)。
     // メッシュから派生したキャッシュ (スキンの保守的 AABB) の無効化に使う。0 = 未登録
     uint64_t revision = 0;
@@ -124,6 +129,9 @@ public:
                      std::span<const uint32_t> indices, std::span<const uint32_t> lodIndices = {},
                      std::span<const MeshLodLevel> lodLevels = {});
     Mesh* Get(AssetID id);
+    // Mesh::skinModel を入れる。Register は Mesh を作り直すので、登録のたびに呼び直すこと。
+    // 未登録の mesh は何もしない
+    void SetSkinModel(AssetID mesh, AssetID skinModel);
     // 描画用: vb / ib が無い (復旧で作り直せなかった) メッシュは nullptr = 呼び出し側の「メッシュ無し」と同じ扱い
     Mesh* GetDrawable(AssetID id);
     // 登録名の逆引き (未登録は nullptr)。モデル由来なら "guid://<16hex>#mesh0#prim0" (M74a) —

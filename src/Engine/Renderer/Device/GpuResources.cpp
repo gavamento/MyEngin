@@ -288,6 +288,14 @@ Mesh* MeshLibrary::Get(AssetID id)
     return (it != meshes_.end()) ? &it->second : nullptr;
 }
 
+void MeshLibrary::SetSkinModel(AssetID mesh, AssetID skinModel)
+{
+    Mesh* m = Get(mesh);
+    if (m != nullptr) {
+        m->skinModel = skinModel;
+    }
+}
+
 Mesh* MeshLibrary::GetDrawable(AssetID id)
 {
     Mesh* mesh = Get(id);

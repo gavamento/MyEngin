@@ -91,6 +91,7 @@
 #include "Engine/Engine/Particles/ParticleSelfTest.h"
 #include "Engine/Engine/Perception/PerceptionSelfTest.h"
 #include "Engine/Engine/Physics/Collider/ConvexSelfTest.h"
+#include "Engine/Engine/Physics/Collider/MeshShapeSelfTest.h"
 #include "Engine/Engine/Physics/Fracture/FractureSelfTest.h"
 #include "Engine/Engine/Physics/Fracture/FractureSkinSelfTest.h"
 #include "Engine/Engine/Physics/Ragdoll/RagdollSelfTest.h"
@@ -240,6 +241,7 @@ const SelfTestSuite kSuites[] = {
     { "distancecull", mye::RunDistanceCullSelfTest, SelfTestTier::Fast, "M99f: 距離カリングの判定・RenderCulling (NoHash・保存・プレハブ上書き)" },
     { "cameraselect", mye::RunCameraSelectSelfTest, SelfTestTier::Fast, "M101: 描画するカメラの選択 (CameraOwner のレーン別・NoHash)" },
     { "skinbounds", mye::RunSkinBoundsSelfTest, SelfTestTier::Fast, "M90d: スキンの保守的 AABB (全クリップの全フレームを包む)" },
+    { "meshshape", mye::RunMeshShapeSelfTest, SelfTestTier::Fast, "スキン付きメッシュの凸包・メッシュコライダー・ModalSound をバインドポーズの大きさで作る" },
     { "meshlod", mye::RunMeshLodSelfTest, SelfTestTier::Fast, "M90e: メッシュ LOD (生成・クック・.meta・選択)" },
     { "skinpalettecache", mye::RunSkinPaletteCacheSelfTest, SelfTestTier::Fast, "M90f: パレットのキャッシュ・URO の更新 tick・LOD 履歴の破棄" },
     { "kernel", mye::RunKernelSelfTest, SelfTestTier::Fast, "M91a: *.kernel.hlsl の GPU/CPU 単一ソース・CPU 実行器・ハッシュ" },

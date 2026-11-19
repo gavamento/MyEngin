@@ -35,6 +35,9 @@ struct CookedMesh {
     // LOD1 以降 (M90e)。段なしは両方空。indices は LOD0 のまま = 段なしのバイト列は v5 と同じ
     std::vector<uint32_t> lodIndices;
     std::vector<MeshLodLevel> lods;
+    // このメッシュを変形するスキンの登録名 (CookedSkin::key)。空 = 結ばれていない。
+    // Replay が MeshLibrary::SetSkinModel を呼び直すのに使う (kCookVersion 7)
+    std::string skinKey;
 };
 
 struct CookedMaterial {
@@ -66,6 +69,8 @@ struct ModelCookData {
                  const std::vector<uint32_t>& indices, const MeshLodData& lod = {});
     void AddMaterial(std::string key, const Material& mat);
     void AddSkin(std::string key, const SkinnedModel& model);
+    // AddMesh 済みのメッシュにスキンを結ぶ (FbxLoader が MeshLibrary::SetSkinModel と同時に呼ぶ)
+    void SetMeshSkin(const std::string& meshKey, const std::string& skinKey);
 
     // CookedCache::Write の deps (外部テクスチャの存在検証用)
     std::vector<std::wstring> ExternalDeps() const;

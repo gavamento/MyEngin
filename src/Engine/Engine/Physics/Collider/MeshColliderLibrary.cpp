@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/MeshShape.h"
 
 using namespace DirectX;
 
@@ -181,8 +182,15 @@ const MeshColliderData* MeshColliderLibrary::Get(AssetID meshAsset)
     if (!mesh || mesh->positions.empty() || mesh->indices.size() < 3) {
         return nullptr; // 未登録/CPU 頂点なし。キャッシュしない (後からロードされ得る)
     }
+    // スキン付き (FBX) は描画のバインドポーズと同じ頂点で組む。スキン未登録はキャッシュしない
+    std::vector<XMFLOAT3> skinnedScratch;
+    const std::vector<XMFLOAT3>* shapePositions =
+        MeshShapePositions(resources_->skinnedModels, *mesh, skinnedScratch);
+    if (shapePositions == nullptr) {
+        return nullptr;
+    }
     auto data = std::make_unique<MeshColliderData>();
-    BuildMeshColliderData(mesh->positions, mesh->indices, *data);
+    BuildMeshColliderData(*shapePositions, mesh->indices, *data);
     const MeshColliderData* raw = data.get();
     cache_[meshAsset.value] = std::move(data);
     return raw;

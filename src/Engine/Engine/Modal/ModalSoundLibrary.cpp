@@ -14,6 +14,7 @@
 #include "Engine/Engine/Asset/CookedCache.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Device/GpuResources.h"
+#include "Engine/Renderer/Mesh/MeshShape.h"
 
 namespace fs = std::filesystem;
 
@@ -162,6 +163,9 @@ bool ModalSoundLibrary::GatherGeometry(const ModalMeshRef& ref,
         if (!m || m->positions.empty()) {
             return false; // 未登録 / CPU 頂点なし。キャッシュしない (後から登録され得る)
         }
+        if (!m->skinModel.IsNull() && resources_->skinnedModels.Get(m->skinModel) == nullptr) {
+            return false; // スキンが未登録。同じく後から登録され得る
+        }
         vertTotal += m->positions.size();
         idxTotal += m->indices.size();
     }
@@ -185,14 +189,19 @@ bool ModalSoundLibrary::GatherGeometry(const ModalMeshRef& ref,
 
     positions.reserve(vertTotal);
     indices.reserve(idxTotal);
+    std::vector<DirectX::XMFLOAT3> skinnedScratch;
     for (const ModalMeshPart& part : ref.parts) {
         const Mesh* m = resources_->meshes.Get(part.mesh);
         const uint32_t base = static_cast<uint32_t>(positions.size());
+        // スキン付き (FBX) は描画のバインドポーズと同じ頂点 = 見た目と同じ大きさで焼く。
+        // スキンの有無は上で確かめたので null にはならない
+        const std::vector<DirectX::XMFLOAT3>& src =
+            *MeshShapePositions(resources_->skinnedModels, *m, skinnedScratch);
         if (part.identity) {
-            positions.insert(positions.end(), m->positions.begin(), m->positions.end());
+            positions.insert(positions.end(), src.begin(), src.end());
         } else {
             const DirectX::XMMATRIX xf = DirectX::XMLoadFloat4x4(&part.toSource);
-            for (const DirectX::XMFLOAT3& p : m->positions) {
+            for (const DirectX::XMFLOAT3& p : src) {
                 DirectX::XMFLOAT3 q;
                 DirectX::XMStoreFloat3(&q,
                                        DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&p), xf));

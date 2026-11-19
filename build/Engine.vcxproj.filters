@@ -837,6 +837,9 @@
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Physics\Collider\MeshShapeSelfTest.cpp">
+      <Filter>Engine\Physics\Collider</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.cpp">
       <Filter>Engine\Physics\Collider</Filter>
     </ClCompile>
@@ -1258,6 +1261,9 @@
       <Filter>Renderer\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Mesh\MeshInstancing.cpp">
+      <Filter>Renderer\Mesh</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Mesh\MeshShape.cpp">
       <Filter>Renderer\Mesh</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Mesh\Skeleton.cpp">
@@ -2034,6 +2040,9 @@
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshColliderLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Physics\Collider\MeshShapeSelfTest.h">
+      <Filter>Engine\Physics\Collider</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Physics\Collider\Shape2DLibrary.h">
       <Filter>Engine\Physics\Collider</Filter>
     </ClInclude>
@@ -2488,6 +2497,9 @@
       <Filter>Renderer\Mesh</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshLod.h">
+      <Filter>Renderer\Mesh</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Mesh\MeshShape.h">
       <Filter>Renderer\Mesh</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Mesh\Skeleton.h">

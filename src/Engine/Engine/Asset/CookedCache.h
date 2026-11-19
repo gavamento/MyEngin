@@ -38,7 +38,10 @@ namespace mye::CookedCache {
 // 6 = M90e: メッシュ LOD。blob の先頭に .meta の LOD 設定 (ModelLodSettings) が入り、メッシュごとに
 // LOD1 以降の index 列と段表が付く。旧 blob はこの並びで読めないので版で弾く。LOD の設定が変わったかは
 // 版ではなく blob 内の設定と現在の .meta の比較で判定する (ModelCook::TryReplayFromCache)
-inline constexpr uint32_t kCookVersion = 6;
+// 7 = FBX のスキン付きメッシュにスキンを結び (CookedMesh::skinKey)、凸包・メッシュコライダー・
+// ModalSound の形をバインドポーズの頂点から作るようになった (MeshShape.h)。旧 .mmdl はこの並びで
+// 読めず、旧 .mcvx / .msfm はキーが同じまま cm 単位 (100 倍) の形を持っているので、版でまとめて弾く
+inline constexpr uint32_t kCookVersion = 7;
 
 // M51j: 封印マーカー。cooked ディレクトリにこの名前のファイルがあると「配布ビルドの
 // 封印キャッシュ」として扱い、ReadValidated が srcPathKey / stat / 内容ハッシュ / deps の

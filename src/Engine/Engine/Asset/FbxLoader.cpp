@@ -47,6 +47,7 @@ struct LoadContext {
     struct SkinCacheEntry {
         uint32_t meshId;
         AssetID id;
+        std::string key; // SkinnedModelLibrary の登録名 (クックにメッシュとの結び付きを書くのに使う)
     };
     std::vector<SkinCacheEntry> skinCache;
     // 非 null なら各 Register サイトが登録内容を追記する (M51b クックの sink)
@@ -558,7 +559,7 @@ AssetID LoadMaterial(LoadContext& lc, const ufbx_material* mat, const ufbx_mesh*
 //   祖先を追加ジョイントにすれば chain が完全になり、メッシュ側は world 恒等のままでよい。
 //   クラスタは配列の先頭に並べたままなので `ufbx_skin_weight.cluster_index` がそのまま
 //   ジョイント index として使える (P4-3 の前提) 点も保たれる。
-AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deformer* skin)
+AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deformer* skin, std::string& outKey)
 {
     std::vector<const ufbx_node*> nodes; // ジョイント index → ufbx ノード
     nodes.reserve(skin->clusters.count + 4);
@@ -676,6 +677,7 @@ AssetID LoadSkin(LoadContext& lc, const ufbx_mesh* mesh, const ufbx_skin_deforme
     if (lc.cook) {
         lc.cook->AddSkin(key, model); // move 前にコピーを記録
     }
+    outKey = key;
     return lc.resources->skinnedModels.Register(key, std::move(model));
 }
 
@@ -717,6 +719,7 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
     const ufbx_skin_deformer* skin =
         (mesh->skin_deformers.count > 0) ? mesh->skin_deformers.data[0] : nullptr;
     AssetID skinModelId;
+    std::string skinKey;
     if (skin) {
         const auto it = std::find_if(lc.skinCache.begin(), lc.skinCache.end(),
                                      [&](const LoadContext::SkinCacheEntry& e) {
@@ -724,14 +727,15 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
                                      });
         if (it != lc.skinCache.end()) {
             skinModelId = it->id;
+            skinKey = it->key;
         } else {
             if (mesh->skin_deformers.count > 1) {
                 MYE_LOG_WARN(
                     "FBX skin: メッシュに skin deformer が %zu 本あります。先頭のみ使用します",
                     mesh->skin_deformers.count);
             }
-            skinModelId = LoadSkin(lc, mesh, skin);
-            lc.skinCache.push_back({ mesh->element_id, skinModelId });
+            skinModelId = LoadSkin(lc, mesh, skin, skinKey);
+            lc.skinCache.push_back({ mesh->element_id, skinModelId, skinKey });
         }
     }
 
@@ -742,6 +746,14 @@ void LoadMeshInto(LoadContext& lc, const ufbx_node* node, GameObject owner)
         const AssetID meshAsset = LoadMeshPart(lc, mesh, part, skin, key);
         if (meshAsset.IsNull()) {
             continue;
+        }
+        if (!skinModelId.IsNull()) {
+            // 物理・音がバインドポーズの形を作れるように、メッシュへスキンを結ぶ (MeshShape.h)。
+            // 頂点は cm のまま・0.01 はパレット側にあるので、これが無いと形が 100 倍になる
+            lc.resources->meshes.SetSkinModel(meshAsset, skinModelId);
+            if (lc.cook) {
+                lc.cook->SetMeshSkin(key, skinKey);
+            }
         }
         const ufbx_material* mat = (part->index < mats.count) ? mats.data[part->index] : nullptr;
         // マテリアルキーはグローバル (element_id) — メッシュ毎に複製すると
@@ -929,7 +941,9 @@ size_t RegisterSkinnedModels(RenderResources& resources, const std::wstring& pat
         if (mesh->skin_deformers.count == 0) {
             continue;
         }
-        LoadSkin(lc, mesh, mesh->skin_deformers.data[0]); // 2 本目以降は Load 側も使わない
+        // メッシュを登録しない経路なので、スキンの登録名 (メッシュとの結び付き用) は使わない
+        std::string unusedSkinKey;
+        LoadSkin(lc, mesh, mesh->skin_deformers.data[0], unusedSkinKey); // 2 本目以降は Load 側も使わない
         ++count;
     }
     ufbx_free_scene(fbx);
