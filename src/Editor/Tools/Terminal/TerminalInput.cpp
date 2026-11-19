@@ -65,24 +65,42 @@ void TerminalSendChar(TerminalScreen& screen, char32_t codepoint, uint8_t modifi
     vterm_keyboard_unichar(screen.RawVTerm(), static_cast<uint32_t>(codepoint), ToVTermModifier(modifiers));
 }
 
-std::string NormalizeTerminalPasteNewlines(std::string_view utf8)
+std::string SanitizeTerminalPaste(std::string_view utf8)
 {
-    // 端末の Enter は CR。Windows の貼付は CRLF、他所からの文字列は LF のことがあり、そのまま送ると
-    // シェルが空行を 2 回受け取ったり LF を改行と見なさなかったりする (Windows Terminal も同じく CR へ揃える)
+    // 貼付本文はそのままシェルや CLI の入力になる。bracketed paste 中でも本文に ESC[201~ があれば貼付を抜けられ、
+    // 無効時も ^C や ESC 列として解釈されるので、有効・無効によらず制御文字を除く (置換文字にはしない)
+    constexpr unsigned char kTab = 0x09;
+    constexpr unsigned char kDel = 0x7F;
+    constexpr unsigned char kC1Lead = 0xC2;   // U+0080-U+009F は UTF-8 で 0xC2 0x80-0x9F
+    constexpr unsigned char kC1TrailFirst = 0x80;
+    constexpr unsigned char kC1TrailLast = 0x9F;
+
     std::string out;
     out.reserve(utf8.size());
-    for (size_t i = 0; i < utf8.size(); ++i) {
-        const char c = utf8[i];
+    bool afterCr = false;   // 直前の入力バイトが CR のとき、続く LF を CRLF の一部として畳む
+    for (const char ch : utf8) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        const bool wasAfterCr = afterCr;
+        afterCr = false;
         if (c == '\r') {
             out += '\r';
-            if (i + 1 < utf8.size() && utf8[i + 1] == '\n') {
-                ++i;
-            }
+            afterCr = true;
         } else if (c == '\n') {
-            out += '\r';
-        } else {
-            out += c;
+            // 端末の Enter は CR。Windows の貼付は CRLF、他所からの文字列は LF のことがあり、そのまま送ると
+            // シェルが空行を 2 回受け取ったり LF を改行と見なさなかったりする (Windows Terminal も同じく CR へ揃える)
+            if (!wasAfterCr) {
+                out += '\r';
+            }
+        } else if (c == kTab || (c >= 0x20 && c != kDel)) {
+            out += ch;
+            // 0xC2 0x9B (8 ビット CSI) などを取り除く。出力側で判定するので、間にあった制御文字を除いた結果として
+            // 0xC2 と 0x80-0x9F が隣り合う場合 ("\xC2\x1b\x9B"、"\xC2\xC2\x9B\x9B") も残さない
+            if (c >= kC1TrailFirst && c <= kC1TrailLast && out.size() >= 2 &&
+                static_cast<unsigned char>(out[out.size() - 2]) == kC1Lead) {
+                out.resize(out.size() - 2);
+            }
         }
+        // それ以外 (HT 以外の C0、ESC を含む。DEL) は捨てる。不正な UTF-8 のバイトは 0x80 以上なので上の分岐でそのまま通る
     }
     return out;
 }
@@ -94,7 +112,7 @@ void TerminalSendPaste(TerminalScreen& screen, std::string_view utf8)
     // start → 本文 → end の順に同じバッファへ並ぶ
     VTerm* vt = screen.RawVTerm();
     vterm_keyboard_start_paste(vt);
-    screen.AppendOutput(NormalizeTerminalPasteNewlines(utf8));
+    screen.AppendOutput(SanitizeTerminalPaste(utf8));
     vterm_keyboard_end_paste(vt);
 }
 

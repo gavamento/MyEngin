@@ -1,8 +1,8 @@
 # sub-02: Win32 非依存のターミナルコア
 
 - 依存: sub-01
-- 状態: 差し戻し (review-1 #1, #2)
-- 往復: 1
+- 状態: OK (コミット待ち)
+- 往復: 2
 
 ## やること
 spec 4.1・4.2。`/home/user/MyEngin/src/Editor/Tools/Terminal/` に Win32 / ImGui 非依存 (標準 C++20 + libvterm のみ) の部品を置く:
@@ -129,7 +129,59 @@ SELF_EVAL: sub-02 (round 1)
   - sub-03: シェルの存在確認は TerminalExecutableFinder として注入する (SearchPathW 等)。ResolveTerminalShell の path/args を QuoteCommandLineArg で組む。環境は BuildTerminalEnvironment → FormatTerminalEnvironmentBlock の UTF-8 を UTF-16 化し CREATE_UNICODE_ENVIRONMENT で渡す
   - sub-04: 毎フレーム Feed (上限 256KB) → TakeOutput を入力パイプへ。DA 応答なども TakeOutput に混ざるのでキー入力が無いフレームでも送ること。default 印のセルはテーマ色へ。width 0 のセルは描かない。ScrollbackLimit は構築時固定なので設定変更時は再構築。設定値の 100〜100000 クランプは窓/設定側で
   - 恒久テストのため、Windows で `MYE_SELFTEST_ONLY=terminalcore` を一度回すこと
+### round 2
+SELF_EVAL: sub-02 (round 2)
+実装:
+  - #1: /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalInput.cpp:SanitizeTerminalPaste — 旧 NormalizeTerminalPasteNewlines を置き換えた Win32 非依存の純関数。改行の CR 正規化と制御文字の除去を 1 パスで行う。TerminalSendPaste は本文をこれに通してから AppendOutput する (bracketed paste の有効・無効によらず常に通す)。宣言と規則は /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalInput.h に書いた。呼び出し元は TerminalSendPaste だけだったので旧関数は残していない (未使用コードを残さない)
+  - #1: /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalCoreSelfTest.cpp:TestPasteSanitize — 新規。(a) 2004 有効で本文に ESC[201~ (b) 2004 無効で C0/DEL/C1 除去と CJK・絵文字保持 (c) 改行の正規化、に加え不正 UTF-8 と途中で切れた列の 5 件。既存 TestPaste は旧関数名を Sanitize へ替え、ESC を含んでいた 1 ケースを ESC なしへ直した (ESC が消えるのが新しい正)。terminalcore は 119 → 131 件
+  - #1 (planner の追記分): /home/user/MyEngin/engine_spec.md (§9.4 Input の項) と /home/user/MyEngin/docs/adr/ADR-041-integrated-terminal.md (決定 7) に貼付消毒の 1 文ずつ
+  - #2: /home/user/MyEngin/external/VERSIONS.md の libvterm 行に「gcc -O1 以上で上流 parser.c / state.c に -Wmaybe-uninitialized が出る (上流のまま、実害なし。最適化なしの gcc -Wall では 0)」を追記 (表の行を壊さないよう、取得元列の前の説明欄の末尾に足した)
+技術解説:
+  - 技術: 出力側スタックでの C1 除去 — UTF-8 の C1 (U+0080-U+009F) は 0xC2 0x80-0x9F の 2 バイト。入力を 1 バイトずつ見て、通すバイトを out に積んだ直後に「out の末尾 2 バイトが 0xC2 + 0x80-0x9F か」を見て、そうなら 2 バイトとも out から落とす。入力側の隣接で見ないのは、間に挟まった ESC などを除いた結果として 0xC2 と 0x9B が隣り合う "\xC2\x1b\x9B" や、入れ子の "\xC2\xC2\x9B\x9B" から 8 ビット CSI (U+009B) が再び出来るのを防ぐため (除去後の出力は C2 + 80-9F を含まないことが不変条件になる)。却下: 先に C0 を落とす → 次に C1 を落とす 2 パス方式 — "\xC2\xC2\x9B\x9B" で 2 パス目の除去が新しい C1 を作る。UTF-8 を完全にデコードして U+0080-U+009F を判定する方式 — 不正列の扱いを自前で決め直す必要があり、「不正な UTF-8 は既存の扱いのまま」という確定事項に反する。
+  - 技術: 常に消毒する理由 — bracketed paste (DECSET 2004、xterm 由来) は本文を CSI 200~ ... CSI 201~ で包み、アプリ側は 201~ が来るまでを貼付として扱う。本文に ESC[201~ があるとそこで貼付が終わり、残りがキー入力として実行される。有効時は ESC を落とせば足りるが、無効時も ESC・^C・C1 がそのままシェルや CLI に解釈されるので、確定事項どおり有効・無効を区別せず同じ消毒をかける。置換文字 (U+FFFD) にしないのは、貼付した文字列に見えない差分を足さないため。落とした後の "[201~" は無害な文字列として残る。
+  - コード: SanitizeTerminalPaste (入力: 貼付文字列 UTF-8 / 出力: 消毒済みバイト列。状態は直前の入力バイトが CR かを示す afterCr だけ。呼び出し元は TerminalSendPaste だけ)。分岐は CR → CR を出して afterCr、LF → 直前が CR なら畳み、そうでなければ CR、HT または 0x20 以上かつ DEL 以外 → 通す、それ以外 (HT 以外の C0、DEL) → 捨てる。0x80 以上のバイトは全部「通す」側に入るので、不正な UTF-8 や途中で切れた列はそのまま通る。
+    ```cpp
+    } else if (c == kTab || (c >= 0x20 && c != kDel)) {
+        out += ch;
+        if (c >= kC1TrailFirst && c <= kC1TrailLast && out.size() >= 2 &&
+            static_cast<unsigned char>(out[out.size() - 2]) == kC1Lead) {
+            out.resize(out.size() - 2);
+        }
+    }
+    ```
+  - コード: 決めた境界 (差分欄にも [追加] で記載) — (1) 単独の 0x9B など 0x80 以上の孤立バイトは通す (UTF-8 では C1 ではなく不正バイト。ConPTY 側の UTF-8 デコードが U+FFFD にするので 8 ビット CSI としては働かない)。(2) 末尾で切れた 0xC2 や 0xE3 0x81 も通す。(3) ただし ESC 等を落とした結果として 0xC2 と 0x80-0x9F が隣り合えば C1 として落とす。(4) CRLF の畳みは入力上の隣接で判定する ("a\x1b\r\nb" は ESC を落とした後も CRLF として 1 個の CR)。TerminalSendPaste の呼び順は round 1 のとおり start_paste → AppendOutput(本文) → end_paste。
+  - 前提・落とし穴: 消毒は TerminalSendPaste の中にあり、窓側 (sub-04) の貼付経路が TerminalSendPaste を通る限り自動で効く。別経路で本文を AppendOutput へ直接積むとこの保護を迂回する。消毒後の本文はバイト列として UTF-8 の妥当性を保証しない (不正入力は不正のまま)。ESC を含むキー入力 (Escape キー、Alt+文字) は TerminalSendKey / TerminalSendChar の経路で、貼付とは別。決定性: 純関数で入力だけで出力が決まる。他の層は round 1 のとおり。
+仕様との差分:
+  - [追加] 不正な UTF-8・途中で切れた列の扱い (上記 (1)〜(4)) — spec は「既存の扱いのまま」のみ。0x80 以上のバイトは通し、除去の結果隣り合った 0xC2 + 0x80-0x9F だけ C1 として落とす。理由: 通すだけだと ESC を挟んだ入力で 8 ビット CSI を作れてしまうため
+  - [追加] NormalizeTerminalPasteNewlines を公開 API から外し SanitizeTerminalPaste に統合 — 改行正規化と消毒が 1 パスで、旧関数の呼び出し元が TerminalSendPaste と旧テストだけだったため。spec・sub に旧関数名の規定は無い
+  - 仕様変更 (spec 4.1・受け入れ条件 3・§7・§8) は読み直して反映済み。逸脱なし
+検証:
+  - g++ -std=c++20 -Wall -Wextra -O1 で terminalcore + terminalsession + terminalwindow(Layout) + terminalvsenv の 4 スイートと libvterm (round 1 でビルド済みの gcc -std=c99 オブジェクト) をリンク → 警告 0 (ビルドログ 0 行)、vsenv=1 layout=1 core=1 session=1、terminalcore 単体は 131 PASS / 0 FAIL (旧 119 + 新規 12)
+  - 同じ構成を -g -fsanitize=address,undefined → 4 スイートとも成功、サニタイザ報告なし
+  - reviewer の /tmp/claude-0/-home-user-MyEngin/a4d9b156-b135-54e6-b68d-c08729d36d62/scratchpad/review1/edge.cpp を再ビルド (plain / ASan+UBSan) → 29 項目すべて ok、FAILS=0。FAIL だった "pasted text cannot terminate bracketed paste early" が ok になり、出力は `\x1b[200~echo safe[201~rm -rf x\x0d\x1b[201~` (ESC は包みの 2 つだけ)
+  - grep で TerminalInput.* に Windows / imgui の include → 0 件。新規テスト (a)(b)(c) と不正 UTF-8 の期待値は、実装前に手で期待バイト列を決め、失敗 1 件 (自分の期待値の CR 数の書き間違い: CRLF は 1 個) を直して再実行
+  - 作業ツリーはコミットしていない。ADR / engine_spec / VERSIONS は文書のみの変更 (整合は diff で確認、エンジンのビルドは不要)
+  - MSVC ビルド、`MYE_SELFTEST_ONLY=terminalcore bin\x64\Debug\Editor.exe --selftest`、tools\check_rules.ps1、TSan: 未実行 (Linux コンテナで MSVC / Windows / pwsh なし。TSan は本変更がスレッドに触れない純関数のため省略)
+自己採点 (1-5):
+  仕様適合: 4 — 確定事項 (常に消毒・HT/CR 以外の C0・DEL・C1 を除去・置換文字なし・CJK/絵文字保持・CR 正規化) と #1 #2 の指示をすべて実装。Windows の実行が未確認
+  正しさ: 4 — 4 スイートと reviewer の edge で plain / ASan+UBSan 確認、元の故障条件 (ESC[201~) の出力で解消を確認、ESC を挟んだ C1 の再構成も反証テスト済み。MSVC と実 ConPTY 経由の貼付は未検証
+  コード品質: 4 — 純関数 1 つに統合し旧関数を残さず、マジックナンバーは名前付き定数、コメントは理由のみ
+  テスト: 4 — 指定 3 ケース + 不正 UTF-8・切れた列・入れ子の C1 を追加。Windows の Fast 層実行は未確認
+不安・質問:
+  - 孤立した 0x80-0x9F の単独バイトを通す判断 (ConPTY の UTF-8 デコードが U+FFFD にする前提、記憶による・この環境では未確認)。厳しくするなら 0x80 以上の不正バイトも落とす案がある (日本語の不正入力は想定しにくい)
+触ったファイル:
+  - /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalInput.h
+  - /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalInput.cpp
+  - /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalCoreSelfTest.cpp
+  - /home/user/MyEngin/engine_spec.md
+  - /home/user/MyEngin/docs/adr/ADR-041-integrated-terminal.md
+  - /home/user/MyEngin/external/VERSIONS.md
+  - /home/user/MyEngin/plans/m106-integrated-terminal/sub-02.md (実装メモ節のみ)
+申し送り:
+  - Windows で `MYE_SELFTEST_ONLY=terminalcore` を再度回すこと (新規 12 件)。sub-04 の窓は貼付を TerminalSendPaste 経由で送る前提を保つこと
+
 - round 1: VERDICT OK (planner)。差分7件はすべて承認: 単独 LF→CR (Windows Terminal と同じ挙動、CR は維持) / シェル設定書式と ConfiguredMalformed / 自動検出の引数は空 (-NoLogo は付けない。プロファイルのバナーはユーザーのシェル設定の領分) / エラー列挙 / 環境組立の2関数分割 (非 ASCII 名の並び差は既知の制約として残す) / AppendOutput / 上限0=保持しない (クランプは sub-04)。MSVC ビルドと SelfTest Fast の実行は Windows の未検証として申し送り。
 - review-1 対応 (planner REVIEW_RESPONSE): 差し戻し。
   - #1 [must] /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalInput.cpp:TerminalSendPaste (と NormalizeTerminalPasteNewlines の周辺) に spec 4.1「貼付本文の規則」を実装する。消毒は Win32 非依存の純関数にし、bracketed paste の有効・無効どちらでも通す。terminalcore に回帰テストを追加: (a) 2004 有効で "echo safe\x1b[201~rm -rf x\r\n" → 出力に ESC[201~ が末尾の 1 回だけ、(b) 2004 無効で ESC・^C(0x03)・NUL・DEL・U+009B が消え、HT/CR・日本語・絵文字は残る、(c) CRLF・LF → CR は従来どおり。検証: g++ で terminalcore を plain と ASan/UBSan で実走 (reviewer の /tmp/claude-0/-home-user-MyEngin/a4d9b156-b135-54e6-b68d-c08729d36d62/scratchpad/review1/edge.cpp の FAIL 行が ok になること)。engine_spec §9.4 と ADR-041 に 1 文。
   - #2 [nit] /home/user/MyEngin/external/VERSIONS.md の libvterm 項に「上流無改変。gcc -O1 以上では parser.c / state.c に -Wmaybe-uninitialized が出る (最適化なしでは 0)」と 1 行。
+- round 2 (出所 REVIEW round 1): VERDICT OK (planner)。SELF_EVAL は scratchpad 原文と一致 (差はフィードバック履歴行のみ)。git status の 7 ファイルと一致。TerminalInput.cpp の差分で、1 回の走査で HT/CR 以外の C0・DEL を除去、LF→CR (CRLF は畳む)、出力側で 0xC2+0x80-0x9F を落とすことを確認 (除去で隣接した組も落ちる)。NormalizeTerminalPasteNewlines は src に残存参照なし。VERSIONS.md 注記あり (review-1 #2 消込)。[追加] 2 件 (不正 UTF-8 の素通し・旧関数の統合) は追認。質問 (孤立 0x80-0x9F の素通し) は可: UTF-8 として不正な単独バイトで C1 として解釈される経路は Latin-1 解釈時のみ、ConPTY が U+FFFD 化するという前提は記憶による・Windows で test_checklists に 1 項目足して確認。nit: CR の直後に除去対象 (例 CR ESC LF) があると afterCr が解除され CR が 2 つ出る。実害は空行 1 つで小さいので申し送り。

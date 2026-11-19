@@ -250,8 +250,8 @@ void TestKeys(const auto& check)
 
 void TestPaste(const auto& check)
 {
-    check(NormalizeTerminalPasteNewlines("a\r\nb\nc\rd") == "a\rb\rc\rd", "paste: newline normalize");
-    check(NormalizeTerminalPasteNewlines("").empty() && NormalizeTerminalPasteNewlines("\r\n\r\n") == "\r\r", "paste: empty / only newlines");
+    check(SanitizeTerminalPaste("a\r\nb\nc\rd") == "a\rb\rc\rd", "paste: newline normalize");
+    check(SanitizeTerminalPaste("").empty() && SanitizeTerminalPaste("\r\n\r\n") == "\r\r", "paste: empty / only newlines");
 
     TerminalScreen screen(80, 24, 0);
     check(!screen.IsBracketedPaste(), "paste: bracketed off by default");
@@ -261,12 +261,45 @@ void TestPaste(const auto& check)
     screen.Feed("\x1b[?2004h");
     check(screen.IsBracketedPaste(), "paste: 2004h enables");
     check(screen.TakeOutput().empty(), "paste: probing mode does not leak bytes");
-    TerminalSendPaste(screen, "\xE3\x81\x82\n\x1b[x");
-    check(screen.TakeOutput() == "\x1b[200~\xE3\x81\x82\r\x1b[x\x1b[201~", "paste: wrapped with 200~/201~");
+    TerminalSendPaste(screen, "\xE3\x81\x82\n[x");
+    check(screen.TakeOutput() == "\x1b[200~\xE3\x81\x82\r[x\x1b[201~", "paste: wrapped with 200~/201~");
     TerminalSendPaste(screen, "");
     check(screen.TakeOutput() == "\x1b[200~\x1b[201~", "paste: empty paste still wrapped");
     screen.Feed("\x1b[?2004l");
     check(!screen.IsBracketedPaste(), "paste: 2004l disables");
+}
+
+// 貼付本文の消毒 (review-1 #1)。出力バイトは TakeOutput で取り、ESC は 200~/201~ の包みにしか現れないことを見る
+void TestPasteSanitize(const auto& check)
+{
+    // (a) 2004 有効で本文に ESC[201~ を含む: 包みを閉じる 201~ は末尾の 1 回だけ。後続の本文は包みの内側に残る
+    {
+        TerminalScreen screen(80, 24, 0);
+        screen.Feed("\x1b[?2004h");
+        TerminalSendPaste(screen, "echo safe\x1b[201~rm -rf x\r\n");
+        const std::string out = screen.TakeOutput();
+        check(out == "\x1b[200~echo safe[201~rm -rf x\r\x1b[201~", "paste sanitize: ESC[201~ in body cannot close the wrapper");
+        check(std::count(out.begin(), out.end(), '\x1b') == 2, "paste sanitize: only the two wrapper ESCs remain");
+        screen.Feed("\x1b[?2004l");
+    }
+    // (b) 2004 無効: C0 (ESC / ^C / NUL)・DEL・U+0080-U+009F (U+009B を含む) が消え、HT・CR・CJK・絵文字が残る
+    {
+        TerminalScreen screen(80, 24, 0);
+        TerminalSendPaste(screen, "a\x1b" "b\x03" "c" + std::string(1, '\0') + "d\x7f" "e\xC2\x9B" "f\xC2\x80" "g\xC2\x9F" "h\tz");
+        check(screen.TakeOutput() == "abcdefgh\tz", "paste sanitize: C0 / DEL / C1 removed, HT kept (2004 off)");
+        TerminalSendPaste(screen, "\xE3\x81\x82\xE6\x97\xA5\xF0\x9F\x98\x80\xC2\xA0\xC2\xA1\x1b\xE3\x81\x84");
+        check(screen.TakeOutput() == "\xE3\x81\x82\xE6\x97\xA5\xF0\x9F\x98\x80\xC2\xA0\xC2\xA1\xE3\x81\x84", "paste sanitize: CJK / emoji / U+00A0-U+00A1 kept");
+        check(SanitizeTerminalPaste("\x1b\x01\x7f\xC2\x85").empty(), "paste sanitize: only control characters gives empty");
+    }
+    // (c) 改行の正規化: CRLF・LF → CR、単独 CR は維持。制御文字の除去と組み合わせても数が崩れない
+    check(SanitizeTerminalPaste("a\r\nb\nc\rd\r\r\n\n") == "a\rb\rc\rd\r\r\r", "paste sanitize: CRLF / LF to CR, lone CR kept");
+    check(SanitizeTerminalPaste("a\x1b\r\nb") == "a\rb", "paste sanitize: removed control before CRLF keeps CRLF folded");
+    // 不正な UTF-8 / 途中で切れた列: 0x80 以上のバイトは通す。ただし取り除いた結果 0xC2 と 0x80-0x9F が隣り合えば C1 として除く
+    check(SanitizeTerminalPaste("a\xff\xfe" "b") == "a\xff\xfe" "b", "paste sanitize: invalid UTF-8 bytes pass through");
+    check(SanitizeTerminalPaste("a\xE3\x81") == "a\xE3\x81" && SanitizeTerminalPaste("a\xC2") == "a\xC2", "paste sanitize: truncated sequence at the end passes through");
+    check(SanitizeTerminalPaste("\xC2\x1b\x9B").empty(), "paste sanitize: C1 made adjacent by removed ESC is removed");
+    check(SanitizeTerminalPaste("\xC2\xC2\x9B\x9B").empty(), "paste sanitize: nested lead bytes do not leave a C1");
+    check(SanitizeTerminalPaste("\x9B[31m") == "\x9B[31m", "paste sanitize: lone 0x9B (not UTF-8 C1) passes through");
 }
 
 // ---- シェル解決 ----
@@ -414,6 +447,7 @@ bool RunTerminalCoreSelfTest()
     TestScreenBulk(check);
     TestKeys(check);
     TestPaste(check);
+    TestPasteSanitize(check);
     TestShellResolve(check);
     TestEnvironment(check);
     MYE_LOG_INFO("TerminalCore self test: %s (%d failure(s))", failCount == 0 ? "PASS" : "FAIL", failCount);
