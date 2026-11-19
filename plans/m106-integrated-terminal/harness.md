@@ -3,7 +3,7 @@
 - 依頼原文: このエンジンでターミナルが開けるようにしたい
   - 追加指示: 「ConPTY+ImGui描画 は？」「vimやCLIなどにも対応させたい」「vimは対応対象外でいいけどclaudecodeCLIなどは対象に入れて」「git・ビルド・Claude Code CLIなども使えるMyEngin統合ターミナルにするなら」
 - 開始: 2026-11-19 / 基点コミット: 9e44a4bb69201beca557be445dae13290658f324 / ブランチ: claude/nice-goodall-kwzmxi
-- フェーズ: 実装
+- フェーズ: レビュー
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -13,7 +13,7 @@
 | sub-03 ConPTY ホストとセッション | OK | 1 | 25754ab | ConPTY 実経路は未実行 (should, Windows で確認) |
 | sub-04 Terminal 窓 | OK | 1 | bfe0c4b | スクロール追従の修正・VS状態表示・環境配線・ADR は sub-05 へ |
 | sub-05 VS 開発者環境とエンジン環境変数 | OK | 1 | 77e28b1 | Win32 経路・chcp 65001 は Windows で要確認 (nit) |
-| sub-06 AI 変更追跡の紐付け (track v4) | 未着手 | 0 | | 依存 sub-02 (窓表示は sub-04 後) |
+| sub-06 AI 変更追跡の紐付け (track v4) | OK | 1 | fb42a4a | Windows ネイティブ cargo test・MSVC は要確認 (nit) |
 
 ## レビュー
 | round | 判定 | 深度/機能/視覚/品質 | 未解決 |
@@ -30,6 +30,7 @@
 - (2026-11-19) 仕様確定: 受け入れ条件 1〜11 で実装へ
 - (2026-11-19 ユーザー判断) 版は 0.88.3 (0.88.0〜0.88.2 を飛ばすことを確認済み)。PR は reviewer PASS 後に版を上げてから master 向けに出す。タグ v0.88.3 はマージ後に master のマージコミットへ付ける (docs/release.md の手順。push で即公開)。
 - (2026-11-19 planner 裁定をユーザー承認) MYE_PROJECT_ROOT / MYE_TERMINAL_ID / TERM_PROGRAM は親に同名があっても置換 (COLORTERM は親を残す) / VS 環境の読み込みはターミナル窓の初回表示時に開始
+- (2026-11-19 planner 裁定をユーザー承認) 旧 v3 サービスへの hostTerminal 送信失敗時の再送は入れない (サービス再起動で解消) / AI Changes 窓の区別はエディタ単位 (「統合ターミナル (このエディタ)」)
 - (2026-11-19) コンテナ再起動で sub-05 coder が中断。途中成果を引き継いで新しい coder で再開した。
 
 ## 申し送り (セッション跨ぎ)
