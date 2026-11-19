@@ -1335,6 +1335,13 @@ Linux のクラウド環境では ConPTY・MSVC ビルド・実画面の確認�
 - [ ] 時間切れの擬似 (`VsDevCmd.bat` の先頭に `ping -n 60 127.0.0.1 >nul` を一時的に入れる): 30 秒後に警告つきで素の環境で起動し、その後 VS 環境が遅れて読めても状態は変わらない。読み込み中にエディタを閉じても 2 秒以内に終わり、`cmd.exe` が残らない
 - [ ] `claude` や `git diff` で truecolor の色が出る (`COLORTERM=truecolor`。spec 5-7 の色の確認)
 
+### AI 変更追跡との紐付け (M106f。受け入れ条件 9)
+
+- [ ] `tools\track` で `cargo test` が全部通る (スキーマ v3 → v4 の移行、`hostTerminal` の保存・欠落・作り直し、フックの環境変数の扱い。結合テスト `tests\hook.rs` の `the_terminal_id_variable_becomes_the_host_terminal_of_the_session_and_its_absence_leaves_it_null` を含む)
+- [ ] 変更の追跡を有効にしたプロジェクトで、統合ターミナルから `claude` を起動してファイルを編集させる。AI Changes 窓のセッション欄の行に「統合ターミナル (このエディタ)」と出る (日本語 UI。英語 UI は "Integrated terminal (this editor)")。外のターミナルで起動した Claude Code のセッションの行には何も付かない (スクリーンショットを残す)
+- [ ] エディタを再起動したあと、前の起動の統合ターミナルで始まったセッションは「統合ターミナル」だけで「(このエディタ)」は付かない。ターミナルの「再起動」では (連番が変わっても) 同じエディタのものとして「(このエディタ)」が付く
+- [ ] 版 3 までの `tracking.db` を持つプロジェクトを開くと、移行前のコピー `tracking.db.bak-v3` ができ、記録済みのセッションは何も付かずに表示される (ターミナルの印は遡って付かない)
+
 ### 実際のツール (受け入れ条件 7)
 
 - [ ] `git log --oneline -20`・`git status`・`git diff` (色つき)・`git log --graph` が崩れず表示される (ページャ `less` が出る環境では `q` で戻れる)

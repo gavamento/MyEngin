@@ -5,6 +5,7 @@
 //====================================================================================
 #include "Editor/Tools/Terminal/TerminalVsEnv.h"
 
+#include <algorithm>
 #include <map>
 #include <utility>
 
@@ -127,6 +128,15 @@ std::vector<TerminalEnvVar> ApplyTerminalEnvironmentDiff(const std::vector<Termi
 std::string FormatTerminalId(uint32_t editorPid, uint64_t editorStartUnixSeconds, int serial)
 {
     return std::to_string(editorPid) + "-" + std::to_string(editorStartUnixSeconds) + "-" + std::to_string(serial);
+}
+
+bool TerminalIdBelongsToEditor(std::string_view id, uint32_t editorPid, uint64_t editorStartUnixSeconds)
+{
+    const std::string prefix = std::to_string(editorPid) + "-" + std::to_string(editorStartUnixSeconds) + "-";
+    if (id.size() <= prefix.size() || id.substr(0, prefix.size()) != prefix) {
+        return false;
+    }
+    return std::all_of(id.begin() + prefix.size(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
 std::vector<TerminalEnvVar> BuildTerminalLaunchEnvironment(const std::vector<TerminalEnvVar>& parent, const std::vector<TerminalEnvVar>& vsDiff,

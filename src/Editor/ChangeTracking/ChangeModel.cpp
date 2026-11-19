@@ -93,6 +93,7 @@ std::vector<TrackSessionRow> ChangeModel::ParseSessions(const nlohmann::json& re
         row.sessionId = Str(item, "sessionId");
         row.provider = Str(item, "provider");
         row.source = Str(item, "source");
+        row.hostTerminal = Str(item, "hostTerminal");   // null・欠落は空 (統合ターミナルの外)
         row.workspace = Str(item, "workspace");
         row.status = Str(item, "status");
         row.startedAt = Int(item, "startedAt", 0);

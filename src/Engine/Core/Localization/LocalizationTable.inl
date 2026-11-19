@@ -3093,6 +3093,8 @@ MYE_STR(AiChg_Sessions,       "Sessions",                              "セッ�
 MYE_STR(AiChg_AllChanges,     "All changes",                           "すべての変更")
 MYE_STR(AiChg_UncertainScope, "Without a session (unknown / inferred)", "セッションなし (不明 / 推定)")
 MYE_STR(AiChg_SessionChanges, "changes",                               "件の変更")
+MYE_STR(AiChg_SessionHostTerminal, "Integrated terminal",              "統合ターミナル")
+MYE_STR(AiChg_SessionHostTerminalHere, "Integrated terminal (this editor)", "統合ターミナル (このエディタ)")
 MYE_STR(AiChg_SessionRunning, "running",                               "実行中")
 MYE_STR(AiChg_SessionFinished, "finished",                             "終了")
 MYE_STR(AiChg_SessionInterrupted, "interrupted",                       "中断")

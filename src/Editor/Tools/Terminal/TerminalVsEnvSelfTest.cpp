@@ -165,6 +165,15 @@ void TestLaunchEnvironment(const auto& check)
 
     check(FormatTerminalId(1234, 1763500000, 1) == "1234-1763500000-1" && FormatTerminalId(0, 0, 12) == "0-0-12", "id: <pid>-<start unix seconds>-<serial>");
     check(FormatTerminalId(4294967295u, 18446744073709551615ull, 2147483647) == "4294967295-18446744073709551615-2147483647", "id: the largest values do not overflow");
+
+    // AI Changes 窓が「このエディタの統合ターミナル」を見分ける。連番は見ないが、PID と起動時刻は完全に一致させる
+    check(TerminalIdBelongsToEditor(FormatTerminalId(1234, 1763500000, 1), 1234, 1763500000) && TerminalIdBelongsToEditor(FormatTerminalId(1234, 1763500000, 12), 1234, 1763500000),
+          "id: an id made by this editor (any serial) belongs to it");
+    check(!TerminalIdBelongsToEditor(FormatTerminalId(1234, 1763500000, 1), 1235, 1763500000) && !TerminalIdBelongsToEditor(FormatTerminalId(1234, 1763500000, 1), 1234, 1763500001),
+          "id: another PID or another start time (a reused PID) does not belong to it");
+    check(!TerminalIdBelongsToEditor("", 1234, 1763500000) && !TerminalIdBelongsToEditor("1234-1763500000-", 1234, 1763500000) && !TerminalIdBelongsToEditor("1234-1763500000-x", 1234, 1763500000)
+              && !TerminalIdBelongsToEditor("11234-1763500000-1", 1234, 1763500000) && !TerminalIdBelongsToEditor("1234-17635000001-1", 1234, 1763500000),
+          "id: empty / no serial / non-numeric serial / a longer number that only ends or starts the same do not belong");
 }
 
 // ---- 非同期ローダー ----

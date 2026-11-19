@@ -128,7 +128,7 @@ AI Change Trackingを独立したサービスとして実装する。
 - Codex CLI
 - Gemini CLI
 - Other MCP Client
-- 将来実装するMyEngin統合ターミナル
+- MyEngin統合ターミナル（M106。中で動くClaude Codeのセッションは `hostTerminal` で区別する）
 
 **接続層**
 
@@ -227,6 +227,7 @@ Named Pipeは現在のユーザーにアクセスを制限し、セッション�
 | `endedAt` | 終了日時 |
 | `status` | Running / Finished / Interrupted |
 | `source` | Terminal / MCP / External |
+| `hostTerminal` | MyEngin統合ターミナルのID（統合ターミナルの外ではなし）。`source` は統合ターミナルでもTerminalのまま |
 | `trackingCoverage` | 追跡範囲・欠落情報 |
 
 PIDの再利用を考慮し、PID単体でセッションを識別しない。

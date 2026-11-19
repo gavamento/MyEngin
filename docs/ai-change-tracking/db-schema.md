@@ -53,7 +53,8 @@ CREATE TABLE sessions (
   started_at        INTEGER NOT NULL,
   ended_at          INTEGER,
   status            TEXT NOT NULL,              -- running / finished / interrupted
-  coverage          TEXT NOT NULL               -- JSON: 追跡できた経路と欠落
+  coverage          TEXT NOT NULL,              -- JSON: 追跡できた経路と欠落
+  host_terminal     TEXT                        -- 版 4: MyEngine 統合ターミナルの ID (MYE_TERMINAL_ID)。統合ターミナルの外・版 3 までの行は NULL
 );
 
 CREATE TABLE operations (
@@ -300,7 +301,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 
 | kind | payload |
 |---|---|
-| `session_begin` | `session_id`、`provider`、`source`、`client_session_id`、`workspace` (正規化した絶対パス)、`workspace_rel` (ルートからの相対。ルートなら空)、`base_commit`、`process_id` / `process_start` (`mcp` の接続だけ。pipe から得た値)、`isolated`、`worktree_eligible` (申告 + リンクされた作業ツリー + Editor 不在。開始時に決まる 3 条件)、`capabilities` |
+| `session_begin` | `session_id`、`provider`、`source`、`client_session_id`、`host_terminal` (M106f。統合ターミナルの ID。無ければ項目を持たない = NULL)、`workspace` (正規化した絶対パス)、`workspace_rel` (ルートからの相対。ルートなら空)、`base_commit`、`process_id` / `process_start` (`mcp` の接続だけ。pipe から得た値)、`isolated`、`worktree_eligible` (申告 + リンクされた作業ツリー + Editor 不在。開始時に決まる 3 条件)、`capabilities` |
 | `session_resumed` | `session_id`、`process_id` / `process_start` (`mcp` の再接続で更新) |
 | `session_end` | `session_id` |
 | `session_interrupted` | `session_id`、`reason` (`process_exited` / `idle` / `startup`) |
@@ -368,5 +369,7 @@ DB を作り直したとき、`events` から `snapshots` / `changes` / `change_
 `editor_saved` のイベントの payload は `{ path, hash }` (path はプロジェクトルート基準、`/` 区切り。`at` は受けた時刻)。作り直し (§6 の 1) はこのイベントも順に読み、観測が先でも後でも同じ `attribution_evidence` (`kind = editor_saved`、`session_id` / `operation_id` は NULL) になる。
 
 **版 3** (M104l): `documents.successor_id` (仮の ID の文書から guid の文書への引き継ぎ、§3.3) と、`idx_documents_current_path`、`idx_scene_changes_revision` を足した (`schema\v3.sql`)。
+
+**版 4** (M106f): `sessions.host_terminal TEXT` (MyEngine 統合ターミナルの ID。`MYE_TERMINAL_ID` をフックが `session_begin` の `hostTerminal` に載せたもの) を足した (`schema\v4.sql`)。`ALTER TABLE ... ADD COLUMN` だけなので、既存の行は NULL (遡って付けない)。`source` の値は変えない (既存の `terminal` の判定を壊さない)。`session_begin` イベントの payload に `host_terminal` が増え、作り直し (§6) でも同じ列になる (版 3 までのイベントには無いので NULL)。
 
 **スキーマの凍結** (M104f 以降): `tools\track\src\schema\v1.sql` はこのサブのコミット以降、書き換えない。表や列を変えるときは `schema\mod.rs` の `MIGRATIONS` へ移行 (v2 以降) を足す (上の方針どおり、旧版の DB は移行の前に `.bak-v<旧版>` へコピーされる)。

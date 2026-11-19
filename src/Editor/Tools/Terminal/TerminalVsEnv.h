@@ -54,6 +54,11 @@ inline constexpr std::string_view kTerminalToolsDirName = "tools";
 // MYE_TERMINAL_ID の値: "<エディタの PID>-<エディタの起動時刻 (UNIX 秒)>-<シェル起動の連番>"
 std::string FormatTerminalId(uint32_t editorPid, uint64_t editorStartUnixSeconds, int serial);
 
+// id が、この PID・起動時刻のエディタが FormatTerminalId で作ったものか ("<PID>-<起動時刻>-" で始まり、連番が 10 進の数字だけ)。
+// AI Changes 窓が「このエディタの統合ターミナルで始まったセッション」を見分けるのに使う。連番は見ない (シェルを再起動すると増えるが、
+// 同じエディタの同じ窓の別シェルとして扱いたいため)
+bool TerminalIdBelongsToEditor(std::string_view id, uint32_t editorPid, uint64_t editorStartUnixSeconds);
+
 // 子プロセスへ渡す環境の全体。parent (親環境) → vsDiff (VS 開発者環境の差分。空なら無し) の順に重ね、
 // MYE_TERMINAL_ID / TERM_PROGRAM / MYE_PROJECT_ROOT (projectRoot が空でなければ) は親の値があっても自分の値で置き換え、
 // COLORTERM は親に無いときだけ足し、PATH の先頭へ "<projectRoot>\tools;" を前置する (BuildTerminalEnvironment の規則で整列済み)。

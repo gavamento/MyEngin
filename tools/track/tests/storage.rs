@@ -178,6 +178,40 @@ fn upgrade_backs_up_old_db_and_failed_migration_rolls_back() {
     assert_eq!(count(&old, "SELECT COUNT(*) FROM sqlite_master WHERE name='extra_v2'"), 0);
 }
 
+#[test]
+fn a_v3_database_upgrades_to_v4_and_old_sessions_have_a_null_host_terminal() {
+    let root = temp_project("v3_to_v4");
+    // 版 3 までの DB を作り、旧版の列だけでセッションを入れる (host_terminal の列はまだ無い)
+    let v3: Vec<Migration> = MIGRATIONS.iter().copied().filter(|m| m.version <= 3).collect();
+    let (store, report) = open_project_with(&root, NOW, StartupOptions { migrations: &v3, ..Default::default() });
+    assert_eq!(report.state, Some(ServiceState::Recording));
+    drop(store);
+    let conn = db_conn(&root);
+    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), 3);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'host_terminal'"), 0);
+    conn.execute(
+        "INSERT INTO sessions (session_id, provider, source, client_session_id, workspace, started_at, status, coverage)
+         VALUES ('old-1', 'claude', 'terminal', 'c-old', 'c:\\proj', 1, 'finished', '{}')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    // 最新のビルドで開くと版 4 へ上がり、移行前のコピー (.bak-v3) が残り、既存の行は NULL
+    let (store, report) = open_project(&root, NOW);
+    assert_eq!(report.state, Some(ServiceState::Recording), "{:?}", report.state);
+    drop(store);
+    assert_eq!(latest_version(), 4);
+    let conn = db_conn(&root);
+    assert_eq!(count(&conn, "SELECT MAX(version) FROM schema_migrations"), 4);
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'host_terminal'"), 1);
+    let old: Option<String> = conn.query_row("SELECT host_terminal FROM sessions WHERE session_id = 'old-1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(old, None, "既存の行は遡って付けない");
+    assert!(Paths::for_project(&root).dir.join("tracking.db.bak-v3").is_file(), "移行前のコピーが無い");
+    // 新しい列は書ける
+    conn.execute("UPDATE sessions SET host_terminal = '1-2-3' WHERE session_id = 'old-1'", []).unwrap();
+}
+
 fn event_json(at: i64, kind: &str) -> String {
     serde_json::to_string(&JournalEntry { at, kind: kind.into(), payload: json!({"k": kind}) }).unwrap()
 }

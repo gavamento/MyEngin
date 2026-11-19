@@ -97,7 +97,10 @@
 - 貼付サイズ: 上限・分割書込なし (同期 WriteFile)。巨大貼付で UI が待ちうる。実機で問題が出たら別サブで分割書込を入れる (sub-04 round 1 裁定)。
 - track の Rust テスト: cargo はこの環境にある (`/root/.cargo/bin/cargo`)。依存クレート取得可否は sub-06 で確認。
 
+- (sub-06 round 1) 版 3 のサービスが残ったまま新フックが hostTerminal を送ると bad_args で session_begin が失敗し、その編集は記録されない。サービス再起動で解消 (ipc-contract.md §4.2 に注記)。フック側の「hostTerminal を外して 1 回再送」は入れない (planner 裁定。未知引数は見える失敗とする IPC 方針 ipc-contract.md §7 を維持)。
+
 ## 8. 変更履歴
 - 2026-11-19 sub-03 round 1 (coder SELF_EVAL): 4.1 の引数引用を「空白・" を含むものだけ引用」に変更。理由は cmd.exe が引用されたスイッチを解釈しないため。
 - 2026-11-19 sub-04 round 1 (coder 質問): 4.1 スクロールバックの追従条件を変更 (出力では戻さず入力で戻す)。理由はスピナーを出し続ける CLI 実行中に履歴が読めないため。実装は sub-05 に追加。ADR 作成と VS 環境状態表示も sub-05 に割当。
 - 2026-11-19 sub-05 round 1 (coder SELF_EVAL): 4.2 に MYE_PROJECT_ROOT / MYE_TERMINAL_ID / TERM_PROGRAM の置換と、VS 環境読み込みの開始を窓の初回表示時とすることを追記。理由は sub-06 の識別を親の値で誤らないため・使わない人に VsDevCmd のコストを払わせないため。
+- 2026-11-19 sub-06 round 1 (coder SELF_EVAL): AI Changes 窓の「このターミナル」判定を、窓の ID との完全一致から、エディタ PID・起動時刻の接頭辞一致 (表示「統合ターミナル (このエディタ)」) に変更。理由はシェル再起動で連番が変わるたびに表示が変わるのを避け、AiChangesWindow を TerminalWindow に依存させないため。7 に旧サービスとの非互換を記載。

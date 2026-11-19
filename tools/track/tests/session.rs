@@ -892,6 +892,74 @@ fn sessions_are_distinguished_and_the_same_client_session_id_resumes_one() {
     assert_eq!(third["resumed"], false);
 }
 
+// ---- 統合ターミナルの紐付け (M106f、スキーマ版 4): hostTerminal ------------------------------------------
+
+fn host_terminal_of(fx: &Fx, session_id: &str) -> Option<String> {
+    fx.db().query_row("SELECT host_terminal FROM sessions WHERE session_id = ?1", [session_id], |r| r.get(0)).unwrap()
+}
+
+#[test]
+fn a_host_terminal_id_is_stored_and_a_missing_one_is_null() {
+    let mut fx = Fx::new("host_terminal");
+    fx.start(cfg(2000));
+    let hosted = fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "h1", "hostTerminal": "4242-1763500000-3" }));
+    let old_hook = fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "h2" }));
+    let null_field = fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "h3", "hostTerminal": null }));
+    let empty = fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "h4", "hostTerminal": "" }));
+    let id_of = |r: &Value| r["sessionId"].as_str().unwrap().to_string();
+    assert_eq!(host_terminal_of(&fx, &id_of(&hosted)).as_deref(), Some("4242-1763500000-3"));
+    // フィールドが無い (旧フック)・null・空は、どれも NULL (欠落 = 統合ターミナルの外)
+    for r in [&old_hook, &null_field, &empty] {
+        assert_eq!(host_terminal_of(&fx, &id_of(r)), None, "{r}");
+    }
+    // source は統合ターミナルでも "terminal" のまま
+    let source: String = fx.db().query_row("SELECT source FROM sessions WHERE client_session_id = 'h1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(source, "terminal");
+    // 同じ clientSessionId の再開は新しい行を作らず、保存済みの値を変えない
+    let again = fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "h1", "hostTerminal": "9-9-9" }));
+    assert_eq!((again["resumed"].as_bool(), id_of(&again)), (Some(true), id_of(&hosted)));
+    assert_eq!(host_terminal_of(&fx, &id_of(&hosted)).as_deref(), Some("4242-1763500000-3"));
+
+    // `sessions` の項目に hostTerminal が出る (無ければ null)
+    let listed = ops::sessions(&fx.db(), args(json!({}))).unwrap();
+    let items = listed["items"].as_array().unwrap();
+    let find = |r: &Value| items.iter().find(|i| i["sessionId"] == r["sessionId"]).unwrap().clone();
+    assert_eq!(find(&hosted)["hostTerminal"], "4242-1763500000-3");
+    assert!(find(&old_hook)["hostTerminal"].is_null(), "{}", find(&old_hook));
+    assert_eq!(find(&hosted)["source"], "terminal");
+
+    // 上限を超える ID と文字列でない値は bad_args。セッションは作られない
+    let before: i64 = fx.db().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
+    for bad in [json!("x".repeat(ops_record::MAX_HOST_TERMINAL_BYTES + 1)), json!(12), json!(["a"])] {
+        let e = fx.call("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "hostTerminal": bad })).unwrap_err();
+        assert_eq!(e.code, code::BAD_ARGS, "{bad}");
+    }
+    let after: i64 = fx.db().query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0)).unwrap();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn a_host_terminal_id_survives_a_rebuild_from_the_journal() {
+    let mut fx = Fx::new("host_terminal_rebuild");
+    fx.start(cfg(2000));
+    fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "rb-h", "hostTerminal": "7-8-9" }));
+    fx.ok("session_begin", HOOK, json!({ "provider": "claude", "workspace": ".", "source": "terminal", "clientSessionId": "rb-n" }));
+    fx.stop();
+    drop(open_project(&fx.root, now_ms()).0);
+    let before = attribution_tables(&fx.db())["sessions"].clone();
+    assert!(before.iter().any(|r| r.contains("7-8-9")), "{before:#?}");
+
+    let paths = Paths::for_project(&fx.root);
+    fs::write(&paths.db, b"this is not a sqlite database").unwrap();
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", paths.db.display()));
+    }
+    let (store, report) = open_project(&fx.root, now_ms());
+    assert!(report.rebuilt.is_some() && report.failed_steps.is_empty(), "{report:?}");
+    drop(store);
+    assert_eq!(attribution_tables(&fx.db())["sessions"], before, "作り直しで host_terminal が変わった");
+}
+
 // ---- 受け入れ条件 11: worktree ----------------------------------------------------------------------------
 
 /// 4 つの条件のうち何を外すか。

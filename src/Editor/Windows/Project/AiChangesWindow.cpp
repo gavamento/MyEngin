@@ -11,11 +11,13 @@
 #include <cstring>
 #include <filesystem>
 #include <iterator>
+#include <utility>
 
 #include "imgui.h"
 #include "fontawesome/IconsFontAwesome6.h"
 
 #include "Editor/ChangeTracking/RestoreFormat.h"
+#include "Editor/Tools/Terminal/TerminalVsEnv.h"
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/ImGui/ImGuiTheme.h"
@@ -380,8 +382,16 @@ void AiChangesWindow::DrawSessions(ChangeTrackingSession& session)
         ImGui::TextDisabled("%s", Tr(StrId::AiChg_NoSessions));
     }
     const float lineH = ImGui::GetTextLineHeight();
+    // 統合ターミナルの ID は "<エディタ PID>-<起動時刻>-<連番>"。自分のエディタのものかを、この窓の寿命のあいだ変わらない PID と起動時刻で見る
+    static const std::pair<uint32_t, uint64_t> editorIdentity = [] {
+        uint32_t pid = 0;
+        uint64_t startUnixSeconds = 0;
+        GetTerminalEditorIdentity(pid, startUnixSeconds);
+        return std::make_pair(pid, startUnixSeconds);
+    }();
+    const auto [editorPid, editorStartUnixSeconds] = editorIdentity;
     for (const TrackSessionRow& s : sessions) {
-        const SessionRowText text = FormatSessionRow(s);
+        const SessionRowText text = FormatSessionRow(s, TerminalIdBelongsToEditor(s.hostTerminal, editorPid, editorStartUnixSeconds));
         ImGui::PushID(s.sessionId.c_str());
         const float sessionH = lineH * (text.review.empty() ? 2.0f : 3.0f) + 4.0f;
         if (ImGui::Selectable("##session", scope_ == Scope::Session && sessionId_ == s.sessionId, 0, ImVec2(0.0f, sessionH))) {
@@ -390,7 +400,10 @@ void AiChangesWindow::DrawSessions(ChangeTrackingSession& session)
         // 文字は項目の上へ描く (カーソルを動かさない)
         const ImVec2 min = ImGui::GetItemRectMin();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        const std::string head = text.title + "  [" + text.status + "]";
+        std::string head = text.title + "  [" + text.status + "]";
+        if (!text.origin.empty()) {
+            head += "  " + text.origin;
+        }
         const std::string tail = text.time + "  " + text.count;
         dl->AddText(ImVec2(min.x + 4.0f, min.y + 1.0f), ImGui::GetColorU32(ImGuiCol_Text), head.c_str());
         dl->AddText(ImVec2(min.x + 4.0f, min.y + 3.0f + lineH), ImGui::GetColorU32(ImGuiCol_TextDisabled), tail.c_str());
