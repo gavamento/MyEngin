@@ -369,13 +369,14 @@ ID3D11ShaderResourceView* ProjectEffectRunner::RunPasses(
             {
                 std::vector<uint8_t> cbData;
                 const auto* values = &cp.desc.propertyValues;
-            decltype(cp.desc.propertyValues) merged;
-            if (dynamicPass && !dynamicPass->overrides.empty()) {
-                merged = *values;
-                for (const auto& kv : dynamicPass->overrides) merged[kv.first] = kv.second;
-                values = &merged;
-            }
-            if (PackProperties(cp.schema, *values, cbData) &&
+                decltype(cp.desc.propertyValues) merged;
+                if (dynamicPass && !dynamicPass->overrides.empty())
+                {
+                    merged = *values;
+                    for (const auto& kv : dynamicPass->overrides) merged[kv.first] = kv.second;
+                    values = &merged;
+                }
+                if (PackProperties(cp.schema, *values, cbData) &&
                     !cbData.empty())
                 {
                     D3D11_MAPPED_SUBRESOURCE mapped = {};

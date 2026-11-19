@@ -589,10 +589,8 @@ void FillDisturbanceSlots(MyeEngineApi& out)
 
 } // namespace
 
-// engine ポインタは常に ScriptApiContext*。キャプチャなしラムダ → 関数ポインタ変換で
-// extern "C" スタイルのテーブルを埋める (C++ ScriptHost / C# ManagedHost が共用)
-
-
+// v37: カメラの CameraPostFxComponent が指す fxstack に対する上書き状態。
+// fxstack が無いカメラは null (呼び出し側は 0 を返す)
 static CameraFxState* CameraEffectState(void* engine, MyeEntityId camera)
 {
     auto& world = Sc(engine)->GetWorld();
@@ -607,6 +605,9 @@ static CameraFxPassState* CameraEffectPass(void* engine, MyeEntityId camera, con
     auto* state = CameraEffectState(engine, camera);
     return state ? state->Find(pass) : nullptr;
 }
+
+// engine ポインタは常に ScriptApiContext*。キャプチャなしラムダ → 関数ポインタ変換で
+// extern "C" スタイルのテーブルを埋める (C++ ScriptHost / C# ManagedHost が共用)
 void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
 {
     out = {};
@@ -1609,27 +1610,39 @@ void BuildEngineApi(MyeEngineApi& out, ScriptApiContext* ctx)
         if (outDx) { *outDx = in.mouseDeltaX; }
         if (outDy) { *outDy = in.mouseDeltaY; }
     };
-    // v36 (M101): レーン別。InputActions が tick 頭に全レーンの入力から写した値を返す。
-    // アクションマップが無い構成 (null) ではレーン 0 だけ GetMouseDelta と同じ値を返す
+    // v37: カメラごとの fxstack パス上書き。パスは fxstack の "id" で指す。成功で 1
     out.SetCameraFxFloat = [](void* e, MyeEntityId c, const char* id, const char* name, float v) -> int {
-        auto* p = CameraEffectPass(e, c, id); return p && p->Set(name, v);
+        auto* p = CameraEffectPass(e, c, id);
+        return (p && p->Set(name, v)) ? 1 : 0;
     };
     out.SetCameraFxVector = [](void* e, MyeEntityId c, const char* id, const char* name, MyeVec4 v) -> int {
-        auto* p = CameraEffectPass(e, c, id); return p && p->Set(name, std::array<float,4>{v.x,v.y,v.z,v.w});
+        auto* p = CameraEffectPass(e, c, id);
+        return (p && p->Set(name, std::array<float, 4>{ v.x, v.y, v.z, v.w })) ? 1 : 0;
     };
     out.ClearCameraFxProperty = [](void* e, MyeEntityId c, const char* id, const char* name) -> int {
-        auto* p = CameraEffectPass(e,c,id); if (!p || !name) return 0; p->overrides.erase(name); return 1;
+        auto* p = CameraEffectPass(e, c, id);
+        if (!p || !name) return 0;
+        p->overrides.erase(name);
+        return 1;
     };
     out.ClearCameraFxPass = [](void* e, MyeEntityId c, const char* id) -> int {
-        auto* p = CameraEffectPass(e,c,id); if (!p) return 0; p->overrides.clear(); return 1;
+        auto* p = CameraEffectPass(e, c, id);
+        if (!p) return 0;
+        p->overrides.clear();
+        return 1;
     };
     out.ClearCameraFxOverrides = [](void* e, MyeEntityId c) -> int {
-        auto* s = CameraEffectState(e,c); if (!s) return 0;
-        for (auto& kv : s->passes) kv.second.overrides.clear(); return 1;
+        auto* s = CameraEffectState(e, c);
+        if (!s) return 0;
+        for (auto& kv : s->passes) kv.second.overrides.clear();
+        return 1;
     };
     out.WasCameraFxPassDrawn = [](void* e, MyeEntityId c, const char* id) -> int {
-        auto* p = CameraEffectPass(e,c,id); return p && p->drawn;
+        auto* p = CameraEffectPass(e, c, id);
+        return (p && p->drawn) ? 1 : 0;
     };
+    // v36 (M101): レーン別。InputActions が tick 頭に全レーンの入力から写した値を返す。
+    // アクションマップが無い構成 (null) ではレーン 0 だけ GetMouseDelta と同じ値を返す
     out.GetMouseDeltaFor = [](void* engine, uint32_t player, int32_t* outDx, int32_t* outDy) {
         int32_t dx = 0, dy = 0;
         const ScriptApiContext* c = Ctx(engine);

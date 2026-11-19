@@ -2604,6 +2604,9 @@
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderTypes.h">
       <Filter>Renderer\Pipeline</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\CameraFxState.h">
+      <Filter>Renderer\PostFx</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\PostFx\FxStackAsset.h">
       <Filter>Renderer\PostFx</Filter>
     </ClInclude>

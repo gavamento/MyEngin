@@ -3086,15 +3086,16 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
         postFx_.Resolve(device, shaders, *hdr, target.rtv, target.width, target.height,
                         effective, view, distortionActive,
                         injectPostFx,     // M78c: ユーザーポスト (Scene View は nullptr)
-                        injectComputeFx);
+                        injectComputeFx); // M78d: ユーザーコンピュート (Scene View は nullptr)
         effectRunner.SetCameraState(nullptr);
         computeRunner.SetCameraState(nullptr);
+        // このフレームで走らなかったパス (fxstack から消えた id) の上書きを捨てる
         if (cameraFxState) {
             for (auto it = cameraFxState->passes.begin(); it != cameraFxState->passes.end();) {
                 if (!it->second.seen) it = cameraFxState->passes.erase(it);
                 else ++it;
             }
-        } // M78d: ユーザーコンピュート (Scene View は nullptr)
+        }
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
     // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。

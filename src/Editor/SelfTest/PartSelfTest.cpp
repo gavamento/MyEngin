@@ -176,7 +176,7 @@ bool RunPartSelfTest()
         const MyeEntityId root = toShared(enemy.Id());
 
         check(api.version == MYE_API_VERSION && MYE_API_VERSION == 37u,
-              "abi: the table reports v36");
+              "abi: the table reports v37");
         // v34 (M94 手触り h): 手触り。鳴らした結果は FeelSystemSelfTest / replay の feel ジョブが見る (ここは充填のみ)
         check(api.PlayFeel != nullptr && api.PlayFeelDesc != nullptr && api.StopFeel != nullptr
                   && api.ConsumeAction != nullptr && api.IsSimStepping != nullptr && api.SetFeelOutputScale != nullptr,

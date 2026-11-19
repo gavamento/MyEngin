@@ -126,7 +126,11 @@ public:
     // generation は保持・加算されるため、古いハンドルが誤って新エンティティに
     // 一致することはない
     void Clear();
-    CameraFxState& CameraFx(EntityID e, AssetID stack) {
+
+    // カメラごとの fxstack パス上書き (表示専用。コンポーネントではないのでシリアライズされない)。
+    // stack が前回と違えば状態を作り直す。エンティティ破棄 / Clear で消える
+    CameraFxState& CameraFx(EntityID e, AssetID stack)
+    {
         auto& state = cameraFx_[e.index];
         if (state.stack != stack) { state = {}; state.stack = stack; }
         return state;
