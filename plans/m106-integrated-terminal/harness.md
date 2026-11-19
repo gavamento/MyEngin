@@ -8,7 +8,7 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 libvterm 同梱 | 未着手 | 0 | | |
+| sub-01 libvterm 同梱 | OK | 1 | 9fcd5a4 | MSVCビルド・上流sha256照合は未確認 (nit) |
 | sub-02 Win32 非依存コア | 未着手 | 0 | | 依存 sub-01 |
 | sub-03 ConPTY ホストとセッション | 未着手 | 0 | | 依存 sub-02 |
 | sub-04 Terminal 窓 | 未着手 | 0 | | 依存 sub-03 |
@@ -33,4 +33,5 @@
 - 実行環境は Linux のクラウドコンテナ。MSVC ビルド・Editor.exe --selftest・check_rules.ps1・ConPTY・実画面確認はできない (Windows 側で要確認)。
 - ハーネス参照資料: Notion「harness」 https://app.notion.com/p/harness-41c02024a4d48019b57ec311190638f9
 - (planner PLAN) libvterm 0.3.3 は GitHub/launchpad が 403、Ubuntu ミラー http://archive.ubuntu.com/ubuntu/pool/universe/libv/libvterm/libvterm_0.3.3.orig.tar.gz から取得可 (sha256 09156f43…7226e0)。展開物: /tmp/claude-0/-home-user-MyEngin/a4d9b156-b135-54e6-b68d-c08729d36d62/scratchpad/libvterm-probe/libvterm-0.3.3/ 。gcc -std=c99 -Wall 警告0、スモーク (1049/2004/truecolor/全角/OSC8) 確認済み。DECSET 2026 は未対応 (無視)。
+- (sub-01) MSVC で libvterm が通らなければ最小パッチ + external/libvterm/PATCHES.md、VERSIONS.md の「改変なし」を直す。include は <vterm.h>、Editor のみ参照。sb_pushline は全画面スクロール時のみ。
 - (planner PLAN) cargo は /root/.cargo/bin/cargo にある。g++ あり。spec は「策定中」、未決は PLAN_RESULT の [ユーザーに聞ける] を参照。
