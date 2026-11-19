@@ -33,6 +33,7 @@
 - 実行環境は Linux のクラウドコンテナ。MSVC ビルド・Editor.exe --selftest・check_rules.ps1・ConPTY・実画面確認はできない (Windows 側で要確認)。
 - ハーネス参照資料: Notion「harness」 https://app.notion.com/p/harness-41c02024a4d48019b57ec311190638f9
 - (2026-11-19 ユーザー指示) 役定義の正本はユーザーがアップロードした harness-planner.md / harness-coder.md / harness-reviewer.md (/root/.claude/uploads/a4d9b156-b135-54e6-b68d-c08729d36d62/ 配下、一時領域)。coder 版に技術解説の手順は無いが、Notion ページと AGENTS.md 第8章に従い coder への指示で技術解説を求め続ける。
+- (2026-11-19 ユーザー指示) coder は Sonnet で起動する (sub-04 以降。sub-03 は起動済みのため Opus のまま)。
 - (planner PLAN) libvterm 0.3.3 は GitHub/launchpad が 403、Ubuntu ミラー http://archive.ubuntu.com/ubuntu/pool/universe/libv/libvterm/libvterm_0.3.3.orig.tar.gz から取得可 (sha256 09156f43…7226e0)。展開物: /tmp/claude-0/-home-user-MyEngin/a4d9b156-b135-54e6-b68d-c08729d36d62/scratchpad/libvterm-probe/libvterm-0.3.3/ 。gcc -std=c99 -Wall 警告0、スモーク (1049/2004/truecolor/全角/OSC8) 確認済み。DECSET 2026 は未対応 (無視)。
 - (sub-01) MSVC で libvterm が通らなければ最小パッチ + external/libvterm/PATCHES.md、VERSIONS.md の「改変なし」を直す。include は <vterm.h>、Editor のみ参照。sb_pushline は全画面スクロール時のみ。
 - (sub-02) 貼付は単独LFもCRへ正規化 / 自動検出時 -NoLogo なし / 環境変数名の非ASCII並び順の制約を sub-04 で engine_spec §9.4 に1行 / スクロールバック上限のクランプは sub-04 設定側 / Feed は1フレーム256KB、TakeOutput はキー入力がなくても毎フレーム送る
