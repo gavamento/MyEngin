@@ -129,6 +129,13 @@ int ClampTerminalViewOffset(int offset, int scrollbackCount);
 // ホイール 1 刻み (wheel の正 = 上へ = 過去へ) を linesPerNotch 行として offset に足し、収める。
 // 代替画面 (altScreen) ではスクロールバックを見せないので常に 0
 int ScrollTerminalView(int offset, float wheel, int linesPerNotch, int scrollbackCount, bool altScreen);
+// 出力を画面へ流した後の表示のずれ (spec 4.1: 最下部を見ているときだけ新規出力に追従する)。
+//   offset == 0 (最下部) : 0 のまま = 追従する。
+//   offset > 0 (履歴を閲覧中) : 見ている内容を動かさない。出力でスクロールバックが増えた分 (after - before) だけ offset を増やし、収める。
+//     キー入力・貼付で最下部へ戻すのは呼び出し側 (この関数は出力だけを扱う)。
+//   altScreen : 常に 0。
+// スクロールバックが上限に達していると、増えずに古い行が捨てられるので増分は 0 になり、内容は 1 行ずつずれる (選択のずれと同じ制約)
+int FollowTerminalViewOnOutput(int offset, int scrollbackBefore, int scrollbackAfter, bool altScreen);
 
 // ---- キーの振り分け ----
 

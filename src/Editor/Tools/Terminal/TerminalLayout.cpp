@@ -275,6 +275,15 @@ int ScrollTerminalView(int offset, float wheel, int linesPerNotch, int scrollbac
     return ClampTerminalViewOffset(offset + delta, scrollbackCount);
 }
 
+int FollowTerminalViewOnOutput(int offset, int scrollbackBefore, int scrollbackAfter, bool altScreen)
+{
+    if (altScreen || offset <= 0) {
+        return 0;   // 最下部を見ているときは、そのまま最下部 (= 新しい出力に追従)
+    }
+    // 出力が行をスクロールバックへ押し出した分だけ、見ている内容は画面の上へずれる。同じ内容を見続けるには、ずれた分だけ過去へ戻す
+    return ClampTerminalViewOffset(offset + (scrollbackAfter - scrollbackBefore), scrollbackAfter);
+}
+
 TerminalChordAction ClassifyTerminalCtrlLetter(char letter, bool shift, bool hasSelection)
 {
     if (letter == 'c') {

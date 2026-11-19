@@ -1293,7 +1293,7 @@ eplay_verify.bat` が通る)
 
 ## M106: ターミナル窓 (ConPTY + libvterm + ImGui 自前描画。手動確認。**見た目の合否はユーザーの目視**)
 
-機械検証: `MYE_SELFTEST_ONLY=terminalcore,terminalsession,terminalwindow,terminalconpty` を付けた `Editor.exe --selftest-full` (`terminalconpty` は Full 層。実 ConPTY で `cmd /c echo` を往復する)、`tools\check_rules.ps1` (規則 10・21)、`tools\check_rules_selftest.ps1` (規則 21 の自己検査)。
+機械検証: `MYE_SELFTEST_ONLY=terminalcore,terminalsession,terminalwindow,terminalvsenv,terminalconpty` を付けた `Editor.exe --selftest-full` (`terminalconpty` は Full 層。実 ConPTY で `cmd /c echo` を往復する)、`tools\check_rules.ps1` (規則 10・21)、`tools\check_rules_selftest.ps1` (規則 21 の自己検査)。
 Linux のクラウド環境では ConPTY・MSVC ビルド・実画面の確認ができていない。**以下は全部 Windows での未確認項目**。窓を出す起動フラグは無い (Window > ターミナル。開いた状態はレイアウトと一緒に保存される)。
 画面のキャプチャは **リポジトリの外のカレントディレクトリで** 起動して撮る (`imgui.ini` をリポジトリへ書かないため)。
 
@@ -1321,7 +1321,19 @@ Linux のクラウド環境では ConPTY・MSVC ビルド・実画面の確認�
 - [ ] IME (日本語): 変換して確定した文字だけがシェルへ入る。変換中の文字は窓へ出ない (OS の候補窓がカーソル付近に出る)。確定の Enter がシェルへの Enter にならない
 - [ ] 貼付: Ctrl+V・Ctrl+Shift+V・右クリック (選択なし) で貼れる。複数行 (PowerShell の `Get-Process | Select -First 3` を 3 行に分けたもの) を貼っても、1 行ずつ実行されるか、bracketed paste 対応のシェルでは 1 まとまりとして入る
 - [ ] 選択とコピー: 左ドラッグで読む順に選択され、ハイライトが出る。Ctrl+C (選択あり) で UTF-8 のままクリップボードへ入り、選択が解ける。解けたあとの Ctrl+C は中断になる。右クリック (選択あり) でメニュー (コピー / 貼り付け)。Ctrl+Shift+C。行末の空白は含まれない。全角の右半分から始まる選択でも文字が欠けない
-- [ ] スクロール: ホイールで履歴を遡る (右上に「履歴 +N」)。Shift+PageUp / PageDown でページ送り。新しい出力・入力・貼付で最下部へ戻る。「履歴を消去」で履歴だけ消え、見えている画面は変わらない
+- [ ] スクロール: ホイールで履歴を遡る (右上に「履歴 +N」)。Shift+PageUp / PageDown でページ送り。最下部を見ているときだけ新しい出力に追従し、履歴を見ている間は出力が増えても表示が動かない (スピナーの再描画でも)。キー入力・貼付で最下部へ戻る。「履歴を消去」で履歴だけ消え、見えている画面は変わらない
+
+### VS 開発者環境とエンジン環境変数 (M106e。受け入れ条件 8 / spec 5-7 の色)
+
+- [ ] `MYE_SELFTEST_ONLY=terminalvsenv Editor.exe --selftest` が PASS (`set` 出力の解析・差分・環境の組み立て・非同期ローダー。Win32 も VS も使わない)
+- [ ] 初回にターミナルを開くと、読み込みが終わるまで窓に「Visual Studio 開発者環境を読み込んでいます」が出てシェルは起動せず (UI は止まらない)、数秒後にシェルが起動する。ツールバーの「VS 環境:」が 読み込み中 → 読み込み済み と変わる。エディタを開き直すまでは 2 回目以降の「再起動」で読み込みは再実行されない (すぐ起動する)
+- [ ] 窓内で `where cl`・`msbuild -version`・`$env:VSCMD_VER` が通る。`$env:MYE_TERMINAL_ID` が `<エディタの PID>-<起動時刻>-1` の形で、「再起動」のたびに末尾の連番が増える。`$env:MYE_PROJECT_ROOT` がプロジェクトのルート、`$env:TERM_PROGRAM` が `MyEngine`、`$env:COLORTERM` が `truecolor`。`$env:Path` の先頭が `<ルート>\tools`
+- [ ] 日本語を含むユーザー名・パスの環境変数 (`$env:USERPROFILE` など) が化けない (`chcp 65001` でパイプへの `set` が UTF-8 になる前提の確認)
+- [ ] VS 環境が使える状態で起動したエディタを、別のターミナル (VS Code 内など) から起動しても、子の `TERM_PROGRAM` が `MyEngine`、`MYE_TERMINAL_ID` が自分の値になる (親の値が残らない)
+- [ ] 設定の「Visual Studio 開発者環境を読み込む」を外して再起動: 待たずに起動し、ツールバーが 無効、`where cl` が見つからない (エンジンの変数と PATH 前置は入る)
+- [ ] VS 未導入の擬似 (`%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe` を一時的に改名): 警告行「Visual Studio 開発者環境を読み込めませんでした」が出て、シェルは素の環境で起動する。ツールバーは 利用できません で、マウスを重ねると理由 (英語) が出る
+- [ ] 時間切れの擬似 (`VsDevCmd.bat` の先頭に `ping -n 60 127.0.0.1 >nul` を一時的に入れる): 30 秒後に警告つきで素の環境で起動し、その後 VS 環境が遅れて読めても状態は変わらない。読み込み中にエディタを閉じても 2 秒以内に終わり、`cmd.exe` が残らない
+- [ ] `claude` や `git diff` で truecolor の色が出る (`COLORTERM=truecolor`。spec 5-7 の色の確認)
 
 ### 実際のツール (受け入れ条件 7)
 

@@ -26,7 +26,7 @@
 | 決定性への影響 | ターミナルは Editor 層のみ、シミュレーションに触れない | — | 決定性契約外。ただし Engine/Runtime/GameLogic/Shared/Server から include 禁止を check_rules 新規則で強制 (規則20と同型) |
 | AI 追跡の識別方法 | フックは常に `source="terminal"` で session_begin (`/home/user/MyEngin/tools/track/src/hook.rs:422-430`)。sessions に識別列なし (`/home/user/MyEngin/tools/track/src/schema/v1.sql:10-23`)。移行は `/home/user/MyEngin/tools/track/src/schema/mod.rs:15` の Migration 配列 (v3 まで) | 「AI変更追跡との紐付け」(合意済み)。2026-11-19 裁定を承認: host_terminal 列 (v4)、source は terminal のまま | 統合ターミナルが子プロセスに `MYE_TERMINAL_ID` (エディタ起動ごとの一意ID + パネル番号) を渡す。フックが読めれば session_begin に `hostTerminal` を載せ、**スキーマ v4 で `sessions.host_terminal TEXT NULL` を追加**。`source` の値は変えない (既存クエリ互換)。却下案: source に新値 "editor_terminal" — 既存の terminal 判定が壊れる |
 | VS 開発者環境の読み込み方法 | vswhere は `/home/user/MyEngin/src/Editor/Tools/VisualStudioLauncher.cpp:238-290` の匿名 namespace | 合意済み。2026-11-19: 読み込みを待ってから起動、30 秒タイムアウトで素の環境 | vswhere 探索を名前付き関数に昇格して共用。`VsDevCmd.bat -arch=x64 && set` を一度だけ実行して環境差分を取得・キャッシュ (エディタ起動中のみ)。失敗・未導入時は警告表示して素の環境で起動 |
-| エンジン環境変数 | — | 合意済み | `MYE_PROJECT_ROOT` (リポジトリ/プロジェクトルート)、`MYE_TERMINAL_ID`、PATH 先頭に `<root>\tools` を追加。既存変数は上書きしない (PATH のみ前置)。値の一覧は 4.2 |
+| エンジン環境変数 | — | 合意済み | `MYE_PROJECT_ROOT` (リポジトリ/プロジェクトルート)、`MYE_TERMINAL_ID`、PATH 先頭に `<root>\tools` を追加。既存変数は上書きしない (PATH のみ前置。MYE_PROJECT_ROOT・MYE_TERMINAL_ID・TERM_PROGRAM は置換、sub-05 round 1 で変更)。値の一覧は 4.2 |
 | vim 等全画面エディタ | — | 対象外 (合意済み) | 代替画面自体は libvterm が持つので動く可能性はあるが、受け入れ条件にしない |
 | タブ | — | 1パネル1シェル (合意済み) | セッションを `TerminalSession` オブジェクトに閉じ、窓が1個所有。複数化を妨げない |
 | SCM 窓更新 | — | 対象外 (合意済み) | やらない |
@@ -50,7 +50,7 @@
 
 ### 4.2 データ・保存形式・互換性
 - 設定は `/home/user/MyEngin/src/Editor/App/EditorGlobalSettings.h` (`%LOCALAPPDATA%\MyEngine\editor_global.json`) に追加: `terminalShell` (文字列、空=自動)、`terminalFontSize` (既定 14)、`terminalScrollback` (既定 5000、範囲 100〜100000)、`terminalLoadVsDevEnv` (既定 true)。キー欠落時は既定値 (旧ファイル互換)。
-- 子プロセス環境: 親環境 (+ VS 開発者環境差分) に `MYE_PROJECT_ROOT`、`MYE_TERMINAL_ID=<エディタPID>-<起動時刻>-<連番>`、`TERM_PROGRAM=MyEngine`、`COLORTERM=truecolor`、PATH 先頭に `<root>\tools`。Windows の環境ブロック規則 (大文字小文字無視でソート済み、二重 NUL 終端) を守る。
+- 子プロセス環境: 親環境 (+ VS 開発者環境差分) に `MYE_PROJECT_ROOT`、`MYE_TERMINAL_ID=<エディタPID>-<起動時刻>-<連番>`、`TERM_PROGRAM=MyEngine`、`COLORTERM=truecolor`、PATH 先頭に `<root>\tools`。既存変数は上書きしないが、エンジンが値を決める `MYE_PROJECT_ROOT`・`MYE_TERMINAL_ID`・`TERM_PROGRAM` だけは親に同名があっても置換する (親が別ターミナルのとき識別を誤らないため。COLORTERM は親の値を残す)。VS 環境の読み込みはターミナル窓の初回表示時に開始する (エディタ起動中 1 回)。Windows の環境ブロック規則 (大文字小文字無視でソート済み、二重 NUL 終端) を守る。
 - AI 追跡: track スキーマ v4 `ALTER TABLE sessions ADD COLUMN host_terminal TEXT`。IPC `session_begin` に任意フィールド `hostTerminal` (欠落=NULL、旧フック互換)。`/home/user/MyEngin/docs/ai-change-tracking/` の ipc-contract.md / db-schema.md / hooks-setup.md を同時更新。
 - ABI (src/Shared) と Interop.cs には触れない。
 
@@ -100,3 +100,4 @@
 ## 8. 変更履歴
 - 2026-11-19 sub-03 round 1 (coder SELF_EVAL): 4.1 の引数引用を「空白・" を含むものだけ引用」に変更。理由は cmd.exe が引用されたスイッチを解釈しないため。
 - 2026-11-19 sub-04 round 1 (coder 質問): 4.1 スクロールバックの追従条件を変更 (出力では戻さず入力で戻す)。理由はスピナーを出し続ける CLI 実行中に履歴が読めないため。実装は sub-05 に追加。ADR 作成と VS 環境状態表示も sub-05 に割当。
+- 2026-11-19 sub-05 round 1 (coder SELF_EVAL): 4.2 に MYE_PROJECT_ROOT / MYE_TERMINAL_ID / TERM_PROGRAM の置換と、VS 環境読み込みの開始を窓の初回表示時とすることを追記。理由は sub-06 の識別を親の値で誤らないため・使わない人に VsDevCmd のコストを払わせないため。

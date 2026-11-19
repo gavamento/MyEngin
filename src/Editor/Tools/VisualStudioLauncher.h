@@ -16,6 +16,14 @@ namespace mye {
 // 見つからなければ空
 const std::wstring& FindLatestDevenv();
 
+// vswhere (-latest -prerelease -utf8) の -property <property> の 1 行目 (例: productPath / installationPath)。
+// 起動して出力を読む同期処理 (100 ms 前後) で、結果はキャッシュしない。失敗・存在しないパスは空。
+// UI スレッドから繰り返し呼ばない (統合ターミナルはワーカースレッドから呼ぶ)
+std::wstring RunVswhere(const wchar_t* property);
+
+// 最新の Visual Studio のインストール先 (installationPath)。VsDevCmd.bat の場所の起点。キャッシュしない (呼び出し側が持つ)。無ければ空
+std::wstring FindLatestVsInstallPath();
+
 // ファイルを「ソリューションのコンテキストで」Visual Studio に開かせる。所有者は EditorApp (1 個)。
 //   - solution を開いている起動中の VS を ROT (DTE) から探し、あればそこへ OpenFile + Edit.GoTo
 //   - 無ければ devenv をソリューションだけで起動し、読み込みが落ち着いたら Poll が DTE で開く。

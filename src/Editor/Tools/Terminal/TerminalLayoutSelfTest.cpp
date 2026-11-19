@@ -225,6 +225,38 @@ void TestScroll(const auto& check)
           "scroll: the view offset is clamped to the scrollback");
 }
 
+void TestFollowOutput(const auto& check)
+{
+    check(FollowTerminalViewOnOutput(0, 10, 25, false) == 0, "follow: at the bottom, new output keeps following (offset stays 0)");
+    check(FollowTerminalViewOnOutput(0, 0, 0, false) == 0 && FollowTerminalViewOnOutput(0, 100, 100, false) == 0, "follow: at the bottom with no growth stays 0");
+    check(FollowTerminalViewOnOutput(5, 10, 10, false) == 5, "follow: reading history, output that adds no scrollback does not move the view (spinner redraw)");
+    check(FollowTerminalViewOnOutput(5, 10, 14, false) == 9, "follow: reading history, the view shifts back by the lines pushed so it keeps showing the same text");
+    check(FollowTerminalViewOnOutput(5, 100, 100, false) == 5, "follow: scrollback at its limit adds nothing (documented drift), the offset is kept");
+    check(FollowTerminalViewOnOutput(5, 10, 12, true) == 0, "follow: the alternate screen never shows history");
+    check(FollowTerminalViewOnOutput(8, 10, 7, false) == 5 && FollowTerminalViewOnOutput(8, 10, 3, false) == 1 && FollowTerminalViewOnOutput(8, 10, 0, false) == 0,
+          "follow: the scrollback shrank (lines pulled back by a taller resize, CSI 3 J) so the offset shrinks with it and stops at the bottom");
+    check(FollowTerminalViewOnOutput(99, 100, 100, false) == 99 && FollowTerminalViewOnOutput(100, 100, 130, false) == 130,
+          "follow: the oldest line stays the oldest as it grows");
+    check(FollowTerminalViewOnOutput(-3, 5, 9, false) == 0, "follow: a negative offset is treated as the bottom");
+    {
+        // 実際の画面で: 履歴を見ている間に 20 行流しても、追従後のずれが同じ行を指す
+        TerminalScreen screen(80, 5, 1000);
+        for (int i = 0; i < 12; ++i) {
+            screen.Feed("L" + std::to_string(i) + "\r\n");
+        }
+        const int before = screen.ScrollbackCount();
+        const int offset = 4;
+        const std::string seen = TerminalLineText(screen, -offset);
+        for (int i = 12; i < 32; ++i) {
+            screen.Feed("L" + std::to_string(i) + "\r\n");
+        }
+        const int moved = FollowTerminalViewOnOutput(offset, before, screen.ScrollbackCount(), screen.IsAltScreen());
+        check(before > 0 && moved == offset + (screen.ScrollbackCount() - before) && TerminalLineText(screen, -moved) == seen,
+              "follow: on a real screen the followed offset still points at the same text after 20 more lines");
+        check(FollowTerminalViewOnOutput(0, before, screen.ScrollbackCount(), false) == 0, "follow: at the bottom the view shows the newest lines");
+    }
+}
+
 void TestChords(const auto& check)
 {
     check(ClassifyTerminalCtrlLetter('c', false, true) == TerminalChordAction::Copy, "chord: Ctrl+C with a selection copies");
@@ -256,6 +288,7 @@ bool RunTerminalLayoutSelfTest()
     TestSelection(check);
     TestGeometry(check);
     TestScroll(check);
+    TestFollowOutput(check);
     TestChords(check);
     MYE_LOG_INFO("TerminalLayout self test: %s (%d failure(s))", failCount == 0 ? "PASS" : "FAIL", failCount);
     return failCount == 0;

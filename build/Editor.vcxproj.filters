@@ -420,6 +420,15 @@
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.cpp">
       <Filter>Tools\Terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvWin32.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
@@ -946,6 +955,12 @@
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h">

@@ -3702,8 +3702,8 @@ MYE_STR(Term_SettingsShellHint, "(empty = auto-detect: pwsh, powershell, cmd)",
 MYE_STR(Term_SettingsFontSize, "Font size",                            "文字サイズ")
 MYE_STR(Term_SettingsScrollback, "Scrollback lines",                   "スクロールバックの行数")
 MYE_STR(Term_SettingsLoadVsEnv, "Load the Visual Studio developer environment", "Visual Studio 開発者環境を読み込む")
-MYE_STR(Term_SettingsApplyOnRestart, "The shell and scrollback settings apply from the next restart.",
-                              "シェルとスクロールバックの設定は、次の再起動から反映されます。")
+MYE_STR(Term_SettingsApplyOnRestart, "The shell, scrollback and Visual Studio environment settings apply from the next restart.",
+                              "シェル・スクロールバック・Visual Studio 環境の設定は、次の再起動から反映されます。")
 MYE_STR(Term_Exited,          "The shell exited. Exit code:",          "シェルが終了しました。終了コード:")
 MYE_STR(Term_StartFailed,     "Could not start the shell:",            "シェルを起動できませんでした:")
 MYE_STR(Term_Unsupported,     "This Windows has no pseudo console (ConPTY needs Windows 10 1809 or later).",
@@ -3714,3 +3714,12 @@ MYE_STR(Term_ShellMalformed,  "The configured shell has an unclosed quote. Check
                               "設定したシェルの引用符が閉じていません。設定のシェルを確認してください。")
 MYE_STR(Term_NoAutoShell,     "No shell was found (pwsh, powershell and cmd are all missing).",
                               "シェルが見つかりません (pwsh・powershell・cmd のどれもありません)。")
+MYE_STR(Term_VsEnv,           "VS environment:",                       "VS 環境:")
+MYE_STR(Term_VsEnvLoading,    "Loading...",                            "読み込み中...")
+MYE_STR(Term_VsEnvLoaded,     "Loaded",                                "読み込み済み")
+MYE_STR(Term_VsEnvUnavailable, "Not available",                        "利用できません")
+MYE_STR(Term_VsEnvOff,        "Off",                                   "無効")
+MYE_STR(Term_VsEnvPending,    "Loading the Visual Studio developer environment. The shell starts when it is ready (up to 30 seconds).",
+                              "Visual Studio 開発者環境を読み込んでいます。完了するとシェルが起動します (最長 30 秒)。")
+MYE_STR(Term_VsEnvWarning,    "The Visual Studio developer environment could not be loaded. The shell started without it (cl and msbuild may not be found).",
+                              "Visual Studio 開発者環境を読み込めませんでした。読み込まずにシェルを起動しました (cl や msbuild が見つからない場合があります)。")

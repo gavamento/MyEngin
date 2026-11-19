@@ -158,6 +158,9 @@
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSession.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvWin32.cpp" />
     <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
@@ -334,6 +337,8 @@
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSession.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />

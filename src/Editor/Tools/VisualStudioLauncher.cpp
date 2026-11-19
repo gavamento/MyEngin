@@ -234,8 +234,10 @@ DteSearch FindDte(const std::wstring& solution, DWORD onlyPid, ComPtr<IDispatch>
     return anyBusy ? DteSearch::Busy : DteSearch::NotFound;
 }
 
-// vswhere の 1 行目 (productPath) を返す。失敗は空
-std::wstring RunVswhere()
+} // namespace
+
+// vswhere の -property <property> の 1 行目を返す。失敗・存在しないパスは空 (VisualStudioLauncher.h)
+std::wstring RunVswhere(const wchar_t* property)
 {
     wchar_t* programFilesX86 = nullptr;
     size_t len = 0;
@@ -264,7 +266,7 @@ std::wstring RunVswhere()
     si.hStdError = writePipe;
     si.hStdInput = nullptr;
     PROCESS_INFORMATION pi = {};
-    std::wstring cmdline = L"\"" + vswhere + L"\" -latest -prerelease -utf8 -property productPath";
+    std::wstring cmdline = L"\"" + vswhere + L"\" -latest -prerelease -utf8 -property " + property;
     const BOOL started = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW,
                                         nullptr, nullptr, &si, &pi);
     CloseHandle(writePipe); // 子の終了で ReadFile が EOF を返すよう、親側の書き込み口は閉じる
@@ -289,12 +291,15 @@ std::wstring RunVswhere()
     return path;
 }
 
-} // namespace
-
 const std::wstring& FindLatestDevenv()
 {
-    static const std::wstring devenv = RunVswhere();
+    static const std::wstring devenv = RunVswhere(L"productPath");
     return devenv;
+}
+
+std::wstring FindLatestVsInstallPath()
+{
+    return RunVswhere(L"installationPath");
 }
 
 bool VisualStudioLauncher::Open(const std::wstring& solution, const std::wstring& file, int line)

@@ -104,15 +104,18 @@ void TerminalWindow::Pump()
     if (!session_) {
         return;
     }
-    // 新しい出力が来たら最下部へ戻す (spec 4.1)。出力が無いフレームはホイールで戻った位置を保つ
-    if (session_->Pump() > 0) {
-        viewOffset_ = 0;
-    }
+    // 最下部を見ているときだけ新しい出力に追従し、履歴を見ているときは同じ内容を見続ける (spec 4.1)。
+    // 最下部へ戻すのはキー入力・貼付 (HandleKeyboard / PasteClipboard)
+    const int scrollbackBefore = session_->Screen().ScrollbackCount();
+    session_->Pump();
+    const TerminalScreen& screen = session_->Screen();
+    viewOffset_ = FollowTerminalViewOnOutput(viewOffset_, scrollbackBefore, screen.ScrollbackCount(), screen.IsAltScreen());
 }
 
 void TerminalWindow::Shutdown()
 {
     session_.reset();
+    vsLoader_.reset();   // 読み込み中なら cancel を立てて短く待つ (戻らなければ切り離す)
     selection_ = TerminalSelection{};
     dragging_ = false;
 }
@@ -136,6 +139,24 @@ void TerminalWindow::StartSession(const TerminalWindowHost& host, const Terminal
     spec.exePath = command.path;
     spec.args = command.args;
     spec.workDir = host.projectRoot;
+
+    // 子へ渡す環境 = 親 + VS 開発者環境の差分 + エンジンの変数 (TerminalVsEnv.h)。読み込めていなければ差分なしの素の環境で起動する
+    std::vector<TerminalEnvVar> vsDiff;
+    sessionVsEnv_ = VsEnvShown::Disabled;
+    if (settings_.loadVsDevEnv && vsLoader_) {
+        if (vsLoader_->State() == TerminalVsEnvState::Ready) {
+            vsDiff = vsLoader_->Diff();
+            sessionVsEnv_ = VsEnvShown::Loaded;
+        } else {
+            sessionVsEnv_ = VsEnvShown::Unavailable;   // 未導入・失敗・時間切れ。ツールバーと警告行が知らせる
+        }
+    }
+    uint32_t editorPid = 0;
+    uint64_t editorStartUnixSeconds = 0;
+    GetTerminalEditorIdentity(editorPid, editorStartUnixSeconds);
+    ++shellSerial_;
+    spec.environment = BuildTerminalLaunchEnvironment(GetTerminalParentEnvironment(), vsDiff, host.projectRoot,
+                                                      FormatTerminalId(editorPid, editorStartUnixSeconds, shellSerial_));
     session_ = std::make_unique<TerminalSession>(CreateConPtyTerminalHost(), grid.cols, grid.rows,
                                                  ClampTerminalScrollback(settings_.scrollback));
     shellName_ = FileNameOf(command.path);
@@ -163,6 +184,7 @@ void TerminalWindow::OnImGui(const TerminalWindowHost& host)
         ImGui::End();   // タブが隠れている間。セッションは Pump が進め続ける
         return;
     }
+    UpdateVsEnvGate();
     DrawToolbar();
     DrawStatusLine();
     DrawSurface(host);
@@ -172,12 +194,59 @@ void TerminalWindow::OnImGui(const TerminalWindowHost& host)
     ImGui::End();
 }
 
+void TerminalWindow::UpdateVsEnvGate()
+{
+    vsEnvPending_ = false;
+    if (session_ || startAttempted_ || !settings_.loadVsDevEnv) {
+        return;   // 起動済み、または読まない設定。待つものは無い
+    }
+    if (!vsLoader_) {
+        vsLoader_ = std::make_unique<TerminalVsEnvLoader>(FetchTerminalVsDevEnvironment);
+    }
+    vsLoader_->Start(TerminalVsEnvLoader::Clock::now());   // 2 回目以降は何もしない
+    vsEnvPending_ = vsLoader_->Poll(TerminalVsEnvLoader::Clock::now()) == TerminalVsEnvState::Loading;
+}
+
+TerminalWindow::VsEnvShown TerminalWindow::VsEnvShownState() const
+{
+    if (startAttempted_) {
+        return sessionVsEnv_;
+    }
+    return settings_.loadVsDevEnv ? VsEnvShown::Loading : VsEnvShown::Disabled;
+}
+
 void TerminalWindow::DrawToolbar()
 {
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s:", Tr(StrId::Term_Shell));
     ImGui::SameLine();
     ImGui::TextUnformatted(shellName_.empty() ? "-" : shellName_.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", Tr(StrId::Term_VsEnv));
+    ImGui::SameLine();
+    {
+        StrId label = StrId::Term_VsEnvOff;
+        ImVec4 color = themeColor::TextDim;
+        switch (VsEnvShownState()) {
+        case VsEnvShown::Loading:
+            label = StrId::Term_VsEnvLoading;
+            break;
+        case VsEnvShown::Loaded:
+            label = StrId::Term_VsEnvLoaded;
+            color = themeColor::Success;
+            break;
+        case VsEnvShown::Unavailable:
+            label = StrId::Term_VsEnvUnavailable;
+            color = themeColor::Warning;
+            break;
+        case VsEnvShown::Disabled:
+            break;
+        }
+        ImGui::TextColored(color, "%s", Tr(label));
+        if (vsLoader_ && !vsLoader_->Detail().empty() && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", vsLoader_->Detail().c_str());   // 英語の詳細 (インストール先・失敗の理由)
+        }
+    }
     ImGui::SameLine();
     if (ImGui::Button(Tr(StrId::Term_Restart))) {
         RequestRestart();
@@ -198,6 +267,11 @@ void TerminalWindow::DrawToolbar()
 
 void TerminalWindow::DrawStatusLine()
 {
+    if (vsEnvPending_) {
+        ImGui::TextColored(themeColor::TextDim, "%s", Tr(StrId::Term_VsEnvPending));
+    } else if (startAttempted_ && sessionVsEnv_ == VsEnvShown::Unavailable) {
+        ImGui::TextColored(themeColor::Warning, "%s", Tr(StrId::Term_VsEnvWarning));
+    }
     if (shellError_ != TerminalShellError::None) {
         StrId message = StrId::Term_NoAutoShell;
         if (shellError_ == TerminalShellError::ConfiguredNotFound) {
@@ -255,7 +329,7 @@ void TerminalWindow::DrawSurface(const TerminalWindowHost& host)
         return;
     }
     grid_ = TerminalGridFromPixels(avail.x, avail.y, cellW, cellH);
-    if (!session_ && !startAttempted_) {
+    if (!session_ && !startAttempted_ && !vsEnvPending_) {
         StartSession(host, grid_);   // 初回表示 (遅延起動)。再起動もここへ戻る
     }
     if (session_) {
