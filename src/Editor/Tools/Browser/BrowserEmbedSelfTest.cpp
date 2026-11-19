@@ -552,6 +552,29 @@ HWND CreateTestParent()
     return hwnd;
 }
 
+// --selftest はプロセスの DPI 認識を設定しない (EnsureProcessDpiAwareness はスプラッシュと Win32Window::Create だけが呼ぶ)。
+// DPI 非対応のスレッドから Per-Monitor V2 の窓を測ると、GetWindowRect が拡縮した値を返す (150% で 800x600 -> 533x400)。
+// エディタ本体と同じ文脈で測るため、テストの間だけスレッドを Per-Monitor V2 にする (プロセス全体は変えない)
+class ScopedPerMonitorDpiThread
+{
+public:
+    ScopedPerMonitorDpiThread()
+        : old_(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+    {
+    }
+    ~ScopedPerMonitorDpiThread()
+    {
+        if (old_ != nullptr) {
+            SetThreadDpiAwarenessContext(old_);
+        }
+    }
+    ScopedPerMonitorDpiThread(const ScopedPerMonitorDpiThread&) = delete;
+    ScopedPerMonitorDpiThread& operator=(const ScopedPerMonitorDpiThread&) = delete;
+
+private:
+    DPI_AWARENESS_CONTEXT old_ = nullptr;
+};
+
 void Pump()
 {
     MSG msg;
@@ -667,6 +690,7 @@ bool RunBrowserEmbedSelfTest()
 bool RunBrowserEmbedProcSelfTest()
 {
     MYE_LOG_INFO("==== BrowserEmbedProc self test ====");
+    const ScopedPerMonitorDpiThread dpiScope;
     int failCount = 0;
     const auto check = [&](bool cond, const char* what) {
         if (cond) {
