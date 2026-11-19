@@ -25,6 +25,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="Common.props" />
   <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(RepoRoot)external\libvterm\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;comdlg32.lib;$(RepoRoot)external\nethost\nethost.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -371,6 +374,10 @@
   <ItemGroup>
     <ProjectReference Include="Engine.vcxproj">
       <Project>{8F2D5C31-1A2B-4E3F-9C4D-5E6F7A8B9C0D}</Project>
+    </ProjectReference>
+    <!-- 統合ターミナル (M106) の VT 解釈。静的 lib は ProjectReference で自動リンクされる -->
+    <ProjectReference Include="libvterm.vcxproj">
+      <Project>{1120A41F-3F5C-4370-A92C-4C3909DCFC62}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
