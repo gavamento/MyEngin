@@ -1,7 +1,7 @@
 # sub-02: Win32 非依存のターミナルコア
 
 - 依存: sub-01
-- 状態: OK (コミット待ち)
+- 状態: 差し戻し (review-1 #1, #2)
 - 往復: 1
 
 ## やること
@@ -130,3 +130,6 @@ SELF_EVAL: sub-02 (round 1)
   - sub-04: 毎フレーム Feed (上限 256KB) → TakeOutput を入力パイプへ。DA 応答なども TakeOutput に混ざるのでキー入力が無いフレームでも送ること。default 印のセルはテーマ色へ。width 0 のセルは描かない。ScrollbackLimit は構築時固定なので設定変更時は再構築。設定値の 100〜100000 クランプは窓/設定側で
   - 恒久テストのため、Windows で `MYE_SELFTEST_ONLY=terminalcore` を一度回すこと
 - round 1: VERDICT OK (planner)。差分7件はすべて承認: 単独 LF→CR (Windows Terminal と同じ挙動、CR は維持) / シェル設定書式と ConfiguredMalformed / 自動検出の引数は空 (-NoLogo は付けない。プロファイルのバナーはユーザーのシェル設定の領分) / エラー列挙 / 環境組立の2関数分割 (非 ASCII 名の並び差は既知の制約として残す) / AppendOutput / 上限0=保持しない (クランプは sub-04)。MSVC ビルドと SelfTest Fast の実行は Windows の未検証として申し送り。
+- review-1 対応 (planner REVIEW_RESPONSE): 差し戻し。
+  - #1 [must] /home/user/MyEngin/src/Editor/Tools/Terminal/TerminalInput.cpp:TerminalSendPaste (と NormalizeTerminalPasteNewlines の周辺) に spec 4.1「貼付本文の規則」を実装する。消毒は Win32 非依存の純関数にし、bracketed paste の有効・無効どちらでも通す。terminalcore に回帰テストを追加: (a) 2004 有効で "echo safe\x1b[201~rm -rf x\r\n" → 出力に ESC[201~ が末尾の 1 回だけ、(b) 2004 無効で ESC・^C(0x03)・NUL・DEL・U+009B が消え、HT/CR・日本語・絵文字は残る、(c) CRLF・LF → CR は従来どおり。検証: g++ で terminalcore を plain と ASan/UBSan で実走 (reviewer の /tmp/claude-0/-home-user-MyEngin/a4d9b156-b135-54e6-b68d-c08729d36d62/scratchpad/review1/edge.cpp の FAIL 行が ok になること)。engine_spec §9.4 と ADR-041 に 1 文。
+  - #2 [nit] /home/user/MyEngin/external/VERSIONS.md の libvterm 項に「上流無改変。gcc -O1 以上では parser.c / state.c に -Wmaybe-uninitialized が出る (最適化なしでは 0)」と 1 行。

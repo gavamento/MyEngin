@@ -42,7 +42,7 @@
 - シェル解決: 設定 `terminal.shell` が空なら pwsh.exe → powershell.exe → cmd.exe の順に PATH/既定位置で探す。設定値が見つからなければエラー表示し自動検出へ落とさない (明示指定を尊重)。引数は空白・`"` を含むものだけ QuoteCommandLineArg (`/home/user/MyEngin/src/Editor/ChangeTracking/TrackLaunch.h:21`) で引用し、それ以外はそのまま渡す (cmd.exe は引用されたスイッチ "/c" を解釈しないため。sub-03 round 1 で変更)。
 - 作業ディレクトリ: プロジェクトルート。
 - 出力: ConPTY 出力パイプを専用読み取りスレッドが読み、ロック付きバイトキューへ。UI スレッドが毎フレーム全量を libvterm へ投入 (libvterm は UI スレッドのみが触る)。
-- 入力: 窓フォーカス中のキー/文字を VT バイト列へ変換 (libvterm の `vterm_keyboard_*` を使用) して入力パイプへ書く。Ctrl+C はシェルへ送る (選択中ならコピー)。Ctrl+V / 右クリックは貼付 (bracketed paste 有効時は 200~/201~ で包む)。フォーカス中は `WantTextInput` 相当を立ててエディタショートカット (`/home/user/MyEngin/src/Editor/App/EditorApp.cpp:1970-2011`) を抑止。
+- 入力: 窓フォーカス中のキー/文字を VT バイト列へ変換 (libvterm の `vterm_keyboard_*` を使用) して入力パイプへ書く。Ctrl+C はシェルへ送る (選択中ならコピー)。Ctrl+V / 右クリックは貼付 (bracketed paste 有効時は 200~/201~ で包む)。貼付本文の規則 (review-1 #1 で追加): bracketed paste の有効・無効によらず同じ消毒を行う。改行は従来どおり CR へ正規化 (CRLF・単独 LF → CR)。HT (0x09) と CR は残す。それ以外の C0 制御文字 (0x00-0x1F、ESC 0x1B を含む)、DEL (0x7F)、UTF-8 で符号化された C1 制御文字 (U+0080-U+009F。8 ビット CSI U+009B を含む) は取り除く (置換文字にはしない)。不正な UTF-8 は既存の扱いのまま。これにより本文中の ESC[201~ で貼付を抜けられない。無効時も消毒するのは、貼付が Ctrl+C・ESC 列としてシェルや CLI に解釈されるのを防ぐため。フォーカス中は `WantTextInput` 相当を立ててエディタショートカット (`/home/user/MyEngin/src/Editor/App/EditorApp.cpp:1970-2011`) を抑止。
 - リサイズ: 窓サイズ ÷ セル寸法で行列を算出し、変化時のみ `vterm_set_size` と `ResizePseudoConsole`。最小 20x5。
 - スクロールバック: libvterm の sb_pushline で行を保持 (既定 5000 行、設定可)。ホイールでスクロール。最下部表示中は新規出力に追従し、履歴表示中は新規出力で戻さず、キー入力・貼付で最下部へ戻る (Windows Terminal と同じ。sub-04 round 1 で変更)。
 - 子終了: 終了コードを1行表示し「再起動」ボタン。ConPTY 非対応 OS / シェル無し / 起動失敗はパネル内にエラー表示し、エディタは継続。
@@ -68,7 +68,7 @@
 ## 5. 受け入れ条件
 1. libvterm 0.3.3 が `/home/user/MyEngin/external/libvterm/` に LICENSE ごと同梱され、VERSIONS.md に版・出所・ライセンスが記載。— Linux: gcc でコンパイル+スモーク / Windows: ソリューションビルド
 2. 画面モデルが UTF-8・全角幅・SGR (16/256/truecolor)・代替画面・スクロールバック・リサイズを正しく反映する。— Linux g++ テスト + SelfTest(Fast)
-3. キー→VT 変換が Enter/BS/Tab/矢印/Home/End/PgUp/PgDn/Del/F1-12/Ctrl+文字/Alt+文字/bracketed paste を正しいバイト列にする。— 同上
+3. キー→VT 変換が Enter/BS/Tab/矢印/Home/End/PgUp/PgDn/Del/F1-12/Ctrl+文字/Alt+文字/bracketed paste を正しいバイト列にし、貼付本文から ESC・C0 (HT/CR を除く)・DEL・C1 を除く (本文の ESC[201~ で貼付を抜けられない)。— 同上
 4. シェル解決が設定優先・自動検出順を守り、環境ブロックが規則どおり (ソート・二重NUL・PATH 前置・既存変数を上書きしない)。— 同上
 5. ConPTY でシェルが起動・入出力・リサイズ・終了・再起動でき、エディタ終了で子孫が残らない。ConPTY 解決失敗時はエラー表示で継続。— Windows 手動 + SelfTest(Full) で `cmd /c echo` 往復
 6. Terminal 窓が Window メニューから開け、既定レイアウトに入り、等幅描画・選択コピー・貼付・ショートカット抑止が効く。— Windows 手動 (スクショ)
@@ -99,8 +99,13 @@
 
 - (sub-06 round 1) 版 3 のサービスが残ったまま新フックが hostTerminal を送ると bad_args で session_begin が失敗し、その編集は記録されない。サービス再起動で解消 (ipc-contract.md §4.2 に注記)。フック側の「hostTerminal を外して 1 回再送」は入れない (planner 裁定。未知引数は見える失敗とする IPC 方針 ipc-contract.md §7 を維持)。
 
+- (review-1 #1) 貼付の消毒規則は Windows Terminal / xterm の既定 (貼付から制御文字を除く) を参考にしたが、公式資料はこの環境で未取得 (記憶による・未確認)。
+- (review-1 #2) libvterm は上流無改変。gcc -O1 以上では parser.c / state.c に -Wmaybe-uninitialized が出る (最適化なしでは警告 0)。
+
 ## 8. 変更履歴
 - 2026-11-19 sub-03 round 1 (coder SELF_EVAL): 4.1 の引数引用を「空白・" を含むものだけ引用」に変更。理由は cmd.exe が引用されたスイッチを解釈しないため。
 - 2026-11-19 sub-04 round 1 (coder 質問): 4.1 スクロールバックの追従条件を変更 (出力では戻さず入力で戻す)。理由はスピナーを出し続ける CLI 実行中に履歴が読めないため。実装は sub-05 に追加。ADR 作成と VS 環境状態表示も sub-05 に割当。
 - 2026-11-19 sub-05 round 1 (coder SELF_EVAL): 4.2 に MYE_PROJECT_ROOT / MYE_TERMINAL_ID / TERM_PROGRAM の置換と、VS 環境読み込みの開始を窓の初回表示時とすることを追記。理由は sub-06 の識別を親の値で誤らないため・使わない人に VsDevCmd のコストを払わせないため。
 - 2026-11-19 sub-06 round 1 (coder SELF_EVAL): AI Changes 窓の「このターミナル」判定を、窓の ID との完全一致から、エディタ PID・起動時刻の接頭辞一致 (表示「統合ターミナル (このエディタ)」) に変更。理由はシェル再起動で連番が変わるたびに表示が変わるのを避け、AiChangesWindow を TerminalWindow に依存させないため。7 に旧サービスとの非互換を記載。
+- 2026-11-19 review-1 #1 (reviewer): 4.1 に貼付本文の消毒規則 (有効・無効とも ESC・C0 (HT/CR 除く)・DEL・C1 を除去) を追加し、受け入れ条件 3 に反映。理由は本文中の ESC[201~ で bracketed paste を抜け、後続がキー入力として実行されるため。sub-02 を差し戻し。
+- 2026-11-19 review-1 #2 (reviewer): libvterm の最適化時警告の注記を external/VERSIONS.md に 1 行残す作業を sub-02 の差し戻しに同梱。

@@ -9,7 +9,7 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 libvterm 同梱 | OK | 1 | 9fcd5a4 | MSVCビルド・上流sha256照合は未確認 (nit) |
-| sub-02 Win32 非依存コア | OK | 1 | bcf3dbc | MSVC・terminalcore 実行は Windows で要確認 (nit) |
+| sub-02 Win32 非依存コア | 差し戻し (review-1 #1,#2) | 1 | bcf3dbc | MSVC・terminalcore 実行は Windows で要確認 (nit) |
 | sub-03 ConPTY ホストとセッション | OK | 1 | 25754ab | ConPTY 実経路は未実行 (should, Windows で確認) |
 | sub-04 Terminal 窓 | OK | 1 | bfe0c4b | スクロール追従の修正・VS状態表示・環境配線・ADR は sub-05 へ |
 | sub-05 VS 開発者環境とエンジン環境変数 | OK | 1 | 77e28b1 | Win32 経路・chcp 65001 は Windows で要確認 (nit) |
@@ -32,6 +32,7 @@
 - (2026-11-19 ユーザー判断) 版は 0.88.3 (0.88.0〜0.88.2 を飛ばすことを確認済み)。PR は reviewer PASS 後に版を上げてから master 向けに出す。タグ v0.88.3 はマージ後に master のマージコミットへ付ける (docs/release.md の手順。push で即公開)。
 - (2026-11-19 planner 裁定をユーザー承認) MYE_PROJECT_ROOT / MYE_TERMINAL_ID / TERM_PROGRAM は親に同名があっても置換 (COLORTERM は親を残す) / VS 環境の読み込みはターミナル窓の初回表示時に開始
 - (2026-11-19 planner 裁定をユーザー承認) 旧 v3 サービスへの hostTerminal 送信失敗時の再送は入れない (サービス再起動で解消) / AI Changes 窓の区別はエディタ単位 (「統合ターミナル (このエディタ)」)
+- (2026-11-19 planner 裁定をユーザー承認) 貼付本文の消毒は bracketed paste の有効・無効によらず常に行う (HT と CR のみ残し C0/DEL/C1 を除去)
 - (2026-11-19) コンテナ再起動で sub-05 coder が中断。途中成果を引き継いで新しい coder で再開した。
 
 ## 申し送り (セッション跨ぎ)
