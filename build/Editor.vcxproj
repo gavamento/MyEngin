@@ -147,6 +147,11 @@
     <ClCompile Include="..\src\Editor\Tools\NavEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEdit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalInput.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalScreen.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.cpp" />
     <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
@@ -311,6 +316,11 @@
     <ClInclude Include="..\src\Editor\Tools\NavEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEdit.h" />
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalInput.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalScreen.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.h" />
     <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />

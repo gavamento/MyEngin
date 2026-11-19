@@ -13,6 +13,7 @@
 #include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Editor/Tools/Browser/BrowserEmbedSelfTest.h"
+#include "Editor/Tools/Terminal/TerminalCoreSelfTest.h"
 #include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
 #include "Editor/SelfTest/ComputeInspectorSelfTest.h"
@@ -270,6 +271,7 @@ const SelfTestSuite kSuites[] = {
     { "changetracking", mye::RunChangeTrackingSelfTest, SelfTestTier::Fast, "M104j" },
     { "browserembed", mye::RunBrowserEmbedSelfTest, SelfTestTier::Fast, "M105a: ブラウザ候補の解析 / 窓の特定 / 状態機械 / 見せる条件 (純関数)" },
     { "browserembedproc", mye::RunBrowserEmbedProcSelfTest, SelfTestTier::Full, "M105a: ダミー窓プロセスの Attach / Detach / Closed / Lost / 応答なし" },
+    { "terminalcore", mye::RunTerminalCoreSelfTest, SelfTestTier::Fast, "M106b: ターミナルの画面モデル / キー→VT / シェル解決 / 環境ブロック (純関数 + libvterm)" },
 };
 
 const SelfTestAlias kAliases[] = {
