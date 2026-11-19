@@ -9,7 +9,7 @@
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
 | sub-01 libvterm 同梱 | OK | 1 | 9fcd5a4 | MSVCビルド・上流sha256照合は未確認 (nit) |
-| sub-02 Win32 非依存コア | 差し戻し (review-1 #1,#2) | 1 | bcf3dbc | MSVC・terminalcore 実行は Windows で要確認 (nit) |
+| sub-02 Win32 非依存コア | OK | 2 | bcf3dbc, 21f000e | MSVC・terminalcore 実行は Windows で要確認 (nit) |
 | sub-03 ConPTY ホストとセッション | OK | 1 | 25754ab | ConPTY 実経路は未実行 (should, Windows で確認) |
 | sub-04 Terminal 窓 | OK | 1 | bfe0c4b | スクロール追従の修正・VS状態表示・環境配線・ADR は sub-05 へ |
 | sub-05 VS 開発者環境とエンジン環境変数 | OK | 1 | 77e28b1 | Win32 経路・chcp 65001 は Windows で要確認 (nit) |
@@ -46,4 +46,5 @@
 - (sub-03) 窓は表示状態に関係なく毎フレーム Pump() / OnShutdown でセッション破棄 / finder は FindTerminalExecutable / ErrorMessage は英語、Tr は窓側 / SendPaste は同期書込 / Job 失敗時の制約を engine_spec §9.4 に1行 / Windows 確認項目は sub-04 で test_checklists へ
 - (sub-04) sub-05: TerminalWindow::StartSession の environment が空 → BuildTerminalEnvironment で注入、VS 読込待ちの保留表示とツールバー状態、スクロールは最下部表示時のみ追従、ADR 追加、MYE_TERMINAL_ID 採番。貼付サイズ上限は入れない (spec §7 リスク)
 - (sub-05) sub-06: MYE_TERMINAL_ID の書式は <エディタPID>-<起動UNIX秒>-<シェル起動連番>、TerminalWindow::StartSession で採番。フックは環境変数 MYE_TERMINAL_ID を読んで hostTerminal に渡す。chcp 65001 で化けたら GetOEMCP 変換を別修正で
+- (sub-02 r2) nit: CR 直後に除去対象バイトがあると空行が 1 つ増える (afterCr の扱い)。孤立 0x80-0x9F が ConPTY で U+FFFD になる前提は Windows で確認 (test_checklists に追加予定)
 - (planner PLAN) cargo は /root/.cargo/bin/cargo にある。g++ あり。spec は「策定中」、未決は PLAN_RESULT の [ユーザーに聞ける] を参照。
