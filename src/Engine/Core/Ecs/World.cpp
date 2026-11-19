@@ -512,6 +512,7 @@ void World::DestroyImmediate(EntityID e)
     UnlinkFromParent(e);
 
     for (EntityID s : subtree) {
+        cameraFx_.erase(s.index);
         EntityRecord& rec = records_[s.index];
         const EntityID moved = rec.archetype->RemoveRow(rec.row);
         if (!moved.IsNull()) {
@@ -562,6 +563,7 @@ void World::ReplaceComponentStorage(ComponentTypeId t, ComponentDesc newDesc)
 
 void World::Clear()
 {
+    cameraFx_.clear();
     MYE_CHECK(!IsIterating());
     commands_.clear();
     cmdPayloads_.clear();

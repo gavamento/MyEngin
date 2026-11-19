@@ -160,6 +160,8 @@ ImFont* TryAddFont(const std::wstring& path, float sizePx, const ImFontConfig* c
 // 見出しフォント (テーマ第 3 世代)。コンテキスト再作成で無効になるので
 // SetupEditorFonts のたびに取り直す
 ImFont* g_headingFont = nullptr;
+// ターミナル窓の等幅フォント。同上、SetupEditorFonts のたびに取り直す。null = 等幅の書体が見つからなかった
+ImFont* g_monospaceFont = nullptr;
 
 } // namespace
 
@@ -167,6 +169,7 @@ bool SetupEditorFonts(float sizePx)
 {
     ImGuiIO& io = ImGui::GetIO();
     g_headingFont = nullptr;
+    g_monospaceFont = nullptr;
     wchar_t winDir[MAX_PATH] = {};
     GetWindowsDirectoryW(winDir, MAX_PATH);
     const std::wstring fonts = std::wstring(winDir) + L"\\Fonts\\";
@@ -231,15 +234,61 @@ bool SetupEditorFonts(float sizePx)
         g_headingFont = heading;
     }
 
-    MYE_LOG_INFO("editor fonts: base=%s jp=%s icons=%s heading=%s", base ? "Segoe UI" : "default",
+    // 等幅 (ターミナル窓): Cascadia Mono → Consolas。システムの Fonts になければ、ユーザー単位のインストール先
+    // (%LOCALAPPDATA%\Microsoft\Windows\Fonts。Windows Terminal 付属の Cascadia はここに入れる人が多い) も見る。
+    // 日本語は直前のベースと同じ連鎖を merge する。全角は窓側が 2 セルの左端へ置くので、日本語フォントの送り幅が
+    // セル幅の整数倍でなくても桁はずれない。どれも無ければ null のまま (窓は既定フォントで 1 セルずつ置く)
+    std::wstring userFonts;
+    wchar_t localAppData[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH) > 0) {
+        userFonts = std::wstring(localAppData) + L"\\Microsoft\\Windows\\Fonts\\";
+    }
+    const char* monoLoaded = nullptr;
+    struct MonoCandidate
+    {
+        const std::wstring* dir;
+        const wchar_t* file;
+        const char* label;
+    };
+    const MonoCandidate monoCandidates[] = {
+        { &fonts, L"CascadiaMono.ttf", "Cascadia Mono" },
+        { &userFonts, L"CascadiaMono.ttf", "Cascadia Mono" },
+        { &fonts, L"consola.ttf", "Consolas" },
+    };
+    for (const MonoCandidate& candidate : monoCandidates) {
+        if (candidate.dir->empty()) {
+            continue;
+        }
+        g_monospaceFont = TryAddFont(*candidate.dir + candidate.file, sizePx, nullptr);
+        if (g_monospaceFont != nullptr) {
+            monoLoaded = candidate.label;
+            break;
+        }
+    }
+    if (g_monospaceFont != nullptr) {
+        for (const wchar_t* name : jpCandidates) {
+            if (TryAddFont(fonts + name, sizePx, &jpCfg)) {
+                break;
+            }
+        }
+    } else {
+        MYE_LOG_WARN("editor font: no monospace font (Cascadia Mono / Consolas) found, the terminal uses the default font");
+    }
+
+    MYE_LOG_INFO("editor fonts: base=%s jp=%s icons=%s heading=%s mono=%s", base ? "Segoe UI" : "default",
                  jpLoaded ? jpLoaded : "(none)", fa ? "FontAwesome6" : "(none)",
-                 g_headingFont ? "Segoe UI Semibold" : "(base)");
+                 g_headingFont ? "Segoe UI Semibold" : "(base)", monoLoaded ? monoLoaded : "(none)");
     return jpLoaded != nullptr; // M47a: UI 言語を日本語にしてよいか
 }
 
 ImFont* EditorHeadingFont()
 {
     return g_headingFont; // null = 呼び出し側で PushFont(nullptr, size) = 書体はそのまま
+}
+
+ImFont* EditorMonospaceFont()
+{
+    return g_monospaceFont; // null = 等幅が無い。呼び出し側が桁をセル単位で置く
 }
 
 } // namespace mye

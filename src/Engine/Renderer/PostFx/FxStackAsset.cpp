@@ -147,6 +147,13 @@ bool LoadFxStack(const std::wstring& path, FxStackAsset& out, std::string* error
                 entry.kind = FxStackKind::Post;
             }
 
+            entry.id = ep.value("id", "");
+            if (!entry.id.empty()) {
+                for (const auto& prev : parsed.passes) if (prev.id == entry.id) {
+                    if (errorMsg) *errorMsg = "duplicate fx pass id: " + entry.id;
+                    return false;
+                }
+            }
             entry.shader  = ep.value("shader", "");
             entry.enabled = ep.value("enabled", true);
 
@@ -155,6 +162,7 @@ bool LoadFxStack(const std::wstring& path, FxStackAsset& out, std::string* error
                 entry.priority  = ep.value("priority", 100);
             } else {
                 entry.dispatchPoint = ep.value("dispatchPoint", "BeforePost");
+                entry.writesSceneColor = ep.value("output", "") == "sceneColor";
                 entry.priority      = ep.value("priority", 50);
             }
 
@@ -189,6 +197,7 @@ bool SaveFxStack(const std::wstring& path, const FxStackAsset& asset, std::strin
     for (const FxStackEntry& entry : asset.passes) {
         json ep;
         ep["kind"]       = (entry.kind == FxStackKind::Compute) ? "compute" : "post";
+        if (!entry.id.empty()) ep["id"] = entry.id;
         ep["shader"]     = entry.shader;
         ep["enabled"]    = entry.enabled;
 
@@ -197,6 +206,7 @@ bool SaveFxStack(const std::wstring& path, const FxStackAsset& asset, std::strin
             ep["priority"]  = entry.priority;
         } else {
             ep["dispatchPoint"] = entry.dispatchPoint;
+            if (entry.writesSceneColor) ep["output"] = "sceneColor";
             ep["priority"]      = entry.priority;
         }
 

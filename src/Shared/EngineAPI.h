@@ -65,7 +65,7 @@
 // v35 (M96d): かき乱しフィールド — FieldAddImpulse / FieldSample (SetFeelOutputScale の次の 2 本 = 202)
 // v36 (M101): レーン別マウス — GetMouseDeltaFor (FieldSample の次の 1 本 = 203)。
 //             あわせて CameraOwner コンポーネント (描画するカメラをマシンのレーンで選ぶ) を追加
-#define MYE_API_VERSION 36u
+#define MYE_API_VERSION 37u
 
 // v30 (M93) OnlineMemberFlags のビット
 #define MYE_ONLINE_MEMBER_OWNER 1u    // 部屋を作った人 (ホスト = サーバを動かしている人)
@@ -1182,6 +1182,13 @@ struct MyeEngineApi {
     //   オフライン (1 台) ではマウスはレーン 0 にしか載らない (他のレーンは 0)。範囲外のレーンは 0。
     //   InputSnapshot 由来 = 決定論レーン (record/verify・ロールバックで同じ値)。outDx / outDy は null 可
     void (*GetMouseDeltaFor)(void* engine, uint32_t player, int32_t* outDx, int32_t* outDy);
+    // v37: camera-local project effect overrides. Return 1 on success.
+    int (*SetCameraFxFloat)(void*, MyeEntityId, const char*, const char*, float);
+    int (*SetCameraFxVector)(void*, MyeEntityId, const char*, const char*, MyeVec4);
+    int (*ClearCameraFxProperty)(void*, MyeEntityId, const char*, const char*);
+    int (*ClearCameraFxPass)(void*, MyeEntityId, const char*);
+    int (*ClearCameraFxOverrides)(void*, MyeEntityId);
+    int (*WasCameraFxPassDrawn)(void*, MyeEntityId, const char*);
 };
 
 // スクリプトの各コールバックに渡されるコンテキスト (POD)

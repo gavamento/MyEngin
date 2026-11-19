@@ -297,7 +297,7 @@ namespace MyeScripting
         // 版がずれると全スロットが黙って別関数を指すため、静的照合 (規則 11) だけでは
         // 「C++ 側だけ更新して build_managed.bat を忘れた」古い MyeScripting.dll を捕まえられない。
         // ★MYE_API_VERSION を上げたらここも同時に上げる (規則 11-e が機械照合する)
-        internal const uint kExpectedApiVersion = 36u;
+        internal const uint kExpectedApiVersion = 37u;
 
         public uint Version;
         public void* Engine;
@@ -552,6 +552,12 @@ namespace MyeScripting
         public delegate* unmanaged<void*, MyeEntityId, MyeVec3, MyeFieldSample*, int> FieldSample;
         // v36 (M101): レーン別マウス
         public delegate* unmanaged<void*, uint, int*, int*, void> GetMouseDeltaFor;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, byte*, float, int> SetCameraFxFloat;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, byte*, MyeVec4, int> SetCameraFxVector;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, byte*, int> ClearCameraFxProperty;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> ClearCameraFxPass;
+        public delegate* unmanaged<void*, MyeEntityId, int> ClearCameraFxOverrides;
+        public delegate* unmanaged<void*, MyeEntityId, byte*, int> WasCameraFxPassDrawn;
     }
 
     // ネイティブ ManagedHost が保持する関数ポインタ表。Bootstrap がここに書き込む。

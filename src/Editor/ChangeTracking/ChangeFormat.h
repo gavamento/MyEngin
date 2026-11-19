@@ -73,8 +73,11 @@ struct SessionRowText {
     std::string time;
     std::string count;  // 「N 件の変更」
     std::string review; // レビューの集約の文面 + 件数 (サービスが返さなければ空)
+    std::string origin; // 統合ターミナルで始まったセッションだけ「統合ターミナル」(このエディタのターミナルなら「このエディタ」付き)。外は空
 };
-SessionRowText FormatSessionRow(const TrackSessionRow& row);
+// fromThisEditor: row.hostTerminal がこのエディタ自身の統合ターミナルの ID か (呼び出し側が TerminalIdBelongsToEditor で決める。
+// 書式の知識を Tools/Terminal に 1 か所だけ置くため、ここでは ID を解釈しない)
+SessionRowText FormatSessionRow(const TrackSessionRow& row, bool fromThisEditor = false);
 
 // UTC ミリ秒 → 現地時刻の "YYYY-MM-DD HH:MM:SS"。0 以下は空
 std::string FormatTimeMs(int64_t utcMs);

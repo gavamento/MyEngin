@@ -270,6 +270,14 @@ BrowserHideReason EvaluateBrowserVisibility(const BrowserVisibilityInput& in)
     return BrowserHideReason::None;
 }
 
+bool ShouldFocusBrowserChild(bool shown, bool hung, const BrowserRect& childScreen, int cursorX, int cursorY)
+{
+    if (!shown || hung || childScreen.Empty()) {
+        return false;
+    }
+    return childScreen.left <= cursorX && cursorX < childScreen.right && childScreen.top <= cursorY && cursorY < childScreen.bottom;
+}
+
 bool BrowserRateLimiter::TryAcquire(int64_t nowMs)
 {
     stamps_.erase(std::remove_if(stamps_.begin(), stamps_.end(), [&](int64_t t) { return nowMs - t >= windowMs_; }),
@@ -493,6 +501,7 @@ void BrowserHost::ReleaseChild()
     childPid_ = 0;
     goneSinceMs_ = -1;
     parentLostSinceMs_ = -1;
+    focusChildPending_ = false;
 }
 
 void BrowserHost::RestoreTopLevel(void* childHwnd, const SavedWindow& saved)
@@ -571,6 +580,22 @@ void BrowserHost::ReturnFocusToMain()
     }
 }
 
+void BrowserHost::NoteMouseDownAt(int screenX, int screenY)
+{
+    if (status_.state != BrowserState::Embedded || childHwnd_ == nullptr) {
+        return;
+    }
+    HWND child = AsHwnd(childHwnd_);
+    // WindowFromPoint は他スレッドの窓へ WM_NCHITTEST を送りうるので使わない。矩形とカーソルだけで決める (同期メッセージなし)
+    RECT rc = {};
+    if (!IsWindow(child) || !GetWindowRect(child, &rc)) {
+        return;
+    }
+    if (ShouldFocusBrowserChild(shown_, status_.hung, ToBrowserRect(rc), screenX, screenY)) {
+        focusChildPending_ = true;
+    }
+}
+
 void BrowserHost::Update(const BrowserFrameInput& in)
 {
     switch (status_.state) {
@@ -624,6 +649,9 @@ void BrowserHost::UpdateEmbedded(const BrowserFrameInput& in)
 {
     HWND child = AsHwnd(childHwnd_);
     HWND main = AsHwnd(mainHwnd_);
+    // 予約はこのフレームで必ず消費する。渡せない状態 (隠す・応答なし・消えた) で早く抜けても持ち越さない
+    const bool focusRequested = focusChildPending_;
+    focusChildPending_ = false;
 
     BrowserObservation obs;
     obs.windowAlive = IsWindow(child) != FALSE;
@@ -704,6 +732,15 @@ void BrowserHost::UpdateEmbedded(const BrowserFrameInput& in)
             }
             SetWindowPos(child, nullptr, in.contentRect.left, in.contentRect.top, in.contentRect.Width(),
                          in.contentRect.Height(), SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+        }
+    }
+    // ブラウザ上で押された: キーボードフォーカスを子窓へ渡す。WS_CHILD にした窓は WM_ACTIVATE を受けないので、
+    // ブラウザは自分ではフォーカスを取り直さない (エディタ側を一度クリックすると打てなくなる)。
+    // 親子にした時点で入力キューは結合しているので、他プロセスの窓へも SetFocus が効く
+    if (focusRequested && parentLostSinceMs_ < 0) {
+        HWND focus = GetFocus();
+        if (focus != child && !IsChild(child, focus)) {
+            SetFocus(child);
         }
     }
 }

@@ -173,6 +173,17 @@ void TestFormat(const Check& check)
               "format: a session row shows provider, state, start time and the change count");
         session.provider.clear();
         check(FormatSessionRow(session).title == "01234567", "format: a session without a provider falls back to its id");
+
+        // 統合ターミナルで始まったセッションだけ出所を出す (M106f)
+        check(FormatSessionRow(session).origin.empty() && FormatSessionRow(session, true).origin.empty(),
+              "format: a session outside the integrated terminal shows no origin");
+        session.hostTerminal = "42-1763500000-2";
+        const SessionRowText otherTerminal = FormatSessionRow(session, false);
+        const SessionRowText thisTerminal = FormatSessionRow(session, true);
+        const bool en = CurrentLanguage() == Lang::En;
+        check(otherTerminal.origin == (en ? "Integrated terminal" : "統合ターミナル")
+                  && thisTerminal.origin == (en ? "Integrated terminal (this editor)" : "統合ターミナル (このエディタ)"),
+              "format: an integrated-terminal session shows its origin, and marks this editor's own terminal");
     });
 
     // 時刻: UTC ミリ秒 → 現地時刻。現地の日時として読み戻すと元の秒になる

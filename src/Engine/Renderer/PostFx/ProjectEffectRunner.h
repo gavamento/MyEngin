@@ -3,6 +3,7 @@
  作成者: 秋田蓮音                                09/22/2026
 ----*/
 #pragma once
+#include "Engine/Renderer/PostFx/CameraFxState.h"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -37,6 +38,7 @@ struct ProjectPostPassDesc
     bool               enabled     = true;
     // プロパティ値 (Inspector / fxstack JSON から流入。sub-03 まで空でも可)
     std::unordered_map<std::string, PropValue> propertyValues;
+    std::string id;
 };
 
 // プロジェクトポストパスのランタイム管理 / 実行クラス (M78b)。
@@ -45,6 +47,7 @@ struct ProjectPostPassDesc
 class ProjectEffectRunner
 {
 public:
+    void SetCameraState(CameraFxState* state) { cameraState_ = state; }
     // プロジェクトポストのハード上限 (spec §4.4)
     static constexpr int kMaxPostPasses = 8;
 
@@ -109,6 +112,7 @@ public:
         AssetID                   magentaShaderID);
 
 private:
+    CameraFxState* cameraState_ = nullptr;
     // エンジン共通定数バッファ (ProjectPostCommon.hlsli の b0)
     struct EnginePostCB
     {

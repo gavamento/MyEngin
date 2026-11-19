@@ -31,6 +31,8 @@ struct FxStackEntry
     int                priority  = 100;
 
     // kind==Compute (sub-04 で使用)
+    std::string id;
+    bool writesSceneColor = false;
     std::string dispatchPoint;        // "BeforePost" / "BeforeTonemap" / "AfterTonemap"
 
     // 両方: プロパティ値の辞書 (JSON "properties" オブジェクト → 名前→値)

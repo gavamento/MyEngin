@@ -28,6 +28,9 @@
     <Filter Include="Tools\Browser">
       <UniqueIdentifier>{80B4F782-97D0-0606-BEC5-4807B880253C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Tools\Terminal">
+      <UniqueIdentifier>{35366E6A-E49B-F89F-E2EC-CE75566BD8B8}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Undo">
       <UniqueIdentifier>{C45724AD-B67D-BA3E-BE10-0FFAC17BD3A6}</UniqueIdentifier>
     </Filter>
@@ -384,6 +387,48 @@
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalByteQueue.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalConPtyHost.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalInput.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayout.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalScreen.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSession.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvWin32.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
@@ -505,6 +550,9 @@
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp">
+      <Filter>Windows\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Project\TerminalWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp">
@@ -876,6 +924,45 @@
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h">
       <Filter>Tools</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalByteQueue.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalHost.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalInput.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayout.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalScreen.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSession.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h">
       <Filter>Tools</Filter>
     </ClInclude>
@@ -997,6 +1084,9 @@
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Project\TerminalWindow.h">
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h">

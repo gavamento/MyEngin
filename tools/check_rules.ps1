@@ -972,7 +972,7 @@ if (-not (Test-Path $tablePath)) {
 #       version の bump とこの表の更新を**同時に**行うこと (どちらか片方だとここで止まる)
 # 11-d  EngineApiTable.cpp が全スロットに `out.<Name> =` で実装を充填している
 # 11-e  Interop.cs の kExpectedApiVersion (実行時照合の前提値、M93a) が MYE_API_VERSION と一致
-$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174; 30 = 178; 31 = 188; 32 = 193; 33 = 194; 34 = 200; 35 = 202; 36 = 203 }
+$apiVersionSlots = @{ 11 = 73; 12 = 87; 13 = 94; 14 = 102; 15 = 104; 16 = 110; 17 = 111; 18 = 112; 19 = 114; 20 = 118; 21 = 125; 22 = 126; 23 = 131; 24 = 139; 25 = 144; 26 = 151; 27 = 158; 28 = 164; 29 = 174; 30 = 178; 31 = 188; 32 = 193; 33 = 194; 34 = 200; 35 = 202; 36 = 203; 37 = 209 }
 $apiHeaderPath = Join-Path $repo 'src\Shared\EngineAPI.h'
 $interopPath = Join-Path $repo 'src\Scripting\Interop.cs'
 $apiTablePath = Join-Path $repo 'src\Engine\Engine\Script\EngineApiTable.cpp'
@@ -1508,6 +1508,19 @@ foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extens
     $top = ($rel -split '[\\/]')[0]
     if ($browserRoots -contains $top) {
         Test-CodeLines $f '#\s*include\s*[<"][^>"]*Editor[\\/]Tools[\\/]Browser[\\/]' 'rule 20' 'the embedded browser is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
+    }
+}
+
+# 規則 21: 統合ターミナル (M106) は Editor 層に閉じ込める
+# 子プロセス (シェル) と疑似コンソール (ConPTY) を持つ機能は、エディタの UI 状態であって sim の入力ではない。
+# Engine / Runtime / GameLogic / Shared / Server から Editor\Tools\Terminal\ を include した瞬間に、ゲート側が他プロセスの入出力と結合する。
+# 静的に見えるのは include だけなので、そこを機械検査する (規則 19 / 20 と同じ作り。-SourceRoot でフィクスチャを差し替えて自己検査できる)
+$terminalRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
+foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    $rel = $f.FullName.Substring($srcRootFull.Length).TrimStart([char]92)
+    $top = ($rel -split '[\\/]')[0]
+    if ($terminalRoots -contains $top) {
+        Test-CodeLines $f '#\s*include\s*[<"][^>"]*Editor[\\/]Tools[\\/]Terminal[\\/]' 'rule 21' 'the integrated terminal is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
     }
 }
 

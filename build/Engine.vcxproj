@@ -806,6 +806,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderPath.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Pipeline\RenderTypes.h" />
+    <ClInclude Include="..\src\Engine\Renderer\PostFx\CameraFxState.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFx\FxStackAsset.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFx\FxStackSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\PostFx\PostFxMath.h" />

@@ -1,7 +1,7 @@
 # check_rules_selftest.ps1 — check_rules.ps1 の規則自身の自己検査
 # 実行: pwsh -File tools\check_rules_selftest.ps1  (期待どおりでなければ exit 1)
 # 違反を仕込んだ一時ファイルを -SourceRoot で読ませ、規則が実際に error を出す (当たらない正規表現のまま
-# 0 件を返し続けない) ことと、正当なコードに誤検出しないことを確かめる。今は規則 18 (M96)・規則 19 (M104)・規則 20 (M105)
+# 0 件を返し続けない) ことと、正当なコードに誤検出しないことを確かめる。今は規則 18 (M96)・規則 19 (M104)・規則 20 (M105)・規則 21 (M106)
 $ErrorActionPreference = 'Stop'
 $checker = Join-Path $PSScriptRoot 'check_rules.ps1'
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ("mye_rules_selftest_" + [Guid]::NewGuid().ToString('N'))
@@ -54,6 +54,17 @@ try {
         '#include "Editor/Tools/Browser/BrowserHost.h"',
         '#include "Editor/Tools/ModalTools.h"'
     ) -Encoding UTF8
+    # 規則 21 (M106): 統合ターミナル (Editor\Tools\Terminal) を下位層から include しない。Editor 側と、似た名前の別パス・コメント内の言及は通す
+    Set-Content -Path (Join-Path $browserBadDir 'Bad21.cpp') -Value @(
+        '#include "Editor/Tools/Terminal/TerminalHost.h"',
+        '#  include <Editor\Tools\Terminal\TerminalScreen.h>',
+        '// #include "Editor/Tools/Terminal/Commented.h" はコメントの中なので許容'
+    ) -Encoding UTF8
+    Set-Content -Path (Join-Path $trackRuntimeDir 'Bad21Runtime.h') -Value @('#include "../Editor/Tools/Terminal/TerminalSession.h"') -Encoding UTF8
+    Set-Content -Path (Join-Path $trackEditorDir 'Good21.cpp') -Value @(
+        '#include "Editor/Tools/Terminal/TerminalSession.h"',
+        '#include "Editor/Tools/TerminalLike.h"'
+    ) -Encoding UTF8
     $out = & pwsh -NoProfile -File $checker -SourceRoot $root 2>&1 | Out-String
     $rule18 = @($out -split "`n" | Where-Object { $_ -match '\[rule 18\]' })
     $fail = 0
@@ -80,6 +91,15 @@ try {
     if ($rule20.Count -ne 3) { Write-Host "FAIL: expected exactly 3 rule 20 errors in total, got $($rule20.Count)"; $fail20++ }
     if ($fail20 -eq 0) { Write-Host 'PASS: rule 20 flags includes of Editor\Tools\Browser from Server / Runtime (3), spares the Editor layer and comments' }
     $fail += $fail20
+
+    $rule21 = @($out -split "`n" | Where-Object { $_ -match '\[rule 21\]' })
+    $fail21 = 0
+    if (@($rule21 | Where-Object { $_ -match 'Bad21\.cpp' }).Count -ne 2) { Write-Host "FAIL: expected 2 rule 21 errors in Bad21.cpp (comment excluded), got $(@($rule21 | Where-Object { $_ -match 'Bad21\.cpp' }).Count)"; $fail21++ }
+    if (@($rule21 | Where-Object { $_ -match 'Bad21Runtime\.h' }).Count -ne 1) { Write-Host 'FAIL: Runtime must not include Editor\Tools\Terminal'; $fail21++ }
+    if (@($rule21 | Where-Object { $_ -match 'Good21\.cpp' }).Count -ne 0) { Write-Host 'FAIL: an Editor file including Tools\Terminal must not be flagged'; $fail21++ }
+    if ($rule21.Count -ne 3) { Write-Host "FAIL: expected exactly 3 rule 21 errors in total, got $($rule21.Count)"; $fail21++ }
+    if ($fail21 -eq 0) { Write-Host 'PASS: rule 21 flags includes of Editor\Tools\Terminal from Server / Runtime (3), spares the Editor layer and comments' }
+    $fail += $fail21
     exit $(if ($fail -eq 0) { 0 } else { 1 })
 }
 finally {

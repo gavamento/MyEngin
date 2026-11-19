@@ -383,7 +383,7 @@ pub fn sessions(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
     };
     let mut stmt = conn
         .prepare(
-            "SELECT session_id, provider, source, client_session_id, workspace, base_commit, started_at, ended_at, status
+            "SELECT session_id, provider, source, client_session_id, workspace, base_commit, started_at, ended_at, status, host_terminal
                FROM sessions
               WHERE started_at < ?1 OR (started_at = ?1 AND session_id < ?2)
               ORDER BY started_at DESC, session_id DESC LIMIT ?3",
@@ -406,6 +406,7 @@ pub fn sessions(conn: &Connection, mut args: Args) -> Result<Value, OpError> {
                 "startedAt": r.get::<_, i64>(6)?,
                 "endedAt": r.get::<_, Option<i64>>(7)?,
                 "status": r.get::<_, String>(8)?,
+                "hostTerminal": r.get::<_, Option<String>>(9)?,
             }))
         })
         .map_err(internal)?;

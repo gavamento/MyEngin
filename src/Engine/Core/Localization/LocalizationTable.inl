@@ -3093,6 +3093,8 @@ MYE_STR(AiChg_Sessions,       "Sessions",                              "セッ�
 MYE_STR(AiChg_AllChanges,     "All changes",                           "すべての変更")
 MYE_STR(AiChg_UncertainScope, "Without a session (unknown / inferred)", "セッションなし (不明 / 推定)")
 MYE_STR(AiChg_SessionChanges, "changes",                               "件の変更")
+MYE_STR(AiChg_SessionHostTerminal, "Integrated terminal",              "統合ターミナル")
+MYE_STR(AiChg_SessionHostTerminalHere, "Integrated terminal (this editor)", "統合ターミナル (このエディタ)")
 MYE_STR(AiChg_SessionRunning, "running",                               "実行中")
 MYE_STR(AiChg_SessionFinished, "finished",                             "終了")
 MYE_STR(AiChg_SessionInterrupted, "interrupted",                       "中断")
@@ -3685,3 +3687,41 @@ MYE_STR(Browser_HungHint,     "Detach is unavailable while the browser is not re
 MYE_STR(Browser_AttachExisting, "Attach existing window...",           "既存の窓を取り込む...")
 MYE_STR(Browser_AttachNone,   "No windows of this browser were found.", "このブラウザの窓が見つかりません。")
 MYE_STR(Browser_AttachNoTitle, "(no title)",                           "(タイトルなし)")
+
+// ---- ターミナル窓 (M106d) ----
+// 数や名前を文の途中へ差し込む文面は持たない。「ラベル: 値」の形で、値はコードが足す
+MYE_STR(Win_Terminal,         "Terminal###Terminal",                   "ターミナル###Terminal")
+MYE_STR(Term_Shell,           "Shell",                                 "シェル")
+MYE_STR(Term_Restart,         "Restart",                               "再起動")
+MYE_STR(Term_ClearScrollback, "Clear scrollback",                      "履歴を消去")
+MYE_STR(Term_Settings,        "Settings...",                           "設定...")
+MYE_STR(Term_Copy,            "Copy",                                  "コピー")
+MYE_STR(Term_Paste,           "Paste",                                 "貼り付け")
+MYE_STR(Term_ViewingHistory,  "Scrollback",                            "履歴")
+MYE_STR(Term_SettingsShell,   "Shell",                                 "シェル")
+MYE_STR(Term_SettingsShellHint, "(empty = auto-detect: pwsh, powershell, cmd)",
+                              "(空 = 自動検出: pwsh → powershell → cmd)")
+MYE_STR(Term_SettingsFontSize, "Font size",                            "文字サイズ")
+MYE_STR(Term_SettingsScrollback, "Scrollback lines",                   "スクロールバックの行数")
+MYE_STR(Term_SettingsLoadVsEnv, "Load the Visual Studio developer environment", "Visual Studio 開発者環境を読み込む")
+MYE_STR(Term_SettingsApplyOnRestart, "The shell, scrollback and Visual Studio environment settings apply from the next restart.",
+                              "シェル・スクロールバック・Visual Studio 環境の設定は、次の再起動から反映されます。")
+MYE_STR(Term_Exited,          "The shell exited. Exit code:",          "シェルが終了しました。終了コード:")
+MYE_STR(Term_StartFailed,     "Could not start the shell:",            "シェルを起動できませんでした:")
+MYE_STR(Term_Unsupported,     "This Windows has no pseudo console (ConPTY needs Windows 10 1809 or later).",
+                              "この Windows には疑似コンソール (ConPTY) がありません (Windows 10 1809 以降が必要です)。")
+MYE_STR(Term_ShellNotFound,   "The configured shell was not found. Check the shell in Settings.",
+                              "設定したシェルが見つかりません。設定のシェルを確認してください。")
+MYE_STR(Term_ShellMalformed,  "The configured shell has an unclosed quote. Check the shell in Settings.",
+                              "設定したシェルの引用符が閉じていません。設定のシェルを確認してください。")
+MYE_STR(Term_NoAutoShell,     "No shell was found (pwsh, powershell and cmd are all missing).",
+                              "シェルが見つかりません (pwsh・powershell・cmd のどれもありません)。")
+MYE_STR(Term_VsEnv,           "VS environment:",                       "VS 環境:")
+MYE_STR(Term_VsEnvLoading,    "Loading...",                            "読み込み中...")
+MYE_STR(Term_VsEnvLoaded,     "Loaded",                                "読み込み済み")
+MYE_STR(Term_VsEnvUnavailable, "Not available",                        "利用できません")
+MYE_STR(Term_VsEnvOff,        "Off",                                   "無効")
+MYE_STR(Term_VsEnvPending,    "Loading the Visual Studio developer environment. The shell starts when it is ready (up to 30 seconds).",
+                              "Visual Studio 開発者環境を読み込んでいます。完了するとシェルが起動します (最長 30 秒)。")
+MYE_STR(Term_VsEnvWarning,    "The Visual Studio developer environment could not be loaded. The shell started without it (cl and msbuild may not be found).",
+                              "Visual Studio 開発者環境を読み込めませんでした。読み込まずにシェルを起動しました (cl や msbuild が見つからない場合があります)。")

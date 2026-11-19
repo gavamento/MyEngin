@@ -137,8 +137,8 @@ fn session_begin(conn: &Connection, cfg: &AttributionConfig, at: i64, p: &Value,
     conn.execute(
         "INSERT OR IGNORE INTO sessions
            (session_id, provider, source, client_session_id, process_id, process_start, workspace, base_commit,
-            started_at, ended_at, status, coverage)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, 'running', ?10)",
+            started_at, ended_at, status, coverage, host_terminal)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, 'running', ?10, ?11)",
         params![
             id,
             provider,
@@ -150,6 +150,8 @@ fn session_begin(conn: &Connection, cfg: &AttributionConfig, at: i64, p: &Value,
             p["base_commit"].as_str(),
             at,
             coverage.to_string(),
+            // 版 4 より前のイベントには無い (None = NULL)。作り直しでも同じ列になる
+            p["host_terminal"].as_str(),
         ],
     )?;
     // 開始のすぐ前の変更は、このセッションより前からあった変更として根拠に残す

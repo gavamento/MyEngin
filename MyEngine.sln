@@ -14,6 +14,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Server", "build\Server.vcxp
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Launcher", "build\Launcher.vcxproj", "{E5F6A7B8-6666-4E9F-B021-3C4D5E6F7081}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libvterm", "build\libvterm.vcxproj", "{1120A41F-3F5C-4370-A92C-4C3909DCFC62}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -44,6 +46,10 @@ Global
 		{E5F6A7B8-6666-4E9F-B021-3C4D5E6F7081}.Debug|x64.Build.0 = Debug|x64
 		{E5F6A7B8-6666-4E9F-B021-3C4D5E6F7081}.Release|x64.ActiveCfg = Release|x64
 		{E5F6A7B8-6666-4E9F-B021-3C4D5E6F7081}.Release|x64.Build.0 = Release|x64
+		{1120A41F-3F5C-4370-A92C-4C3909DCFC62}.Debug|x64.ActiveCfg = Debug|x64
+		{1120A41F-3F5C-4370-A92C-4C3909DCFC62}.Debug|x64.Build.0 = Debug|x64
+		{1120A41F-3F5C-4370-A92C-4C3909DCFC62}.Release|x64.ActiveCfg = Release|x64
+		{1120A41F-3F5C-4370-A92C-4C3909DCFC62}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

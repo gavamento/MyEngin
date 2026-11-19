@@ -3023,6 +3023,7 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                     for (const auto& entry : fx.passes) {
                         if (entry.kind == FxStackKind::Post) {
                             ProjectPostPassDesc d;
+                            d.id = entry.id;
                             d.shaderName     = entry.shader;
                             d.insertion      = entry.insertion;
                             d.priority       = entry.priority;
@@ -3032,6 +3033,8 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                         } else if (entry.kind == FxStackKind::Compute) {
                             ProjectComputePassDesc d;
                             d.shader        = entry.shader;
+                            d.id = entry.id;
+                            d.writesSceneColor = entry.writesSceneColor;
                             d.dispatchPoint = DispatchPointFromString(entry.dispatchPoint);
                             d.priority      = entry.priority;
                             d.enabled       = entry.enabled;
@@ -3053,6 +3056,16 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
             }
         }
 
+        CameraFxState* cameraFxState = nullptr;
+        if (!fxId.IsNull() && !cameraOverride && !camEntity.IsNull()) {
+            cameraFxState = &world.CameraFx(camEntity, fxId);
+            for (auto& kv : cameraFxState->passes) {
+                kv.second.seen = false;
+                kv.second.drawn = false;
+            }
+        }
+        effectRunner.SetCameraState(cameraFxState);
+        computeRunner.SetCameraState(cameraFxState);
         ProjectEffectRunner*  injectPostFx = nullptr;
         ProjectComputeRunner* injectComputeFx = nullptr;
         if (ShouldInjectProjectFxStack(cameraOverride != nullptr)) {
@@ -3074,6 +3087,15 @@ void RenderSystem::ResolvePost(World& world, GraphicsDevice& device, ShaderManag
                         effective, view, distortionActive,
                         injectPostFx,     // M78c: ユーザーポスト (Scene View は nullptr)
                         injectComputeFx); // M78d: ユーザーコンピュート (Scene View は nullptr)
+        effectRunner.SetCameraState(nullptr);
+        computeRunner.SetCameraState(nullptr);
+        // このフレームで走らなかったパス (fxstack から消えた id) の上書きを捨てる
+        if (cameraFxState) {
+            for (auto it = cameraFxState->passes.begin(); it != cameraFxState->passes.end();) {
+                if (!it->second.seen) it = cameraFxState->passes.erase(it);
+                else ++it;
+            }
+        }
     }
     // M44d: 次フレームのモーションブラー用に viewProj を保存 (viewKey=0 = AssetPreview は対象外)。
     // M46d: カメラ位置と描画通番も同じ場所で更新する (再投影とテンポラル履歴の連続性判定)。

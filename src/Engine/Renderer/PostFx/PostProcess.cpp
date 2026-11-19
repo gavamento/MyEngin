@@ -869,11 +869,14 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
     // M78d: AfterTonemap コンピュートを同点で先に走らせる。
     // needLdrIntermediate が true なので t.userPostLdr には常に LDR が書き込まれている。
     // ldrSRV を nullptr にすることはない (指摘 #2 対応)。
+    ID3D11ShaderResourceView* afterComputeColor = t.userPostLdr.SRV();
     if (hasAfterTonemapCs)
     {
         // t.userPostLdr.SRV() = トーンマップ/FXAA 済み LDR シーンカラー
         // (needLdrIntermediate==true のため必ず chainFinalDst = t.userPostLdr.RTV() に書かれている)
-        computeRunner->RunDispatch(ComputeDispatchPoint::AfterTonemap,
+        // The tonemap/FXAA target is now the compute input SRV.
+        dc->OMSetRenderTargets(0, nullptr, nullptr);
+        afterComputeColor = computeRunner->RunDispatch(ComputeDispatchPoint::AfterTonemap,
                                    device, shaders,
                                    t.userPostLdr.SRV(), view.depthSRV, width, height);
     }
@@ -882,7 +885,7 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
         // t.userPostLdr が入力。pingRTA=t.ldr, pingRTB=t.userPostLdr の順にすることで
         // 最初のパスが t.ldr に書く (inputSRV と同じ t.userPostLdr への同時 SRV/RTV バインドを防ぐ)
         runner->RunPasses(PostInsertionPoint::AfterTonemap,
-                          device, shaders, t.userPostLdr.SRV(),
+                          device, shaders, afterComputeColor,
                           t.ldr, t.userPostLdr, // pingRTA=t.ldr (最初に書く先), pingRTB=t.userPostLdr
                           dst,                  // finalDstRTV: 最終出力は外部 dst へ
                           view.depthSRV,
@@ -899,7 +902,7 @@ void PostProcess::Resolve(GraphicsDevice& device, ShaderManager& shaders, Target
         {
             dc->OMSetRenderTargets(1, &dst, nullptr);
             dc->RSSetViewports(1, &vp);
-            ID3D11ShaderResourceView* bsrv[1] = { t.userPostLdr.SRV() };
+            ID3D11ShaderResourceView* bsrv[1] = { afterComputeColor };
             dc->PSSetShaderResources(0, 1, bsrv);
             ID3D11SamplerState* bsamps[1] = { linearClamp_.Get() };
             dc->PSSetSamplers(0, 1, bsamps);

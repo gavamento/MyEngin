@@ -74,7 +74,7 @@ git の差分には AI 以前の未コミットの変更が混ざり、シーン
   M104k2 (Editor の保存の通知)、M104m2 (Inspector と Scene View の表示)、M104m3 / M104o2 (時間に依存する試験を負荷に強くする)、M104p2 (ファイルと Hunk の復元の適用・ジャーナル・回復)。
   最後に M104u (配布物への同梱) を足した (ユーザー判断、2026-11-14)。
 - 実装で変わった設計の細部: シーンの構造比較の対象に、プレハブ伝播 (`PrefabPropagation`) を足した ([architecture.md](../ai-change-tracking/architecture.md) §6.4)。
-  行は原因のプレハブの Revision に付け、確認 (レビュー) と復元の対象にしない。DB のスキーマは版 3 (events の索引と、`.meta` が後から付いた文書の引き継ぎ列)。
+  行は原因のプレハブの Revision に付け、確認 (レビュー) と復元の対象にしない。DB のスキーマは版 3 (events の索引と、`.meta` が後から付いた文書の引き継ぎ列)。 その後 M106f で版 4 (`sessions.host_terminal` = MyEngine 統合ターミナルの ID。[db-schema.md](../ai-change-tracking/db-schema.md) §8)。
 - 配布物: エンジンの配布物 (`make_dist.ps1`、`release.yml`) は `mye_track.exe` を Editor の隣へ同梱する (欠けていれば作成が失敗)。ゲームの配布物 (`--package`) には入れない (`ci.yml` で検査)。古い版の削除は、その版のサービスが動いていると失敗しうる ([hooks-setup.md](../ai-change-tracking/hooks-setup.md) §7)。
 - Editor 層の起動の変更が 1 つ: `EditorApp` を `wWinMain` のローカル変数から `std::unique_ptr` でヒープへ移した (`EditorMain.cpp`)。
   M104 でメンバが増えて (約 11 KB)、Debug の 1 MB のスタックの余裕が減り、既存の `physics` の自己テストがスタックオーバーフローで落ちたため (D38 / D43)。

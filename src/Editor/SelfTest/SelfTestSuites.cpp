@@ -13,6 +13,10 @@
 #include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Editor/Tools/Browser/BrowserEmbedSelfTest.h"
+#include "Editor/Tools/Terminal/TerminalCoreSelfTest.h"
+#include "Editor/Tools/Terminal/TerminalLayoutSelfTest.h"
+#include "Editor/Tools/Terminal/TerminalSessionSelfTest.h"
+#include "Editor/Tools/Terminal/TerminalVsEnvSelfTest.h"
 #include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
 #include "Editor/SelfTest/ComputeInspectorSelfTest.h"
@@ -270,6 +274,11 @@ const SelfTestSuite kSuites[] = {
     { "changetracking", mye::RunChangeTrackingSelfTest, SelfTestTier::Fast, "M104j" },
     { "browserembed", mye::RunBrowserEmbedSelfTest, SelfTestTier::Fast, "M105a: ブラウザ候補の解析 / 窓の特定 / 状態機械 / 見せる条件 (純関数)" },
     { "browserembedproc", mye::RunBrowserEmbedProcSelfTest, SelfTestTier::Full, "M105a: ダミー窓プロセスの Attach / Detach / Closed / Lost / 応答なし" },
+    { "terminalcore", mye::RunTerminalCoreSelfTest, SelfTestTier::Fast, "M106b: ターミナルの画面モデル / キー→VT / シェル解決 / 環境ブロック (純関数 + libvterm)" },
+    { "terminalsession", mye::RunTerminalSessionSelfTest, SelfTestTier::Fast, "M106c: 出力キュー / セッションの状態遷移・投入上限・応答返送 (偽ホスト)" },
+    { "terminalconpty", mye::RunTerminalConPtySelfTest, SelfTestTier::Full, "M106c: ConPTY で cmd.exe を起動・echo 往復・リサイズ・再起動・非対応時の Unsupported" },
+    { "terminalwindow", mye::RunTerminalLayoutSelfTest, SelfTestTier::Fast, "M106d: ターミナル窓の純関数 (セル→描画ラン・選択→文字列・ピクセル→行列・スクロール・出力への追従・キー振り分け・設定のクランプ)" },
+    { "terminalvsenv", mye::RunTerminalVsEnvSelfTest, SelfTestTier::Fast, "M106e: set 出力の解析・環境差分・エンジン環境変数の組み立て・VS 環境ローダー (偽 fetch。純関数 + スレッド)" },
 };
 
 const SelfTestAlias kAliases[] = {

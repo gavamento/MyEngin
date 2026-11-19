@@ -105,7 +105,18 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         const ImVec2 off((avail.x - imgSize.x) * 0.5f, (avail.y - imgSize.y) * 0.5f);
         ImGui::SetCursorScreenPos(ImVec2(cursor.x + off.x, cursor.y + off.y));
         const ImVec2 imgPos = ImGui::GetCursorScreenPos();
-        ImGui::Image(reinterpret_cast<ImTextureID>(rt_.SRV()), imgSize);
+        // ★画像の上のクリックは見えないボタンが受ける。ImGui::Image は操作を受けないアイテムなので、
+        //   そのままだと本体クリックが「ウィンドウのドラッグ移動」になり、浮いた Game ウィンドウが
+        //   カーソルロック (毎フレーム中央へ SetCursorPos) と噛み合って毎フレーム同じ向きへ
+        //   (中央 − クリック点) ずつ動き、画面外へ飛んでいった。ゲームの入力は Win32 の生入力を
+        //   gameArea_ で絞って読むので、ImGui がここでクリックを持っても影響しない
+        if (imgSize.x > 0.0f && imgSize.y > 0.0f) {
+            ImGui::InvisibleButton("##gameImage", imgSize,
+                                   ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight
+                                       | ImGuiButtonFlags_MouseButtonMiddle);
+            ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(rt_.SRV()), imgPos,
+                                                 ImVec2(imgPos.x + imgSize.x, imgPos.y + imgSize.y));
+        }
         // ゲームがクリックを受け取る範囲 = この画像 (EngineLoop が範囲外のクリックを捨てる)。
         // ★マルチビューポートは無効 (ImGuiRenderer は Docking だけ) なので、ImGui のスクリーン座標が
         //   そのままメインウィンドウのクライアント px = InputSnapshot.mouseX/Y と同じ系
@@ -113,6 +124,25 @@ void GameViewWindow::OnImGui(EngineContext& ctx, const Selection& selection)
         gameArea_.y = static_cast<int32_t>(imgPos.y);
         gameArea_.w = static_cast<int32_t>(imgSize.x);
         gameArea_.h = static_cast<int32_t>(imgSize.y);
+        // ★画像の外で押したボタンを押し続けている間は「見えていない」(w = h = 0) と報告する。
+        //   再生中に Scene タブから Game タブへ切り替えると、タブを押した同じフレームで Game が
+        //   見えるようになりカーソルロックが掛かる。ロックは毎フレームカーソルを画像の中央へ
+        //   SetCursorPos するので、ImGui には「タブを掴んで右下へ引いた」と見えて Game が
+        //   ドックから外れ、外れた窓がマウスを追い、中央へ戻されるたびにまた動いて画面外へ飛んだ。
+        //   押した位置はフレーム頭で確定する MouseClickedPos で見る (ActiveId は処理順で後から立つ
+        //   ことがある)。0 の範囲は EngineLoop でロック保留とクリック全捨てになるが、押したのは
+        //   画像の外なのでゲームが受け取るべきクリックは無い。離した次のフレームからロックが掛かる
+        const ImGuiIO& mouseIo = ImGui::GetIO();
+        for (int button = 0; button < ImGuiMouseButton_COUNT; ++button) {
+            const ImVec2 pressedAt = mouseIo.MouseClickedPos[button];
+            const bool pressedInside = pressedAt.x >= imgPos.x && pressedAt.y >= imgPos.y
+                                       && pressedAt.x < imgPos.x + imgSize.x && pressedAt.y < imgPos.y + imgSize.y;
+            if (mouseIo.MouseDown[button] && !pressedInside) {
+                gameArea_.w = 0;
+                gameArea_.h = 0;
+                break;
+            }
+        }
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
         if (showStats_) {

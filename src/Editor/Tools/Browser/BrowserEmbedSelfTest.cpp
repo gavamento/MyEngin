@@ -521,6 +521,19 @@ void TestWindowAirspace(const auto& check)
     check(RunAirspace(moving) == BrowserHideReason::WindowDragging, "airspace 4: a window being moved hides the browser");
 }
 
+void TestFocusDecision(const auto& check)
+{
+    const BrowserRect r{ 100, 200, 500, 600 };
+    check(ShouldFocusBrowserChild(true, false, r, 300, 400), "focus: a press inside the shown child gives it focus");
+    check(ShouldFocusBrowserChild(true, false, r, 100, 200), "focus: the top-left edge is inside");
+    check(!ShouldFocusBrowserChild(true, false, r, 500, 400), "focus: the right edge is outside");
+    check(!ShouldFocusBrowserChild(true, false, r, 300, 600), "focus: the bottom edge is outside");
+    check(!ShouldFocusBrowserChild(true, false, r, 99, 400), "focus: a press left of the child is ignored");
+    check(!ShouldFocusBrowserChild(false, false, r, 300, 400), "focus: a hidden child never takes focus");
+    check(!ShouldFocusBrowserChild(true, true, r, 300, 400), "focus: a hung child never takes focus");
+    check(!ShouldFocusBrowserChild(true, false, BrowserRect{}, 0, 0), "focus: an empty child rect never takes focus");
+}
+
 void TestRateLimiter(const auto& check)
 {
     BrowserRateLimiter lim(10, 1000);
@@ -551,6 +564,29 @@ HWND CreateTestParent()
     SetThreadDpiAwarenessContext(old);
     return hwnd;
 }
+
+// --selftest はプロセスの DPI 認識を設定しない (EnsureProcessDpiAwareness はスプラッシュと Win32Window::Create だけが呼ぶ)。
+// DPI 非対応のスレッドから Per-Monitor V2 の窓を測ると、GetWindowRect が拡縮した値を返す (150% で 800x600 -> 533x400)。
+// エディタ本体と同じ文脈で測るため、テストの間だけスレッドを Per-Monitor V2 にする (プロセス全体は変えない)
+class ScopedPerMonitorDpiThread
+{
+public:
+    ScopedPerMonitorDpiThread()
+        : old_(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+    {
+    }
+    ~ScopedPerMonitorDpiThread()
+    {
+        if (old_ != nullptr) {
+            SetThreadDpiAwarenessContext(old_);
+        }
+    }
+    ScopedPerMonitorDpiThread(const ScopedPerMonitorDpiThread&) = delete;
+    ScopedPerMonitorDpiThread& operator=(const ScopedPerMonitorDpiThread&) = delete;
+
+private:
+    DPI_AWARENESS_CONTEXT old_ = nullptr;
+};
 
 void Pump()
 {
@@ -658,6 +694,7 @@ bool RunBrowserEmbedSelfTest()
     TestStateMachine(check);
     TestVisibility(check);
     TestRateLimiter(check);
+    TestFocusDecision(check);
     TestGlobalSettings(check);
     TestWindowAirspace(check);
     MYE_LOG_INFO("BrowserEmbed self test: %s (%d failure(s))", failCount == 0 ? "PASS" : "FAIL", failCount);
@@ -667,6 +704,7 @@ bool RunBrowserEmbedSelfTest()
 bool RunBrowserEmbedProcSelfTest()
 {
     MYE_LOG_INFO("==== BrowserEmbedProc self test ====");
+    const ScopedPerMonitorDpiThread dpiScope;
     int failCount = 0;
     const auto check = [&](bool cond, const char* what) {
         if (cond) {
@@ -727,6 +765,35 @@ bool RunBrowserEmbedProcSelfTest()
             drv.rect = BrowserRect{ 30, 40, 530, 400 };
             drv.Run(500, [&] { return ClientRectOfChild(child) == drv.rect; });
             check(ClientRectOfChild(child) == drv.rect, "child follows a changed content rect");
+
+            // 3b. フォーカスの往復: 親へ戻した後、子窓の上の押下の通知で子窓 (別プロセス) へ渡る。外の押下・隠した子窓では渡らない
+            {
+                const auto focusInChild = [&] {
+                    HWND f = GetFocus();
+                    return f != nullptr && (f == child || IsChild(child, f));
+                };
+                RECT rc = {};
+                GetWindowRect(child, &rc);
+                const int cx = (rc.left + rc.right) / 2;
+                const int cy = (rc.top + rc.bottom) / 2;
+                SetFocus(parent);
+                check(!focusInChild(), "focus: parent holds focus before the press");
+                host.NoteMouseDownAt(rc.right + 5, cy);
+                drv.Run(100, [] { return false; });
+                check(!focusInChild(), "focus: a press outside the child does not move focus");
+                host.NoteMouseDownAt(cx, cy);
+                drv.Run(100, [] { return false; }, /*show=*/false);
+                drv.Run(400, [&] { return IsWindowVisible(child) == FALSE; }, /*show=*/false);
+                check(!focusInChild(), "focus: a press noted while hiding is dropped, not replayed later");
+                drv.Run(400, [&] { return IsWindowVisible(child) != FALSE; }, /*show=*/true);
+                drv.Run(100, [] { return false; });
+                check(!focusInChild(), "focus: the dropped press stays dropped after showing again");
+                host.NoteMouseDownAt(cx, cy);
+                const int64_t focused = drv.Run(500, focusInChild);
+                check(focused >= 0, "focus: a press over the shown child moves keyboard focus into it");
+                host.ReturnFocusToMain();
+                check(GetFocus() == parent, "focus: ReturnFocusToMain gives it back to the parent");
+            }
 
             // 4. Detach: 元のスタイル・親なし・可視・サイズ
             const bool detached = host.Detach();

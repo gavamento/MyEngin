@@ -436,6 +436,11 @@ void TestFormat(const Check& check)
     const std::vector<TrackSessionRow> parsed = ChangeModel::ParseSessions(sessions);
     check(parsed.size() == 1 && parsed[0].review == "partially_rejected" && parsed[0].reviewCounts.rejected == 2 && parsed[0].reviewCounts.pending == 1 && parsed[0].reviewTruncated,
           "parse: a session's review aggregate, counts and truncation are read");
+    // 統合ターミナルの ID (M106f): 文字列はそのまま、null・欠落は空 (旧サービス・旧 DB のセッション)
+    const std::vector<TrackSessionRow> hosted = ChangeModel::ParseSessions(json{ { "items", json::array({
+        { { "sessionId", "h1" }, { "hostTerminal", "42-1763500000-2" } }, { { "sessionId", "h2" }, { "hostTerminal", nullptr } }, { { "sessionId", "h3" } } }) } });
+    check(hosted.size() == 3 && hosted[0].hostTerminal == "42-1763500000-2" && hosted[1].hostTerminal.empty() && hosted[2].hostTerminal.empty(),
+          "parse: a session's hostTerminal is read, and null / missing reads as empty");
     const std::vector<TrackChangeRow> rows = ChangeModel::ParseChanges(json{ { "items", json::array({ ListRow(1, "a", "ai", "approved"), ListRow(2, "b", "editor_user", "") }) } });
     check(rows.size() == 2 && rows[0].review == "approved" && rows[1].review.empty() && ReviewManager::IsReviewable(rows[0]) && !ReviewManager::IsReviewable(rows[1]),
           "parse: a null review (not reviewable) reads as empty");
