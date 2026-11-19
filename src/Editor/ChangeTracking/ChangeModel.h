@@ -47,6 +47,8 @@ struct TrackSessionRow {
     std::string sessionId;
     std::string provider;
     std::string source;
+    // 統合ターミナルの中で始まったセッションの、そのターミナルの ID (MYE_TERMINAL_ID)。空 = 統合ターミナルの外・旧サービス / 旧 DB
+    std::string hostTerminal;
     std::string workspace;
     std::string status; // running / finished / interrupted
     int64_t startedAt = 0;

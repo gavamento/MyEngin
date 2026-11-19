@@ -238,12 +238,26 @@ fn capabilities(role: Role, worktree: bool) -> Vec<&'static str> {
     kinds
 }
 
+/// `hostTerminal` の長さの上限 (バイト)。MYE_TERMINAL_ID は数十バイトなので、これを超えるものは契約違反として拒む。
+pub const MAX_HOST_TERMINAL_BYTES: usize = 128;
+
+/// `hostTerminal` (任意。MyEngine 統合ターミナルの ID)。欠落・null・空は None (旧フックと統合ターミナル外のセッション)。
+fn host_terminal_arg(args: &mut Args) -> Result<Option<String>, OpError> {
+    match args.string("hostTerminal")? {
+        Some(id) if id.len() > MAX_HOST_TERMINAL_BYTES => {
+            Err(OpError::bad_args(format!("hostTerminal は {MAX_HOST_TERMINAL_BYTES} バイトまで")))
+        }
+        other => Ok(other.filter(|id| !id.is_empty())),
+    }
+}
+
 pub fn session_begin(env: &RecordEnv, caller: &Caller, mut args: Args) -> Result<Value, OpError> {
     let provider = args.choice("provider", PROVIDERS)?.ok_or_else(|| OpError::bad_args("provider が要る"))?;
     let workspace_arg = args.required_string("workspace")?;
     let source = args.choice("source", SOURCES)?.ok_or_else(|| OpError::bad_args("source が要る"))?;
     let client_session_id = args.string("clientSessionId")?;
     let isolated = args.bool("isolated")?.unwrap_or(false);
+    let host_terminal = host_terminal_arg(&mut args)?;
     args.finish()?;
     let workspace_rel = normalize_path(&env.root, &workspace_arg, true)?;
     let workspace = if workspace_rel.is_empty() { env.root.clone() } else { env.root.join(&workspace_rel) };
@@ -275,6 +289,7 @@ pub fn session_begin(env: &RecordEnv, caller: &Caller, mut args: Args) -> Result
             "provider": provider,
             "source": source,
             "client_session_id": client_session_id,
+            "host_terminal": host_terminal,
             "workspace": workspace_text,
             "workspace_rel": workspace_rel,
             "base_commit": base_commit,

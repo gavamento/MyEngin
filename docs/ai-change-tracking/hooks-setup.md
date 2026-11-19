@@ -125,7 +125,7 @@
 
 | サブコマンド | 標準入力 (Claude Code の JSON) | サービスへ送るもの |
 |---|---|---|
-| `pre` | `session_id`、`cwd`、`tool_name`、`tool_input`、`tool_use_id` | `session_begin` (`clientSessionId` = `session_id`、`provider = claude`、`source = terminal`。既にあればそれが返る) → `op_begin` (`clientOpId` = `tool_use_id`、`declaredEdit`) |
+| `pre` | `session_id`、`cwd`、`tool_name`、`tool_input`、`tool_use_id` | `session_begin` (`clientSessionId` = `session_id`、`provider = claude`、`source = terminal`、環境変数 `MYE_TERMINAL_ID` があれば `hostTerminal` = その値 (MyEngine 統合ターミナルの中で動いているとき。空・128 バイト超・制御文字を含む値は付けない)。既にあればそれが返る) → `op_begin` (`clientOpId` = `tool_use_id`、`declaredEdit`) |
 | `post` | 同上 + `tool_response` (`PostToolUse`。成功の後だけ来る) | `op_end` (`clientSessionId` + `clientOpId`、`result`)。`hook_event_name` が `PostToolUseFailure` なら (設定の誤り) 失敗として扱う |
 | `post-failure` | `PostToolUseFailure`。`tool_name`、`tool_use_id`、`error` など | `op_end` (`result = failed`) |
 | `denied` | `PermissionDenied` (自動のモードの拒否)。`tool_name`、`tool_use_id`、`reason` (`tool_input` が無くても閉じる) | `op_end` (`result = denied`) |

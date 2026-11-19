@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 
 use crate::client::{read_service_json, Client};
 use crate::launch::start_service;
-use crate::ops_record::normalize_path;
+use crate::ops_record::{normalize_path, MAX_HOST_TERMINAL_BYTES};
 use crate::pipe::pipe_name;
 use crate::project::project_id;
 use crate::protocol::{MAX_LINE_BYTES, PROTO_VERSION};
@@ -40,6 +40,10 @@ pub const ENV_DUMP: &str = "MYE_TRACK_HOOK_DUMP";
 
 /// 設定されていれば panic する (終了コード 0 の試験用。製品の設定では使わない)。
 pub const ENV_TEST_PANIC: &str = "MYE_TRACK_HOOK_TEST_PANIC";
+
+/// MyEngine 統合ターミナルが子プロセスへ入れる ID (Editor の `TerminalVsEnv.h` の `kTerminalEnvTerminalId`)。
+/// 書式は `<エディタ PID>-<起動 UNIX 秒>-<シェル起動連番>`。フックは中身を解釈せず、そのまま `hostTerminal` へ渡す。
+pub const ENV_TERMINAL_ID: &str = "MYE_TERMINAL_ID";
 
 /// bad_token のあと、新しい service.json の値を待つ上限。
 const TOKEN_REFRESH_WAIT: Duration = Duration::from_millis(1000);
@@ -420,12 +424,8 @@ impl Link {
     }
 
     fn begin_session(&mut self, session_id: &str) -> Result<Value, String> {
-        let args = json!({
-            "clientSessionId": session_id,
-            "provider": "claude",
-            "source": "terminal",
-            "workspace": self.root.to_string_lossy(),
-        });
+        let host_terminal = host_terminal_from_env(std::env::var_os(ENV_TERMINAL_ID));
+        let args = session_begin_args(session_id, &self.root, host_terminal.as_deref());
         self.call("session_begin", args)
     }
 
@@ -447,6 +447,29 @@ impl Link {
         }
         self.call("op_begin", args).map(|_| ())
     }
+}
+
+/// 環境変数 `MYE_TERMINAL_ID` の値から `hostTerminal` に載せる文字列を取る。
+/// 無い・空・UTF-8 でない・サービスの上限 (`MAX_HOST_TERMINAL_BYTES`) を超える・制御文字を含むものは None。
+/// 拒否されて session_begin ごと失敗するより、統合ターミナルの印だけを諦めて記録を続ける (AI の作業と変更の記録を止めない)。
+pub fn host_terminal_from_env(value: Option<std::ffi::OsString>) -> Option<String> {
+    let id = value?.into_string().ok()?;
+    let usable = !id.is_empty() && id.len() <= MAX_HOST_TERMINAL_BYTES && !id.chars().any(char::is_control);
+    usable.then_some(id)
+}
+
+/// `session_begin` の引数。`source` は常に "terminal" のまま (統合ターミナルかどうかは `hostTerminal` の有無で表す)。
+pub fn session_begin_args(session_id: &str, root: &Path, host_terminal: Option<&str>) -> Value {
+    let mut args = json!({
+        "clientSessionId": session_id,
+        "provider": "claude",
+        "source": "terminal",
+        "workspace": root.to_string_lossy(),
+    });
+    if let Some(id) = host_terminal {
+        args["hostTerminal"] = json!(id);
+    }
+    args
 }
 
 /// 送る 1 行の長さ (改行を除く)。`Client::request` が組む形と同じ。
@@ -501,6 +524,36 @@ mod tests {
         // replace_all が無ければ偽
         let plain = json!({"old_string": "x", "new_string": "y"});
         assert_eq!(Tool::Edit.declared_edit(&plain).unwrap()["replaceAll"], false);
+    }
+
+    #[test]
+    fn 統合ターミナルの_id_は条件を満たすときだけ_host_terminal_になる() {
+        use std::ffi::OsString;
+        let id = |s: &str| host_terminal_from_env(Some(OsString::from(s)));
+        assert_eq!(id("4242-1763500000-3").as_deref(), Some("4242-1763500000-3"));
+        assert_eq!(host_terminal_from_env(None), None, "環境変数が無い = 統合ターミナルの外");
+        assert_eq!(id(""), None, "空");
+        assert_eq!(id("a\nb"), None, "制御文字");
+        assert_eq!(id(&"x".repeat(MAX_HOST_TERMINAL_BYTES)).map(|v| v.len()), Some(MAX_HOST_TERMINAL_BYTES));
+        assert_eq!(id(&"x".repeat(MAX_HOST_TERMINAL_BYTES + 1)), None, "サービスが拒む長さは送らない");
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            assert_eq!(host_terminal_from_env(Some(OsString::from_vec(vec![0xff, 0xfe]))), None, "UTF-8 でない");
+        }
+    }
+
+    #[test]
+    fn session_begin_の引数は_host_terminal_があるときだけ載り_source_は変わらない() {
+        let root = Path::new("C:/proj");
+        let plain = session_begin_args("s1", root, None);
+        assert!(plain.get("hostTerminal").is_none(), "旧フックと同じ形: {plain}");
+        assert_eq!(plain["source"], "terminal");
+        let hosted = session_begin_args("s1", root, Some("10-20-3"));
+        assert_eq!(hosted["hostTerminal"], "10-20-3");
+        assert_eq!(hosted["source"], "terminal", "source は統合ターミナルでも terminal のまま");
+        assert_eq!(hosted["clientSessionId"], "s1");
+        assert_eq!(hosted["provider"], "claude");
     }
 
     #[test]

@@ -291,9 +291,12 @@ ChangeRowText FormatChangeRow(const TrackChangeRow& row)
     return out;
 }
 
-SessionRowText FormatSessionRow(const TrackSessionRow& row)
+SessionRowText FormatSessionRow(const TrackSessionRow& row, bool fromThisEditor)
 {
     SessionRowText out;
+    if (!row.hostTerminal.empty()) {
+        out.origin = Tr(fromThisEditor ? StrId::AiChg_SessionHostTerminalHere : StrId::AiChg_SessionHostTerminal);
+    }
     out.title = row.provider.empty() ? row.sessionId.substr(0, 8) : row.provider;
     out.status = SessionStatusLabel(row.status);
     out.time = FormatTimeMs(row.startedAt);

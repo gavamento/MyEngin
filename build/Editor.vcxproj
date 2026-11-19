@@ -25,6 +25,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="Common.props" />
   <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(RepoRoot)external\libvterm\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>d3d11.lib;dxgi.lib;d3dcompiler.lib;dxguid.lib;winmm.lib;comdlg32.lib;$(RepoRoot)external\nethost\nethost.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -144,6 +147,20 @@
     <ClCompile Include="..\src\Editor\Tools\NavEditorSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEdit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalByteQueue.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalConPtyHost.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalInput.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayout.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalScreen.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSession.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalVsEnvWin32.cpp" />
     <ClCompile Include="..\src\Editor\Tools\VisualStudioLauncher.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Undo\UndoStack.cpp" />
@@ -185,6 +202,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\ScenePreviewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SceneRestoreWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\TerminalWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\FeelAssetInspector.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp" />
@@ -308,6 +326,19 @@
     <ClInclude Include="..\src\Editor\Tools\NavEditorSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEdit.h" />
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalByteQueue.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalHost.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalInput.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayout.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalScreen.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSession.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnv.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalVsEnvSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\VisualStudioLauncher.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoSelfTest.h" />
     <ClInclude Include="..\src\Editor\Undo\UndoStack.h" />
@@ -349,6 +380,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\ScenePreviewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SceneRestoreWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\TerminalWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\FeelAssetInspector.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h" />
@@ -371,6 +403,10 @@
   <ItemGroup>
     <ProjectReference Include="Engine.vcxproj">
       <Project>{8F2D5C31-1A2B-4E3F-9C4D-5E6F7A8B9C0D}</Project>
+    </ProjectReference>
+    <!-- 統合ターミナル (M106) の VT 解釈。静的 lib は ProjectReference で自動リンクされる -->
+    <ProjectReference Include="libvterm.vcxproj">
+      <Project>{1120A41F-3F5C-4370-A92C-4C3909DCFC62}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

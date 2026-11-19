@@ -276,6 +276,40 @@ fn edit_and_write_hooks_make_declared_changes_verified() {
     assert_eq!(sessions["result"]["items"][0]["status"], "finished");
 }
 
+// ---- M106f: 統合ターミナルの紐付け。MYE_TERMINAL_ID があれば hostTerminal として保存され、無ければ NULL -----------
+
+#[test]
+fn the_terminal_id_variable_becomes_the_host_terminal_of_the_session_and_its_absence_leaves_it_null() {
+    let project = temp_root("host_terminal");
+    let root = &project.0;
+    fs::write(root.join("h1.txt"), "a\n").unwrap();
+    fs::write(root.join("h2.txt"), "a\n").unwrap();
+    let _service = ServiceProc::spawn(root);
+
+    // 統合ターミナルの中の Claude Code: 環境変数がある (source は terminal のまま)
+    let mut inside = pre_edit(root, root, "h1.txt", "a", "b", false, "t-in");
+    inside["session_id"] = json!("sess-inside");
+    let mut command = hook_command("pre", Some(root));
+    command.env("MYE_TERMINAL_ID", "4242-1763500000-3");
+    run_command(command, &json_bytes(&inside)).assert_quiet("統合ターミナルの pre");
+
+    // 外のターミナルの Claude Code: 環境変数が無い (テストを統合ターミナルから走らせても親の値を引き継がない)
+    let mut outside = pre_edit(root, root, "h2.txt", "a", "b", false, "t-out");
+    outside["session_id"] = json!("sess-outside");
+    let mut command = hook_command("pre", Some(root));
+    command.env_remove("MYE_TERMINAL_ID");
+    run_command(command, &json_bytes(&outside)).assert_quiet("外のターミナルの pre");
+
+    let mut mcp = connect(root, "mcp");
+    let sessions = mcp.request(3, "sessions", json!({})).unwrap();
+    let items = sessions["result"]["items"].as_array().unwrap();
+    let by_client = |client: &str| items.iter().find(|i| i["clientSessionId"] == client).unwrap_or_else(|| panic!("{client} が無い: {sessions}"));
+    assert_eq!(by_client("sess-inside")["hostTerminal"], "4242-1763500000-3");
+    assert_eq!(by_client("sess-inside")["source"], "terminal");
+    assert!(by_client("sess-outside")["hostTerminal"].is_null(), "{sessions}");
+    assert_eq!(by_client("sess-outside")["source"], "terminal");
+}
+
 #[test]
 fn a_human_change_or_a_missing_old_string_keeps_the_change_from_being_verified() {
     let project = temp_root("not_verified");

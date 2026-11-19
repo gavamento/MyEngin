@@ -57,4 +57,10 @@ bool SetupEditorFonts(float sizePx = 16.0f);
 // ★GetFontSize() を渡さないこと — あれは DPI スケール適用後の値で二重スケールになる
 ImFont* EditorHeadingFont();
 
+// 等幅フォント (ターミナル窓): Cascadia Mono → Consolas (C:\Windows\Fonts、無ければユーザー単位の Fonts) + 日本語のマージ。
+// null = どちらも無い。そのとき窓は PushFont(nullptr, size) の既定フォントで、1 セルずつ桁の位置へ置く。
+// 使い方: ImGui::PushFont(EditorMonospaceFont(), 設定のピクセルサイズ)。サイズは EditorHeadingFont と同じく
+// DPI スケール適用前の値を渡す (GetFontSize() は渡さない)
+ImFont* EditorMonospaceFont();
+
 } // namespace mye
