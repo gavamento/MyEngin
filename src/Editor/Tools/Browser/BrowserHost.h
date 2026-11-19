@@ -133,6 +133,10 @@ struct BrowserVisibilityInput {
 
 BrowserHideReason EvaluateBrowserVisibility(const BrowserVisibilityInput& in);
 
+// ブラウザ上のマウスボタン押下の通知を受けたとき、子窓へキーボードフォーカスを渡すか。
+// 見せていて応答があり、カーソル (画面座標) が子窓の画面矩形の中 (右・下の辺は含まない) のときだけ
+bool ShouldFocusBrowserChild(bool shown, bool hung, const BrowserRect& childScreen, int cursorX, int cursorY);
+
 // 時間窓あたりの回数上限 (矩形の取り合いで点滅させない用。既定 1 秒 10 回)
 class BrowserRateLimiter {
 public:
@@ -206,6 +210,10 @@ public:
     void RequestClose();
     // 子窓 (その子孫を含む) がキーボードフォーカスを持っていればメイン窓へ戻す。応答なしなら何もしない。UI スレッド専用
     void ReturnFocusToMain();
+    // メイン窓に届いた「子孫窓でのボタン押下」の通知 (WM_PARENTNOTIFY) から、その時のカーソル (画面座標) で呼ぶ。
+    // カーソルが見せている子窓の上なら、次の Update で子窓へフォーカスを渡す予約をする。
+    // その場で SetFocus しない: WM_PARENTNOTIFY はブラウザのスレッドからの同期送信で、中でフォーカスを動かすと再入になる
+    void NoteMouseDownAt(int screenX, int screenY);
     // 待つのをやめる (起動したブラウザは閉じない。後から出た窓は普通のトップレベル窓のまま)
     void CancelLaunch();
     // 毎フレーム (全 ImGui 窓の提出が終わった後に呼ぶ)
@@ -265,6 +273,8 @@ private:
     int64_t goneSinceMs_ = -1;
     int64_t parentLostSinceMs_ = -1;
     bool shown_ = true;
+    // NoteMouseDownOverChild の予約。UpdateEmbedded が消費する (渡せない状態でも下ろす = 後から勝手に奪わない)
+    bool focusChildPending_ = false;
     BrowserRateLimiter rectLimiter_;
     SavedWindow saved_;
 };

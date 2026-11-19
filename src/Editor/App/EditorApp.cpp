@@ -481,14 +481,33 @@ void EditorApp::OnStart(EngineContext& ctx)
     if (openBrowserWindow || !browserProbe.id.empty()) {
         browser_.open = true;
     }
-    // マウスボタン押下で、子窓 (ブラウザ) がフォーカスを持っていればメイン窓へ戻す。メッセージは消費しない
-    ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t, int64_t, int64_t&) {
+    // フォーカスの往復 (ブラウザ窓)。メッセージは消費しない
+    //  - メイン窓のクライアント領域でのボタン押下: 子窓 (ブラウザ) がフォーカスを持っていればメイン窓へ戻す
+    //  - 子孫窓 (= 埋め込んだブラウザ) でのボタン押下の通知 (WM_PARENTNOTIFY。システムが祖先へ送る): 子窓へフォーカスを渡す予約。
+    //    Edge / Chrome とも届くことを実クリックで確認した (ADR-040 O10)。WM_MOUSEACTIVATE はメイン窓がアクティブだと来ない
+    ctx.window->AddMsgHandler([this](void*, uint32_t msg, uint64_t wparam, int64_t, int64_t&) {
         switch (msg) {
         case WM_LBUTTONDOWN:
         case WM_RBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_XBUTTONDOWN:
             browser_.ReturnFocusToMain();
+            break;
+        case WM_PARENTNOTIFY:
+            switch (LOWORD(wparam)) {
+            case WM_LBUTTONDOWN:
+            case WM_RBUTTONDOWN:
+            case WM_MBUTTONDOWN:
+            case WM_XBUTTONDOWN: {
+                POINT cursor = {};
+                if (GetCursorPos(&cursor)) {
+                    browser_.NoteMouseDownAt(cursor.x, cursor.y);
+                }
+                break;
+            }
+            default:
+                break;
+            }
             break;
         default:
             break;

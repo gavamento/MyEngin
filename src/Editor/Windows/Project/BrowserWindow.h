@@ -53,6 +53,8 @@ public:
     void Shutdown();
     // マウスボタン押下のとき、子窓がフォーカスを持っていればメイン窓へ戻す
     void ReturnFocusToMain() { host_.ReturnFocusToMain(); }
+    // ブラウザ上のマウスボタン押下の通知のとき、子窓へフォーカスを渡す予約をする (渡すのは次の ApplyToHost)
+    void NoteMouseDownAt(int screenX, int screenY) { host_.NoteMouseDownAt(screenX, screenY); }
 
     BrowserHost& Host() { return host_; }
     const BrowserHost& Host() const { return host_; }
