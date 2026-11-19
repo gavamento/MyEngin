@@ -1073,7 +1073,8 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 変更が 256 件を超えるシーンでは、見えているものを近い順に 256 件だけ描き、AI Changes 窓の帯に「Scene View の枠の上限に達しました。枠を出していない数: N」が出る
 - [ ] AI Changes 窓の帯の歯車で、追加・変更・削除・競合の 4 色を変えられる。ドラッグ中に Hierarchy のバッジ・Inspector の点・Scene View の枠・帯の件数の色が同時に変わり、「既定に戻す」で戻る。エディタを閉じて開き直しても同じ色
 - [ ] 「Hierarchy で変更を強調する」を切ると、Hierarchy・Inspector・Scene View の印がすべて消え、開き直しても切のまま
-- [ ] Play 中に強調の切り替えを繰り返しても、シミュレーションに影響が出ない (リプレイ検証 `toolseplay_verify.bat` が通る)
+- [ ] Play 中に強調の切り替えを繰り返しても、シミュレーションに影響が出ない (リプレイ検証 `tools
+eplay_verify.bat` が通る)
 
 ## M104k2: Editor の保存を追跡サービスへ知らせる (手動確認)
 
@@ -1289,3 +1290,50 @@ Q 石・E 瓶)。波そのものを見たいときは SceneView の「音響」�
 - [ ] 失敗の表示: DPI 認識が違うブラウザ・管理者権限の差などで「埋め込めませんでした: …」に理由が出て、窓は外の普通の窓のまま残る (WS_CHILD で取り残されない)。Opera GX は初回以外に親を外されうる (ベストエフォート)
 - [ ] 応答なし: ブラウザが固まっている間 (`dummy-hang`、または実ブラウザを一時停止) ツールバーに「応答なし」が出て、エディタは固まらず、「切り離す」は押せない (「閉じる」は押せる)。応答が戻ると表示が消える
 - [ ] `--lang ja` と `--lang en` の両方でパネルの文面が揃い、文字が崩れない (`Editor.exe --browser-window --screenshot <png>`)
+
+## M106: ターミナル窓 (ConPTY + libvterm + ImGui 自前描画。手動確認。**見た目の合否はユーザーの目視**)
+
+機械検証: `MYE_SELFTEST_ONLY=terminalcore,terminalsession,terminalwindow,terminalconpty` を付けた `Editor.exe --selftest-full` (`terminalconpty` は Full 層。実 ConPTY で `cmd /c echo` を往復する)、`tools\check_rules.ps1` (規則 10・21)、`tools\check_rules_selftest.ps1` (規則 21 の自己検査)。
+Linux のクラウド環境では ConPTY・MSVC ビルド・実画面の確認ができていない。**以下は全部 Windows での未確認項目**。窓を出す起動フラグは無い (Window > ターミナル。開いた状態はレイアウトと一緒に保存される)。
+画面のキャプチャは **リポジトリの外のカレントディレクトリで** 起動して撮る (`imgui.ini` をリポジトリへ書かないため)。
+
+### ビルドと下回り (M106a〜c)
+
+- [ ] `Debug|x64` / `Release|x64` のビルドが通る。libvterm (`external\libvterm`、C99) が MSVC の警告なしでコンパイルされる。`external\libvterm\VERSIONS.md` の版と、上流 libvterm 0.3.3 の配布物の sha256 が一致する (Ubuntu ミラー由来のため、上流との同一性は Windows 側で照合する)
+- [ ] `MYE_SELFTEST_ONLY=terminalcore,terminalsession,terminalwindow Editor.exe --selftest` が PASS (Fast)。`--selftest-full` で `terminalconpty` も PASS (`cmd /c echo` のマーカーが画面に出て終了コード 0、起動中のリサイズ、再起動、ConPTY 無し (関数ポインタ null) での Unsupported)
+- [ ] `cmd /c` が引用なしのスイッチで動く: 設定のシェルに `cmd.exe /k echo hi` のように引数付きで指定して再起動し、`hi` が出てシェルが動き続ける (cmd.exe は引用された `"/c"` を解釈しないので、空白や `"` を含まない引数は引用しない実装にしてある)
+
+### 窓・配置・設定
+
+- [ ] Window > ターミナル で窓が開く。初回表示でシェルが起動する (既定は pwsh → powershell → cmd の順に見つかったもの。ツールバーにシェル名が出る)。作業ディレクトリがプロジェクトのルート
+- [ ] 既定レイアウト (表示 > レイアウトをリセット) で、下段の Console と同じ束にタブとして入る。Console が選ばれたまま起動し、ターミナルを開くとそのタブが前に出る。ドラッグで他へドッキング・浮動化できる
+- [ ] 窓を閉じてもシェルは生きている (閉じて開き直すと、続きの画面が出る)。タブが隠れている間も、長い出力 (`dir /s C:\Windows` など数十万行) を流してもエディタが固まらず、戻ると流れ終わった結果が出る
+- [ ] 等幅で描かれる (Cascadia Mono か Consolas。ログに `mono=` が出る)。日本語 (`echo こんにちは`、`dir` の日本語ファイル名) が 2 セル幅で桁を崩さず出る。`tree` の罫線・`git log --graph` の記号が欠けない
+- [ ] 色: 16 色 (`pwsh` の `Write-Host -ForegroundColor`)・256 色・truecolor (`git diff` の色、`$PSStyle`)・太字・下線・反転が出る。背景色つきの行が隙間なく塗られる
+- [ ] 設定 (ツールバーの「設定...」): 文字サイズを変えると即座に反映される。シェル・スクロールバック行数は「再起動」から反映される。範囲外の値 (文字サイズ 0 / 999、行数 0 / 1000000) は範囲内へ丸められる。エディタを閉じて開き直しても値が残る (`editor_global.json` の `terminalShell` / `terminalFontSize` / `terminalScrollback` / `terminalLoadVsDevEnv`)。設定ファイルにこれらのキーが無い古いファイルでも既定値で開く
+- [ ] シェルの設定に存在しないパスを入れて「再起動」: 窓の中に「設定したシェルが見つかりません」が出て、自動検出には落ちない。引用符を閉じない値 (`"C:\Program Files`) では「引用符が閉じていません」。空にして再起動すると自動検出に戻る
+- [ ] `--lang ja` と `--lang en` の両方で文面が揃い、文字が崩れない
+
+### 入力
+
+- [ ] 文字入力・Enter・Backspace・Tab (補完)・矢印 (履歴)・Home / End・Delete・F1〜F12・Ctrl+C (実行中コマンドの中断)・Ctrl+L・Ctrl+D・Alt+文字 が効く
+- [ ] ショートカットの抑止: ターミナルにフォーカスがある間、Ctrl+S (シーン保存) / Delete (エンティティ削除) / F / Ctrl+Z / Ctrl+D などがエディタへ届かない。Hierarchy をクリックすると効くようになる
+- [ ] IME (日本語): 変換して確定した文字だけがシェルへ入る。変換中の文字は窓へ出ない (OS の候補窓がカーソル付近に出る)。確定の Enter がシェルへの Enter にならない
+- [ ] 貼付: Ctrl+V・Ctrl+Shift+V・右クリック (選択なし) で貼れる。複数行 (PowerShell の `Get-Process | Select -First 3` を 3 行に分けたもの) を貼っても、1 行ずつ実行されるか、bracketed paste 対応のシェルでは 1 まとまりとして入る
+- [ ] 選択とコピー: 左ドラッグで読む順に選択され、ハイライトが出る。Ctrl+C (選択あり) で UTF-8 のままクリップボードへ入り、選択が解ける。解けたあとの Ctrl+C は中断になる。右クリック (選択あり) でメニュー (コピー / 貼り付け)。Ctrl+Shift+C。行末の空白は含まれない。全角の右半分から始まる選択でも文字が欠けない
+- [ ] スクロール: ホイールで履歴を遡る (右上に「履歴 +N」)。Shift+PageUp / PageDown でページ送り。新しい出力・入力・貼付で最下部へ戻る。「履歴を消去」で履歴だけ消え、見えている画面は変わらない
+
+### 実際のツール (受け入れ条件 7)
+
+- [ ] `git log --oneline -20`・`git status`・`git diff` (色つき)・`git log --graph` が崩れず表示される (ページャ `less` が出る環境では `q` で戻れる)
+- [ ] MSBuild の出力 (`msbuild build\Editor.vcxproj /m` の進捗行・警告・エラーの赤字) が崩れず、長い行が折り返される
+- [ ] **Claude Code CLI** (`claude`) が窓内で起動し、入力欄・スピナー・色・複数行貼付が崩れずに使える。応答の出力中に画面が乱れない。リサイズしても入力欄が追従する
+- [ ] リサイズ: ドックの境界を動かす・窓を浮動化して引き伸ばす・最小まで縮める (20 x 5 で止まる) と、`mode con` や `pwsh` の `$Host.UI.RawUI.WindowSize` が追従し、`claude` や `htop` 相当の画面が崩れない。サイズ変更中に UI が目立って止まらない
+
+### 終了・失敗・後始末
+
+- [ ] `exit` でシェルを終わらせると、状態行に「シェルが終了しました。終了コード: N」と「再起動」が出る。最後の出力 (`exit 3` の前の `echo`) も画面に出ている。「再起動」で新しいシェルが起動して画面が空になる。この間 UI が目立って止まらない
+- [ ] ツールバーの「再起動」を実行中のシェルに押しても同様に起こし直せ、古い出力が新しい画面へ混ざらない。長い出力の最中に押しても固まらない
+- [ ] エディタを閉じる (実行中のシェル + `ping -t localhost` のような子を持たせたまま): 終了が目立って遅れず、タスクマネージャに `conhost.exe` / `cmd.exe` / `pwsh.exe` / `ping.exe` が残らない。エディタをタスクマネージャから強制終了したときも、シェルの子孫が残らない (ジョブオブジェクトの KILL_ON_JOB_CLOSE)
+- [ ] ConPTY が使えない OS (Windows 10 1809 より前。手元に無ければ未確認のままにして記録) では、窓に「疑似コンソール (ConPTY) がありません」が出てエディタは動き続ける
+- [ ] 大量出力 (`1..200000 | % { "line $_" }`) で UI が固まらない (1 フレームに流す量の上限は 256 KB)。終わると最後の行が見える

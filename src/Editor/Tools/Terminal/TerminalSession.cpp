@@ -86,6 +86,11 @@ size_t TerminalSession::Pump(size_t maxBytes)
     return fed;
 }
 
+void TerminalSession::ClearScrollback()
+{
+    m_screen->Feed("\x1b[3J");
+}
+
 void TerminalSession::SendKey(TerminalKey key, uint8_t modifiers)
 {
     TerminalSendKey(*m_screen, key, modifiers);

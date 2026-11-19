@@ -402,6 +402,12 @@
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalInput.cpp">
       <Filter>Tools\Terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayout.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalScreen.cpp">
       <Filter>Tools\Terminal</Filter>
     </ClCompile>
@@ -535,6 +541,9 @@
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp">
+      <Filter>Windows\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Project\TerminalWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp">
@@ -921,6 +930,12 @@
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalInput.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayout.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalScreen.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
@@ -1054,6 +1069,9 @@
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Project\TerminalWindow.h">
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h">

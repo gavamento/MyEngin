@@ -245,6 +245,15 @@ void TestSessionLifecycle(const auto& check)
         check(session.Resize(1, 1) && log->resizeCols == kTerminalMinCols && log->resizeRows == kTerminalMinRows,
               "session: resize clamps to minimum before host");
 
+        // 履歴の消去: 自分の画面のスクロールバックだけを捨てる。子へは何も送らず、見えている画面も変えない
+        // (上の大量出力 z... で画面は 'z' の行で埋まり、スクロールバックが溜まっている)
+        check(session.Screen().ScrollbackCount() > 0, "session: scrollback has lines before clearing");
+        const std::string visibleBefore = TerminalLineText(session.Screen(), 0);
+        log->written.clear();
+        session.ClearScrollback();
+        check(session.Screen().ScrollbackCount() == 0 && TerminalLineText(session.Screen(), 0) == visibleBefore && log->written.empty(),
+              "session: ClearScrollback drops the history only (screen kept, nothing sent to the shell)");
+
         // 子の終了: 終了コードを取り、Close(true) で最後の出力を残し、次の Pump で画面へ出す
         log->exited = true;
         log->exitCode = 3;

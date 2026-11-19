@@ -45,6 +45,7 @@
 #include "Editor/Windows/Project/SceneRestoreWindow.h"
 #include "Editor/Windows/Project/ScenePreviewWindow.h"
 #include "Editor/Windows/Project/SourceControlWindow.h"
+#include "Editor/Windows/Project/TerminalWindow.h"
 #include "Editor/Windows/Asset/SearchWindow.h"
 #include "Editor/Windows/Audio/AudioMixerWindow.h"
 #include "Editor/Windows/AI/BehaviorTreeWindow.h"
@@ -213,6 +214,7 @@ private:
     // M104j: AI Change Tracking。窓 (M104k) と独立に生きる。設定が無効なら何も起動しない
     ChangeTrackingSession changeTracking_;
     BrowserWindow browser_; // M105b (既定は閉じている)
+    TerminalWindow terminal_; // M106d (既定は閉じている。シェルは最初に表示されたとき起動し、OnShutdown で破棄する)
     std::unique_ptr<BrowserEmbedProbe> browserProbe_; // M105a: --browser-embed-probe のときだけ作る
     // 自分の保存の直後のファイルの印 (保存の直後に編集を続けたとき、自分の保存の監視イベントを外部変更として確認しない)
     OwnSaveRecord ownSave_;

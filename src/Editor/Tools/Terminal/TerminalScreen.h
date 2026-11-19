@@ -85,7 +85,12 @@ private:
     std::unique_ptr<Impl> m_impl;
 };
 
+// コードポイント 1 つを UTF-8 にして out の末尾へ足す
+void AppendTerminalUtf8(std::string& out, char32_t codepoint);
+
 // 1 行分のセルを UTF-8 文字列にする (選択コピー用・テスト用)。末尾の空白は落とす。全角の右半分は飛ばす
 std::string TerminalLineText(const TerminalScreen& screen, int line);
+// 同じく列 colBegin..colEnd (両端を含む。範囲外は切る) だけ。colBegin が全角の右半分なら左半分から含める
+std::string TerminalLineText(const TerminalScreen& screen, int line, int colBegin, int colEnd);
 
 } // namespace mye

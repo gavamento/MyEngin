@@ -3685,3 +3685,32 @@ MYE_STR(Browser_HungHint,     "Detach is unavailable while the browser is not re
 MYE_STR(Browser_AttachExisting, "Attach existing window...",           "既存の窓を取り込む...")
 MYE_STR(Browser_AttachNone,   "No windows of this browser were found.", "このブラウザの窓が見つかりません。")
 MYE_STR(Browser_AttachNoTitle, "(no title)",                           "(タイトルなし)")
+
+// ---- ターミナル窓 (M106d) ----
+// 数や名前を文の途中へ差し込む文面は持たない。「ラベル: 値」の形で、値はコードが足す
+MYE_STR(Win_Terminal,         "Terminal###Terminal",                   "ターミナル###Terminal")
+MYE_STR(Term_Shell,           "Shell",                                 "シェル")
+MYE_STR(Term_Restart,         "Restart",                               "再起動")
+MYE_STR(Term_ClearScrollback, "Clear scrollback",                      "履歴を消去")
+MYE_STR(Term_Settings,        "Settings...",                           "設定...")
+MYE_STR(Term_Copy,            "Copy",                                  "コピー")
+MYE_STR(Term_Paste,           "Paste",                                 "貼り付け")
+MYE_STR(Term_ViewingHistory,  "Scrollback",                            "履歴")
+MYE_STR(Term_SettingsShell,   "Shell",                                 "シェル")
+MYE_STR(Term_SettingsShellHint, "(empty = auto-detect: pwsh, powershell, cmd)",
+                              "(空 = 自動検出: pwsh → powershell → cmd)")
+MYE_STR(Term_SettingsFontSize, "Font size",                            "文字サイズ")
+MYE_STR(Term_SettingsScrollback, "Scrollback lines",                   "スクロールバックの行数")
+MYE_STR(Term_SettingsLoadVsEnv, "Load the Visual Studio developer environment", "Visual Studio 開発者環境を読み込む")
+MYE_STR(Term_SettingsApplyOnRestart, "The shell and scrollback settings apply from the next restart.",
+                              "シェルとスクロールバックの設定は、次の再起動から反映されます。")
+MYE_STR(Term_Exited,          "The shell exited. Exit code:",          "シェルが終了しました。終了コード:")
+MYE_STR(Term_StartFailed,     "Could not start the shell:",            "シェルを起動できませんでした:")
+MYE_STR(Term_Unsupported,     "This Windows has no pseudo console (ConPTY needs Windows 10 1809 or later).",
+                              "この Windows には疑似コンソール (ConPTY) がありません (Windows 10 1809 以降が必要です)。")
+MYE_STR(Term_ShellNotFound,   "The configured shell was not found. Check the shell in Settings.",
+                              "設定したシェルが見つかりません。設定のシェルを確認してください。")
+MYE_STR(Term_ShellMalformed,  "The configured shell has an unclosed quote. Check the shell in Settings.",
+                              "設定したシェルの引用符が閉じていません。設定のシェルを確認してください。")
+MYE_STR(Term_NoAutoShell,     "No shell was found (pwsh, powershell and cmd are all missing).",
+                              "シェルが見つかりません (pwsh・powershell・cmd のどれもありません)。")

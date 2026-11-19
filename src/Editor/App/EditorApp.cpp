@@ -137,6 +137,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Diff", &sourceControl_.diffOpen },
                     { "AI Changes", &aiChanges_.open },
                     { "Browser", &browser_.open },
+                    { "Terminal", &terminal_.open },
                     { "Particle Settings", &particleSettings_.open },
                     { "Sound Generator", &soundGen_.open },
                     { "Audio Mixer", &audioMixer_.open },
@@ -474,6 +475,8 @@ void EditorApp::OnStart(EngineContext& ctx)
         EditorGlobalSettings globals;
         globals.Load();
         browser_.ApplySettings({ globals.browserId, globals.browserCustomExe, globals.browserStartUrl });
+        terminal_.ApplySettings({ globals.terminalShell, globals.terminalFontSize, globals.terminalScrollback,
+                                  globals.terminalLoadVsDevEnv });
     }
     if (openBrowserWindow || !browserProbe.id.empty()) {
         browser_.open = true;
@@ -645,6 +648,8 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     changeTracking_.Shutdown();
     // 子窓にしたブラウザ窓は、メイン窓の Destroy より前に外へ戻す (Destroy すると子窓も道連れになる)
     browser_.Shutdown();
+    // ターミナルのシェルを終わらせる (Job を閉じて子孫ごと)。窓を閉じていても生きているので、ここで必ず破棄する
+    terminal_.Shutdown();
 }
 
 void EditorApp::OnDeviceLost(EngineContext& ctx)
@@ -1231,6 +1236,11 @@ void EditorApp::OnImGui(EngineContext& ctx)
         BrowserWindowHost browserHost;
         browserHost.pickExe = [&ctx]() { return PickBrowserExe(ctx.window->Hwnd()); };
         browser_.OnImGui(browserHost);
+        // M106d: Pump は窓が閉じていてもタブが隠れていても毎フレーム呼ぶ (呼ばないと出力キューが満杯になり子が止まる)
+        TerminalWindowHost terminalHost;
+        terminalHost.projectRoot = WideToUtf8(ctx.projectRoot);
+        terminal_.Pump();
+        terminal_.OnImGui(terminalHost);
         restoreRun_.OnImGui(changeTracking_, host);
         sceneRestore_.OnImGui(changeTracking_, host);
         scenePreview_.OnImGui(changeTracking_);
@@ -1412,6 +1422,18 @@ void EditorApp::OnImGui(EngineContext& ctx)
             globals.browserId = changed.id;
             globals.browserCustomExe = changed.customExe;
             globals.browserStartUrl = changed.startUrl;
+            globals.Save();
+        }
+    }
+    {
+        TerminalWindowSettings changed;
+        if (terminal_.TakeSettingsChanged(changed)) {
+            EditorGlobalSettings globals;
+            globals.Load(); // 他のキーを消さないよう読み直してから保存
+            globals.terminalShell = changed.shell;
+            globals.terminalFontSize = changed.fontSize;
+            globals.terminalScrollback = changed.scrollback;
+            globals.terminalLoadVsDevEnv = changed.loadVsDevEnv;
             globals.Save();
         }
     }
@@ -1949,6 +1971,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Diff), nullptr, &sourceControl_.diffOpen);
         ImGui::MenuItem(Tr(StrId::Win_AiChanges), nullptr, &aiChanges_.open);
         ImGui::MenuItem(Tr(StrId::Win_Browser), nullptr, &browser_.open);
+        ImGui::MenuItem(Tr(StrId::Win_Terminal), nullptr, &terminal_.open);
         ImGui::MenuItem(Tr(StrId::Win_ParticleSettings), nullptr, &particleSettings_.open);
         ImGui::MenuItem(Tr(StrId::Win_SoundGenerator), nullptr, &soundGen_.open);
         ImGui::MenuItem(Tr(StrId::Win_AudioMixer), nullptr, &audioMixer_.open);
@@ -2339,6 +2362,9 @@ void EditorApp::SetupDockLayout(unsigned int dockspaceId)
     ImGui::DockBuilderDockWindow("Timeline", bottom);
     ImGui::DockBuilderDockWindow("Feel Monitor", rightBottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
+    // ターミナル (M106d)。Console と同じ下段の束へタブで入れる。既定は閉じている (閉じた窓はタブを作らないので、
+    // 起動時に選ばれているタブは変わらない)。ウィンドウ ID は ### の右辺
+    ImGui::DockBuilderDockWindow("Terminal", bottom);
     // ★Source Control は**左列 (Hierarchy と同じ束)**。
     //   下段帯 (高さ ≒ 200px) では変更一覧が 2 行で切れ、コミット欄が窓の外へ落ちる
     //   (M66c で実測)。縦に長い左列なら「選ぶ → 書く → 押す」がスクロール無しで通る

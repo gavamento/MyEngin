@@ -1511,6 +1511,19 @@ foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extens
     }
 }
 
+# 規則 21: 統合ターミナル (M106) は Editor 層に閉じ込める
+# 子プロセス (シェル) と疑似コンソール (ConPTY) を持つ機能は、エディタの UI 状態であって sim の入力ではない。
+# Engine / Runtime / GameLogic / Shared / Server から Editor\Tools\Terminal\ を include した瞬間に、ゲート側が他プロセスの入出力と結合する。
+# 静的に見えるのは include だけなので、そこを機械検査する (規則 19 / 20 と同じ作り。-SourceRoot でフィクスチャを差し替えて自己検査できる)
+$terminalRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
+foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    $rel = $f.FullName.Substring($srcRootFull.Length).TrimStart([char]92)
+    $top = ($rel -split '[\\/]')[0]
+    if ($terminalRoots -contains $top) {
+        Test-CodeLines $f '#\s*include\s*[<"][^>"]*Editor[\\/]Tools[\\/]Terminal[\\/]' 'rule 21' 'the integrated terminal is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

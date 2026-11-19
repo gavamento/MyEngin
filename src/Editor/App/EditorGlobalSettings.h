@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 
+#include "Editor/Tools/Terminal/TerminalLayout.h"
 #include "Engine/Core/Localization/Localization.h"
 
 namespace mye {
@@ -29,6 +30,11 @@ struct EditorGlobalSettings {
     std::string browserId;           // 選んだ候補の id。"custom" = exe 指定。空 = 未選択
     std::string browserCustomExe;    // "custom" のときの exe パス (UTF-8)
     std::string browserStartUrl;     // 開始 URL (UTF-8)。空 = ブラウザの既定
+    // ターミナル窓 (M106d)。シェルの場所はマシンの性質なのでプロジェクトには置かない。範囲のクランプは窓の側 (TerminalLayout.h)
+    std::string terminalShell;       // 起動するシェル (UTF-8)。空 = 自動検出 (pwsh → powershell → cmd)
+    int terminalFontSize = kTerminalDefaultFontSize;       // 文字サイズ (px)
+    int terminalScrollback = kTerminalDefaultScrollback;   // スクロールバックの行数。変更は次に起動するシェルから
+    bool terminalLoadVsDevEnv = true; // VS 開発者環境を読み込んで起動する (読み込みの実処理は M106e)
 
     void Load();
     void Save() const;

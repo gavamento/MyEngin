@@ -46,6 +46,10 @@ void EditorGlobalSettings::Load()
         browserId = root.value("browserId", browserId);
         browserCustomExe = root.value("browserCustomExe", browserCustomExe);
         browserStartUrl = root.value("browserStartUrl", browserStartUrl);
+        terminalShell = root.value("terminalShell", terminalShell);
+        terminalFontSize = root.value("terminalFontSize", terminalFontSize);
+        terminalScrollback = root.value("terminalScrollback", terminalScrollback);
+        terminalLoadVsDevEnv = root.value("terminalLoadVsDevEnv", terminalLoadVsDevEnv);
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_global.json parse error: %s", ex.what());
     }
@@ -71,6 +75,10 @@ void EditorGlobalSettings::Save() const
     root["browserId"] = browserId;
     root["browserCustomExe"] = browserCustomExe;
     root["browserStartUrl"] = browserStartUrl;
+    root["terminalShell"] = terminalShell;
+    root["terminalFontSize"] = terminalFontSize;
+    root["terminalScrollback"] = terminalScrollback;
+    root["terminalLoadVsDevEnv"] = terminalLoadVsDevEnv;
 
     std::error_code ec;
     std::filesystem::create_directories(MachineLocalDir(), ec);

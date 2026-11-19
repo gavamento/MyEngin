@@ -48,6 +48,9 @@ public:
     // 投入したバイト数を返す。キー入力が無いフレームでも毎フレーム呼ぶ (応答の返送が遅れると CLI が待つ)
     size_t Pump(size_t maxBytes = kTerminalFeedBytesPerFrame);
 
+    // 画面モデルのスクロールバックだけを捨てる (CSI 3 J を自分の画面へ流す。子には何も送らず、今見えている画面も変えない)
+    void ClearScrollback();
+
     // 入力を変換して子へ送る (Running 以外では捨てる)
     void SendKey(TerminalKey key, uint8_t modifiers);
     void SendChar(char32_t codepoint, uint8_t modifiers);

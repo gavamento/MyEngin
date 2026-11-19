@@ -152,6 +152,8 @@
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalInput.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayout.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalScreen.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSession.cpp" />
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.cpp" />
@@ -197,6 +199,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\ScenePreviewWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SceneRestoreWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\SourceControlWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\TerminalWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\FeelAssetInspector.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Scene\GameViewWindow.cpp" />
@@ -325,6 +328,8 @@
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalHost.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalInput.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayout.h" />
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalLayoutSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalScreen.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSession.h" />
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.h" />
@@ -370,6 +375,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\ScenePreviewWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SceneRestoreWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\SourceControlWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\TerminalWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\ComputeInspectorSection.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\FeelAssetInspector.h" />
     <ClInclude Include="..\src\Editor\Windows\Scene\GameViewWindow.h" />

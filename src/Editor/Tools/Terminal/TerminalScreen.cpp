@@ -136,25 +136,6 @@ TerminalCell ConvertCell(const VTermScreen* screen, const VTermScreenCell& src)
     return cell;
 }
 
-void AppendUtf8(std::string& out, char32_t cp)
-{
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-}
-
 } // namespace
 
 TerminalScreen::TerminalScreen(int cols, int rows, int scrollbackLimit)
@@ -297,11 +278,41 @@ VTerm* TerminalScreen::RawVTerm() const
     return m_impl->vt;
 }
 
+void AppendTerminalUtf8(std::string& out, char32_t cp)
+{
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
 std::string TerminalLineText(const TerminalScreen& screen, int line)
 {
+    return TerminalLineText(screen, line, 0, screen.Cols() - 1);
+}
+
+std::string TerminalLineText(const TerminalScreen& screen, int line, int colBegin, int colEnd)
+{
+    colBegin = std::max(colBegin, 0);
+    colEnd = std::min(colEnd, screen.Cols() - 1);
+    // 全角の右半分から始まる範囲は、左半分 (文字の本体) から含める。含めないと選択の端の 1 文字が欠ける
+    if (colBegin > 0 && colBegin <= colEnd && screen.GetCell(line, colBegin).width == 0) {
+        --colBegin;
+    }
     std::string text;
     size_t keep = 0;
-    for (int col = 0; col < screen.Cols(); ++col) {
+    for (int col = colBegin; col <= colEnd; ++col) {
         const TerminalCell cell = screen.GetCell(line, col);
         if (cell.width == 0) {
             continue;
@@ -311,7 +322,7 @@ std::string TerminalLineText(const TerminalScreen& screen, int line)
             continue;
         }
         for (int i = 0; i < cell.charCount; ++i) {
-            AppendUtf8(text, cell.chars[i]);
+            AppendTerminalUtf8(text, cell.chars[i]);
         }
         keep = text.size();
     }
