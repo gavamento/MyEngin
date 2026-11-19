@@ -3,7 +3,7 @@
 - 依頼原文: このエンジンでターミナルが開けるようにしたい
   - 追加指示: 「ConPTY+ImGui描画 は？」「vimやCLIなどにも対応させたい」「vimは対応対象外でいいけどclaudecodeCLIなどは対象に入れて」「git・ビルド・Claude Code CLIなども使えるMyEngin統合ターミナルにするなら」
 - 開始: 2026-11-19 / 基点コミット: 9e44a4bb69201beca557be445dae13290658f324 / ブランチ: claude/nice-goodall-kwzmxi
-- フェーズ: 完了 (PR 待ち)
+- フェーズ: 完了 (PR gavamento/MyEngin#6 を 2026-11-19 にマージ、master 6ace750)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -37,6 +37,7 @@
 - (2026-11-19) コンテナ再起動で sub-05 coder が中断。途中成果を引き継いで新しい coder で再開した。
 
 ## 申し送り (セッション跨ぎ)
+- (2026-11-19) タグ v0.88.3 はクラウド環境から push できず (HTTP 403、push はブランチのみ許可)。ユーザーが手元で `git tag v0.88.3 6ace750c6a599972957be89823640be7797d37ee` と `git push origin v0.88.3` を実行する。残りの Windows 確認は PR #6 のチェックリスト。
 - 実行環境は Linux のクラウドコンテナ。MSVC ビルド・Editor.exe --selftest・check_rules.ps1・ConPTY・実画面確認はできない (Windows 側で要確認)。
 - ハーネス参照資料: Notion「harness」 https://app.notion.com/p/harness-41c02024a4d48019b57ec311190638f9
 - (2026-11-19 ユーザー指示) 役定義の正本はユーザーがアップロードした harness-planner.md / harness-coder.md / harness-reviewer.md (/root/.claude/uploads/a4d9b156-b135-54e6-b68d-c08729d36d62/ 配下、一時領域)。coder 版に技術解説の手順は無いが、Notion ページと AGENTS.md 第8章に従い coder への指示で技術解説を求め続ける。
