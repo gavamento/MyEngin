@@ -9,10 +9,60 @@
 #include <cmath>
 #include <vector>
 
+#include "Engine/Core/Util/Random.h"
+
 namespace mye {
 namespace {
 
 constexpr double kTwoPi = 6.283185307179586476925286766559;
+
+// Mel 32 帯域の中心周波数は等間隔の格子点になるため、そのまま鳴らすとボコーダー的な
+// 人工和音になりやすい。メッシュ固有シードと帯域番号から決定論的な ±3.5% のオフセットを
+// 生成し、隣接帯域の順序を保ったまま格子感を崩す
+float BandDetuneFactor(uint64_t seed, int band)
+{
+    uint64_t z = seed ^ (static_cast<uint64_t>(band + 1) * 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    z = z ^ (z >> 31);
+    // 上位 24 bit を [-1, 1] へ正規化
+    const float u = static_cast<float>(z >> 40) * (2.0f / 16777215.0f) - 1.0f;
+    constexpr float kMaxDetuneRatio = 0.035f;
+    return 1.0f + kMaxDetuneRatio * u;
+}
+
+// 接触瞬間の広帯域トランジェント (2 極 LPF 12 dB/oct + 指数減衰ノイズ)。
+// 純粋な減衰サイン波だけだと電子音・ベル的になるため、短い打撃の芯を冒頭へ重ねる
+void AddTransientBurst(std::vector<double>& mix, uint32_t rate, const ModalModeSet& modes)
+{
+    if (modes.transientAmp <= 0.0f || modes.transientDecay <= 0.0f || mix.empty()) {
+        return;
+    }
+    const double fc = std::clamp(static_cast<double>(modes.transientCutoffHz), 200.0,
+                                 static_cast<double>(rate) * 0.45);
+    const double alpha = 1.0 - std::exp(-kTwoPi * fc / static_cast<double>(rate));
+    const double invRate = 1.0 / static_cast<double>(rate);
+    const double decay = static_cast<double>(modes.transientDecay);
+    const double amp = static_cast<double>(modes.transientAmp);
+    constexpr double kAttackSec = 0.0002; // 0.2 ms: クリックを抑えつつ硬い立ち上がりを保つ
+
+    Pcg32 rng;
+    rng.Seed(modes.transientSeed != 0 ? modes.transientSeed : 0x4D4F44414C54524EULL);
+    double lp1 = 0.0;
+    double lp2 = 0.0;
+    for (size_t n = 0; n < mix.size(); ++n) {
+        const double t = static_cast<double>(n) * invRate;
+        const double env = std::exp(-decay * t);
+        if (env < 1.0e-4) {
+            break;
+        }
+        const double att = t < kAttackSec ? (t / kAttackSec) : 1.0;
+        const double noise = static_cast<double>(rng.Range(-1.0f, 1.0f));
+        lp1 += alpha * (noise - lp1);
+        lp2 += alpha * (lp1 - lp2);
+        mix[n] += lp2 * env * att * amp;
+    }
+}
 
 // [0, attackSamples) の間だけ 0→1 の線形ランプ。以降は 1.0 (spec §4.1「1 ms 線形アタック」)。
 // 2 次再帰共振器はサンプルごとの sin() 評価を避けるための漸化式なので、アタックは
@@ -76,8 +126,13 @@ void BuildModes(const ModalCellFeature& feature, const float k[3], const DmNetHe
         }
         a *= hdr.ampScale * post.gain; // 手順 4 末尾
 
-        // 手順 5: 帯域中心を「参照材質の非減衰角周波数」とみなし、参照材質の λ を作る
-        const float fc = hdr.bandCenterHz[i];
+        // 手順 5: 帯域中心を「参照材質の非減衰角周波数」とみなし、参照材質の λ を作る。
+        // detuneSeed != 0 のときは帯域内の決定論的オフセットで Mel 格子感を崩す
+        // (手順 6 の材質・サイズスケール則より前に掛けるため、E/ρ/L の比率は厳密に保たれる)
+        float fc = hdr.bandCenterHz[i];
+        if (post.detuneSeed != 0) {
+            fc *= BandDetuneFactor(post.detuneSeed, i);
+        }
         const float w = static_cast<float>(kTwoPi) * fc;
         const float cRef = 0.5f * (hdr.refAlpha + hdr.refBeta * w * w);
         float lambda = w * w + cRef * cRef;
@@ -163,6 +218,8 @@ void ModalSynthRender(const ModalModeSet& modes, AudioClip& out)
             yPrev1 = y;
         }
     }
+
+    AddTransientBurst(mix, rate, modes);
 
     out.sampleRate = rate;
     out.channels = 1;

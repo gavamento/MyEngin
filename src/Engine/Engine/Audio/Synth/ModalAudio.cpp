@@ -304,12 +304,35 @@ ModalShotResult MakeModalShotPlay(const ModalFeatureMap& featureMap, const DmNet
     post.beta = (mat != nullptr) ? mat->rayleighBeta : hdr.refBeta;
     post.maskThreshold = comp.maskThreshold;
     post.gain = comp.gain;
+    // メッシュ固有の決定論的シードで Mel 帯域中心の格子感を崩す (同じメッシュは同じ固有振動比を保つ)
+    post.detuneSeed = impact.mesh.value != 0 ? impact.mesh.value : 0x4D4F44414C444554ULL;
 
     ModalModeSet modes;
     BuildModes(feature, impact.k, hdr, post, modes);
     if (modes.count == 0) {
         return ModalShotResult::BelowMin;
     }
+
+    // 接触瞬間の広帯域トランジェントをモードエネルギーと材質の硬さから設定する。
+    // 純粋な減衰サイン波だけだと電子音・ベル的になるため、短い打撃の芯を重ねる
+    float energySq = 0.0f;
+    for (int32_t i = 0; i < modes.count; ++i) {
+        energySq += modes.amp[i] * modes.amp[i];
+    }
+    const float modeRms = std::sqrt(energySq);
+    const float stiffRatio =
+        (post.young > 0.0f && hdr.refYoung > 0.0f) ? (post.young / hdr.refYoung) : 1.0f;
+    const float hardness =
+        std::clamp(0.5f + 0.25f * std::log10((std::max)(stiffRatio, 1.0e-4f)), 0.0f, 1.0f);
+    modes.transientAmp = (std::min)(modeRms * 0.45f, 0.85f);
+    modes.transientCutoffHz = 1400.0f + hardness * 5600.0f;
+    modes.transientDecay = 140.0f + hardness * 140.0f;
+    uint64_t tSeed = HashStr("modal-transient");
+    tSeed = HashBytes(&impact.mesh.value, sizeof(impact.mesh.value), tSeed);
+    tSeed = HashBytes(&impact.key, sizeof(impact.key), tSeed);
+    tSeed = HashBytes(&impact.tick, sizeof(impact.tick), tSeed);
+    tSeed = HashBytes(&rawCell, sizeof(rawCell), tSeed);
+    modes.transientSeed = tSeed;
 
     ModalSynthRender(modes, outClip);
 

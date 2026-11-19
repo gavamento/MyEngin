@@ -26,6 +26,12 @@ struct ModalModeSet {
     float freqHz[kModalBands] = {};
     float amp[kModalBands] = {};
     float decay[kModalBands] = {}; // 指数減衰率 [1/s]
+    // 接触瞬間の広帯域トランジェント (2 極 LPF 付き減衰ノイズ)。
+    // transientAmp <= 0 で無効 (単体テストの純音検証や既存呼び出しと互換)
+    float transientAmp = 0.0f;
+    float transientDecay = 180.0f;     // [1/s] (約 5〜15 ms で減衰する打撃の芯)
+    float transientCutoffHz = 3500.0f; // 2 極 LPF のカットオフ [Hz]
+    uint64_t transientSeed = 0;        // 決定論的ノイズ用シード
 };
 
 // BuildModes に渡す材質・サイズパラメータ。World も PhysMat も直接渡さない —
@@ -39,6 +45,9 @@ struct ModalPostParams {
     float beta = 0.0f;          // Rayleigh 減衰の剛性項 [s]
     float maskThreshold = 0.0f; // ≤0 はヘッダ既定 (hdr.maskThreshold) を使う
     float gain = 1.0f;
+    // Mel 固定帯域中心の格子感を崩すための決定論的デチューン用シード。
+    // 0 = デチューン無し (帯域中心をそのまま使う。スケール則の厳密検証と互換)
+    uint64_t detuneSeed = 0;
 };
 
 // PCM の可聴下限 (1/32768 = int16 の 1 LSB 相当)。これを下回るモードは鳴らさず、

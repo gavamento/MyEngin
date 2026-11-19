@@ -310,6 +310,77 @@ bool RunModalSynthSelfTest()
               "a band centered above the Nyquist limit is dropped even though band 0 survives");
     }
 
+    // ---- (9) detuneSeed: 帯域内で決定論的にオフセットしつつ、材質スケール則は厳密に保つ ----
+    {
+        DmNetHeader hdr;
+        hdr.refYoung = 7.0e10f;
+        hdr.refDensity = 2700.0f;
+        hdr.refSizeL = 0.6f;
+        hdr.refAlpha = 0.0f;
+        hdr.refBeta = 0.0f;
+        hdr.ampScale = 1.0f;
+        hdr.maskThreshold = 0.5f;
+        hdr.logAmpMin = -1.0f;
+        hdr.logAmpMax = 1.0f;
+        hdr.bandCenterHz[8] = 500.0f;
+
+        ModalCellFeature feat{};
+        feat.v[MaskCh(0, 8)] = 5.0f;
+        feat.v[AmpCh(0, 8)] = 0.5f;
+        const float k[3] = { 1.0f, 0.0f, 0.0f };
+
+        ModalPostParams p1;
+        p1.young = hdr.refYoung;
+        p1.density = hdr.refDensity;
+        p1.sizeL = hdr.refSizeL;
+        p1.detuneSeed = 0x123456789ABCDEF0ULL;
+
+        ModalModeSet out1, out2;
+        BuildModes(feat, k, hdr, p1, out1);
+        BuildModes(feat, k, hdr, p1, out2);
+        const float relDiff = std::fabs(out1.freqHz[0] - 500.0f) / 500.0f;
+        check(out1.count == 1 && out1.freqHz[0] == out2.freqHz[0] && relDiff > 0.0f
+                  && relDiff <= 0.036f,
+              "detuneSeed deterministically offsets band frequency within +-3.5%");
+
+        ModalPostParams pE4 = p1;
+        pE4.young = p1.young * 4.0f;
+        ModalModeSet outE4;
+        BuildModes(feat, k, hdr, pE4, outE4);
+        check(outE4.count == 1 && std::fabs(outE4.freqHz[0] / out1.freqHz[0] - 2.0f) < 1.0e-4f,
+              "detuneSeed preserves exact material scaling (E x4 -> freq x2)");
+    }
+
+    // ---- (10) 接触トランジェント: 冒頭エネルギーが増え、決定論かつテールに影響しない ----
+    {
+        ModalModeSet base;
+        base.count = 1;
+        base.freqHz[0] = 440.0f;
+        base.decay[0] = 5.0f;
+        base.amp[0] = 0.25f;
+
+        ModalModeSet withTr = base;
+        withTr.transientAmp = 0.4f;
+        withTr.transientDecay = 200.0f;
+        withTr.transientCutoffHz = 4000.0f;
+        withTr.transientSeed = 0xCAFEBABE12345678ULL;
+
+        AudioClip cBase, cTr1, cTr2;
+        ModalSynthRender(base, cBase);
+        ModalSynthRender(withTr, cTr1);
+        ModalSynthRender(withTr, cTr2);
+
+        check(cTr1.samples == cTr2.samples, "transient burst renders bit-identically for the same seed");
+        const double headBase = RmsIn(cBase, 0.0, 0.015);
+        const double headTr = RmsIn(cTr1, 0.0, 0.015);
+        const double tailBase = RmsIn(cBase, 0.15, 0.25);
+        const double tailTr = RmsIn(cTr1, 0.15, 0.25);
+        check(headTr > headBase * 1.05,
+              "transient burst increases initial impact energy in [0, 15ms]");
+        check(tailBase > 0.0 && std::fabs(tailTr - tailBase) / tailBase < 1.0e-3,
+              "transient burst decays before [150, 250ms] and leaves the modal tail intact");
+    }
+
     if (failCount == 0) {
         MYE_LOG_INFO("==== ModalSynth self test: ALL PASS ====");
     } else {
