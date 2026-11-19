@@ -12,7 +12,7 @@
 | sub-02 Win32 非依存コア | OK | 1 | bcf3dbc | MSVC・terminalcore 実行は Windows で要確認 (nit) |
 | sub-03 ConPTY ホストとセッション | OK | 1 | 25754ab | ConPTY 実経路は未実行 (should, Windows で確認) |
 | sub-04 Terminal 窓 | OK | 1 | bfe0c4b | スクロール追従の修正・VS状態表示・環境配線・ADR は sub-05 へ |
-| sub-05 VS 開発者環境とエンジン環境変数 | 未着手 | 0 | | 依存 sub-04 |
+| sub-05 VS 開発者環境とエンジン環境変数 | OK | 1 | 77e28b1 | Win32 経路・chcp 65001 は Windows で要確認 (nit) |
 | sub-06 AI 変更追跡の紐付け (track v4) | 未着手 | 0 | | 依存 sub-02 (窓表示は sub-04 後) |
 
 ## レビュー
@@ -29,6 +29,7 @@
 - (2026-11-19 planner 裁定をユーザー承認) AI 追跡: sessions.host_terminal 列追加 (スキーマ v4)、source は "terminal" のまま / VS 環境: 読み込み完了を待って起動、30 秒タイムアウトで素の環境 / 既定レイアウト: 下段 Console のドックにタブ / IME: 確定文字のみ送信
 - (2026-11-19) 仕様確定: 受け入れ条件 1〜11 で実装へ
 - (2026-11-19 ユーザー判断) 版は 0.88.3 (0.88.0〜0.88.2 を飛ばすことを確認済み)。PR は reviewer PASS 後に版を上げてから master 向けに出す。タグ v0.88.3 はマージ後に master のマージコミットへ付ける (docs/release.md の手順。push で即公開)。
+- (2026-11-19 planner 裁定をユーザー承認) MYE_PROJECT_ROOT / MYE_TERMINAL_ID / TERM_PROGRAM は親に同名があっても置換 (COLORTERM は親を残す) / VS 環境の読み込みはターミナル窓の初回表示時に開始
 - (2026-11-19) コンテナ再起動で sub-05 coder が中断。途中成果を引き継いで新しい coder で再開した。
 
 ## 申し送り (セッション跨ぎ)
@@ -41,4 +42,5 @@
 - (sub-02) 貼付は単独LFもCRへ正規化 / 自動検出時 -NoLogo なし / 環境変数名の非ASCII並び順の制約を sub-04 で engine_spec §9.4 に1行 / スクロールバック上限のクランプは sub-04 設定側 / Feed は1フレーム256KB、TakeOutput はキー入力がなくても毎フレーム送る
 - (sub-03) 窓は表示状態に関係なく毎フレーム Pump() / OnShutdown でセッション破棄 / finder は FindTerminalExecutable / ErrorMessage は英語、Tr は窓側 / SendPaste は同期書込 / Job 失敗時の制約を engine_spec §9.4 に1行 / Windows 確認項目は sub-04 で test_checklists へ
 - (sub-04) sub-05: TerminalWindow::StartSession の environment が空 → BuildTerminalEnvironment で注入、VS 読込待ちの保留表示とツールバー状態、スクロールは最下部表示時のみ追従、ADR 追加、MYE_TERMINAL_ID 採番。貼付サイズ上限は入れない (spec §7 リスク)
+- (sub-05) sub-06: MYE_TERMINAL_ID の書式は <エディタPID>-<起動UNIX秒>-<シェル起動連番>、TerminalWindow::StartSession で採番。フックは環境変数 MYE_TERMINAL_ID を読んで hostTerminal に渡す。chcp 65001 で化けたら GetOEMCP 変換を別修正で
 - (planner PLAN) cargo は /root/.cargo/bin/cargo にある。g++ あり。spec は「策定中」、未決は PLAN_RESULT の [ユーザーに聞ける] を参照。
