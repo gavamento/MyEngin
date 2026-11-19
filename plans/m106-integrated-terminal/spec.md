@@ -39,7 +39,7 @@
 ## 4. 仕様
 ### 4.1 振る舞い
 - Window メニュー「ターミナル」で窓を開く。初回表示でシェルを起動 (遅延起動)。窓を閉じてもセッションは維持、エディタ終了 (OnShutdown) で Job を閉じて子孫ごと終了。
-- シェル解決: 設定 `terminal.shell` が空なら pwsh.exe → powershell.exe → cmd.exe の順に PATH/既定位置で探す。設定値が見つからなければエラー表示し自動検出へ落とさない (明示指定を尊重)。引数は QuoteCommandLineArg (`/home/user/MyEngin/src/Editor/ChangeTracking/TrackLaunch.h:21`) で組む。
+- シェル解決: 設定 `terminal.shell` が空なら pwsh.exe → powershell.exe → cmd.exe の順に PATH/既定位置で探す。設定値が見つからなければエラー表示し自動検出へ落とさない (明示指定を尊重)。引数は空白・`"` を含むものだけ QuoteCommandLineArg (`/home/user/MyEngin/src/Editor/ChangeTracking/TrackLaunch.h:21`) で引用し、それ以外はそのまま渡す (cmd.exe は引用されたスイッチ "/c" を解釈しないため。sub-03 round 1 で変更)。
 - 作業ディレクトリ: プロジェクトルート。
 - 出力: ConPTY 出力パイプを専用読み取りスレッドが読み、ロック付きバイトキューへ。UI スレッドが毎フレーム全量を libvterm へ投入 (libvterm は UI スレッドのみが触る)。
 - 入力: 窓フォーカス中のキー/文字を VT バイト列へ変換 (libvterm の `vterm_keyboard_*` を使用) して入力パイプへ書く。Ctrl+C はシェルへ送る (選択中ならコピー)。Ctrl+V / 右クリックは貼付 (bracketed paste 有効時は 200~/201~ で包む)。フォーカス中は `WantTextInput` 相当を立ててエディタショートカット (`/home/user/MyEngin/src/Editor/App/EditorApp.cpp:1970-2011`) を抑止。
@@ -97,4 +97,4 @@
 - track の Rust テスト: cargo はこの環境にある (`/root/.cargo/bin/cargo`)。依存クレート取得可否は sub-06 で確認。
 
 ## 8. 変更履歴
-(確定後に記入)
+- 2026-11-19 sub-03 round 1 (coder SELF_EVAL): 4.1 の引数引用を「空白・" を含むものだけ引用」に変更。理由は cmd.exe が引用されたスイッチを解釈しないため。

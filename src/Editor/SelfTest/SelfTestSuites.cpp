@@ -14,6 +14,7 @@
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Editor/Tools/Browser/BrowserEmbedSelfTest.h"
 #include "Editor/Tools/Terminal/TerminalCoreSelfTest.h"
+#include "Editor/Tools/Terminal/TerminalSessionSelfTest.h"
 #include "Editor/SelfTest/AnimatorControllerEditSelfTest.h"
 #include "Editor/SelfTest/BehaviorTreeEditorSelfTest.h"
 #include "Editor/SelfTest/ComputeInspectorSelfTest.h"
@@ -272,6 +273,8 @@ const SelfTestSuite kSuites[] = {
     { "browserembed", mye::RunBrowserEmbedSelfTest, SelfTestTier::Fast, "M105a: ブラウザ候補の解析 / 窓の特定 / 状態機械 / 見せる条件 (純関数)" },
     { "browserembedproc", mye::RunBrowserEmbedProcSelfTest, SelfTestTier::Full, "M105a: ダミー窓プロセスの Attach / Detach / Closed / Lost / 応答なし" },
     { "terminalcore", mye::RunTerminalCoreSelfTest, SelfTestTier::Fast, "M106b: ターミナルの画面モデル / キー→VT / シェル解決 / 環境ブロック (純関数 + libvterm)" },
+    { "terminalsession", mye::RunTerminalSessionSelfTest, SelfTestTier::Fast, "M106c: 出力キュー / セッションの状態遷移・投入上限・応答返送 (偽ホスト)" },
+    { "terminalconpty", mye::RunTerminalConPtySelfTest, SelfTestTier::Full, "M106c: ConPTY で cmd.exe を起動・echo 往復・リサイズ・再起動・非対応時の Unsupported" },
 };
 
 const SelfTestAlias kAliases[] = {

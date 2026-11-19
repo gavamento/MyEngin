@@ -13,7 +13,7 @@ spec 4.1・4.2・4.3。
 - 設定: EditorGlobalSettings に terminalShell / terminalFontSize / terminalScrollback / terminalLoadVsDevEnv (読込のみ。VS 環境の実処理は sub-05)。設定 UI は既存のエディタ設定画面の流儀に合わせる。
 - ローカライズ: LocalizationTable.inl 両言語、###ID 一意。
 - check_rules: 規則20 (`/home/user/MyEngin/tools/check_rules.ps1:1503-1510`) と同型の新規則で Engine/Runtime/GameLogic/Shared/Server から `Editor[\/]Tools[\/]Terminal[\/]` の include を禁止。
-- 文書: engine_spec.md に §9.4 Terminal window を追加、`/home/user/MyEngin/docs/test_checklists.md` に手動確認項目 (Claude Code CLI・git・MSBuild 出力・リサイズ・貼付・終了)。
+- 文書: engine_spec.md に §9.4 Terminal window を追加、`/home/user/MyEngin/docs/test_checklists.md` に手動確認項目 (Claude Code CLI・git・MSBuild 出力・リサイズ・貼付・終了。sub-03 由来: `terminalconpty` Full の成功、エディタ終了・再起動・子終了時に UI が目立って止まらないこと、終了後に conhost/cmd/pwsh が残らないこと、cmd /c が引用なしスイッチで動くこと)。
 
 ## やらないこと (このサブでは)
 - VS 開発者環境、AI 追跡。

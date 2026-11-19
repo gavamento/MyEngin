@@ -387,6 +387,12 @@
     <ClCompile Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalByteQueue.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalConPtyHost.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.cpp">
       <Filter>Tools\Terminal</Filter>
     </ClCompile>
@@ -397,6 +403,12 @@
       <Filter>Tools\Terminal</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalScreen.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSession.cpp">
+      <Filter>Tools\Terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.cpp">
       <Filter>Tools\Terminal</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.cpp">
@@ -894,16 +906,28 @@
     <ClInclude Include="..\src\Editor\Tools\PatrolRouteEditSelfTest.h">
       <Filter>Tools</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalByteQueue.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalCoreSelfTest.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalEnvironment.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalHost.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalInput.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalScreen.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSession.h">
+      <Filter>Tools\Terminal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalSessionSelfTest.h">
       <Filter>Tools\Terminal</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\Terminal\TerminalShellResolve.h">
