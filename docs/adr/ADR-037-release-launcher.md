@@ -24,6 +24,7 @@
 タグ `v<kEngineVersion>` を push すると `release.yml` が Release ビルド → 短い selftest → `make_dist.ps1 -Release` → `gh release create` まで行う。
 タグと `kEngineVersion` が食い違えば止める (版の正本は 1 つ。About・Hub・Launcher の表示と Release の版がずれると更新確認が終わらない)。
 `-rc1` などの接尾辞付きタグはプレリリースで、Launcher とエディタは既定で見ない (`--include-prerelease` で見る)。
+版の付け方 (`nn.xxx.yyy`、上げる単位、ぶつかったときの付け直し) は 2026-11-20 に AGENTS.md 第 8 章「版（バージョン）」へ定めた。ここでの決定 (正本は 1 つ、タグと一致させる) はそのまま。
 `ci.yml` の成功を条件にしない: `ci.yml` は replay 照合やスクショまで回す重い検査で、そちらが赤い間も公開を止めないため。release.yml 側で Release ビルドと fast 層の selftest・Launcher の selftest を独自に回す。
 却下: 独自の更新サーバ (運用が増える)、`ci.yml` の成果物をそのまま公開 (成功時に成果物を上げておらず、警告をエラーにするビルドが既存の警告で落ちている)。
 

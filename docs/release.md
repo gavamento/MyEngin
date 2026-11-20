@@ -14,8 +14,9 @@ https://github.com/gavamento/MyEngin/releases/latest/download/MyEngineLauncher.e
 
 ## 公開の手順
 
-1. `src/Engine/Engine/App/Project.h` の `kEngineVersion` を新しい版にする (例 `0.87`)。
-   表示 (Hub・About・タイトル・Launcher) はすべてこの定数から出る。`tools/collab_fixture.ps1` の `engineVersion` も合わせる。
+1. `src/Engine/Engine/App/Project.h` の `kEngineVersion` が公開したい版になっていることを確かめる (例 `0.89.3`)。
+   版の付け方と、上げるときに揃えるファイルは [AGENTS.md](../AGENTS.md) 第 8 章「版（バージョン）」に従う。
+   表示 (Hub・About・タイトル・Launcher) はすべてこの定数から出る。
 2. コミットして master に push する。
 3. 試走 (任意): GitHub の Actions → Release → Run workflow。Release は作らず、asset を artifact として上げる。
    ```
