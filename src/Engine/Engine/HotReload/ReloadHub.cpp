@@ -129,7 +129,7 @@ std::vector<std::wstring> OrderBatch(const std::vector<BatchChange>& changes)
         }
         paths.push_back(NormalizePathKey(c.path));
     }
-    // 種別順 → 同種は正規化キーの昇順。**明示的な決定論キー**で並べる
+    // 種別順 → 同種は正規化キーの昇順。明示的な決定論キーで並べる
     // (入力の並びに依存させると、同じ checkout が機体によって違う順で適用される)
     std::stable_sort(paths.begin(), paths.end(), [](const std::wstring& a, const std::wstring& b) {
         const int ra = ReloadRank(a);
