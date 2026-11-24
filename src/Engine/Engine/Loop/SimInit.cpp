@@ -155,9 +155,14 @@ void InitSimProjectState(const std::wstring& assetsRoot)
     TagNames::Get().Load(assetsRoot);
 }
 
+bool IsMissingGameLogicExpected(bool hasProject, size_t scriptSourceCount, bool dllExists)
+{
+    return hasProject && scriptSourceCount == 0 && !dllExists;
+}
+
 bool LoadGameLogic(Scene& scene, ScriptHost& scriptHost, DllReloader& dllReloader,
                    const std::wstring& assetsRoot, const std::wstring& dllPath,
-                   const std::wstring& shadowCopyDir)
+                   const std::wstring& shadowCopyDir, const std::wstring& projectRoot)
 {
     // ---- スキーマ由来の動的コンポーネント (M48j) ----
     // ★呼ぶ位置がそのまま決定論の契約: 組込み型 (World の生成時に RegisterBuiltinComponents で
@@ -168,6 +173,16 @@ bool LoadGameLogic(Scene& scene, ScriptHost& scriptHost, DllReloader& dllReloade
 
     scriptHost.Init(&scene);
     dllReloader.Init(&scriptHost, dllPath, shadowCopyDir);
+    {
+        // スクリプトが 1 本も無いプロジェクトは DLL が無くて正しい。下のエラーは読み込み漏れのためのもの
+        std::error_code ec;
+        const bool dllExists = std::filesystem::exists(dllPath, ec);
+        if (IsMissingGameLogicExpected(!projectRoot.empty(), CountProjectScriptSources(projectRoot),
+                                       dllExists)) {
+            MYE_LOG_INFO("[dll] this project has no C++ scripts yet - GameLogic.dll is not built");
+            return false;
+        }
+    }
     if (!dllReloader.LoadInitial()) {
         // ★黙って続けない。C++ スクリプトが 1 本も無い世界は「動くけれど別物」で、
         //   リプレイもネットも全く違う結果になる (M52h でシャドウコピーの衝突により

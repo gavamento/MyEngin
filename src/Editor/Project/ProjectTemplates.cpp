@@ -178,6 +178,9 @@ bool CreateProject(const std::wstring& dir, const std::string& name, ProjectTemp
     ProjectManifest m;
     m.name = name.empty() ? WideToUtf8(root.filename().wstring()) : name;
     m.engineVersion = kEngineVersion;
+    // シーンが無いときにデモで開くか空で開くかは、ここで書いた値で決まる
+    m.startContent = (tmpl == ProjectTemplate::Demo3D) ? ProjectStartContent::Demo
+                                                      : ProjectStartContent::Empty;
     // M66b: 作成時のパスを「正のパス」として刻む。以後ここと違う場所で開くと
     // Source Control 窓が警告を出す (= 誰かのローカルパスが共有マニフェストへ
     // 混ざったまま push された、を検知する唯一の手掛かり)

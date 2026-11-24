@@ -108,15 +108,38 @@ public:
     int CacheHits() const { return cacheHits_.load(); }
     int CacheMisses() const { return cacheMisses_.load(); }
 
+    // あたためでシェーダーをどの種類としてコンパイルするか。
+    // source が空なら名前だけで決まる分を返す (.kernel = Skip、.cs = Compute、.surface = Surface)。
+    // 名前で決まらないものは、本文がサーフェス用のヘッダーを取り込んでいれば Surface、他は Program
+    enum class PrewarmKind : uint8_t { Skip, Program, Compute, Surface };
+    static PrewarmKind ClassifyForPrewarm(std::string_view name, std::string_view source);
+
+    // キャッシュのあたため。キャッシュファイルがまだ無いシェーダーだけを複数スレッドでコンパイルして
+    // 書き出す。プログラムは登録しない — 後の Load / LoadCompute / LoadSurface がキャッシュから読む。
+    // 対象は各ルート直下とプロジェクト索引の *.hlsl (.kernel は除く)。種類は ClassifyForPrewarm が決める。
+    // SetCacheDir の後、最初の Load の前に呼ぶ。全スレッドの終了を待ってから戻る
+    struct PrewarmStats {
+        int candidates = 0; // キャッシュが無く、コンパイルを試みた数
+        int compiled = 0;   // そのうち成功した数
+        int threads = 0;    // 使ったスレッド数 (呼び出しスレッドを含む)
+        double ms = 0.0;
+    };
+    PrewarmStats PrewarmCache();
+
 private:
-    bool CompileProgram(const std::wstring& path, ShaderProgram& out); // out.isCompute を見て分岐
+    // コンパイル失敗の報告のしかた。SuppressErrors はあたため用 (失敗はキャッシュに残らず、後の Load が報告する)。
+    // コンパイル警告はどちらでも出す
+    enum class CompileLog : uint8_t { Report, SuppressErrors };
+
+    bool CompileProgram(const std::wstring& path, ShaderProgram& out,
+                        CompileLog log = CompileLog::Report); // out.isCompute を見て分岐
     // M79: 作者ソース + 生成エントリ (MyEngineSurfaceEntries.hlsli) を 5 エントリ
     // (色 VS/PS・影 VS・速度 VS/PS) 個別コンパイルし、リフレクション表と入力レイアウトまで作る。
     // M94: MyEngineSurfaceSprite.hlsli を include した作者ソースは、スプライト用 2 エントリ
     // (MyEngineSurfaceSpriteEntries.hlsli) も作る。MyEngineSurface.hlsli を include していなければスプライト専用。
     // previousGeneration: ホットリロード成功時に +1 して out.generation にする (0 = 初回)
     bool CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out,
-                              uint64_t previousGeneration = 0);
+                              uint64_t previousGeneration = 0, CompileLog log = CompileLog::Report);
     // キャッシュから読めたら out を完成させて true。鮮度が合わない / 無い / 壊れていれば false
     bool TryLoadCached(const std::wstring& path, const std::vector<char>& source,
                        ShaderProgram& out);
@@ -126,10 +149,12 @@ private:
     // バイトコード (CS 1 本 or VS+PS 2 本) から D3D オブジェクトを作る。キャッシュと
     // コンパイル直後で同じ関数を通す = 「キャッシュ経由だけ入力レイアウトが違う」を作らない
     bool Instantiate(const std::string& pathUtf8,
-                     const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out);
+                     const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out,
+                     CompileLog log = CompileLog::Report);
     // M79 sub-02: サーフェス版 (5 blob: 色VS,色PS,影VS,速度VS,速度PS の順。M94: 末尾にスプライト VS,PS の 2 本。
     // 2 本 = スプライト専用、7 本 = 両方)
-    bool InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs, SurfaceProgram& out);
+    bool InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs, SurfaceProgram& out,
+                            CompileLog log = CompileLog::Report);
     // #include "name" を優先度順のルートで解決する (IncludeRecorder と同じ規則)。
     // 見つからなければ空文字列
     std::wstring ResolveInclude(const char* name, std::vector<char>* outData) const;

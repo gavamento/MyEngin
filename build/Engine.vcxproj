@@ -355,6 +355,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Device\ReflectionClassJson.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\RenderTexture.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\SwapChain.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Device\TextureLoadBatchSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\VolumeTexture.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.cpp" />
@@ -403,6 +404,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Shader\ProjectShaderPropertiesSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderCache.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManager.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManagerPrewarmSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManagerProjectIndexSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Shader\SurfaceDeferredSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Shader\SurfaceMaterialSelfTest.cpp" />
@@ -765,6 +767,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Device\ReflectionClassJson.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\RenderTexture.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\SwapChain.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Device\TextureLoadBatchSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\VolumeTexture.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.h" />
@@ -825,6 +828,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Shader\ProjectShaderPropertiesSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderCache.h" />
     <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManager.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManagerPrewarmSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManagerProjectIndexSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceDeferredSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Shader\SurfaceDrawBind.h" />

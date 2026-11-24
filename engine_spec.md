@@ -1467,6 +1467,25 @@ displays. Hub / CI / headless paths are unchanged.
 
 - Provide Play / Pause / Step controls. **Editing during Play mode is discarded, as in Unity**: `PlayModeController` snapshots the scene to JSON on Play and restores it on Stop. The persistent store and pause state are snapshotted separately, because otherwise values written during Play leak into the editing state after Stop. **Play starts a fresh simulation session, like a Runtime launch**: the toolbar sets `EngineContext::simSessionResetRequested`, and at the next frame head (before the first Play tick) `EngineLoop` drops the engine-side carry state through `ResetSimCarryState` — the same function a script `LoadScene` uses (previous-tick contact pairs, particles, acoustics, AI / nav / BT, …) — and sets `tickIndex` back to 0. Without it `tickIndex` keeps counting through Edit mode, and contact pairs (keyed by entity index only) left from the previous Play suppress the first `OnTriggerEnter`. Ignored while recording, verifying or networked, where the tick sequence is the contract
 
+#### 9.0.1 Start content of a project (`startContent`)
+
+`project.mye.json` records how a project opens when it has no scene file yet. `CreateProject`
+writes it from the chosen template; the Editor (`EditorApp::OnStart`) and the Runtime
+(`PrepareStartScene`) share one decision, `ProjectUsesDemoContent`.
+
+| `startContent` | Written by | Behavior |
+|---|---|---|
+| `"demo"` | the 3D Demo template | Registers the demo and showcase materials. Without a scene file the demo scene is built in code |
+| `"empty"` | the Empty template | Registers no demo or showcase material. Without a scene file the project opens with `BuildEmptyStartScene`: a Main Camera and a Sun, nothing else |
+| missing | projects created before this key | Treated as `"empty"` only when the scene to open does not exist **and** the demo ground texture (`assets/textures/test.png`, or its cooked `.dds`) is absent. Otherwise `"demo"` — a saved scene may reference the demo materials by name, so they stay registered. The manifest is never rewritten |
+
+Launching without `--project` (the repository demo, tests) and any `--*-demo` showcase always use
+the demo content. `formatVersion` stays 1: readers take every key with a default.
+
+A project with no C++ script source (`<project>/src/GameLogic/Scripts/*.cpp`) has no
+`cache/GameLogic.dll`, and that is its normal state: `LoadGameLogic` logs one info line. A missing
+DLL is still an error when script sources exist, and when launching without a project.
+
 ### 9.1 Localization
 
 The editor ships in **Japanese by default** and can be switched to English at runtime from
@@ -1707,6 +1726,7 @@ persists the parse results so warm starts skip the parsers entirely.
 | Textures | Embedded images are stored encoded and re-decoded on replay (so `.meta` import settings keep working); external files are re-loaded from the recorded resolved path |
 | Mesh LOD (M90e, `kCookVersion` 6) | The blob starts with the model's LOD settings (`ModelLodSettings`, 28 bytes: level count, three target ratios, three screen-sizes) and each mesh carries its LOD1+ index list plus a level table. The settings live in the `.meta`, which the header check never looks at, so `ModelCook::TryReplayFromCache` compares the settings recorded in the blob with the current `.meta` and recooks on any difference — no manual cache deletion. A sealed cache does not compare. A model without `"lod"` in its `.meta` has no levels and its vertex / index bytes are identical to version 5. Details: §6.14 and ADR-029 |
 | Escape hatch | `--no-cook-cache` (mirrors `--no-jobs` / `--no-sim-cache`): parse everything fresh, never read or write the cache |
+| Startup texture decode | A cache hit still has to decode the external textures of every model. `RegisterAssetLibraries` wraps its scan in a `TextureLoadBatch`: `TextureLibrary::LoadFile` calls made inside the scope hand the image decode to the decode workers (`min(8, max(1, cores - 2))` threads) and return the AssetID at once, and leaving the outermost scope waits until every texture is published. The result is the same as the synchronous load (same AssetID, sRGB decision and mip generation; the sRGB hint is passed through `RequestLoadFileAsync(path, srgbHint)`). DDS files, files whose source image is missing (the sealed-bundle `.dds` fallback) and headless runs stay synchronous. Inside the scope a caller must not read the size or contents of a texture right after `LoadFile` — it is the shared 1x1 white placeholder until the scope ends. A corrupt image stays a white placeholder instead of returning a null id. One log line reports count, workers, wall time, total decode time and total GPU upload time |
 | Sealed bundle (M51j) | A `.sealed` marker inside `cache/cooked/` (written only by Build Settings into the package) makes `ReadValidated` skip the pathKey / stat / content-hash / deps checks (magic / version / guid still apply). A relocated package always misses pathKey and mtime, and after the batch DDS cook its source images no longer exist, so replaying the sealed registrations avoids a full re-parse that could not even find its textures. When M51j introduced it, this was also the only thing keeping scene references intact — sub-asset AssetIDs derived from the packaging machine's absolute paths. Since M74a they derive from `.meta` GUIDs (§10.2.1), so the IDs no longer depend on sealing. External texture paths recorded in the blob are remapped onto the package's `assets/` root when missing (`ModelCook::Replay`). A sealed cache still checks the version, so **packages are rebuilt with the new exe** whenever `kCookVersion` moves — the exe and the cache are always shipped together, so this is a rebuild, not a migration |
 
 #### 10.2.1 Sub-asset keys (M74a / M74b)
@@ -1726,6 +1746,22 @@ and actors store. See [ADR-019](docs/adr/ADR-019-guid-subasset-keys.md).
 | Migration | `Editor.exe --migrate-subasset-ids [--project DIR] [--legacy-root OLD]... [--dry-run]` scans and registers every model headlessly, rebuilds the legacy name for each current name under every legacy root (the current checkout is always included), and rewrites matching integers in `*.scene.json` / `*.prefab.json` / `*.actor.json` as text, so a diff touches only the ID digits. A legacy ID can only be recomputed if the absolute root that produced it is known, and a model that has since moved inside the project cannot be mapped |
 | Versions | `kCookVersion` 3. The scene document, `.rep` and snapshot versions are unchanged: layouts did not change, and no committed replay or hash depends on these values |
 | Tests | `SubAssetKeySelfTest`: the same model at two absolute paths registers identical names and IDs; without a `.meta` they diverge (control); convex source lookup; legacy recomputation for this and another checkout; text rewrite; end-to-end migration |
+
+#### 10.2.2 Shader bytecode cache and prewarm
+
+`ShaderManager` keeps the compiled bytecode of every program in `<project>/cache/shaders/`
+(`<exeDir>/cache/shaders/` without a project — the same two-path rule as the cooked cache).
+The bytecode is the compile result itself, so rendering is identical with and without the cache.
+
+| Concept | Decision |
+|---|---|
+| Freshness | Content hashes, never mtime: the source, the compile configuration (entry points, targets, flags, compiler version) and every `#include` (requested name, resolved path and content). A mismatch recompiles and overwrites |
+| Writes | `<file>.<pid>.tmp` then rename, so parallel processes never leave a half-written entry |
+| Prewarm | `ShaderManager::PrewarmCache()` runs once, right after `SetCacheDir` and before the render paths load anything. It compiles the shaders that have **no cache file yet** on up to `min(16, cores)` threads (the calling thread included) and writes their cache entries; it registers no program. The later `Load` / `LoadCompute` / `LoadSurface` calls stay sequential on the main thread and hit the cache, so no call site depends on the prewarm |
+| Prewarm candidates | `*.hlsl` directly under each shader root plus the project shader index, minus `.kernel` files and anything that already has a cache file. `ShaderManager::ClassifyForPrewarm` picks the kind: `.cs` = compute; `.surface`, or a source that includes `MyEngineSurface.hlsli` / `MyEngineSurfaceSprite.hlsli` (the same test `CompileSurfaceProgram` uses — `surface_error.hlsl` has no suffix), = surface; anything else = vertex + pixel. Entry points may live in an `#include`, so files are not filtered by their text; an include-only `.hlsl` simply fails to compile, silently |
+| Prewarm logging | Compile **errors** are suppressed (a failed shader leaves no cache entry, so the real `Load` reports it once); compile **warnings** are still logged. One summary line reports candidates, compiled count, threads and time |
+| Known limit | A cache file that exists but is stale (an edited shared `.hlsli`, an engine update) is not prewarmed; those shaders recompile one at a time in `Load`, as before. A `.hlsl` that never compiles (broken, or include-only) never gets a cache file, so it is tried again on every launch |
+| Escape hatch | `--no-shader-cache`: compile on every launch; the prewarm does nothing |
 
 ### 10.3 Physics material assets (`.physmat.json`, M59a1/M59a2)
 

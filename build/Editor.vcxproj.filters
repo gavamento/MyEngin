@@ -249,6 +249,9 @@
     <ClCompile Include="..\src\Editor\Project\ProjectTemplates.cpp">
       <Filter>Project</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Project\ProjectTemplatesSelfTest.cpp">
+      <Filter>Project</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Scene\CameraPilot.cpp">
       <Filter>Scene</Filter>
     </ClCompile>
@@ -778,6 +781,9 @@
       <Filter>Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Project\ProjectTemplates.h">
+      <Filter>Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Project\ProjectTemplatesSelfTest.h">
       <Filter>Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Scene\CameraPilot.h">

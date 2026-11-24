@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 
 namespace mye {
@@ -14,6 +15,13 @@ constexpr const wchar_t* kProjectManifestFile = L"project.mye.json";
 // プロジェクトローカル状態 (imgui.ini / editor_settings.json 等、VCS 除外) の置き場
 constexpr const wchar_t* kProjectLocalDir = L".mye";
 
+// シーンが無いときに何で開くか。作成時のテンプレートが書く
+enum class ProjectStartContent {
+    Unspecified, // キー無し (この項目より前に作られたプロジェクト)。資産の有無から推定する
+    Demo,        // デモ材質を登録し、デモシーンを生成する
+    Empty,       // デモ材質を登録せず、カメラとライトだけのシーンで開く
+};
+
 // プロジェクトマニフェスト (<root>\project.mye.json)。
 // 読みは root.value(key, default) の前方互換パターン (EditorSettings と同じ)
 struct ProjectManifest {
@@ -28,6 +36,8 @@ struct ProjectManifest {
     //   formatVersion は 1 のまま — 読み手は value(key, default) なので、
     //   このキーが無い旧マニフェストもそのまま読める
     std::string canonicalRoot;
+    // JSON では "startContent": "demo" / "empty"。Unspecified はキーを書かない
+    ProjectStartContent startContent = ProjectStartContent::Unspecified;
 };
 
 // dir がプロジェクトルートか (マニフェストの存在チェックのみ)
@@ -37,5 +47,10 @@ bool SaveProjectManifest(const std::wstring& root, const ProjectManifest& m);
 
 // bootScene を assets 配下の絶対パス (バックスラッシュ区切り) に解決する
 std::wstring ProjectBootScenePath(const std::wstring& root, const ProjectManifest& m);
+
+// プロジェクトの C++ スクリプトのソース数 (<root>\src\GameLogic\Scripts 直下の .cpp。再帰しない)。
+// projectRoot が空、またはディレクトリが無ければ 0。
+// 列挙条件はエディタの PrepareProjectScriptsBat (AssetOps.cpp) と同じに保つこと
+size_t CountProjectScriptSources(const std::wstring& projectRoot);
 
 } // namespace mye

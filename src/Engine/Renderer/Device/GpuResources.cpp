@@ -748,6 +748,10 @@ AssetID TextureLibrary::LoadFile(const std::wstring& path, bool srgb)
         // null を返す結果は従来と同じ (decode 後に作成失敗で null) — ERROR ログと decode の無駄を省く
         return {};
     }
+    if (batchDepth_ > 0 && CanDecodeOnWorker(path)) {
+        ++batchRequested_;
+        return RequestLoadFileAsync(path, srgb);
+    }
     // M39b: .meta のインポート設定が呼び出し側ヒントを上書きする (auto = ヒントのまま)
     importmeta::TextureImportSettings imp;
     importmeta::Resolve(path, imp);
@@ -944,10 +948,20 @@ TextureLibrary::~TextureLibrary()
             workerStop_ = true;
         }
         asyncCv_.notify_all();
-        if (worker_.joinable()) {
-            worker_.join();
+        for (std::thread& worker : workers_) {
+            if (worker.joinable()) {
+                worker.join();
+            }
         }
     }
+}
+
+int TextureLibrary::DecodeWorkerCount()
+{
+    // メインスレッドと OS のぶんを 2 本残す。hardware_concurrency が 0 (不明) でも 1 本は起こす
+    constexpr int kReservedThreads = 2;
+    const int hardware = static_cast<int>(std::thread::hardware_concurrency());
+    return std::clamp(hardware - kReservedThreads, 1, kMaxDecodeWorkers);
 }
 
 void TextureLibrary::EnsureWorker()
@@ -956,7 +970,53 @@ void TextureLibrary::EnsureWorker()
         return;
     }
     workerStarted_ = true;
-    worker_ = std::thread([this] { AsyncWorker(); });
+    const int count = DecodeWorkerCount();
+    workers_.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        workers_.emplace_back([this] { AsyncWorker(); });
+    }
+}
+
+// ワーカーでデコードできるファイルか。DDS (デコード不要) と、元画像が無いファイル
+// (配布物の同名 .dds で代替する / 読めずにエラーを出す) は同期ロードの担当
+bool TextureLibrary::CanDecodeOnWorker(const std::wstring& path)
+{
+    if (HasDdsExt(path)) {
+        return false;
+    }
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
+}
+
+void TextureLibrary::BeginLoadBatch()
+{
+    if (batchDepth_ == 0) {
+        batchRequested_ = 0;
+        batchStartTotals_ = asyncTotals_;
+        batchStart_ = std::chrono::steady_clock::now();
+    }
+    ++batchDepth_;
+}
+
+void TextureLibrary::EndLoadBatch()
+{
+    if (batchDepth_ <= 0) {
+        return; // 対になっていない呼び出し
+    }
+    --batchDepth_;
+    if (batchDepth_ > 0 || batchRequested_ == 0) {
+        return;
+    }
+    WaitForAsyncLoads();
+    const double wallMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - batchStart_).count();
+    // published が requested より少ないときは、デコード失敗か待ちの時間切れ
+    MYE_LOG_INFO("[assets] texture batch: %u requested, %u published on %d worker(s), %.1f ms wall "
+                 "(decode %.1f ms total, GPU upload %.1f ms total)",
+                 batchRequested_, asyncTotals_.published - batchStartTotals_.published,
+                 DecodeWorkerCount(), wallMs,
+                 asyncTotals_.decodeMs - batchStartTotals_.decodeMs,
+                 asyncTotals_.uploadMs - batchStartTotals_.uploadMs);
 }
 
 // ワーカースレッド: CPU デコードのみ (GPU 作成には触れない)。
@@ -995,11 +1055,11 @@ void TextureLibrary::AsyncWorker()
     }
 }
 
-AssetID TextureLibrary::RequestLoadFileAsync(const std::wstring& path)
+AssetID TextureLibrary::RequestLoadFileAsync(const std::wstring& path, bool srgbHint)
 {
     // DDS は既に圧縮済みで decode 不要 (ワーカーの stbi は非対応) → 同期ロードで即座に公開
     if (HasDdsExt(path)) {
-        return LoadFile(path);
+        return LoadFile(path, srgbHint);
     }
     const AssetID id = IdForFile(path);
     if (pending_.count(id.value)) {
@@ -1018,6 +1078,7 @@ AssetID TextureLibrary::RequestLoadFileAsync(const std::wstring& path)
         textures_.emplace(id.value, std::move(ph));
     }
     pending_.insert(id.value);
+    asyncSrgbHints_[id.value] = srgbHint;
     names_[id.value] = WideToUtf8(path);
     EnsureWorker();
     {
@@ -1043,13 +1104,18 @@ void TextureLibrary::PollAsyncLoads()
             continue;
         }
         pending_.erase(r.id);
+        bool srgbHint = false;
+        if (const auto hintIt = asyncSrgbHints_.find(r.id); hintIt != asyncSrgbHints_.end()) {
+            srgbHint = hintIt->second;
+            asyncSrgbHints_.erase(hintIt);
+        }
         if (!r.ok) {
             MYE_LOG_WARN("async texture decode failed (id=%016llx)",
                          static_cast<unsigned long long>(r.id));
             continue; // プレースホルダのまま残す (再投入せず hammering を防ぐ)
         }
         // M39b: 非同期経路 (サムネイル等) も .meta の srgb on を尊重する — 先勝ちキャッシュに
-        // 非 sRGB で入ると 3D 側が色褪せるため。auto は従来どおり UNORM (ImGui 直表示向け)
+        // 非 sRGB で入ると 3D 側が色褪せるため。auto は投入時の指定に従う (指定なし = UNORM、ImGui 直表示向け)
         importmeta::TextureImportSettings imp;
         std::wstring path;
         auto nameIt = names_.find(r.id);
@@ -1057,11 +1123,16 @@ void TextureLibrary::PollAsyncLoads()
             path = Utf8ToWide(nameIt->second);
             importmeta::Resolve(path, imp);
         }
+        // 決め方は同期の LoadFile と同じ
+        const bool effSrgb = (imp.srgb == 1) ? true : (imp.srgb == 2) ? false : srgbHint;
         Texture t;
         const auto uploadStart = std::chrono::steady_clock::now();
-        const bool created = CreateFromPixels(t, r.pixels.data(), r.w, r.h, imp.srgb == 1, imp.generateMips != 0);
+        const bool created = CreateFromPixels(t, r.pixels.data(), r.w, r.h, effSrgb, imp.generateMips != 0);
         const float uploadMs =
             std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - uploadStart).count();
+        ++asyncTotals_.published;
+        asyncTotals_.decodeMs += r.decodeMs;
+        asyncTotals_.uploadMs += uploadMs;
         if (nameIt != names_.end()) {
             prof::RecordAssetLoad("texture (async)", nameIt->second, r.decodeMs + uploadMs);
         }
@@ -1071,7 +1142,7 @@ void TextureLibrary::PollAsyncLoads()
             }
             textures_[r.id] = std::move(t); // プレースホルダを実体に差し替え
             // 復旧で作り直せるようにする
-            SetFileRecipe(recipes_[r.id], path, imp.srgb == 1, imp.generateMips != 0);
+            SetFileRecipe(recipes_[r.id], path, effSrgb, imp.generateMips != 0);
         }
     }
 }
@@ -1301,6 +1372,7 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
         it->second = std::move(fresh);
         ++generations_[id.value];
         pending_.erase(id.value);
+        asyncSrgbHints_.erase(id.value);
         SetFileRecipe(recipes_[id.value], path, srgb, mips);
         return true;
     }
@@ -1319,6 +1391,7 @@ bool TextureLibrary::ReplaceFromFile(AssetID id, const std::wstring& path)
     it->second = std::move(fresh); // AssetID は不変のまま実体を差し替え (spec 8.2)
     ++generations_[id.value];
     pending_.erase(id.value);
+    asyncSrgbHints_.erase(id.value);
     SetFileRecipe(recipes_[id.value], path, srgb, mips);
     return true;
 }

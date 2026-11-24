@@ -95,11 +95,16 @@ void UninstallSimLibraries();
 // 途中で変えると同じ .rep の再生が割れる
 void InitSimProjectState(const std::wstring& assetsRoot);
 
+// GameLogic.dll が無いのが正常な状態か。プロジェクト起動で C++ スクリプトのソースが 0 本のときだけ true
+// (ソースがあるのに DLL が無い、またはプロジェクト指定なしの起動は、読み込み漏れとして扱う)
+bool IsMissingGameLogicExpected(bool hasProject, size_t scriptSourceCount, bool dllExists);
+
 // スキーマ型の登録 → GameLogic.dll のロード。**この順序が TypeId の割り当てを決める**
-// (スキーマ型は組込み型の後・スクリプト型の前)。DLL が無くても false を返すだけで継続する
+// (スキーマ型は組込み型の後・スクリプト型の前)。DLL が無くても false を返すだけで継続する。
+// projectRoot は「DLL が無いのが正常か」の判定に使う (空 = プロジェクト指定なしの起動)
 bool LoadGameLogic(Scene& scene, ScriptHost& scriptHost, DllReloader& dllReloader,
                    const std::wstring& assetsRoot, const std::wstring& dllPath,
-                   const std::wstring& shadowCopyDir);
+                   const std::wstring& shadowCopyDir, const std::wstring& projectRoot);
 
 // ScriptHost / ManagedHost に渡す共有バッファの束 (所有者は呼び出し側)
 struct SimSharedServices {

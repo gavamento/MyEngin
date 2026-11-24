@@ -209,11 +209,6 @@ void* StartGameLogicBuild(EngineContext& ctx, std::wstring& logPathOut);
 bool ShouldAutoRebuildScripts(bool hasProject, bool packaging, bool scriptsLoaded,
                               size_t scriptCount);
 
-// <project>\src\GameLogic\Scripts 直下の .cpp を数える (再帰しない。無ければ 0)。
-// ★列挙条件は PrepareProjectScriptsBat と同じに保つこと — 「撃つと決めた根拠」と
-//   「実際にコンパイルされる一覧」がずれると、中身 0 本の DLL を焼いて成功扱いになる
-size_t CountProjectScriptSources(const std::wstring& projectRoot);
-
 // MyeCollab.dll (Rust) の初回自動ビルド (M66m)。EditorApp が起動直後、DLL が見つからず
 // Unavailable::NoService になったときだけ呼ぶ。cargo が PATH にも rustup の既定
 // インストール先にも見つからなければ**何もせず nullptr** (ログもしない) — rustup 未導入は

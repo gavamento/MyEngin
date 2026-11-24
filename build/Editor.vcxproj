@@ -101,6 +101,7 @@
     <ClCompile Include="..\src\Editor\Project\ProjectManager.cpp" />
     <ClCompile Include="..\src\Editor\Project\ProjectRegistry.cpp" />
     <ClCompile Include="..\src\Editor\Project\ProjectTemplates.cpp" />
+    <ClCompile Include="..\src\Editor\Project\ProjectTemplatesSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Scene\CameraPilot.cpp" />
     <ClCompile Include="..\src\Editor\Scene\CameraPilotSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Scene\ComponentClipboard.cpp" />
@@ -278,6 +279,7 @@
     <ClInclude Include="..\src\Editor\Project\ProjectManager.h" />
     <ClInclude Include="..\src\Editor\Project\ProjectRegistry.h" />
     <ClInclude Include="..\src\Editor\Project\ProjectTemplates.h" />
+    <ClInclude Include="..\src\Editor\Project\ProjectTemplatesSelfTest.h" />
     <ClInclude Include="..\src\Editor\Scene\CameraPilot.h" />
     <ClInclude Include="..\src\Editor\Scene\CameraPilotSelfTest.h" />
     <ClInclude Include="..\src\Editor\Scene\ComponentClipboard.h" />
