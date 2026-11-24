@@ -1357,3 +1357,43 @@ Linux のクラウド環境では ConPTY・MSVC ビルド・実画面の確認�
 - [ ] エディタを閉じる (実行中のシェル + `ping -t localhost` のような子を持たせたまま): 終了が目立って遅れず、タスクマネージャに `conhost.exe` / `cmd.exe` / `pwsh.exe` / `ping.exe` が残らない。エディタをタスクマネージャから強制終了したときも、シェルの子孫が残らない (ジョブオブジェクトの KILL_ON_JOB_CLOSE)
 - [ ] ConPTY が使えない OS (Windows 10 1809 より前。手元に無ければ未確認のままにして記録) では、窓に「疑似コンソール (ConPTY) がありません」が出てエディタは動き続ける
 - [ ] 大量出力 (`1..200000 | % { "line $_" }`) で UI が固まらない (1 フレームに流す量の上限は 256 KB)。終わると最後の行が見える
+
+## 起動の並列化と Empty プロジェクトの修正 (手動確認。**Windows でのビルド・SelfTest・計測は未実施**)
+
+実装は Linux 上の mingw-w64 による構文・型検査だけを通している。下の項目は全て未確認。
+
+### ビルドと自動検証
+
+- [ ] `tools\gen_project_files.ps1` を実行しても `build\*.vcxproj` と `.filters` に差分が出ない (新規ファイル 6 本は手で並びへ入れてある)
+- [ ] `MyEngine.sln` の Debug|x64 と Release|x64 がビルドできる
+- [ ] `tools\check_rules.ps1` が通る
+- [ ] `set MYE_SELFTEST_ONLY=projecttemplates,textureloadbatch,shadermanagerprewarm,assetops` のあと `cmd /c "bin\x64\Debug\Editor.exe --selftest 2>&1"` が PASS する (GUI の exe なので `cmd /c` 経由で実行する)
+- [ ] `cmd /c "bin\x64\Debug\Editor.exe --selftest-full 2>&1"` と Release 版が PASS する
+- [ ] `tools\shot_verify.bat` が通る (テクスチャの読み込み方・シェーダーのコンパイル順・`ground_fog.hlsli` を変えたので、見た目が変わっていないことの確認)
+- [ ] `tools\replay_verify.bat` が通る
+
+### Empty テンプレート
+
+- [ ] Empty で新規作成して開く: Main Camera と Sun だけのシーンで開き、キューブ群のデモシーンにならない。`project.mye.json` に `"startContent": "empty"` がある
+- [ ] 同じ起動で、コンソールに `texture load failed: …\textures\test.png` と `glTF parse failed: …\models\BoxTextured.glb` が出ない
+- [ ] 修正前に Empty で作った既存プロジェクト (設定ファイルに `startContent` が無く、シーン未保存) も、同じく空のシーンで開く。設定ファイルは書き換わらない
+- [ ] 3D Demo で新規作成して開く: 今までどおりデモシーンで開く。`"startContent": "demo"` がある
+- [ ] 修正前に 3D Demo で作ってシーンを保存済みのプロジェクトが、今までどおり表示される (デモ用マテリアルの色が抜けない)
+- [ ] プロジェクト指定なし (リポジトリ直下) の `Editor.exe` と `--rt-demo` などのショーケースが、今までどおり開く
+- [ ] Runtime でも、Empty のプロジェクトがカメラとライトだけで起動する
+
+### コンソールのエラーと警告
+
+- [ ] Empty の新規プロジェクトを開いても `[dll] GameLogic.dll was not loaded` のエラーが出ず、`[dll] this project has no C++ scripts yet` の情報ログが 1 行出る
+- [ ] そのプロジェクトに C++ スクリプトを 1 本足し、ビルド前に開き直すと、今までどおり `GameLogic.dll was not loaded` のエラーが出る
+- [ ] シェーダーキャッシュのフォルダ (`<プロジェクト>\cache\shaders`) を別名に変えて起動し、`warning X3557` (`ground_fog.hlsli`) が出ない。出る場合は `#pragma warning` をファイル先頭へ移す必要がある
+
+### 起動時間 (変更前の実測: 同じプロジェクトで 1 回目 約 24 秒、2 回目 約 3.9 秒)
+
+- [ ] 毎回の起動: デモ素材入りのプロジェクトを 2 回起動し、2 回目の `[assets] startup asset scan` を記録する (変更前 3,357.8 ms)。`[assets] texture batch: … requested, … published on … worker(s)` の行で、デコード合計と GPU 転送合計も記録する
+- [ ] 走査が 1.5 秒を切らない場合は、追加の最適化へ進まず、上の集計行を見て原因 (GPU 転送がメインスレッドに残る分) を確かめる
+- [ ] 初回の起動: `cache\shaders` を別名に変えて起動し、`[startup] shaders` / `render_paths` / `ui` と `[shadercache] prewarm: … candidate(s), … compiled on … thread(s)` を記録する (変更前 render_paths 10,764.6 ms、ui 7,719.4 ms)
+- [ ] 3 段階の合計が変更前の半分以下にならない場合は、追加の最適化へ進まず、集計行を見て相談する
+- [ ] 起動直後のシーンに、白いままのモデルや描画の欠けが無い
+- [ ] プロファイラーの「アセット」タブで、起動時のテクスチャが `texture (async)` として記録されている
+- [ ] エディタのアセットブラウザでサムネイルを大量に表示しても、目立つカクつきが増えていない (デコード用ワーカーを 1 本から最大 8 本に増やしたため)
