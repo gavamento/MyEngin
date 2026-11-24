@@ -1393,6 +1393,8 @@ Linux のクラウド環境では ConPTY・MSVC ビルド・実画面の確認�
 - [ ] 毎回の起動: デモ素材入りのプロジェクトを 2 回起動し、2 回目の `[assets] startup asset scan` を記録する (変更前 3,357.8 ms)。`[assets] texture batch: … requested, … published on … worker(s)` の行で、デコード合計と GPU 転送合計も記録する
 - [ ] 走査が 1.5 秒を切らない場合は、追加の最適化へ進まず、上の集計行を見て原因 (GPU 転送がメインスレッドに残る分) を確かめる
 - [ ] 初回の起動: `cache\shaders` を別名に変えて起動し、`[startup] shaders` / `render_paths` / `ui` と `[shadercache] prewarm: … candidate(s), … compiled on … thread(s)` を記録する (変更前 render_paths 10,764.6 ms、ui 7,719.4 ms)
+- [ ] その起動のプロファイラー「アセット」タブで、`surface_error`・`project_post_magenta`・`hzb_reduce_max.cs` が他のシェーダーと同じく数 ms 以下になっている (あたための対象から漏れていると、ここだけ数百 ms になる)
+- [ ] 同じプロジェクトをもう一度起動すると、`[shadercache] prewarm` の行が出ないか `0 compiled` になる。`[startup] shaders` の時間も記録する (あたための確認だけで何 ms かかるか)
 - [ ] 3 段階の合計が変更前の半分以下にならない場合は、追加の最適化へ進まず、集計行を見て相談する
 - [ ] 起動直後のシーンに、白いままのモデルや描画の欠けが無い
 - [ ] プロファイラーの「アセット」タブで、起動時のテクスチャが `texture (async)` として記録されている

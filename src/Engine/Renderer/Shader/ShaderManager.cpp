@@ -763,6 +763,22 @@ void ShaderManager::SetCacheDir(std::wstring dir, bool enabled)
     }
 }
 
+ShaderManager::PrewarmKind ShaderManager::ClassifyForPrewarm(std::string_view name, std::string_view source)
+{
+    if (name.ends_with(".kernel")) {
+        return PrewarmKind::Skip; // カーネルは Compute.ForEach が別の経路で扱う
+    }
+    if (name.ends_with(".cs")) {
+        return PrewarmKind::Compute;
+    }
+    // 見分け方は CompileSurfaceProgram と同じ文字列。surface_error のように末尾が付かないサーフェスもある
+    if (name.ends_with(".surface") || source.find("MyEngineSurface.hlsli") != std::string_view::npos
+        || source.find("MyEngineSurfaceSprite.hlsli") != std::string_view::npos) {
+        return PrewarmKind::Surface;
+    }
+    return PrewarmKind::Program;
+}
+
 ShaderManager::PrewarmStats ShaderManager::PrewarmCache()
 {
     PrewarmStats stats;
@@ -795,39 +811,41 @@ ShaderManager::PrewarmStats ShaderManager::PrewarmCache()
         std::sort(names.begin(), names.end());
     }
 
-    enum class Kind { Program, Compute, Surface };
     struct Job {
         std::wstring path;
-        Kind kind;
+        PrewarmKind kind;
     };
     std::vector<Job> jobs;
-    for (const std::string& name : names) {
-        const std::string_view view(name);
-        if (view.ends_with(".kernel")) {
-            continue; // カーネルは Compute.ForEach が別の経路で扱う
+    // キャッシュの有無は 1 回の列挙で引く (シェーダー 1 本ごとにファイルシステムへ問い合わせない)
+    std::unordered_set<std::wstring> cacheFiles;
+    {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(cacheDir_, ec)) {
+            cacheFiles.insert(entry.path().filename().wstring());
         }
-        const Kind kind = view.ends_with(".cs") ? Kind::Compute
-            : view.ends_with(".surface") ? Kind::Surface : Kind::Program;
+    }
+    const auto cached = [&cacheFiles](const std::wstring& cacheFile) { return cacheFiles.contains(cacheFile); };
+    for (const std::string& name : names) {
+        const PrewarmKind byName = ClassifyForPrewarm(name, {});
+        if (byName == PrewarmKind::Skip) {
+            continue;
+        }
         // Load が見るのと同じファイルを指させる (索引と、上位ルートが同名を隠す規則)
         const std::wstring path = ResolvePath(name);
-        const std::wstring cacheFile = (kind == Kind::Surface)
-            ? SurfaceShaderCacheFileName(path) : ShaderCacheFileName(path, kind == Kind::Compute);
-        std::error_code ec;
-        if (std::filesystem::exists(cacheDir_ + L"\\" + cacheFile, ec)) {
-            continue; // 鮮度は後の Load が確かめる
+        // キャッシュファイルが在れば本文を読まずに外す (鮮度は後の Load が確かめる)。
+        // 名前で種類が決まらないものは、通常用とサーフェス用のどちらかが在れば外す
+        const bool alreadyCached = (byName == PrewarmKind::Compute) ? cached(ShaderCacheFileName(path, true))
+            : (byName == PrewarmKind::Surface) ? cached(SurfaceShaderCacheFileName(path))
+            : cached(ShaderCacheFileName(path, false)) || cached(SurfaceShaderCacheFileName(path));
+        if (alreadyCached) {
+            continue;
         }
-        // 入口関数を持たないファイル (取り込まれる側) はプログラムではない
         std::vector<char> source;
         if (!ReadFileBytes(path, source)) {
             continue;
         }
-        const std::string_view text(source.data(), source.size());
-        const bool hasEntry = (kind == Kind::Compute) ? text.find("CSMain") != std::string_view::npos
-            : (kind == Kind::Surface) ? text.find("PSMain") != std::string_view::npos
-            : text.find("VSMain") != std::string_view::npos && text.find("PSMain") != std::string_view::npos;
-        if (hasEntry) {
-            jobs.push_back({ path, kind });
-        }
+        // 取り込み専用のファイルも試す。失敗は報告せず、キャッシュにも残らない
+        jobs.push_back({ path, ClassifyForPrewarm(name, std::string_view(source.data(), source.size())) });
     }
     stats.candidates = static_cast<int>(jobs.size());
     if (jobs.empty()) {
@@ -845,14 +863,14 @@ ShaderManager::PrewarmStats ShaderManager::PrewarmCache()
             }
             const Job& job = jobs[index];
             bool ok = false;
-            if (job.kind == Kind::Surface) {
+            if (job.kind == PrewarmKind::Surface) {
                 SurfaceProgram scratch;
                 scratch.path = job.path;
                 ok = CompileSurfaceProgram(job.path, scratch, 0, CompileLog::SuppressErrors);
             } else {
                 ShaderProgram scratch;
                 scratch.path = job.path;
-                scratch.isCompute = (job.kind == Kind::Compute);
+                scratch.isCompute = (job.kind == PrewarmKind::Compute);
                 ok = CompileProgram(job.path, scratch, CompileLog::SuppressErrors);
             }
             if (ok) {

@@ -108,9 +108,15 @@ public:
     int CacheHits() const { return cacheHits_.load(); }
     int CacheMisses() const { return cacheMisses_.load(); }
 
+    // あたためでシェーダーをどの種類としてコンパイルするか。
+    // source が空なら名前だけで決まる分を返す (.kernel = Skip、.cs = Compute、.surface = Surface)。
+    // 名前で決まらないものは、本文がサーフェス用のヘッダーを取り込んでいれば Surface、他は Program
+    enum class PrewarmKind : uint8_t { Skip, Program, Compute, Surface };
+    static PrewarmKind ClassifyForPrewarm(std::string_view name, std::string_view source);
+
     // キャッシュのあたため。キャッシュファイルがまだ無いシェーダーだけを複数スレッドでコンパイルして
     // 書き出す。プログラムは登録しない — 後の Load / LoadCompute / LoadSurface がキャッシュから読む。
-    // 対象は各ルート直下とプロジェクト索引の *.hlsl (.kernel と、入口関数の無いファイルは除く)。
+    // 対象は各ルート直下とプロジェクト索引の *.hlsl (.kernel は除く)。種類は ClassifyForPrewarm が決める。
     // SetCacheDir の後、最初の Load の前に呼ぶ。全スレッドの終了を待ってから戻る
     struct PrewarmStats {
         int candidates = 0; // キャッシュが無く、コンパイルを試みた数

@@ -43,6 +43,17 @@ constexpr char kIncludeOnlySource[] = R"(
 float Half(float x) { return x * 0.5f; }
 )";
 
+// 入口関数を取り込み先に持つシェーダーと、その取り込み先
+constexpr char kEntryHeaderSource[] = R"(
+struct VSIn { float3 pos : POSITION; };
+float4 VSMain(VSIn v) : SV_Position { return float4(v.pos, 1.0f); }
+float4 PSMain() : SV_Target { return float4(TINT, 1.0f); }
+)";
+constexpr char kFromIncludeSource[] = R"(
+#define TINT float3(0.0f, 1.0f, 0.0f)
+#include "entry_common.hlsli"
+)";
+
 // 入口関数の名前はあるが、コンパイルできない
 constexpr char kBrokenSource[] = R"(
 float4 VSMain() : SV_Position { return undefined_symbol; }
@@ -108,10 +119,31 @@ bool RunShaderManagerPrewarmSelfTest()
     WriteText(shaderDir / L"good_b.hlsl", define2 + kProgramSource);
     WriteText(shaderDir / L"comp.cs.hlsl", kComputeSource);
     WriteText(shaderDir / L"include_only.hlsl", kIncludeOnlySource);
+    WriteText(shaderDir / L"entry_common.hlsli", kEntryHeaderSource);
+    WriteText(shaderDir / L"from_include.hlsl", kFromIncludeSource);
     WriteText(shaderDir / L"broken.hlsl", kBrokenSource);
     WriteText(shaderDir / L"skip.kernel.hlsl", kComputeSource);
-    constexpr int kGoodCount = 3;      // good_a / good_b / comp.cs
-    constexpr int kCandidateCount = 4; // 上の 3 本 + broken (入口関数の名前があるので試す)
+    constexpr int kGoodCount = 4;      // good_a / good_b / comp.cs / from_include
+    constexpr int kCandidateCount = 6; // 上の 4 本 + broken + include_only (.hlsli と .kernel は数えない)
+    constexpr int kNeverCachedCount = kCandidateCount - kGoodCount;
+
+    // ---- (0) 種類の判定 (ファイルにもデバイスにも触れない) ----
+    {
+        using Kind = ShaderManager::PrewarmKind;
+        check(ShaderManager::ClassifyForPrewarm("fill.kernel", kComputeSource) == Kind::Skip,
+              "classify: .kernel is skipped");
+        check(ShaderManager::ClassifyForPrewarm("particle_sim.cs", {}) == Kind::Compute,
+              "classify: .cs is compute from the name alone");
+        check(ShaderManager::ClassifyForPrewarm("Toon.surface", {}) == Kind::Surface,
+              "classify: .surface is a surface from the name alone");
+        check(ShaderManager::ClassifyForPrewarm("surface_error", "#include \"MyEngineSurface.hlsli\"\n") == Kind::Surface,
+              "classify: a file without the suffix is a surface when it includes the surface header");
+        check(ShaderManager::ClassifyForPrewarm("fx", "#include \"MyEngineSurfaceSprite.hlsli\"\n") == Kind::Surface,
+              "classify: the sprite surface header also makes a surface");
+        check(ShaderManager::ClassifyForPrewarm("forward_lit", kProgramSource) == Kind::Program
+                  && ShaderManager::ClassifyForPrewarm("surface_error", {}) == Kind::Program,
+              "classify: anything else is a vertex + pixel program");
+    }
 
     // ---- (1) デバイスなし (Init 前) は何もしない ----
     {
@@ -148,7 +180,7 @@ bool RunShaderManagerPrewarmSelfTest()
         check(warm.Init(device, dirs), "shader manager init (prewarm)");
         const ShaderManager::PrewarmStats first = warm.PrewarmCache();
         check(first.candidates == kCandidateCount,
-              "prewarm: programs with entry points are tried; include-only and .kernel files are skipped");
+              "prewarm: every .hlsl without a cache file is tried; .hlsli and .kernel files are not");
         check(first.compiled == kGoodCount && first.threads >= 1,
               "prewarm: every healthy shader is compiled, and the broken one does not stop the others");
         check(static_cast<int>(CacheFiles(warmCache).size()) == kGoodCount,
@@ -159,11 +191,15 @@ bool RunShaderManagerPrewarmSelfTest()
         const AssetID a = warm.Load("good_a");
         const AssetID b = warm.Load("good_b");
         const AssetID c = warm.LoadCompute("comp.cs");
+        const AssetID d = warm.Load("from_include");
         const ShaderProgram* pa = warm.Get(a);
         const ShaderProgram* pb = warm.Get(b);
         const ShaderProgram* pc = warm.Get(c);
+        const ShaderProgram* pd = warm.Get(d);
         check(pa != nullptr && pa->valid && pb != nullptr && pb->valid && pc != nullptr && pc->valid,
               "after prewarm: Load / LoadCompute return valid programs");
+        check(pd != nullptr && pd->valid,
+              "after prewarm: a shader whose entry points live in an include is valid too");
         check(warm.CacheHits() == hitsBefore + kGoodCount && warm.CacheMisses() == missesBefore,
               "after prewarm: every Load is a cache hit (no compile on the calling thread)");
 
@@ -175,6 +211,8 @@ bool RunShaderManagerPrewarmSelfTest()
         const ShaderManager::PrewarmStats second = warm.PrewarmCache();
         check(second.compiled == 0 && static_cast<int>(CacheFiles(warmCache).size()) == kGoodCount,
               "prewarm again: nothing is compiled when the cache files already exist");
+        check(second.candidates == kNeverCachedCount,
+              "prewarm again: only the files that can never be cached are tried again");
     }
 
     // ---- (4) あたためなしで作ったキャッシュとバイト一致する ----
@@ -185,6 +223,7 @@ bool RunShaderManagerPrewarmSelfTest()
         plain.Load("good_a");
         plain.Load("good_b");
         plain.LoadCompute("comp.cs");
+        plain.Load("from_include");
         const std::vector<std::wstring> warmFiles = CacheFiles(warmCache);
         const std::vector<std::wstring> plainFiles = CacheFiles(plainCache);
         bool same = warmFiles == plainFiles && static_cast<int>(plainFiles.size()) == kGoodCount;
