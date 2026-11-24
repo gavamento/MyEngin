@@ -10,6 +10,9 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <string_view>
+#include <thread>
+#include <unordered_set>
 
 #include <process.h>
 
@@ -760,6 +763,124 @@ void ShaderManager::SetCacheDir(std::wstring dir, bool enabled)
     }
 }
 
+ShaderManager::PrewarmStats ShaderManager::PrewarmCache()
+{
+    PrewarmStats stats;
+    if (device_ == nullptr || cacheDir_.empty()) {
+        return stats; // ヘッドレス、またはキャッシュ無効
+    }
+    const auto start = std::chrono::steady_clock::now();
+
+    // 候補の名前 = 各ルート直下の *.hlsl とプロジェクト索引。順序は名前順に固定する
+    std::vector<std::string> names;
+    {
+        std::unordered_set<std::string> seen;
+        std::error_code ec;
+        for (const std::wstring& dir : dirs_) {
+            for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+                if (!entry.is_regular_file(ec) || entry.path().extension() != L".hlsl") {
+                    continue;
+                }
+                std::string name = WideToUtf8(entry.path().stem().wstring());
+                if (seen.insert(name).second) {
+                    names.push_back(std::move(name));
+                }
+            }
+        }
+        for (const auto& indexed : projectShaders_) {
+            if (seen.insert(indexed.first).second) {
+                names.push_back(indexed.first);
+            }
+        }
+        std::sort(names.begin(), names.end());
+    }
+
+    enum class Kind { Program, Compute, Surface };
+    struct Job {
+        std::wstring path;
+        Kind kind;
+    };
+    std::vector<Job> jobs;
+    for (const std::string& name : names) {
+        const std::string_view view(name);
+        if (view.ends_with(".kernel")) {
+            continue; // カーネルは Compute.ForEach が別の経路で扱う
+        }
+        const Kind kind = view.ends_with(".cs") ? Kind::Compute
+            : view.ends_with(".surface") ? Kind::Surface : Kind::Program;
+        // Load が見るのと同じファイルを指させる (索引と、上位ルートが同名を隠す規則)
+        const std::wstring path = ResolvePath(name);
+        const std::wstring cacheFile = (kind == Kind::Surface)
+            ? SurfaceShaderCacheFileName(path) : ShaderCacheFileName(path, kind == Kind::Compute);
+        std::error_code ec;
+        if (std::filesystem::exists(cacheDir_ + L"\\" + cacheFile, ec)) {
+            continue; // 鮮度は後の Load が確かめる
+        }
+        // 入口関数を持たないファイル (取り込まれる側) はプログラムではない
+        std::vector<char> source;
+        if (!ReadFileBytes(path, source)) {
+            continue;
+        }
+        const std::string_view text(source.data(), source.size());
+        const bool hasEntry = (kind == Kind::Compute) ? text.find("CSMain") != std::string_view::npos
+            : (kind == Kind::Surface) ? text.find("PSMain") != std::string_view::npos
+            : text.find("VSMain") != std::string_view::npos && text.find("PSMain") != std::string_view::npos;
+        if (hasEntry) {
+            jobs.push_back({ path, kind });
+        }
+    }
+    stats.candidates = static_cast<int>(jobs.size());
+    if (jobs.empty()) {
+        return stats;
+    }
+
+    // 結果のプログラムは捨てる。欲しいのは CompileProgram が書くキャッシュファイルだけ
+    std::atomic<size_t> next{ 0 };
+    std::atomic<int> compiled{ 0 };
+    const auto work = [&] {
+        for (;;) {
+            const size_t index = next.fetch_add(1);
+            if (index >= jobs.size()) {
+                return;
+            }
+            const Job& job = jobs[index];
+            bool ok = false;
+            if (job.kind == Kind::Surface) {
+                SurfaceProgram scratch;
+                scratch.path = job.path;
+                ok = CompileSurfaceProgram(job.path, scratch, 0, CompileLog::SuppressErrors);
+            } else {
+                ShaderProgram scratch;
+                scratch.path = job.path;
+                scratch.isCompute = (job.kind == Kind::Compute);
+                ok = CompileProgram(job.path, scratch, CompileLog::SuppressErrors);
+            }
+            if (ok) {
+                ++compiled;
+            }
+        }
+    };
+    constexpr int kMaxPrewarmThreads = 16;
+    const int hardware = static_cast<int>(std::thread::hardware_concurrency());
+    stats.threads = std::clamp(std::min(hardware, static_cast<int>(jobs.size())), 1, kMaxPrewarmThreads);
+    {
+        std::vector<std::thread> helpers;
+        helpers.reserve(static_cast<size_t>(stats.threads - 1));
+        for (int i = 1; i < stats.threads; ++i) {
+            helpers.emplace_back(work);
+        }
+        work(); // 呼び出しスレッドも 1 本ぶん働く
+        for (std::thread& helper : helpers) {
+            helper.join();
+        }
+    }
+    stats.compiled = compiled.load();
+    stats.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    MYE_LOG_INFO("[shadercache] prewarm: %d candidate(s), %d compiled on %d thread(s), %.1f ms",
+                 stats.candidates, stats.compiled, stats.threads, stats.ms);
+    return stats;
+}
+
 std::wstring ShaderManager::ResolveInclude(const char* name, std::vector<char>* outData) const
 {
     std::vector<char> scratch;
@@ -818,7 +939,8 @@ bool ShaderManager::TryLoadCached(const std::wstring& path, const std::vector<ch
 }
 
 bool ShaderManager::Instantiate(const std::string& pathUtf8,
-                                const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out)
+                                const std::vector<std::vector<uint8_t>>& blobs, ShaderProgram& out,
+                                CompileLog log)
 {
     ID3D11Device* dev = device_->Device();
     out.cs.Reset();
@@ -829,7 +951,9 @@ bool ShaderManager::Instantiate(const std::string& pathUtf8,
         if (blobs.size() != 1
             || FAILED(dev->CreateComputeShader(blobs[0].data(), blobs[0].size(), nullptr,
                                                out.cs.GetAddressOf()))) {
-            MYE_LOG_ERROR("compute shader creation failed: %s", pathUtf8.c_str());
+            if (log == CompileLog::Report) {
+                MYE_LOG_ERROR("compute shader creation failed: %s", pathUtf8.c_str());
+            }
             return false;
         }
         // v21 (M78e): バイトコードを保持して ComputeAbiRunner の D3DReflect 名前バインドを可能にする
@@ -841,21 +965,27 @@ bool ShaderManager::Instantiate(const std::string& pathUtf8,
                                           out.vs.GetAddressOf()))
         || FAILED(dev->CreatePixelShader(blobs[1].data(), blobs[1].size(), nullptr,
                                          out.ps.GetAddressOf()))) {
-        MYE_LOG_ERROR("shader object creation failed: %s", pathUtf8.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("shader object creation failed: %s", pathUtf8.c_str());
+        }
         return false;
     }
     if (!BuildInputLayout(dev, blobs[0], out.inputLayout)) {
-        MYE_LOG_ERROR("input layout creation failed: %s", pathUtf8.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("input layout creation failed: %s", pathUtf8.c_str());
+        }
         return false;
     }
     return true;
 }
 
-bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
+bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out, CompileLog log)
 {
     std::vector<char> source;
     if (!ReadFileBytes(path, source)) {
-        MYE_LOG_ERROR("shader file not found: %s", WideToUtf8(path).c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("shader file not found: %s", WideToUtf8(path).c_str());
+        }
         return false;
     }
     const std::string pathUtf8 = WideToUtf8(path);
@@ -882,7 +1012,9 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
         if (FAILED(hr)) {
             const char* msg = errors ? static_cast<const char*>(errors->GetBufferPointer())
                                      : "(no error output)";
-            MYE_LOG_ERROR("HLSL %s (%s):\n%s", entryPoint, pathUtf8.c_str(), msg);
+            if (log == CompileLog::Report) {
+                MYE_LOG_ERROR("HLSL %s (%s):\n%s", entryPoint, pathUtf8.c_str(), msg);
+            }
             return false;
         }
         if (errors && errors->GetBufferSize() > 1) {
@@ -922,7 +1054,7 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
         }
         entry.deps = std::move(unique);
     }
-    if (!Instantiate(pathUtf8, entry.blobs, out)) {
+    if (!Instantiate(pathUtf8, entry.blobs, out, log)) {
         return false;
     }
     out.valid = true;
@@ -961,7 +1093,7 @@ bool ShaderManager::CompileProgram(const std::wstring& path, ShaderProgram& out)
 }
 
 bool ShaderManager::InstantiateSurface(const std::vector<std::vector<uint8_t>>& blobs,
-                                       SurfaceProgram& out)
+                                       SurfaceProgram& out, CompileLog log)
 {
     // blob の並び: メッシュ 5 本 (色VS,色PS,影VS,速度VS,速度PS) → スプライト 2 本 (VS,PS)。
     // 5 = メッシュのみ (従来)、2 = スプライトのみ、7 = 両方
@@ -986,7 +1118,9 @@ bool ShaderManager::InstantiateSurface(const std::vector<std::vector<uint8_t>>& 
                                              out.spritePS.GetAddressOf()))
             || !BuildInputLayout(dev, spriteVsBytecode, out.spriteInputLayout)) {
             out.errorMessage = "サーフェス規約: スプライト用シェーダオブジェクト作成に失敗";
-            MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+            if (log == CompileLog::Report) {
+                MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+            }
             return false;
         }
         ReflectSurfaceBytecode(spriteVsBytecode, out.spriteVSReflect);
@@ -1030,7 +1164,9 @@ bool ShaderManager::InstantiateSurface(const std::vector<std::vector<uint8_t>>& 
         || FAILED(dev->CreatePixelShader(velPsBytecode.data(), velPsBytecode.size(), nullptr,
                                          out.velocityPS.GetAddressOf()))) {
         out.errorMessage = "サーフェス規約: シェーダオブジェクト作成に失敗";
-        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        }
         return false;
     }
 
@@ -1039,7 +1175,9 @@ bool ShaderManager::InstantiateSurface(const std::vector<std::vector<uint8_t>>& 
         || !BuildSurfaceInputLayout(dev, shadowVsBytecode, out.shadowInputLayout, layoutErr)
         || !BuildSurfaceInputLayout(dev, velVsBytecode, out.velocityInputLayout, layoutErr)) {
         out.errorMessage = "サーフェス規約: " + layoutErr;
-        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        }
         return false;
     }
 
@@ -1090,12 +1228,14 @@ bool ShaderManager::TryLoadCachedSurface(const std::wstring& path, const std::ve
 // バイトコードキャッシュのキーは「生成エントリ込みのソース全体」(combined) のハッシュ
 // + 依存 include の中身ハッシュ (spec §4.4)。previousGeneration+1 を成功時の世代番号にする
 bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgram& out,
-                                          uint64_t previousGeneration)
+                                          uint64_t previousGeneration, CompileLog log)
 {
     std::vector<char> authorSource;
     if (!ReadFileBytes(path, authorSource)) {
         out.errorMessage = "shader file not found: " + WideToUtf8(path);
-        MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("%s", out.errorMessage.c_str());
+        }
         return false;
     }
     const std::string pathUtf8 = WideToUtf8(path);
@@ -1105,7 +1245,9 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
         ParseProperties(std::string_view(authorSource.data(), authorSource.size()));
     if (!out.propertiesSchema.ok) {
         out.errorMessage = "Properties パース失敗: " + out.propertiesSchema.errorMessage;
-        MYE_LOG_ERROR("HLSL surface (%s): %s", pathUtf8.c_str(), out.errorMessage.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("HLSL surface (%s): %s", pathUtf8.c_str(), out.errorMessage.c_str());
+        }
         return false;
     }
 
@@ -1190,7 +1332,9 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
             ? "サーフェス規約 (スプライト): float4 PSMain(MyeSpriteInput i) : SV_Target\n" + err
             : "サーフェス規約: VSOut VSMain(VSIn v) / float4 PSMain(VSOut i) : SV_Target / "
               "VSOut.pos : SV_Position\n" + err;
-        MYE_LOG_ERROR("HLSL surface (%s):\n%s", pathUtf8.c_str(), out.errorMessage.c_str());
+        if (log == CompileLog::Report) {
+            MYE_LOG_ERROR("HLSL surface (%s):\n%s", pathUtf8.c_str(), out.errorMessage.c_str());
+        }
         return false;
     }
 
@@ -1228,7 +1372,7 @@ bool ShaderManager::CompileSurfaceProgram(const std::wstring& path, SurfaceProgr
         blobs.push_back(spriteVsBytecode);
         blobs.push_back(spritePsBytecode);
     }
-    if (!InstantiateSurface(blobs, out)) {
+    if (!InstantiateSurface(blobs, out, log)) {
         return false;
     }
 

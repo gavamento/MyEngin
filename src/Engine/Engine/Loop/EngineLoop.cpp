@@ -426,6 +426,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         MYE_LOG_INFO("[shadercache] %s (%s)",
                      config.useShaderCache ? "enabled" : "disabled (compile every launch)",
                      WideToUtf8(shaderCacheDir).c_str());
+        // キャッシュの無いシェーダーを先に並列コンパイルしておく。以降の Load は順番どおりのまま
+        shaderManager.PrewarmCache();
     }
     reportStartupStage(StartupStage::Shaders);
     resources.Init(device);

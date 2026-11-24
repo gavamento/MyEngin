@@ -1398,6 +1398,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManager.cpp">
       <Filter>Renderer\Shader</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManagerPrewarmSelfTest.cpp">
+      <Filter>Renderer\Shader</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Shader\ShaderManagerProjectIndexSelfTest.cpp">
       <Filter>Renderer\Shader</Filter>
     </ClCompile>
@@ -2665,6 +2668,9 @@
       <Filter>Renderer\Shader</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManager.h">
+      <Filter>Renderer\Shader</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManagerPrewarmSelfTest.h">
       <Filter>Renderer\Shader</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Shader\ShaderManagerProjectIndexSelfTest.h">

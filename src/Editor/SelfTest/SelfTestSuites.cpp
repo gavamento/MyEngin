@@ -135,6 +135,7 @@
 #include "Engine/Renderer/PostFx/FxStackSelfTest.h"
 #include "Engine/Renderer/PostFx/ProjectEffectRunnerSelfTest.h"
 #include "Engine/Renderer/Shader/ProjectShaderPropertiesSelfTest.h"
+#include "Engine/Renderer/Shader/ShaderManagerPrewarmSelfTest.h"
 #include "Engine/Renderer/Shader/ShaderManagerProjectIndexSelfTest.h"
 #include "Engine/Renderer/Shader/SurfaceDeferredSelfTest.h"
 #include "Engine/Renderer/Shader/SurfaceMaterialSelfTest.h"
@@ -285,6 +286,7 @@ const SelfTestSuite kSuites[] = {
     { "terminalvsenv", mye::RunTerminalVsEnvSelfTest, SelfTestTier::Fast, "M106e: set 出力の解析・環境差分・エンジン環境変数の組み立て・VS 環境ローダー (偽 fetch。純関数 + スレッド)" },
     { "projecttemplates", mye::RunProjectTemplatesSelfTest, SelfTestTier::Fast, "テンプレートが書く開始内容 / デモを使うかの判定 / 空の開始シーン / DLL 無しの扱い" },
     { "textureloadbatch", mye::RunTextureLoadBatchSelfTest, SelfTestTier::Fast, "テクスチャのまとめ読み: 同期ロードとの一致 / sRGB 指定 / 入れ子 / 対象外のファイル (WARP)" },
+    { "shadermanagerprewarm", mye::RunShaderManagerPrewarmSelfTest, SelfTestTier::Fast, "シェーダーキャッシュのあたため: 対象の選び方 / 後の Load の命中 / あたためなしとのバイト一致 (WARP)" },
 };
 
 const SelfTestAlias kAliases[] = {
