@@ -100,4 +100,21 @@ std::wstring ProjectBootScenePath(const std::wstring& root, const ProjectManifes
     return root + L"\\assets\\" + rel;
 }
 
+size_t CountProjectScriptSources(const std::wstring& projectRoot)
+{
+    if (projectRoot.empty()) {
+        return 0;
+    }
+    // ディレクトリが無い場合は error_code 版の directory_iterator が end を返す = 0 本
+    std::error_code ec;
+    size_t count = 0;
+    const std::wstring scriptsDir = projectRoot + L"\\src\\GameLogic\\Scripts";
+    for (const auto& entry : std::filesystem::directory_iterator(scriptsDir, ec)) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == L".cpp") {
+            ++count;
+        }
+    }
+    return count;
+}
+
 } // namespace mye

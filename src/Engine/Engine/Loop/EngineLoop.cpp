@@ -573,7 +573,8 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         const std::wstring dllPath = config.projectRoot.empty()
             ? GetExecutableDir() + L"\\GameLogic.dll"
             : config.projectRoot + L"\\cache\\GameLogic.dll";
-        LoadGameLogic(scene, scriptHost, dllReloader, assetsRoot, dllPath, cacheHot);
+        LoadGameLogic(scene, scriptHost, dllReloader, assetsRoot, dllPath, cacheHot,
+                      config.projectRoot);
     }
     reportStartupStage(StartupStage::Scripts);
 

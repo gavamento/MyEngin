@@ -17,6 +17,7 @@
 #include "Engine/Engine/App/Project.h"
 #include "Engine/Engine/Demo/StartScene.h"
 #include "Engine/Engine/Loop/EngineLoop.h"
+#include "Engine/Engine/Loop/SimInit.h"
 #include "Engine/Engine/Scene/Scene.h"
 
 namespace mye {
@@ -207,6 +208,18 @@ bool RunProjectTemplatesSelfTest()
         check(countWith(CameraComponent::sTypeId) == 1 && countWith(LightComponent::sTypeId) == 1,
               "empty scene: one camera and one light");
         check(countWith(MeshRendererComponent::sTypeId) == 0, "empty scene: nothing to draw");
+    }
+
+    // ---- (6) GameLogic.dll が無いのが正常な条件 ----
+    {
+        check(IsMissingGameLogicExpected(true, 0, false),
+              "dll: a project with no script sources and no DLL is expected");
+        check(!IsMissingGameLogicExpected(true, 1, false),
+              "dll: script sources without a DLL is still a load failure");
+        check(!IsMissingGameLogicExpected(false, 0, false),
+              "dll: launching without a project still reports the missing DLL");
+        check(!IsMissingGameLogicExpected(true, 0, true),
+              "dll: an existing DLL is always loaded");
     }
 
     fs::remove_all(tempRoot, ec);

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <string>
 
 namespace mye {
@@ -46,5 +47,10 @@ bool SaveProjectManifest(const std::wstring& root, const ProjectManifest& m);
 
 // bootScene を assets 配下の絶対パス (バックスラッシュ区切り) に解決する
 std::wstring ProjectBootScenePath(const std::wstring& root, const ProjectManifest& m);
+
+// プロジェクトの C++ スクリプトのソース数 (<root>\src\GameLogic\Scripts 直下の .cpp。再帰しない)。
+// projectRoot が空、またはディレクトリが無ければ 0。
+// 列挙条件はエディタの PrepareProjectScriptsBat (AssetOps.cpp) と同じに保つこと
+size_t CountProjectScriptSources(const std::wstring& projectRoot);
 
 } // namespace mye

@@ -7,7 +7,7 @@
 
 namespace mye {
 
-// テンプレートが書く開始内容、デモを使うかの判定、空の開始シーン。全項目成功で true
+// テンプレートが書く開始内容、デモを使うかの判定、空の開始シーン、DLL 無しの扱い。全項目成功で true
 bool RunProjectTemplatesSelfTest();
 
 } // namespace mye

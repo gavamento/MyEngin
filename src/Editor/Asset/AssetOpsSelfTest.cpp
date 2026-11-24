@@ -22,6 +22,7 @@
 #include "Editor/Windows/Asset/AssetBrowserWindow.h" // AssetTileLabel
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/AI/BehaviorTreeLibrary.h"
+#include "Engine/Engine/App/Project.h" // CountProjectScriptSources
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Asset/TerrainAsset.h"
 #include "Engine/Engine/Loop/EngineLoop.h"

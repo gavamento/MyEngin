@@ -345,7 +345,8 @@ bool HeadlessSim::Init(const HeadlessSimSetup& setup)
     const std::wstring dllPath = m.config.projectRoot.empty()
         ? GetExecutableDir() + L"\\GameLogic.dll"
         : m.config.projectRoot + L"\\cache\\GameLogic.dll";
-    LoadGameLogic(m.scene, m.scriptHost, m.dllReloader, m.assetsRoot, dllPath, m.shadowCopyDir);
+    LoadGameLogic(m.scene, m.scriptHost, m.dllReloader, m.assetsRoot, dllPath, m.shadowCopyDir,
+                  m.config.projectRoot);
     SceneSerializer::SetManagedHost(&m.managedHost);
     m.audioScriptRng.Seed(kAudioScriptRngSeed);
     {
