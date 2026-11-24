@@ -27,6 +27,7 @@
 #include "Engine/Core/Localization/Localization.h"
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Demo/DemoContent.h"
+#include "Engine/Engine/Demo/StartScene.h" // ProjectUsesDemoContent / BuildEmptyStartScene
 #include "Engine/Engine/Scene/EntityNaming.h"
 #include "Engine/Engine/Physics/Fracture/FractureSystem.h" // PreloadFractureAssets (シーンロード直後の破片資産先読み)
 #include "Engine/Engine/HotReload/DllReloader.h"
@@ -171,27 +172,32 @@ void EditorApp::OnStart(EngineContext& ctx)
     // リソース (メッシュ/マテリアル/モデル) は毎回登録する。
     // シーンファイルは AssetID しか持たないため、実体の登録は起動側の責務
     // (パスベースの完全なアセット解決は AssetManager の将来拡張)
-    RegisterDemoContent(ctx);
+    const bool usesDemo = ProjectUsesDemoContent(ctx, scenePath_, showcase != nullptr);
+    if (usesDemo) {
+        RegisterDemoContent(ctx);
+    }
     RegisterAssetLibraries(ctx); // シーンロード前に .prefab/.anim を登録 (参照解決のため)
     if (startupObserver != nullptr) {
         startupObserver->OnStage(StartupStage::Assets);
     }
-    // ショーケース材質は無条件で登録する (M50a)。名前キーの少数登録で冪等・非ハッシュなので
-    // 常時登録が安全 — フラグゲートだと保存済みショーケースを --scene で直接開いたときに
-    // 材質が解決されず、キューブ群が描画されない
-    RegisterRtShowcaseContent(ctx);
-    RegisterPartsShowcaseContent(ctx);
-    RegisterFlowShowcaseContent(ctx); // M51j (flow_* 材質。少数の名前キー登録なので常時)
-    RegisterLocalPlayersContent(ctx); // M52g (mp_* 材質。同上の理由で常時)
-    RegisterNetDuelContent(ctx);      // M52i (duel_* 材質。同上)
-    RegisterRenderShowcaseContent(ctx); // M54a (rdemo_* 材質。同上)
-    RegisterTerrainShowcaseContent(ctx); // M58c (tdemo_* 材質。同上)
-    RegisterPhysicsShowcaseContent(ctx); // M59d (pdemo_* 材質。同上)
-    RegisterJointShowcaseContent(ctx);   // M60i (jdemo_* 材質 + 車輪メッシュ。同上)
-    RegisterFogShowcaseContent(ctx);     // M57追補 (fdemo_* 材質。同上)
-    RegisterParticleShowcaseContent(ctx); // M63a (vdemo_* 材質 + 手続きテクスチャ。同上)
-    RegisterAcousticShowcaseContent(ctx); // M65b (adem_* 材質。同上)
-    RegisterModalShowcaseContent(ctx);    // M76f (mdemo_* 材質。同上)
+    if (usesDemo) {
+        // ショーケース材質はデモを使う限り無条件で登録する (M50a)。名前キーの少数登録で冪等・非ハッシュなので
+        // 常時登録が安全 — フラグゲートだと保存済みショーケースを --scene で直接開いたときに
+        // 材質が解決されず、キューブ群が描画されない
+        RegisterRtShowcaseContent(ctx);
+        RegisterPartsShowcaseContent(ctx);
+        RegisterFlowShowcaseContent(ctx); // M51j (flow_* 材質。少数の名前キー登録なので常時)
+        RegisterLocalPlayersContent(ctx); // M52g (mp_* 材質。同上の理由で常時)
+        RegisterNetDuelContent(ctx);      // M52i (duel_* 材質。同上)
+        RegisterRenderShowcaseContent(ctx); // M54a (rdemo_* 材質。同上)
+        RegisterTerrainShowcaseContent(ctx); // M58c (tdemo_* 材質。同上)
+        RegisterPhysicsShowcaseContent(ctx); // M59d (pdemo_* 材質。同上)
+        RegisterJointShowcaseContent(ctx);   // M60i (jdemo_* 材質 + 車輪メッシュ。同上)
+        RegisterFogShowcaseContent(ctx);     // M57追補 (fdemo_* 材質。同上)
+        RegisterParticleShowcaseContent(ctx); // M63a (vdemo_* 材質 + 手続きテクスチャ。同上)
+        RegisterAcousticShowcaseContent(ctx); // M65b (adem_* 材質。同上)
+        RegisterModalShowcaseContent(ctx);    // M76f (mdemo_* 材質。同上)
+    }
     if (showcase != nullptr && showcase->prepare != nullptr) {
         // シーンファイルを先に確保してから普通のロード経路で開く (--flow-demo の 2 シーン)。
         // ここで組む = GameLogic.dll / C# コンパイル済み (EngineLoop が OnStart 前に実施)
@@ -208,8 +214,10 @@ void EditorApp::OnStart(EngineContext& ctx)
         PreloadFractureAssets(ctx.scene->GetWorld());
     } else if (showcase != nullptr && showcase->build != nullptr) {
         showcase->build(ctx, showcaseOptions);
-    } else {
+    } else if (usesDemo) {
         BuildDemoScene(ctx, perfRate, perfMax);
+    } else {
+        BuildEmptyStartScene(ctx);
     }
     if (startupObserver != nullptr) {
         startupObserver->OnStage(StartupStage::Scene);

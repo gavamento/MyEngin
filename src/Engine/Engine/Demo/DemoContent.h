@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace mye {
 
@@ -10,6 +11,10 @@ struct InputSnapshot; // M75f: UiDemoScriptInput
 // デモ用リソース (メッシュ / マテリアル / モデル) を登録する。
 // シーンファイルは AssetID しか持たないため実体登録は起動側の責務 — Editor / Runtime 共用。
 void RegisterDemoContent(EngineContext& ctx);
+
+// デモの地面テクスチャ (assets\textures\test.png) が読める形で在るか。
+// 配布物は元画像の代わりに同名の .dds を持つので、どちらかがあれば true
+bool DemoGroundTextureExists(const std::wstring& assetsRoot);
 
 // デモシーン (spinner / パーティクル / スクリプト) を構築する (シーンファイルが無い時のみ)。
 // perfRate>0 でパーティクル放出数を上書き (性能計測モード)

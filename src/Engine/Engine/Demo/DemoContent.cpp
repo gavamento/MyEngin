@@ -48,6 +48,27 @@
 
 namespace mye {
 
+namespace {
+
+std::wstring DemoGroundTexturePath(const std::wstring& assetsRoot)
+{
+    return assetsRoot + L"\\textures\\test.png";
+}
+
+} // namespace
+
+bool DemoGroundTextureExists(const std::wstring& assetsRoot)
+{
+    const std::filesystem::path source(DemoGroundTexturePath(assetsRoot));
+    std::error_code ec;
+    if (std::filesystem::exists(source, ec)) {
+        return true;
+    }
+    std::filesystem::path cooked = source;
+    cooked.replace_extension(L".dds");
+    return std::filesystem::exists(cooked, ec);
+}
+
 void RegisterDemoContent(EngineContext& ctx)
 {
     RenderResources& res = *ctx.resources;
@@ -66,8 +87,10 @@ void RegisterDemoContent(EngineContext& ctx)
     {
         Material m;
         m.shader = shader;
-        const AssetID groundTex =
-            res.textures.LoadFile(ctx.assetsRoot + L"\\textures\\test.png", true); // アルベド=sRGB (M38a)
+        // 無いファイルは読みに行かない (下の灰色の代替へ進む。毎回の読み込みエラーを出さない)
+        const AssetID groundTex = DemoGroundTextureExists(ctx.assetsRoot)
+            ? res.textures.LoadFile(DemoGroundTexturePath(ctx.assetsRoot), true) // アルベド=sRGB (M38a)
+            : AssetID{};
         m.texture = groundTex.IsNull() ? white : groundTex;
         m.baseColor = groundTex.IsNull() ? DirectX::XMFLOAT4{ 0.45f, 0.47f, 0.50f, 1.0f }
                                          : DirectX::XMFLOAT4{ 1.0f, 1.0f, 1.0f, 1.0f };

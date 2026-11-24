@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include "Editor/Asset/AssetOpsSelfTest.h"
+#include "Editor/Project/ProjectTemplatesSelfTest.h"
 #include "Editor/ChangeTracking/ChangeTrackingSelfTest.h"
 #include "Editor/Scene/CameraPilotSelfTest.h"
 #include "Editor/Tools/Browser/BrowserEmbedSelfTest.h"
@@ -281,6 +282,7 @@ const SelfTestSuite kSuites[] = {
     { "terminalconpty", mye::RunTerminalConPtySelfTest, SelfTestTier::Full, "M106c: ConPTY で cmd.exe を起動・echo 往復・リサイズ・再起動・非対応時の Unsupported" },
     { "terminalwindow", mye::RunTerminalLayoutSelfTest, SelfTestTier::Fast, "M106d: ターミナル窓の純関数 (セル→描画ラン・選択→文字列・ピクセル→行列・スクロール・出力への追従・キー振り分け・設定のクランプ)" },
     { "terminalvsenv", mye::RunTerminalVsEnvSelfTest, SelfTestTier::Fast, "M106e: set 出力の解析・環境差分・エンジン環境変数の組み立て・VS 環境ローダー (偽 fetch。純関数 + スレッド)" },
+    { "projecttemplates", mye::RunProjectTemplatesSelfTest, SelfTestTier::Fast, "テンプレートが書く開始内容 / デモを使うかの判定 / 空の開始シーン" },
 };
 
 const SelfTestAlias kAliases[] = {

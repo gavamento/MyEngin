@@ -17,6 +17,21 @@ std::wstring ManifestPath(const std::wstring& root)
     return root + L"\\" + kProjectManifestFile;
 }
 
+constexpr const char* kStartContentDemo = "demo";
+constexpr const char* kStartContentEmpty = "empty";
+
+// 知らない綴りは Unspecified (新しい版が書いた値を古い版が読んでも落ちない)
+ProjectStartContent ParseStartContent(const std::string& text)
+{
+    if (text == kStartContentDemo) {
+        return ProjectStartContent::Demo;
+    }
+    if (text == kStartContentEmpty) {
+        return ProjectStartContent::Empty;
+    }
+    return ProjectStartContent::Unspecified;
+}
+
 } // namespace
 
 bool IsProjectRoot(const std::wstring& dir)
@@ -38,6 +53,7 @@ bool LoadProjectManifest(const std::wstring& root, ProjectManifest& out)
         out.engineVersion = j.value("engineVersion", out.engineVersion);
         out.bootScene = j.value("bootScene", out.bootScene);
         out.canonicalRoot = j.value("canonicalRoot", out.canonicalRoot);
+        out.startContent = ParseStartContent(j.value("startContent", std::string()));
         return true;
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("project.mye.json parse error: %s", ex.what());
@@ -56,6 +72,12 @@ bool SaveProjectManifest(const std::wstring& root, const ProjectManifest& m)
     // 「未記録」と「空に設定した」の区別が付かなくなる (M66b)
     if (!m.canonicalRoot.empty()) {
         j["canonicalRoot"] = m.canonicalRoot;
+    }
+    // Unspecified はキーを書かない (読み直しても「推定する」のままにする)
+    if (m.startContent == ProjectStartContent::Demo) {
+        j["startContent"] = kStartContentDemo;
+    } else if (m.startContent == ProjectStartContent::Empty) {
+        j["startContent"] = kStartContentEmpty;
     }
 
     std::ofstream f(std::filesystem::path(ManifestPath(root)), std::ios::binary);
