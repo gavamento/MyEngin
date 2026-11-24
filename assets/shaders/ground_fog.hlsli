@@ -127,6 +127,8 @@ float3 GfogLocalLightRadiance(GroundFogLight lt, float3 p, out float3 travelDir)
     return lt.colorKind.rgb * atten;
 }
 
+// 局所ライトのループが空に畳まれる取り込み元 (パーティクル描画) で X3557 が出る。空でよいので黙らせる
+#pragma warning(disable: 3557)
 // 段 1 つぶんの散乱放射輝度 (単位 σ あたり)。lightMask = この層・この線分に届く局所ライトのビット (0 = 照らさない)
 float3 GfogStepRadiance(DisturbanceLayer L, float3 p, float3 rayDir, uint lightMask)
 {
@@ -146,6 +148,7 @@ float3 GfogStepRadiance(DisturbanceLayer L, float3 p, float3 rayDir, uint lightM
     }
     return radiance;
 }
+#pragma warning(default: 3557)
 
 // 層 i の板を [t0, t1] で積分して、(color × T + inscatter) を返す。additive のときは inscatter を足さない
 float3 GfogIntegrateLayer(uint i, float3 origin, float3 rayDir, float t0, float t1, float jitter, float3 color,
