@@ -1251,6 +1251,9 @@
     <ClCompile Include="..\src\Engine\Renderer\Device\SwapChain.cpp">
       <Filter>Renderer\Device</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Renderer\Device\TextureLoadBatchSelfTest.cpp">
+      <Filter>Renderer\Device</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Renderer\Device\VolumeTexture.cpp">
       <Filter>Renderer\Device</Filter>
     </ClCompile>
@@ -2479,6 +2482,9 @@
       <Filter>Renderer\Device</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Device\SwapChain.h">
+      <Filter>Renderer\Device</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Renderer\Device\TextureLoadBatchSelfTest.h">
       <Filter>Renderer\Device</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Renderer\Device\VolumeTexture.h">

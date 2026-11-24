@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -241,7 +242,8 @@ public:
     // CPU デコード (stb_image) はワーカースレッド、GPU 作成+差し替えは PollAsyncLoads
     // (メインスレッドのセーフポイント) で行う。決定論には無関係 (テクスチャは非ハッシュ)。
     // 毎フレーム同じパスで呼んでも冪等 (ロード済み/処理中は即 return)。
-    AssetID RequestLoadFileAsync(const std::wstring& path);
+    // srgbHint は LoadFile の srgb と同じ意味 (.meta が auto のときだけ効く)
+    AssetID RequestLoadFileAsync(const std::wstring& path, bool srgbHint = false);
     // メインスレッドで毎フレーム呼ぶ。デコード完了分を GPU テクスチャ化して公開する。
     void PollAsyncLoads();
     // M52c: 決定的スクショ用。進行中の非同期デコードが**全て公開されるまで**待つ。
@@ -252,6 +254,15 @@ public:
     bool IsPending(AssetID id) const { return pending_.count(id.value) != 0; }
     // 非同期ロードを投入してまだ公開されていない枚数 (メインスレッド専用。プロファイラ表示用)
     int PendingAsyncCount() const { return static_cast<int>(pending_.size()); }
+
+    // まとめ読みの開始と終了。対で呼ぶこと (通常は下の TextureLoadBatch に任せる)。メインスレッド専用。
+    // 開始から終了までの LoadFile は、画像ファイルならデコードをワーカーへ回して ID だけ返す。
+    // 最も外側の終了で、全件が公開されるまで待つ (結果は同期ロードと同じ)。
+    // 範囲内では LoadFile の直後にそのテクスチャの寸法や中身を読まないこと (白の 1x1 が返る)
+    void BeginLoadBatch();
+    void EndLoadBatch();
+    // デコード用ワーカーの本数 (起動前でも、起動したら何本になるかを返す)
+    static int DecodeWorkerCount();
 
     // ファイルパスに対応する AssetID (正規化パスのハッシュ)。ロード有無に関わらず同じ値
     static AssetID IdForFile(const std::wstring& path);
@@ -275,6 +286,7 @@ private:
     bool MakePlaceholder(Texture& out);
     void EnsureWorker();
     void AsyncWorker();
+    static bool CanDecodeOnWorker(const std::wstring& path);
 
     GraphicsDevice* device_ = nullptr;
     std::unordered_map<uint64_t, Texture> textures_;
@@ -297,15 +309,40 @@ private:
         bool ok = false;
         float decodeMs = 0.0f; // ワーカーで測ったデコード時間 (プロファイラの記録用)
     };
-    std::thread worker_;
+    // 公開済みの非同期ロードの累計 (まとめ読みの集計ログ用)。メインスレッド専用
+    struct AsyncTotals {
+        uint32_t published = 0;
+        double decodeMs = 0.0; // ワーカーでのデコード時間の合計
+        double uploadMs = 0.0; // メインスレッドでの GPU 作成時間の合計
+    };
+    static constexpr int kMaxDecodeWorkers = 8;
+    std::vector<std::thread> workers_;
     std::mutex asyncMutex_;
     std::condition_variable asyncCv_;
     std::deque<DecodeJob> jobQueue_;       // asyncMutex_ で保護
     std::vector<DecodeResult> doneQueue_;  // asyncMutex_ で保護
     std::unordered_set<uint64_t> pending_; // メインスレッド専用 (二重投入ガード)
     std::unordered_map<uint64_t, uint64_t> generations_; // リロード後の旧decode結果を拒否
+    std::unordered_map<uint64_t, bool> asyncSrgbHints_;  // 投入時の srgbHint。メインスレッド専用
+    AsyncTotals asyncTotals_;
+    int batchDepth_ = 0;          // BeginLoadBatch の入れ子の深さ
+    uint32_t batchRequested_ = 0; // 最も外側のまとめ読みがワーカーへ回した枚数
+    AsyncTotals batchStartTotals_;
+    std::chrono::steady_clock::time_point batchStart_;
     bool workerStop_ = false;              // asyncMutex_ で保護
     bool workerStarted_ = false;           // メインスレッド専用
+};
+
+// TextureLibrary のまとめ読みの範囲。スコープを出るときに全件の公開を待つ
+class TextureLoadBatch {
+public:
+    explicit TextureLoadBatch(TextureLibrary& textures) : textures_(textures) { textures_.BeginLoadBatch(); }
+    ~TextureLoadBatch() { textures_.EndLoadBatch(); }
+    TextureLoadBatch(const TextureLoadBatch&) = delete;
+    TextureLoadBatch& operator=(const TextureLoadBatch&) = delete;
+
+private:
+    TextureLibrary& textures_;
 };
 
 // ---- マテリアル ----

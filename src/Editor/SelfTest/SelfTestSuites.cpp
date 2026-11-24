@@ -46,6 +46,7 @@
 #include "Engine/Core/Jobs/JobSystemSelfTest.h"
 #include "Engine/Core/Localization/LocalizationSelfTest.h"
 #include "Engine/Renderer/Device/GpuMemorySelfTest.h"
+#include "Engine/Renderer/Device/TextureLoadBatchSelfTest.h"
 #include "Engine/Engine/Feel/FeelLibrarySelfTest.h"
 #include "Engine/Engine/Feel/FeelMathSelfTest.h"
 #include "Engine/Engine/Feel/FeelSystemSelfTest.h"
@@ -283,6 +284,7 @@ const SelfTestSuite kSuites[] = {
     { "terminalwindow", mye::RunTerminalLayoutSelfTest, SelfTestTier::Fast, "M106d: ターミナル窓の純関数 (セル→描画ラン・選択→文字列・ピクセル→行列・スクロール・出力への追従・キー振り分け・設定のクランプ)" },
     { "terminalvsenv", mye::RunTerminalVsEnvSelfTest, SelfTestTier::Fast, "M106e: set 出力の解析・環境差分・エンジン環境変数の組み立て・VS 環境ローダー (偽 fetch。純関数 + スレッド)" },
     { "projecttemplates", mye::RunProjectTemplatesSelfTest, SelfTestTier::Fast, "テンプレートが書く開始内容 / デモを使うかの判定 / 空の開始シーン / DLL 無しの扱い" },
+    { "textureloadbatch", mye::RunTextureLoadBatchSelfTest, SelfTestTier::Fast, "テクスチャのまとめ読み: 同期ロードとの一致 / sRGB 指定 / 入れ子 / 対象外のファイル (WARP)" },
 };
 
 const SelfTestAlias kAliases[] = {

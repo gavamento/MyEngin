@@ -355,6 +355,7 @@
     <ClCompile Include="..\src\Engine\Renderer\Device\ReflectionClassJson.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\RenderTexture.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\SwapChain.cpp" />
+    <ClCompile Include="..\src\Engine\Renderer\Device\TextureLoadBatchSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\Device\VolumeTexture.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.cpp" />
     <ClCompile Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.cpp" />
@@ -765,6 +766,7 @@
     <ClInclude Include="..\src\Engine\Renderer\Device\ReflectionClassJson.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\RenderTexture.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\SwapChain.h" />
+    <ClInclude Include="..\src\Engine\Renderer\Device\TextureLoadBatchSelfTest.h" />
     <ClInclude Include="..\src\Engine\Renderer\Device\VolumeTexture.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiRenderer.h" />
     <ClInclude Include="..\src\Engine\Renderer\ImGui\ImGuiTheme.h" />

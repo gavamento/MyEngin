@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cwctype>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -235,6 +236,12 @@ void RegisterAssetLibraries(EngineContext& ctx)
     }
     // 起動時アセット走査の所要時間 (M51b のクック効果を含む診断値。sim には無関係)
     const auto scanStart = std::chrono::steady_clock::now();
+    // 走査中のテクスチャ読み込みは並列デコードに回し、走査の終わりで全件そろえる。
+    // この関数の中では、読み込んだテクスチャの寸法や中身を読まないこと
+    std::optional<TextureLoadBatch> textureBatch;
+    if (ctx.resources != nullptr) {
+        textureBatch.emplace(ctx.resources->textures);
+    }
     std::vector<std::wstring> audioFiles; // 走査後にまとめて判定する (M45f。下の注記参照)
     std::vector<std::wstring> impactFiles; // .impact.json (手続き生成。走査後にまとめて生成)
     for (const auto& e : std::filesystem::recursive_directory_iterator(ctx.assetsRoot, ec)) {
@@ -399,6 +406,7 @@ void RegisterAssetLibraries(EngineContext& ctx)
         }
     }
 
+    textureBatch.reset(); // ここで全テクスチャの公開を待つ (待ち時間は下の走査時間に入る)
     const double scanMs = std::chrono::duration<double, std::milli>(
                               std::chrono::steady_clock::now() - scanStart)
                               .count();
