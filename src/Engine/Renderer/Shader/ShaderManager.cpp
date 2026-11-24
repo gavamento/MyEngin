@@ -787,9 +787,9 @@ ShaderManager::PrewarmStats ShaderManager::PrewarmCache()
                 }
             }
         }
-        for (const auto& indexed : projectShaders_) {
-            if (seen.insert(indexed.first).second) {
-                names.push_back(indexed.first);
+        for (std::string& name : ProjectShaderNames()) {
+            if (seen.insert(name).second) {
+                names.push_back(std::move(name));
             }
         }
         std::sort(names.begin(), names.end());
