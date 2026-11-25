@@ -21,6 +21,7 @@ external\eos-sdk\
 ```
 
 4. Visual Studio でソリューションを開き直してビルドする。`build\Common.props` が `Include\eos_sdk.h` の有無を見て `MYE_HAS_EOS=1` を立て、exe へ lib を渡し、2 つの DLL を `bin\x64\<構成>\` へコピーする。`xaudio2_9redist.dll` が無いとボイスだけが無効になる (ロビーと P2P は動く)。
+   exe は SDK の DLL を遅延ロードで参照するので、DLL が隣に無くても起動する (そのときオンラインだけが無効になる)。エディタのゲーム書き出しは、`online.backend` が `eos` のプロジェクトにだけ 2 つの DLL を同梱する。
 5. `assets\project_settings.json` (ゲームのプロジェクトなら `<project>\assets\project_settings.json`) の `online` 節を埋める。値の取り方とポータルの設定は `docs\eos-setup.md`。
 
 ## 使っている版

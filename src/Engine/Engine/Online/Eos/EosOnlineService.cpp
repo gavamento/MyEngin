@@ -29,6 +29,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/App/Project.h"
+#include "Engine/Engine/Online/Eos/EosRedist.h"
 #include "Engine/Platform/PathUtil.h"
 
 namespace mye {
@@ -41,8 +42,6 @@ constexpr char kSocketName[] = "mye";
 constexpr char kAttrJoinCode[] = "JOINCODE";
 constexpr char kAttrName[] = "NAME";
 constexpr char kBucketId[] = "myengine";
-// RTC (ボイス) の再生に要る XAudio2.9 の再配布 DLL。SDK の ThirdParty から exe の隣へコピーする (BUILD.md)
-constexpr wchar_t kXAudioRedist[] = L"xaudio2_9redist.dll";
 
 void CopyText(char* dst, size_t cap, const char* src)
 {
@@ -106,17 +105,18 @@ public:
         EOS_Logging_SetLogLevel(EOS_ELogCategory::EOS_LC_ALL_CATEGORIES, EOS_ELogLevel::EOS_LOG_Warning);
 
         // RTC (ボイス) を使うなら XAudio2.9 の再配布 DLL の場所を渡す (無いと RTC が初期化されない)
-        const std::string xaudioPath = WideToUtf8(GetExecutableDir() + L"\\" + kXAudioRedist);
+        const std::string xaudioPath = WideToUtf8(GetExecutableDir() + L"\\" + kEosXAudioRedistDll);
         EOS_Windows_RTCOptions winRtc = {};
         winRtc.ApiVersion = EOS_WINDOWS_RTCOPTIONS_API_LATEST;
         winRtc.XAudio29DllPath = xaudioPath.c_str();
         EOS_Platform_RTCOptions rtc = {};
         rtc.ApiVersion = EOS_PLATFORM_RTCOPTIONS_API_LATEST;
         rtc.PlatformSpecificOptions = &winRtc;
-        const bool voiceUsable = settings.voiceEnabled && std::filesystem::exists(GetExecutableDir() + L"\\" + kXAudioRedist);
+        const bool voiceUsable = settings.voiceEnabled
+            && std::filesystem::exists(GetExecutableDir() + L"\\" + kEosXAudioRedistDll);
         if (settings.voiceEnabled && !voiceUsable) {
             MYE_LOG_WARN("[online] voice is off: %s is missing next to the exe (see external\\eos-sdk\\BUILD.md)",
-                         WideToUtf8(kXAudioRedist).c_str());
+                         WideToUtf8(kEosXAudioRedistDll).c_str());
         }
         voiceUsable_ = voiceUsable;
 
@@ -834,6 +834,15 @@ private:
 
 std::unique_ptr<IOnlineService> CreateEosOnlineService()
 {
+    // SDK の DLL は遅延ロード。無いまま SDK の関数を呼ぶと例外で落ちるので、作る前に読み込んで確かめる。
+    // 読み込んだモジュールは解放しない (以後の SDK 呼び出しが同じモジュールを使う)
+    const std::wstring dllPath = GetExecutableDir() + L"\\" + kEosSdkDll;
+    if (LoadLibraryW(dllPath.c_str()) == nullptr) {
+        const DWORD loadError = GetLastError();
+        MYE_LOG_WARN("[online] cannot load %s (error %lu) - online features are off", WideToUtf8(dllPath).c_str(),
+                     loadError);
+        return nullptr;
+    }
     return std::make_unique<EosOnlineService>();
 }
 

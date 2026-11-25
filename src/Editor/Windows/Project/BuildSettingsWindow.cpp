@@ -20,6 +20,7 @@
 #include "Engine/Engine/Asset/AssetDatabase.h"
 #include "Engine/Engine/Asset/FbxLoader.h"
 #include "Engine/Engine/Asset/ModelLoader.h"
+#include "Engine/Engine/Online/OnlineRedist.h"
 #include "Engine/Engine/Script/ManagedHost.h"
 #include "Engine/Engine/Schema/SchemaCodegen.h"
 #include "Engine/Engine/Session/Provenance.h"
@@ -202,6 +203,31 @@ bool BuildSettingsWindow::StageCopy(EngineContext& ctx, std::string& detail)
         } else {
             detail = "coreclr.dll or hostfxr.dll not located";
             return false;
+        }
+    }
+
+    // 1d) オンライン実装の実行時 DLL。プロジェクトが選んだ backend の分だけ同梱する
+    // (exe は遅延ロードで参照するので、オンラインを使わないゲームには要らない)
+    {
+        OnlineSettings onlineSettings;
+        LoadOnlineSettings(ctx.assetsRoot, onlineSettings);
+        for (const OnlineRedistFile& file : OnlineRedistFiles(onlineSettings.backend)) {
+            const fs::path src = exeDir / file.fileName;
+            if (!fs::exists(src, ec)) {
+                if (file.required) {
+                    detail = "online runtime DLL not found next to Editor.exe";
+                    MYE_LOG_ERROR("[build] online.backend \"%s\" needs %s next to Editor.exe",
+                                  OnlineBackendName(onlineSettings.backend), WideToUtf8(src.wstring()).c_str());
+                    return false;
+                }
+                MYE_LOG_WARN("[build] optional online runtime DLL is missing: %s",
+                             WideToUtf8(src.wstring()).c_str());
+                continue;
+            }
+            if (!copyFile(src, out / file.fileName)) {
+                detail = "online runtime DLL copy failed";
+                return false;
+            }
         }
     }
 

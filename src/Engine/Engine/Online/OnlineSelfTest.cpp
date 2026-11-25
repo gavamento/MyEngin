@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@
 
 #include "Engine/Core/Diagnostics/Log.h"
 #include "Engine/Engine/Online/LocalOnlineService.h"
+#include "Engine/Engine/Online/OnlineRedist.h"
 #include "Engine/Engine/Online/OnlineSession.h"
 #include "Engine/Engine/Net/NetRuntime.h"
 #include "Engine/Engine/Script/EngineApiTable.h"
@@ -80,6 +82,22 @@ bool RunOnlineSelfTest()
         }
         check(alphabetOk, "join code: 6 chars from the 32-char alphabet (no I / O / 0 / 1)");
         check(a == OnlineSession::MakeJoinCode(1) && a != b, "join code: same entropy -> same code, different -> different");
+    }
+
+    // ---- ゲームの配布物へ同梱する実行時ファイル ----
+    {
+        check(OnlineRedistFiles(OnlineBackend::None).empty() && OnlineRedistFiles(OnlineBackend::Local).empty(),
+              "redist: none / local ask for no runtime files (an offline game ships without the SDK DLL)");
+        const std::span<const OnlineRedistFile> eos = OnlineRedistFiles(OnlineBackend::Eos);
+#if defined(MYE_HAS_EOS)
+        bool eosOk = !eos.empty() && eos[0].required;
+#else
+        bool eosOk = eos.empty();
+#endif
+        for (const OnlineRedistFile& file : eos) {
+            eosOk = eosOk && file.fileName != nullptr && file.fileName[0] != L'\0';
+        }
+        check(eosOk, "redist: eos asks for its SDK DLL (required) only in a build that has the SDK");
     }
 
     // ---- 中継の分割と組み立て ----

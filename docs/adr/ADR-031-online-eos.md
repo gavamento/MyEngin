@@ -67,6 +67,21 @@ Vivox は位置音声が楽だが入口 (ロビー・NAT 越え) を別に要る
 `build\Common.props` が `Include\eos_sdk.h` の有無を見て `MYE_HAS_EOS` を立てる。SDK が無ければ EOS 実装は
 空の翻訳単位になり、CI はそのままビルドできる。EOS の名前は `Online\Eos\` と `Common.props` だけ (check_rules 規則 13-d)。
 
+### 追補 (2026-11-25): SDK の DLL は遅延ロードし、ゲームには使うときだけ同梱する
+
+SDK 付きでビルドした Runtime.exe は SDK の DLL を通常の import で参照していたので、オンラインを使わないゲームでも
+DLL が exe の隣に無いと起動できなかった。ゲーム書き出し (Build Settings) は DLL を運んでいなかったため、
+SDK を置いた開発機で書き出したゲームがすべて起動しなかった。
+
+- exe は SDK の DLL を遅延ロード (`/DELAYLOAD`) で参照する。DLL が無くても起動できる。
+- `CreateEosOnlineService` が exe の隣の DLL を先に読み込んで確かめる。無ければ理由を WARN して nullptr を返し、
+  オンラインだけが無効になる (SDK 無しのビルドで `eos` を選んだときと同じ縮退)。
+- ゲーム書き出しは、プロジェクトの `online.backend` に応じて `OnlineRedistFiles` が挙げるファイルだけを同梱する。
+  `eos` なら SDK の DLL (必須。無ければ書き出しを失敗にする) と `xaudio2_9redist.dll` (任意)、`none` / `local` は無し。
+
+採らなかった案: 書き出しで常に DLL を同梱する。変更は小さいが、オンラインを使わないゲームに 19.5 MB の DLL と
+SDK の告知義務を持ち込み、DLL を消すと起動できない状態も残る。
+
 ## 決定 5: sim との境界
 
 オンラインの値 (人数、表示名、発話中、P2P の到着順と時刻) は sim の外。sim へ入るのは、ホストの Server.exe が

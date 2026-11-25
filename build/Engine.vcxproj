@@ -203,6 +203,7 @@
     <ClCompile Include="..\src\Engine\Engine\Online\HostServerProcess.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Online\LocalOnlineService.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineFactory.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineRedist.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineSession.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineSettings.cpp" />
@@ -598,9 +599,11 @@
     <ClInclude Include="..\src\Engine\Engine\Net\ServerNetSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Net\ServerSession.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\Eos\EosOnlineService.h" />
+    <ClInclude Include="..\src\Engine\Engine\Online\Eos\EosRedist.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\HostServerProcess.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\IOnlineService.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\LocalOnlineService.h" />
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineRedist.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\OnlineSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\OnlineSession.h" />
     <ClInclude Include="..\src\Engine\Engine\Online\OnlineSettings.h" />

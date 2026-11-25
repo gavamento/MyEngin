@@ -10,7 +10,8 @@
 
 namespace mye {
 
-// EOS の実装を作る。SDK を入れずにビルドした (MYE_HAS_EOS が無い) ときは nullptr。
+// EOS の実装を作る。SDK を入れずにビルドした (MYE_HAS_EOS が無い) とき、
+// または SDK の DLL が exe の隣に無いとき (理由を WARN) は nullptr。
 // ★SDK の型はこのヘッダから出さない (規則 13-d: EOS の名前は Online\Eos\ の .cpp に閉じる)
 std::unique_ptr<IOnlineService> CreateEosOnlineService();
 

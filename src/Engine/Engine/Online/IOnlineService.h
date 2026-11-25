@@ -58,7 +58,8 @@ public:
     virtual void SetMemberMuted(const char* memberId, bool muted) = 0;
 };
 
-// settings.backend に応じた実装を作る。None / SDK 無しの Eos → nullptr (Eos のときは理由を WARN)。
+// settings.backend に応じた実装を作る。None / SDK 無しの Eos / SDK の DLL が無い Eos → nullptr
+// (Eos のときは理由を WARN)。
 // ★Editor / Runtime の main から呼んで EngineConfig へ渡す。Engine.lib の中から呼ばないのは、
 //   Server.exe (Engine.lib をリンクする) に EOS SDK の import を持ち込まないため
 std::unique_ptr<IOnlineService> CreateOnlineService(OnlineBackend backend);

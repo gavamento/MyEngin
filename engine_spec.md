@@ -1,7 +1,7 @@
 # Custom Game Engine Specification
 
 - **Engine Name**: MyEngine
-- **Version**: 0.89.3 (エンジンの版 `kEngineVersion`。GitHub Releases の `v0.89.3`、M98 / M106)
+- **Version**: 0.89.4 (エンジンの版 `kEngineVersion`。GitHub Releases の `v0.89.4`、M98 / M106)
 - **Author**: Gavament
 - **Last Updated**: 2026-11-11
 
@@ -4137,6 +4137,10 @@ speaking). Implementations: `EosOnlineService` (Device ID login through Connect,
 selftests and CI). `project_settings.json` `online.backend` selects `eos` / `local` / `none`;
 `--online-backend` overrides it. The Runtime's `main` passes `CreateOnlineService` through
 `EngineConfig::createOnlineService`; `Server.exe` never does, so it carries no EOS import.
+The SDK DLL is delay-loaded: an exe built with the SDK starts without it, and `CreateEosOnlineService`
+returns null with a warning when the DLL is not next to the exe (the game runs offline). The editor's
+game build copies only the files `OnlineRedistFiles(backend)` lists: the SDK DLL (required) and
+`xaudio2_9redist.dll` (optional) for `eos`, nothing for `none` / `local`.
 
 **Session lifecycle.** A connect request from the lobby starts the client at a frame boundary
 (`StartClient`, the same function `--net-connect` uses). If the client fails before the join snapshot,

@@ -72,7 +72,8 @@ if (-not $SkipBuild) {
 $required = 'Editor.exe', 'Runtime.exe', 'Server.exe', 'GameLogic.dll', 'nethost.dll', 'MyeScripting.dll',
     'MyeScripting.runtimeconfig.json', 'MyeCollab.dll', 'MyeCollabCli.exe', 'mye_track.exe',
     'libcrypto-3-x64.dll', 'libssl-3-x64.dll'
-# M93: EOS SDK を入れてビルドしたなら、その DLL が無いと Runtime / Editor が起動しない (import している)
+# M93: EOS SDK を入れてビルドしたなら、その DLL も渡す。exe は遅延ロードなので無くても起動するが、
+# 受け取った側で online.backend = eos が使えず、eos のゲームの書き出しが失敗する
 if (Test-Path -LiteralPath (Join-Path $repo 'external\eos-sdk\Include\eos_sdk.h')) {
     $required += 'EOSSDK-Win64-Shipping.dll'
 }

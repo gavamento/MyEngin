@@ -74,6 +74,10 @@
     CI と SDK を持たない開発機はそのままビルドできる (オンラインは local / none だけ)。
     ★Server.exe も Engine.lib をリンクするが、EOS の実装を参照するのは Editor / Runtime の main が呼ぶ
       CreateOnlineService だけなので、Server の exe に EOS の import は入らない (lib は渡しても使われない)。
+    ★SDK の DLL は遅延ロードにする。通常の import だと、オンラインを使わないゲームでも DLL が隣に無いだけで
+      exe が起動しない。DLL の有無は CreateEosOnlineService が確かめ、無ければオンラインだけを無効にする。
+      ゲーム書き出しは online.backend が eos のプロジェクトにだけ DLL を同梱する (OnlineRedistFiles)。
+      /IGNORE:4199 は、EOS を参照しない exe (Editor / Server) で遅延指定が警告になるのを抑える。
   -->
   <PropertyGroup>
     <MyeEosRoot>$(RepoRoot)external\eos-sdk\</MyeEosRoot>
@@ -87,7 +91,9 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(MyeHasEos)'=='true' And '$(ConfigurationType)'=='Application'">
     <Link>
-      <AdditionalDependencies>$(MyeEosRoot)Lib\EOSSDK-Win64-Shipping.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(MyeEosRoot)Lib\EOSSDK-Win64-Shipping.lib;delayimp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>EOSSDK-Win64-Shipping.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+      <AdditionalOptions>/IGNORE:4199 %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <Target Name="MyeCopyEosDll" AfterTargets="Build" Condition="'$(MyeHasEos)'=='true' And '$(ConfigurationType)'=='Application'">

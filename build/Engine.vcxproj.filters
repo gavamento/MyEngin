@@ -795,6 +795,9 @@
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineFactory.cpp">
       <Filter>Engine\Online</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Online\OnlineRedist.cpp">
+      <Filter>Engine\Online</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Online\OnlineSelfTest.cpp">
       <Filter>Engine\Online</Filter>
     </ClCompile>
@@ -1980,6 +1983,9 @@
     <ClInclude Include="..\src\Engine\Engine\Online\Eos\EosOnlineService.h">
       <Filter>Engine\Online\Eos</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\Eos\EosRedist.h">
+      <Filter>Engine\Online\Eos</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Online\HostServerProcess.h">
       <Filter>Engine\Online</Filter>
     </ClInclude>
@@ -1987,6 +1993,9 @@
       <Filter>Engine\Online</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Online\LocalOnlineService.h">
+      <Filter>Engine\Online</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Online\OnlineRedist.h">
       <Filter>Engine\Online</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Online\OnlineSelfTest.h">
