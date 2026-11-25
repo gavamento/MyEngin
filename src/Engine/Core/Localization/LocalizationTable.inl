@@ -81,7 +81,6 @@ MYE_STR(Menu_GameObject,      "GameObject",        "ゲームオブジェクト"
 MYE_STR(Menu_Window,          "Window",            "ウィンドウ")
 MYE_STR(Menu_ResetLayout,     "Reset Layout",      "レイアウトをリセット")
 
-MYE_STR(Menu_RenderPath,      "Render Path",       "レンダーパス")
 MYE_STR(Menu_Forward,         "Forward",           "Forward")
 MYE_STR(Menu_Deferred,        "Deferred",          "Deferred")
 MYE_STR(Menu_Rendering,       "Rendering",         "レンダリング")
@@ -263,8 +262,6 @@ MYE_STR(Tool_TipStopNet,      "Stop: leave the session (sends Bye)", "停止: �
 MYE_STR(Tool_TipPlayLockedNet, "Disabled while connected to a server. After leaving, restart the client from the Network window to rejoin", "サーバ接続中は使えません。抜けたあとは Network 窓から接続し直してください")
 MYE_STR(Tool_SpaceLocal,      "Local",                        "ローカル")
 MYE_STR(Tool_SpaceWorld,      "World",                        "ワールド")
-// ImGui::Combo の "\0" 区切りアイテム列。末尾の "\0" は必須
-MYE_STR(Tool_RenderPathItems, "Forward\0Deferred\0",          "Forward\0Deferred\0")
 MYE_STR(Tool_TipLayouts,      "Layouts",                      "レイアウト")
 
 // ---- ステータスバー (M47b) ----
@@ -612,6 +609,8 @@ MYE_STR(Build_Failed,         "Build failed - see the stage list / Console.",
 // ---- プロジェクト設定 (M47b) ----
 MYE_STR(PrjSet_Rendering,     "Rendering",           "レンダリング")
 MYE_STR(PrjSet_ActivePath,    "Active render path: %s", "現在のレンダーパス: %s")
+MYE_STR(PrjSet_RenderPathNote, "  Applied at once and written to assets/project_settings.json; the editor and runtime start with it. Screenshot runs always use Forward (use --deferred).",
+                              "  即座に反映し、assets/project_settings.json に書き込みます。エディタと Runtime は次回もこのパスで起動します。スクショ撮影の実行は常に Forward です (--deferred で指定)。")
 MYE_STR(PrjSet_Editor,        "Editor",              "エディタ")
 MYE_STR(PrjSet_ExternalCmd,   "External editor cmd", "外部エディタのコマンド")
 MYE_STR(PrjSet_SnapTranslate, "Snap: translate",     "スナップ: 移動")

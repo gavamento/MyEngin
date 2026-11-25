@@ -52,7 +52,7 @@ $manifest = @'
 {
   "formatVersion": 1,
   "name": "collab_fixture",
-  "engineVersion": "0.88.3",
+  "engineVersion": "0.89.3",
   "bootScene": "scenes/main.scene.json"
 }
 '@

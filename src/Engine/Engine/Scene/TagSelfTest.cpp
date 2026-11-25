@@ -17,6 +17,7 @@
 #include "Engine/Core/Ecs/World.h"
 #include "Engine/Engine/RayTracing/RtScope.h"
 #include "Engine/Engine/Rendering/CullingSettings.h"
+#include "Engine/Engine/Rendering/RenderPathSetting.h"
 #include "Engine/Engine/Scene/GameObject.h"
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Replay/WorldHasher.h"
@@ -426,6 +427,53 @@ bool RunTagSelfTest()
             std::ifstream f(settingsFile, std::ios::binary);
             const std::string after((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             check(after == broken, "CullingSettings: corrupt file content untouched");
+        }
+        // ---- 起動時のレンダーパス (rendering.renderPath) ----
+        {
+            const std::wstring projectRoot = dir.wstring();
+            const fs::path settingsFile = dir / L"project_settings.json";
+            auto writeText = [&](const std::string& text) {
+                std::ofstream f(settingsFile, std::ios::binary | std::ios::trunc);
+                f << text;
+            };
+            fs::remove(settingsFile, ec);
+            check(LoadRenderPathSetting(projectRoot) == RenderPathKind::Forward,
+                  "RenderPathSetting: a missing file reads as forward");
+            writeText(R"({"tags":["A"],"rendering":{"frustumCulling":false}})");
+            check(LoadRenderPathSetting(projectRoot) == RenderPathKind::Forward,
+                  "RenderPathSetting: a missing key reads as forward");
+            check(SaveRenderPathSetting(projectRoot, RenderPathKind::Deferred)
+                      && LoadRenderPathSetting(projectRoot) == RenderPathKind::Deferred,
+                  "RenderPathSetting: deferred round-trips");
+            {
+                std::ifstream f(settingsFile);
+                nlohmann::json j;
+                f >> j;
+                check(j["tags"][0] == "A" && j["rendering"]["frustumCulling"] == false
+                          && j["rendering"]["renderPath"] == "deferred",
+                      "RenderPathSetting: other keys and sections are preserved");
+            }
+            check(SaveRenderPathSetting(projectRoot, RenderPathKind::Forward)
+                      && LoadRenderPathSetting(projectRoot) == RenderPathKind::Forward,
+                  "RenderPathSetting: forward round-trips");
+            writeText(R"({"rendering":{"renderPath":1}})");
+            const bool wrongType = LoadRenderPathSetting(projectRoot) == RenderPathKind::Forward;
+            writeText(R"({"rendering":{"renderPath":"Deferred"}})");
+            const bool unknownName = LoadRenderPathSetting(projectRoot) == RenderPathKind::Forward;
+            check(wrongType && unknownName, "RenderPathSetting: a wrong type or an unknown name reads as forward");
+            writeText(R"({"rendering":"oops"})");
+            check(SaveRenderPathSetting(projectRoot, RenderPathKind::Deferred)
+                      && LoadRenderPathSetting(projectRoot) == RenderPathKind::Deferred,
+                  "RenderPathSetting: a non-object rendering node is replaced when saving");
+            const std::string broken = "{ not json";
+            writeText(broken);
+            check(LoadRenderPathSetting(projectRoot) == RenderPathKind::Forward,
+                  "RenderPathSetting: a corrupt file reads as forward");
+            check(!SaveRenderPathSetting(projectRoot, RenderPathKind::Deferred),
+                  "RenderPathSetting: a corrupt file is not overwritten");
+            std::ifstream f(settingsFile, std::ios::binary);
+            const std::string after((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            check(after == broken, "RenderPathSetting: corrupt file content untouched");
         }
         fs::remove_all(dir, ec);
 

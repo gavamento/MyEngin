@@ -59,6 +59,7 @@
 #include "Engine/Engine/Scene/Prefab.h"
 #include "Engine/Engine/Rendering/ProbeBaker.h"
 #include "Engine/Engine/App/Project.h"
+#include "Engine/Engine/Rendering/RenderPathSetting.h"
 #include "Engine/Engine/Rendering/RenderStatsDump.h"
 #include "Engine/Engine/Rendering/RenderSystem.h"
 #include "Engine/Engine/Net/ClientSession.h"
@@ -477,6 +478,13 @@ int EngineLoop::Run(const EngineConfig& config, IEngineApp& app)
         CullingCliOverrides cullingCli = config.cullingCli;
         cullingCli.occlusion = config.occlusionCulling;
         renderSystem.ApplyCullingSettings(ResolveCullingSettings(assetsRoot, cullingCli));
+    }
+    // 起動時のレンダーパス (rendering.renderPath)。撮影・計測の run は保存値を見ずに Forward —
+    // golden PNG や統計が「最後に誰かが保存した設定」で変わらないようにする。--deferred は
+    // Editor / Runtime の OnStart がこの後で上書きするので、撮影で Deferred を撮る経路はそのまま
+    if (!config.IsCaptureRun() && LoadRenderPathSetting(assetsRoot) == RenderPathKind::Deferred) {
+        activePath = &deferredPath;
+        MYE_LOG_INFO("[render] start path %s (project_settings.json)", activePath->Name());
     }
     // 撮影・計測の run だけ統計の読み戻しで GPU を待つ (counts を構成間で一致させる)。対話は待たない
     renderSystem.occlusionStatsWait = config.IsCaptureRun();

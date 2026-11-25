@@ -1523,17 +1523,6 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(Tr(StrId::Menu_RenderPath))) {
-            // 実行時切替 (M6.5)。描画のみの変更なのでリプレイ一貫性には影響しない
-            const bool isForward = (ctx.renderPath == ctx.renderPathForward);
-            if (ImGui::MenuItem(Tr(StrId::Menu_Forward), nullptr, isForward)) {
-                ctx.renderPath = ctx.renderPathForward;
-            }
-            if (ImGui::MenuItem(Tr(StrId::Menu_Deferred), nullptr, !isForward)) {
-                ctx.renderPath = ctx.renderPathDeferred;
-            }
-            ImGui::EndMenu();
-        }
         // M54e: 影の内訳 (平行光 CSM / 局所ライトのアトラス) と統計。局所ライトの
         // アトラスは 4096^2 = 64MB + タイル数ぶんの深度パスという別勘定のコストなので、
         // CSM を残したまま局所影だけ外せる口を持つ

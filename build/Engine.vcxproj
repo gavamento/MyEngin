@@ -261,6 +261,7 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\DistanceCullSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\LightSelection.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp" />
+    <ClCompile Include="..\src\Engine\Engine\Rendering\RenderPathSetting.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsDump.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsSelfTest.cpp" />
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderSystem.cpp" />
@@ -663,6 +664,7 @@
     <ClInclude Include="..\src\Engine\Engine\Rendering\DistanceCullSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\LightSelection.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\ProbeBaker.h" />
+    <ClInclude Include="..\src\Engine\Engine\Rendering\RenderPathSetting.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsDump.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsSelfTest.h" />
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderSystem.h" />

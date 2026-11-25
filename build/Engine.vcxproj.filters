@@ -969,6 +969,9 @@
     <ClCompile Include="..\src\Engine\Engine\Rendering\ProbeBaker.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Engine\Engine\Rendering\RenderPathSetting.cpp">
+      <Filter>Engine\Rendering</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Engine\Engine\Rendering\RenderStatsDump.cpp">
       <Filter>Engine\Rendering</Filter>
     </ClCompile>
@@ -2173,6 +2176,9 @@
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\ProbeBaker.h">
+      <Filter>Engine\Rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Engine\Engine\Rendering\RenderPathSetting.h">
       <Filter>Engine\Rendering</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Engine\Engine\Rendering\RenderStatsDump.h">

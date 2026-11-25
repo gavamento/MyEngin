@@ -30,7 +30,7 @@ public:
     // 共有される設定 (assets\project_settings.json / assets\input\actions.json) に
     // 未保存の編集があるか (M66d、spec §4.1 の S6)。
     // ★対象外にしているもの:
-    //     * レンダリングパスのラジオ … そもそも永続化されない (spec が明示的に除外)
+    //     * レンダリングパスのラジオ … 選んだ瞬間に rendering.renderPath へ書くので未保存の状態にならない
     //     * editor_settings.json      … <project>\.mye\ = 個人設定でチームと共有しない
     //     * パーティクルバックエンドのラジオ (M66h) … **セッション上書き**が正常な状態で、
     //       ディスクと違うことは未保存を意味しない。ここに入れると

@@ -1,7 +1,7 @@
 # Custom Game Engine Specification
 
 - **Engine Name**: MyEngine
-- **Version**: 0.88.3 (エンジンの版 `kEngineVersion`。GitHub Releases の `v0.88.3`、M98 / M106)
+- **Version**: 0.89.3 (エンジンの版 `kEngineVersion`。GitHub Releases の `v0.89.3`、M98 / M106)
 - **Author**: Gavament
 - **Last Updated**: 2026-11-11
 
@@ -299,7 +299,12 @@ Systems outside the table are not parallelised by changing their algorithm: that
 
 ### 6.1 Scope
 
-Resolved: **both paths are implemented and switchable at runtime** (View > Render Path).
+Resolved: **both paths are implemented and switchable at runtime** (Project Settings > Rendering, the only switch).
+The choice is written at once to `assets\project_settings.json` as `"rendering": {"renderPath": "forward" | "deferred"}`
+and the editor and the runtime start with it (missing key, missing or corrupt file, or any other value = Forward; a wrong
+value logs one warning). Capture runs (`--screenshot` / `--render-stats-dump`) ignore the saved value and start in Forward,
+so goldens do not depend on whoever saved last; `--deferred` still selects Deferred for any run and is never written back.
+It is render-only and touches neither the sim nor the hash.
 The original Option A / Option B trade-off was settled by sharing the lighting functions
 in `common.hlsli` between the two paths, which keeps their output visually identical while
 letting the Deferred path carry the effects that need a G-Buffer. See ADR-007.

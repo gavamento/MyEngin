@@ -21,6 +21,7 @@
 #include "Engine/Engine/Compute/ComputeService.h"
 #include "Engine/Engine/Compute/ComputeSettings.h"
 #include "Engine/Engine/Particles/ParticleSystem.h"
+#include "Engine/Engine/Rendering/RenderPathSetting.h"
 #include "Engine/Engine/Rendering/RenderSystem.h" // M99: カリングの設定欄
 #include "Engine/Engine/UI/UIFontMetricsCook.h" // M75d
 #include "Engine/Platform/InputActions.h"
@@ -58,15 +59,25 @@ void ProjectSettingsWindow::OnImGui(EngineContext& ctx, EditorSettings& settings
 
     // ---- レンダリング ----
     if (ImGui::CollapsingHeader(Tr(StrId::PrjSet_Rendering), ImGuiTreeNodeFlags_DefaultOpen)) {
+        // ★レンダーパスの切り替え口はここだけ。選んだ瞬間に実行中のパスを差し替え、
+        //   rendering.renderPath へも書く (カリングと同じ即保存 = 未保存の状態を作らない)。
+        //   描画のみの変更なのでリプレイ一貫性には影響しない
         const bool isForward = (ctx.renderPath == ctx.renderPathForward);
         ImGui::Text(Tr(StrId::PrjSet_ActivePath), ctx.renderPath ? ctx.renderPath->Name() : "?");
-        if (ImGui::RadioButton(Tr(StrId::Menu_Forward), isForward)) {
-            ctx.renderPath = ctx.renderPathForward;
+        auto selectPath = [&](IRenderPath* path, RenderPathKind kind) {
+            ctx.renderPath = path;
+            if (SaveRenderPathSetting(ctx.assetsRoot, kind)) {
+                scmhint::Changed(ctx.assetsRoot + L"\\project_settings.json");
+            }
+        };
+        if (ImGui::RadioButton(Tr(StrId::Menu_Forward), isForward) && !isForward) {
+            selectPath(ctx.renderPathForward, RenderPathKind::Forward);
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton(Tr(StrId::Menu_Deferred), !isForward)) {
-            ctx.renderPath = ctx.renderPathDeferred;
+        if (ImGui::RadioButton(Tr(StrId::Menu_Deferred), !isForward) && isForward) {
+            selectPath(ctx.renderPathDeferred, RenderPathKind::Deferred);
         }
+        ImGui::TextDisabled("%s", Tr(StrId::PrjSet_RenderPathNote));
 
         // ---- パーティクルのプロジェクト既定 (M66h、spec §4.2 の決定 8) ----
         // ★`particleBackend` を assets\project_settings.json へ書き戻すのは**ここだけ**。

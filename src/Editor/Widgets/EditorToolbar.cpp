@@ -1,8 +1,6 @@
 #include "Editor/Widgets/EditorToolbar.h"
 
-#include <algorithm>
 #include <cstdio>
-#include <cstring>
 
 #include "Editor/Widgets/EditorWidgets.h"
 #include "Editor/App/LayoutManager.h"
@@ -170,25 +168,13 @@ bool EditorToolbar::OnImGui(EngineContext& ctx, PlayModeController& playMode, Se
         }
         ImGui::EndDisabled();
 
-        // ---- 右: Render Path + レイアウト (最右端、Unity の Layout ドロップダウン相当) ----
+        // ---- 右: レイアウト (最右端、Unity の Layout ドロップダウン相当) ----
+        // レンダーパスの切り替えは Project Settings > レンダリングだけ (保存される設定なので 1 箇所に置く)。
         // M47b: 幅は実測にする。訳文の長さでボタンが見切れないようにするため
         const ImGuiStyle& style = ImGui::GetStyle();
         const float layoutBtnW =
             ImGui::CalcTextSize(ICON_FA_TABLE_COLUMNS).x + style.FramePadding.x * 2.0f
             + style.ItemSpacing.x;
-        const char* pathItems = Tr(StrId::Tool_RenderPathItems);
-        float itemsW = 0.0f;
-        for (const char* p = pathItems; *p != '\0'; p += std::strlen(p) + 1) {
-            itemsW = (std::max)(itemsW, ImGui::CalcTextSize(p).x);
-        }
-        // コンボの矢印ぶん (GetFrameHeight) + 左右の余白
-        const float rightWidth = itemsW + ImGui::GetFrameHeight() + style.FramePadding.x * 4.0f;
-        ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth - layoutBtnW);
-        ImGui::SetNextItemWidth(rightWidth);
-        int cur = (ctx.renderPath == ctx.renderPathForward) ? 0 : 1;
-        if (ImGui::Combo("##renderpath", &cur, pathItems)) {
-            ctx.renderPath = (cur == 0) ? ctx.renderPathForward : ctx.renderPathDeferred;
-        }
         ImGui::SameLine(ImGui::GetWindowWidth() - layoutBtnW);
         resetLayout = layouts.DrawToolbarUi();
     }
