@@ -384,10 +384,25 @@
     <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.cpp">
       <Filter>Tools\GameLift</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftFlow.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftFlowSelfTest.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftHost.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftSettings.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackage.cpp">
       <Filter>Tools\GameLift</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\ServerProcess.cpp">
       <Filter>Tools\GameLift</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\ModalTools.cpp">
@@ -553,6 +568,9 @@
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp">
+      <Filter>Windows\Project</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Windows\Project\GameLiftWindow.cpp">
       <Filter>Windows\Project</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp">
@@ -939,10 +957,28 @@
     <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.h">
       <Filter>Tools\GameLift</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftFlow.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftFlowSelfTest.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftFlowTestDoubles.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftHost.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftSettings.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackage.h">
       <Filter>Tools\GameLift</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\ServerProcess.h">
       <Filter>Tools\GameLift</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\ModalTools.h">
@@ -1105,6 +1141,9 @@
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h">
+      <Filter>Windows\Project</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Windows\Project\GameLiftWindow.h">
       <Filter>Windows\Project</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h">

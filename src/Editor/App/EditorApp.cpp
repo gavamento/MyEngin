@@ -115,6 +115,7 @@ void EditorApp::OnStart(EngineContext& ctx)
         ? ctx.assetsRoot
         : ctx.projectRoot + L"\\" + kProjectLocalDir;
     settings_.Load(settingsDir);
+    gameLift_.Bind(settings_.gameLift, [this]() { settings_.Save(); });
     // 名前付きレイアウト: ImGui ini + パネル開閉フラグを <settingsDir>\layouts に保存/復元
     layouts_.Init(settingsDir + L"\\layouts",
                   { { "Hierarchy", &hierarchy_.open },
@@ -133,6 +134,7 @@ void EditorApp::OnStart(EngineContext& ctx)
                     { "Timeline", &timeline_.open },
                     { "Feel Monitor", &feelMonitor_.open },
                     { "Network", &net_.open },
+                    { "GameLift", &gameLift_.open },
                     { "Source Control", &sourceControl_.open },
                     { "Diff", &sourceControl_.diffOpen },
                     { "AI Changes", &aiChanges_.open },
@@ -669,6 +671,8 @@ void EditorApp::OnShutdown(EngineContext& ctx)
     browser_.Shutdown();
     // ターミナルのシェルを終わらせる (Job を閉じて子孫ごと)。窓を閉じていても生きているので、ここで必ず破棄する
     terminal_.Shutdown();
+    // GameLift 窓の Server.exe を停止手順 (イベント → 猶予 → 強制終了) で止める
+    gameLift_.Shutdown();
 }
 
 void EditorApp::OnDeviceLost(EngineContext& ctx)
@@ -1052,6 +1056,14 @@ void EditorApp::OnImGui(EngineContext& ctx)
     performanceCompare_.OnImGui();
     timeline_.OnImGui(ctx, playMode_);
     net_.OnImGui(ctx);
+    {
+        // M107d: 窓を閉じていても CLI の完了と Server.exe の監視は進める (Pump)
+        GameLiftWindowEnv gameLiftEnv;
+        gameLiftEnv.projectRoot = ctx.projectRoot;
+        gameLiftEnv.exeDir = GetExecutableDir();
+        gameLift_.Pump(gameLiftEnv);
+        gameLift_.OnImGui(gameLiftEnv);
+    }
     {
         // M66b/M66c (状態は scm_、窓は描くだけ)。
         // ★窓に渡すのは「今 dirty か」と「保存する手段」だけ。EngineContext を
@@ -1975,6 +1987,7 @@ void EditorApp::DrawMainMenuBar(EngineContext& ctx)
         ImGui::MenuItem(Tr(StrId::Win_Timeline), nullptr, &timeline_.open);
         ImGui::MenuItem(Tr(StrId::Win_FeelMonitor), nullptr, &feelMonitor_.open);
         ImGui::MenuItem(Tr(StrId::Win_Net), nullptr, &net_.open);
+        ImGui::MenuItem(Tr(StrId::Win_GameLift), nullptr, &gameLift_.open);
         ImGui::MenuItem(Tr(StrId::Win_SourceControl), nullptr, &sourceControl_.open);
         ImGui::MenuItem(Tr(StrId::Win_Diff), nullptr, &sourceControl_.diffOpen);
         ImGui::MenuItem(Tr(StrId::Win_AiChanges), nullptr, &aiChanges_.open);

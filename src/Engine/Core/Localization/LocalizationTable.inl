@@ -3724,3 +3724,145 @@ MYE_STR(Term_VsEnvPending,    "Loading the Visual Studio developer environment. 
                               "Visual Studio 開発者環境を読み込んでいます。完了するとシェルが起動します (最長 30 秒)。")
 MYE_STR(Term_VsEnvWarning,    "The Visual Studio developer environment could not be loaded. The shell started without it (cl and msbuild may not be found).",
                               "Visual Studio 開発者環境を読み込めませんでした。読み込まずにシェルを起動しました (cl や msbuild が見つからない場合があります)。")
+
+// ---- GameLift 窓 (M107d) ----
+MYE_STR(Win_GameLift,         "GameLift###GameLift",                   "GameLift###GameLift")
+MYE_STR(GameLift_CliLine,     "AWS CLI: %s  (%s)",                     "AWS CLI: %s  (%s)")
+MYE_STR(GameLift_CliNotFound, "aws.exe was not found. Install the AWS CLI v2 (winget install -e --id Amazon.AWSCLI), then press Recheck.",
+                              "aws.exe が見つかりません。AWS CLI v2 を入れてください (winget install -e --id Amazon.AWSCLI)。入れたら「再確認」を押してください。")
+MYE_STR(GameLift_CliVersionUnreadable, "The AWS CLI did not report a version:",
+                              "AWS CLI の版を読めませんでした:")
+MYE_STR(GameLift_CliTooOld,   "AWS CLI v1 is not supported (found %s). Install the AWS CLI v2.",
+                              "AWS CLI v1 には対応していません (見つかった版: %s)。AWS CLI v2 を入れてください。")
+MYE_STR(GameLift_Checking,    "Checking...",                           "確認中...")
+MYE_STR(GameLift_NotChecked,  "Not checked yet. Press Recheck.",       "まだ確認していません。「再確認」を押してください。")
+MYE_STR(GameLift_AccountLine, "Account: %s   %s",                      "アカウント: %s   %s")
+MYE_STR(GameLift_NotLoggedIn, "Not signed in (no credentials, or they expired). Press \"Open aws login\", finish in that window, then press Recheck.",
+                              "ログインしていません (資格情報が無いか、期限が切れています)。「aws login を開く」を押し、開いた窓で済ませてから「再確認」を押してください。")
+MYE_STR(GameLift_LoginError,  "Could not check the account:",          "アカウントを確認できませんでした:")
+MYE_STR(GameLift_Region,      "Region",                                "リージョン")
+MYE_STR(GameLift_Recheck,     "Recheck",                               "再確認")
+MYE_STR(GameLift_OpenLogin,   "Open aws login",                        "aws login を開く")
+MYE_STR(GameLift_OpenLoginTip, "Opens a console that runs 'aws login'. Finish there, then press Recheck.",
+                              "'aws login' を実行するコンソールを開きます。そちらで済ませてから「再確認」を押してください。")
+MYE_STR(GameLift_OpenLoginFailed, "Could not open the console:",       "コンソールを開けませんでした:")
+MYE_STR(GameLift_TabAnywhere, "My PC (Anywhere)###GLTabAnywhere",      "自分の PC (Anywhere)###GLTabAnywhere")
+MYE_STR(GameLift_TabEc2,      "On AWS (EC2)###GLTabEc2",               "AWS 上 (EC2)###GLTabEc2")
+MYE_STR(GameLift_Ec2Soon,     "The EC2 steps are not implemented yet.", "EC2 の手順はまだ実装されていません。")
+MYE_STR(GameLift_FieldSuffix, "Location suffix",                       "ロケーション (接尾辞)")
+MYE_STR(GameLift_FieldFleetName, "Fleet name",                         "フリート名")
+MYE_STR(GameLift_FieldCompute, "Compute name",                         "コンピュート名")
+MYE_STR(GameLift_FieldIp,     "IP address of this PC",                 "この PC の IP アドレス")
+MYE_STR(GameLift_FieldPort,   "UDP port",                              "UDP ポート")
+MYE_STR(GameLift_FieldMaxPlayers, "Max players (1-4)",                 "最大人数 (1〜4)")
+MYE_STR(GameLift_BtnPrepare,  "1. Prepare...",                         "1. 準備...")
+MYE_STR(GameLift_BtnStart,    "2. Start the server",                   "2. サーバを起動")
+MYE_STR(GameLift_BtnJoin,     "3. Create a session and join",          "3. セッションを作って参加")
+MYE_STR(GameLift_BtnStop,     "4. Stop the server",                    "4. サーバを停止")
+MYE_STR(GameLift_BtnCleanup,  "5. Clean up...",                        "5. 片付け...")
+MYE_STR(GameLift_StateNotDone, "not yet",                              "未")
+MYE_STR(GameLift_StateRunning, "running",                              "実行中")
+MYE_STR(GameLift_StateDone,   "done",                                  "済")
+MYE_STR(GameLift_StateFailed, "failed",                                "失敗")
+MYE_STR(GameLift_ServerLine,  "Server: %s",                            "サーバ: %s")
+MYE_STR(GameLift_SrvStopped,  "stopped",                               "停止中")
+MYE_STR(GameLift_SrvStarting, "starting (waiting for ProcessReady)",   "起動中 (ProcessReady 待ち)")
+MYE_STR(GameLift_SrvReady,    "ready (waiting for a game session)",    "待機中 (ゲームセッションの割り当て待ち)")
+MYE_STR(GameLift_SrvStopping, "stopping...",                           "停止処理中...")
+MYE_STR(GameLift_SrvExited,   "exited (exit code %d)",                 "終了しました (終了コード %d)")
+MYE_STR(GameLift_SrvForced,   "It did not stop within the grace period and was terminated (no ProcessEnding was sent).",
+                              "猶予内に止まらなかったため強制終了しました (ProcessEnding は送られていません)。")
+MYE_STR(GameLift_ClientsLine, "Clients started: %d / %d",              "起動したクライアント: %d / %d")
+MYE_STR(GameLift_LogHeader,   "Server log (last lines)",               "サーバのログ (末尾)")
+MYE_STR(GameLift_LogFile,     "Log file: %s",                          "ログファイル: %s")
+MYE_STR(GameLift_Why_Busy,    "Another step is running.",              "別の手順を実行中です。")
+MYE_STR(GameLift_Why_StatusUnknown, "Press Recheck first.",            "先に「再確認」を押してください。")
+MYE_STR(GameLift_Why_CliMissing, "The AWS CLI is not available.",      "AWS CLI を使えません。")
+MYE_STR(GameLift_Why_CliTooOld, "AWS CLI v2 is required.",             "AWS CLI v2 が必要です。")
+MYE_STR(GameLift_Why_NotLoggedIn, "Sign in with aws login, then press Recheck.",
+                              "aws login でログインしてから「再確認」を押してください。")
+MYE_STR(GameLift_Why_NoRegion, "Set a region.",                        "リージョンを設定してください。")
+MYE_STR(GameLift_Why_InvalidRegion, "The region is not valid (for example ap-northeast-1).",
+                              "リージョンが正しくありません (例: ap-northeast-1)。")
+MYE_STR(GameLift_Why_InvalidSuffix, "The location suffix takes letters, digits and '-' (up to 57 characters) and must not start with 'custom-'.",
+                              "ロケーションの接尾辞は英数と '-' (57 文字まで) で、'custom-' で始めないでください。")
+MYE_STR(GameLift_Why_InvalidFleetName, "The fleet name takes letters, digits, '-', '_' and '.' (up to 64 characters).",
+                              "フリート名は英数と '-' '_' '.' (64 文字まで) です。")
+MYE_STR(GameLift_Why_InvalidComputeName, "The compute name takes letters, digits and '-' only ('_' and '.' are rejected by AWS).",
+                              "コンピュート名は英数と '-' だけです (AWS が '_' と '.' を拒みます)。")
+MYE_STR(GameLift_Why_InvalidIp, "The IP address is not valid (a.b.c.d).", "IP アドレスが正しくありません (a.b.c.d)。")
+MYE_STR(GameLift_Why_InvalidPort, "The port must be 1-65535.",          "ポートは 1〜65535 にしてください。")
+MYE_STR(GameLift_Why_InvalidMaxPlayers, "Max players must be 1-4.",    "最大人数は 1〜4 にしてください。")
+MYE_STR(GameLift_Why_NoProject, "Open a project first (Editor.exe --project <folder>).",
+                              "先にプロジェクトを開いてください (Editor.exe --project <フォルダ>)。")
+MYE_STR(GameLift_Why_NoGameLogic, "Build GameLogic.dll first (<project>/cache/GameLogic.dll is missing).",
+                              "先に GameLogic.dll をビルドしてください (<project>/cache/GameLogic.dll がありません)。")
+MYE_STR(GameLift_Why_NoServerExe, "Server.exe is not next to Editor.exe (build the Server project).",
+                              "Server.exe が Editor.exe の隣にありません (Server プロジェクトをビルドしてください)。")
+MYE_STR(GameLift_Why_NoRuntimeExe, "Runtime.exe is not next to Editor.exe (build the Runtime project).",
+                              "Runtime.exe が Editor.exe の隣にありません (Runtime プロジェクトをビルドしてください)。")
+MYE_STR(GameLift_Why_NotPrepared, "Run step 1 (Prepare) first.",       "先に 1. 準備を実行してください。")
+MYE_STR(GameLift_Why_ServerRunning, "The server is already running.",  "サーバは既に動いています。")
+MYE_STR(GameLift_Why_ServerNotRunning, "The server is not running.",   "サーバは動いていません。")
+MYE_STR(GameLift_Why_ServerNotReady, "Wait until the server is ready (ProcessReady).",
+                              "サーバが待機中 (ProcessReady) になるまで待ってください。")
+MYE_STR(GameLift_Why_ClientLimit, "A client is already started for every player slot.",
+                              "最大人数ぶんのクライアントを起動済みです。")
+MYE_STR(GameLift_Running,     "Running: %s (%d s)",                    "実行中: %s (%d 秒)")
+MYE_STR(GameLift_Cancel,      "Cancel",                                "取消")
+MYE_STR(GameLift_CancelNote,  "Cancelling does not undo operations AWS has already accepted.",
+                              "取消しても、AWS が受け付け済みの操作は取り消されません。")
+MYE_STR(GameLift_Cancelled,   "Cancelled. Operations AWS had already accepted are not undone.",
+                              "取り消しました。AWS が受け付け済みの操作は取り消されていません。")
+MYE_STR(GameLift_WaitCapacity, "Waiting for the server to take a session (retry %d / %d)",
+                              "サーバがセッションを受けられるようになるのを待っています (再試行 %d / %d)")
+MYE_STR(GameLift_WaitSession, "Waiting for the game session to become ACTIVE (%d / %d)",
+                              "ゲームセッションが ACTIVE になるのを待っています (%d / %d)")
+MYE_STR(GameLift_WaitFleet,   "Waiting for the fleet to be deleted (%d / %d)",
+                              "フリートが消えるのを待っています (%d / %d)")
+MYE_STR(GameLift_WaitServerStop, "Stopping the server first...",       "先にサーバを停止しています...")
+MYE_STR(GameLift_LastError,   "Last error",                            "直近のエラー")
+MYE_STR(GameLift_Err_Credentials, "Credentials are missing or expired. Use aws login, then press Recheck.",
+                              "資格情報が無いか期限切れです。aws login をやり直して「再確認」を押してください。")
+MYE_STR(GameLift_Err_NotFound, "AWS: not found.",                      "AWS: 見つかりません。")
+MYE_STR(GameLift_Err_Capacity, "AWS: no server process can take a session (FleetCapacityExceeded).",
+                              "AWS: セッションを受けられるサーバプロセスがありません (FleetCapacityExceeded)。")
+MYE_STR(GameLift_Err_Conflict, "AWS: it already exists or is in a conflicting state.",
+                              "AWS: 既にあるか、競合する状態です。")
+MYE_STR(GameLift_Err_Invalid, "AWS: the request was rejected.",        "AWS: リクエストが拒否されました。")
+MYE_STR(GameLift_Err_NoRegion, "No region is set.",                    "リージョンが設定されていません。")
+MYE_STR(GameLift_Err_Other,   "AWS CLI error.",                        "AWS CLI のエラー。")
+MYE_STR(GameLift_Err_CliStart, "Could not start the AWS CLI:",         "AWS CLI を起動できませんでした:")
+MYE_STR(GameLift_Err_CliTimeout, "The AWS CLI did not finish in time and was stopped.",
+                              "AWS CLI が時間内に終わらず、止めました。")
+MYE_STR(GameLift_Err_InvalidInput, "An input value is not valid.",     "入力値が正しくありません。")
+MYE_STR(GameLift_Err_BadResponse, "Could not read the AWS CLI response:", "AWS CLI の応答を読めませんでした:")
+MYE_STR(GameLift_Err_NoSdkEndpoint, "The compute has no SDK endpoint. Status:",
+                              "コンピュートに SDK エンドポイントがありません。状態:")
+MYE_STR(GameLift_Err_ServerStart, "Could not start Server.exe:",       "Server.exe を起動できませんでした:")
+MYE_STR(GameLift_Err_ClientStart, "Could not start Runtime.exe:",      "Runtime.exe を起動できませんでした:")
+MYE_STR(GameLift_Err_CapacityGiveUp, "Gave up waiting for the server to take a session (FleetCapacityExceeded). Check the server log.",
+                              "サーバがセッションを受けられるようになるのを待ちきれませんでした (FleetCapacityExceeded)。サーバのログを確認してください。")
+MYE_STR(GameLift_Err_SessionNotActive, "The game session did not become ACTIVE:",
+                              "ゲームセッションが ACTIVE になりませんでした:")
+MYE_STR(GameLift_Err_SessionTimeout, "The game session did not become ACTIVE in time.",
+                              "ゲームセッションが時間内に ACTIVE になりませんでした。")
+MYE_STR(GameLift_Err_FleetTimeout, "The fleet was not deleted in time. Press Clean up again later.",
+                              "フリートが時間内に消えませんでした。しばらくしてからもう一度「片付け」を押してください。")
+MYE_STR(GameLift_ConfirmPrepareTitle, "Create AWS resources###GLConfirmPrepare", "AWS にリソースを作ります###GLConfirmPrepare")
+MYE_STR(GameLift_ConfirmCleanupTitle, "Delete AWS resources###GLConfirmCleanup", "AWS のリソースを削除します###GLConfirmCleanup")
+MYE_STR(GameLift_ConfirmPrepareIntro, "Creates these in region %s. Resources that already exist are reused:",
+                              "リージョン %s に次を作ります。既にあるものは作りません:")
+MYE_STR(GameLift_ConfirmLocation, "Location   %s",                     "ロケーション   %s")
+MYE_STR(GameLift_ConfirmFleet, "Fleet      %s",                        "フリート       %s")
+MYE_STR(GameLift_ConfirmCompute, "Compute    %s  (IP %s)",             "コンピュート   %s  (IP %s)")
+MYE_STR(GameLift_ConfirmPrepareNote, "No EC2 instance is started. This window does not show GameLift's charges for Anywhere fleets; see the AWS pricing page.",
+                              "EC2 のインスタンスは起動しません。Anywhere フリートの GameLift の料金はこの窓では示しません。AWS の料金ページを確認してください。")
+MYE_STR(GameLift_ConfirmCleanupIntro, "Deletes these from region %s. This cannot be undone:",
+                              "リージョン %s から次を削除します。元に戻せません:")
+MYE_STR(GameLift_ConfirmFleetNone, "(no fleet saved)",                 "(保存済みのフリートなし)")
+MYE_STR(GameLift_ConfirmCleanupNote, "A running local server is stopped first. Deleting the fleet takes a few minutes.",
+                              "動いているローカルのサーバは先に止めます。フリートの削除には数分かかります。")
+MYE_STR(GameLift_ConfirmCreate, "Create",                              "作成")
+MYE_STR(GameLift_ConfirmDelete, "Delete",                              "削除")
+MYE_STR(GameLift_ConfirmAbort, "Abort",                                "やめる")

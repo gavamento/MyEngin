@@ -6,6 +6,11 @@
 
 ## やること
 
+0. **(VERDICT sub-04 round 1 の回答)** 着手の最初に `GameLiftFlow.cpp` (約 1100 行) を分ける: 共通 (確認・待ち・Issue・FailWith・状態確認) / Anywhere の操作 / EC2 の操作。
+   振る舞いは変えない。分けた直後に `gameliftflow` が全 PASS することを確かめてから EC2 を足す。
+   EC2 の操作も同じ `GameLiftFlow` の上に載せ、同じ runner を共有して、1 窓で同時に走る CLI を 1 本に保つ。
+   upload-build は操作ごとのタイムアウト上書き (0 = なし) を `Issue` に足して使う。
+
 spec 4.1.6 と 4.3 のうち EC2 タブ。
 
 1. EC2 タブの入力欄 (書き出しフォルダ = 既定は BuildSettings の出力先、ビルド名・版、フリート名、インスタンスタイプ、ポート、最大人数) と保存。

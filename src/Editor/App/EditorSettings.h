@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Editor/ChangeTracking/OverlayPalette.h"
+#include "Editor/Tools/GameLift/GameLiftSettings.h"
 
 namespace mye {
 
@@ -71,6 +72,9 @@ struct EditorSettings {
         float ms = 0.0f;
     };
     std::vector<ProfilerBudget> profilerBudgets;
+    // ---- GameLift 窓 (M107d) ----
+    // AWS アカウントは人ごとなのでここ (project_settings.json に置くと共有される)。トークンは持たない
+    GameLiftSettings gameLift;
 
     void Load(const std::wstring& dir);
     void Save() const;

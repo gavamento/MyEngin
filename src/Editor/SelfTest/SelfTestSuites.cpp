@@ -38,6 +38,7 @@
 #include "Editor/Tools/EngineIndexDumpSelfTest.h"
 #include "Editor/Tools/FractureEditorSelfTest.h"
 #include "Editor/Tools/GameLift/GameLiftCliSelfTest.h"
+#include "Editor/Tools/GameLift/GameLiftFlowSelfTest.h"
 #include "Editor/Tools/GameLift/ServerPackageSelfTest.h"
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Editor/Tools/PatrolRouteEditSelfTest.h"
@@ -287,6 +288,8 @@ const SelfTestSuite kSuites[] = {
     { "serverpackagelocal", mye::RunServerPackageLocalSelfTest, SelfTestTier::Full, "M107b: 実 Server.exe の局所起動確認 (exit 5 + ready)・起動確認が組んだフォルダを汚さない" },
     { "gameliftcli", mye::RunGameLiftCliSelfTest, SelfTestTier::Fast, "M107c: aws CLI の argv 組み立て・利用者入力の検査・引数の引用の往復・環境ブロック・エラー分類・応答の解析 (純関数)" },
     { "gameliftcliprocess", mye::RunGameLiftCliProcessSelfTest, SelfTestTier::Fast, "M107c: 子プロセス実行器 (偽 CLI = cmd.exe): stdout/stderr 分離・1 MB 超・タイムアウト・取消・環境の到達と親の不変" },
+    { "gameliftflow", mye::RunGameLiftFlowSelfTest, SelfTestTier::Fast, "M107d: GameLift 窓の手順 (偽 CLI + 偽ホスト): ボタンの有効/無効と理由・準備の冪等と確認・サーバ起動の argv/環境・参加の再試行と待ち・片付けの順序・取消・設定の往復 (トークン無し)" },
+    { "gameliftserver", mye::RunGameLiftServerSelfTest, SelfTestTier::Fast, "M107d: Server.exe 子プロセス (偽サーバ = cmd/powershell): 環境のトークン・ログのファイル化と ProcessReady・stop イベント・猶予内停止と強制終了" },
 };
 
 const SelfTestAlias kAliases[] = {

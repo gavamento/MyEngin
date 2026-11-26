@@ -13,7 +13,7 @@ namespace mye {
 namespace {
 
 constexpr size_t kMaxNameLength = 64;
-constexpr size_t kMaxSuffixLength = 50; // "custom-" (7) を足しても API の上限 64 に収まる
+constexpr size_t kMaxLocationNameLength = 64; // API 上のロケーション名 ("custom-" + 接尾辞) の上限
 constexpr size_t kMaxIdLength = 512;    // ゲームセッション ID は ARN で長い
 constexpr int kMaxPort = 65535;
 constexpr int kMaxPlayersLimit = 4;
@@ -79,7 +79,9 @@ bool BuildComputeCall(const wchar_t* op, const std::string& region, const std::s
 
 bool IsValidLocationSuffix(const std::string& suffix)
 {
-    return IsSimpleToken(suffix, kMaxSuffixLength, "-_.") && suffix.rfind(kLocationPrefixNarrow, 0) != 0;
+    // register-compute / create-location は英数と '-' だけを通す。'_' '.' は AWS 側で拒否される
+    return IsSimpleToken(suffix, kMaxLocationNameLength - sizeof(kLocationPrefixNarrow) + 1, "-") &&
+           suffix.rfind(kLocationPrefixNarrow, 0) != 0;
 }
 
 bool IsValidFleetName(const std::string& name)
@@ -89,7 +91,7 @@ bool IsValidFleetName(const std::string& name)
 
 bool IsValidComputeName(const std::string& name)
 {
-    return IsSimpleToken(name, kMaxNameLength, "-_.");
+    return IsSimpleToken(name, kMaxNameLength, "-");
 }
 
 bool IsValidBuildName(const std::string& name)

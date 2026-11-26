@@ -83,16 +83,21 @@ void TestQuotingRoundTrip(Counter& c)
 
 void TestValidators(Counter& c)
 {
-    c.Check(IsValidLocationSuffix("mye-dev") && IsValidLocationSuffix("a.b_c-1"), "location suffix: allowed characters");
+    c.Check(IsValidLocationSuffix("mye-dev") && IsValidLocationSuffix("A1-b2"), "location suffix: allowed characters (alphanumerics and '-')");
     c.Check(!IsValidLocationSuffix("") && !IsValidLocationSuffix("a b") && !IsValidLocationSuffix("a/b") &&
-                !IsValidLocationSuffix("custom-x") && !IsValidLocationSuffix("-x") && !IsValidLocationSuffix("あ") &&
-                !IsValidLocationSuffix(std::string(51, 'a')),
-            "location suffix: empty / space / slash / custom- prefix / leading '-' / non-ASCII / too long are rejected");
-    c.Check(IsValidLocationSuffix(std::string(50, 'a')), "location suffix: 50 characters is the limit");
+                !IsValidLocationSuffix("custom-x") && !IsValidLocationSuffix("-x") && !IsValidLocationSuffix("あ"),
+            "location suffix: empty / space / slash / custom- prefix / leading '-' / non-ASCII are rejected");
+    c.Check(!IsValidLocationSuffix("my_pc") && !IsValidLocationSuffix("a.b"),
+            "location suffix: '_' and '.' are rejected (AWS allows only alphanumerics and '-')");
+    // "custom-" (7 文字) を足して API 上限 64 文字 → 接尾辞は 57 文字まで
+    c.Check(IsValidLocationSuffix(std::string(57, 'a')) && !IsValidLocationSuffix(std::string(58, 'a')),
+            "location suffix: 57 characters is the limit (custom- + suffix <= 64)");
     c.Check(IsValidFleetName("mye-anywhere") && !IsValidFleetName("my fleet") && !IsValidFleetName("--x") &&
                 !IsValidFleetName("a\"b") && !IsValidFleetName("a&b"),
             "fleet name");
     c.Check(IsValidComputeName("PC-01") && !IsValidComputeName("pc 01") && !IsValidComputeName(""), "compute name");
+    c.Check(!IsValidComputeName("my_pc") && !IsValidComputeName("a.b") && IsValidComputeName("my-pc"),
+            "compute name: '_' and '.' are rejected (AWS allows only alphanumerics and '-')");
     c.Check(IsValidBuildName("mye-server") && IsValidBuildVersion("20261127.1") && !IsValidBuildVersion("1 2"),
             "build name / version");
     c.Check(IsValidInstanceType("c5.large") && !IsValidInstanceType("c5 large") && !IsValidInstanceType("c5;large"),

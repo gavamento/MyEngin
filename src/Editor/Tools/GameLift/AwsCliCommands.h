@@ -18,11 +18,14 @@ struct AwsCall
     bool secret = false;     // 出力にトークンを含む (get-compute-auth-token)
 };
 
-// --- 利用者が入れる値の検査 (ASCII の英数と '-' '_' '.'、先頭は英数。'-' 始まりを許すと CLI のオプションに化ける) ---
+// --- 利用者が入れる値の検査 (ASCII。先頭は英数 — '-' 始まりを許すと CLI のオプションに化ける) ---
 
-// ロケーションの接尾辞 (表示と API 名は "custom-" + 接尾辞)。"custom-" 始まりは二重になるので拒否
+// ロケーションの接尾辞 (表示と API 名は "custom-" + 接尾辞)。英数と '-' だけ (AWS が '_' '.' を拒む)、
+// "custom-" を足して 64 文字以内。"custom-" 始まりは二重になるので拒否
 bool IsValidLocationSuffix(const std::string& suffix);
+// 以下の名前は英数と '-' '_' '.'
 bool IsValidFleetName(const std::string& name);
+// コンピュート名は英数と '-' だけ (AWS が '_' '.' を拒む)
 bool IsValidComputeName(const std::string& name);
 bool IsValidBuildName(const std::string& name);
 bool IsValidBuildVersion(const std::string& version);

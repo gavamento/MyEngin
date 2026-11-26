@@ -35,6 +35,7 @@
 #include "Editor/Windows/Debug/ProfilerWindow.h"
 #include "Editor/Windows/Debug/FeelMonitorWindow.h"
 #include "Editor/Windows/Debug/PerformanceCompareWindow.h"
+#include "Editor/Windows/Project/GameLiftWindow.h"
 #include "Editor/Windows/Project/NetWindow.h"
 #include "Editor/Windows/Debug/TimelineWindow.h"
 #include "Editor/Windows/Project/ProjectSettingsWindow.h"
@@ -207,6 +208,7 @@ private:
     FeelMonitorWindow feelMonitor_; // M94i
     PerformanceCompareWindow performanceCompare_;
     TimelineWindow timeline_; // M52e: 巻き戻しスクラブ (Play 中のみ中身がある)
+    GameLiftWindow gameLift_; // M107d: AWS GameLift の操作 (Anywhere の手順。窓を閉じても Server.exe の監視は続く)
     NetWindow net_;           // M52i: ネットセッションの状態 (--net-host/join 時のみ中身がある)
     // M66b: git 連携。**セッションは窓と独立**に生きる (窓を閉じていても status は最新)
     SourceControlSession scm_;

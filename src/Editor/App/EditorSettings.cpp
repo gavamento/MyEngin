@@ -89,6 +89,29 @@ void EditorSettings::Load(const std::wstring& dir)
                 }
             }
         }
+        if (root.contains("gameLift") && root["gameLift"].is_object()) {
+            const nlohmann::json& g = root["gameLift"];
+            // 型が違うキーは value() が例外を投げるので、キーごとに型を見て読む (壊れた値は既定のまま)
+            const auto readString = [&g](const char* key, std::string& out) {
+                if (g.contains(key) && g[key].is_string()) {
+                    out = g[key].get<std::string>();
+                }
+            };
+            const auto readInt = [&g](const char* key, int& out) {
+                if (g.contains(key) && g[key].is_number_integer()) {
+                    out = g[key].get<int>();
+                }
+            };
+            readString("region", gameLift.region);
+            readString("locationSuffix", gameLift.locationSuffix);
+            readString("anywhereFleetName", gameLift.anywhereFleetName);
+            readString("computeName", gameLift.computeName);
+            readString("ipAddress", gameLift.ipAddress);
+            readInt("port", gameLift.port);
+            readInt("maxPlayers", gameLift.maxPlayers);
+            readString("anywhereFleetId", gameLift.anywhereFleetId);
+            SanitizeGameLiftSettings(gameLift);
+        }
     } catch (const nlohmann::json::exception& ex) {
         MYE_LOG_WARN("editor_settings.json parse error: %s", ex.what());
     }
@@ -151,6 +174,19 @@ void EditorSettings::Save() const
             budgets[budget.key] = budget.ms;
         }
         root["profilerBudgets"] = budgets;
+    }
+    {
+        // 認証トークン・資格情報は書かない (GameLiftSettings がそもそも持たない)
+        nlohmann::json g = nlohmann::json::object();
+        g["region"] = gameLift.region;
+        g["locationSuffix"] = gameLift.locationSuffix;
+        g["anywhereFleetName"] = gameLift.anywhereFleetName;
+        g["computeName"] = gameLift.computeName;
+        g["ipAddress"] = gameLift.ipAddress;
+        g["port"] = gameLift.port;
+        g["maxPlayers"] = gameLift.maxPlayers;
+        g["anywhereFleetId"] = gameLift.anywhereFleetId;
+        root["gameLift"] = g;
     }
 
     std::ofstream f(std::filesystem::path(path_), std::ios::binary);

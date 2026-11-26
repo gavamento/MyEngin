@@ -145,8 +145,13 @@
     <ClCompile Include="..\src\Editor\Tools\GameLift\AwsCliParse.cpp" />
     <ClCompile Include="..\src\Editor\Tools\GameLift\CliProcess.cpp" />
     <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftFlow.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftFlowSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftHost.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftSettings.cpp" />
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackage.cpp" />
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\ServerProcess.cpp" />
     <ClCompile Include="..\src\Editor\Tools\ModalTools.cpp" />
     <ClCompile Include="..\src\Editor\Tools\NavBakeCommit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\NavBakeService.cpp" />
@@ -202,6 +207,7 @@
     <ClCompile Include="..\src\Editor\Windows\Project\AiChangesWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\BrowserWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\BuildSettingsWindow.cpp" />
+    <ClCompile Include="..\src\Editor\Windows\Project\GameLiftWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\NetWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.cpp" />
     <ClCompile Include="..\src\Editor\Windows\Project\RestoreRunWindow.cpp" />
@@ -330,8 +336,14 @@
     <ClInclude Include="..\src\Editor\Tools\GameLift\AwsCliParse.h" />
     <ClInclude Include="..\src\Editor\Tools\GameLift\CliProcess.h" />
     <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftFlow.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftFlowSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftFlowTestDoubles.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftHost.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftSettings.h" />
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackage.h" />
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\ServerProcess.h" />
     <ClInclude Include="..\src\Editor\Tools\ModalTools.h" />
     <ClInclude Include="..\src\Editor\Tools\NavBakeCommit.h" />
     <ClInclude Include="..\src\Editor\Tools\NavBakeService.h" />
@@ -386,6 +398,7 @@
     <ClInclude Include="..\src\Editor\Windows\Project\AiChangesWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\BrowserWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\BuildSettingsWindow.h" />
+    <ClInclude Include="..\src\Editor\Windows\Project\GameLiftWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\NetWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\ProjectSettingsWindow.h" />
     <ClInclude Include="..\src\Editor\Windows\Project\RestoreRunWindow.h" />
