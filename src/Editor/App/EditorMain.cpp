@@ -29,6 +29,7 @@
 #include "Engine/Engine/App/EngineCli.h"
 #include "Engine/Engine/Demo/ShowcaseScenes.h"
 #include "Editor/Tools/EngineIndexDump.h"         // M87a: --dump-index
+#include "Editor/Tools/GameLift/ServerPackage.h"  // M107b: --gamelift-server-build
 #include "Engine/Platform/CrashHandler.h"
 #include "Engine/Platform/PathUtil.h"
 #include "Engine/Renderer/Texture/ImageDiff.h"
@@ -116,6 +117,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool fieldBench = false;              // --field-bench (M96d: かき乱しフィールドのヘッドレス計測)
     std::wstring perfBenchOutput;         // --perf-bench FILE
     std::wstring dumpIndexPath;           // --dump-index FILE (M87a: エンジン索引を JSON へ書いて終了)
+    std::wstring gameLiftServerBuildDist; // --gamelift-server-build DIST (M107b: 書き出しフォルダからサーバ版を組んで終了)
     std::string perfBenchCommit;           // --perf-commit SHA
     bool browserList = false;             // --browser-list (M105a: 検出したブラウザを出して終了)
     bool browserDummy = false;            // --browser-dummy-window (M105a: selftest 用のダミー窓プロセス)
@@ -185,6 +187,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
             if (arg == L"--field-bench") {
                 fieldBench = true;
+                continue;
+            }
+            if (arg == L"--gamelift-server-build" && i + 1 < argc) {
+                gameLiftServerBuildDist = argv[++i];
                 continue;
             }
             if (arg == L"--dump-index" && i + 1 < argc) {
@@ -375,6 +381,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // --field-bench (M96d): かき乱しフィールドのヘッドレス計測 (ステップ時間・ハッシュ時間・スナップショットのバイト数)
     if (fieldBench) {
         return mye::RunDisturbanceFieldBenchmark();
+    }
+    // --gamelift-server-build DIST [--project DIR] (M107b): ウィンドウも D3D も作らず、書き出しフォルダ DIST から
+    // <project>\cache\gamelift\server-build\ へサーバ版を組み、局所起動確認まで行う。結果は 1 行 (exit 0 / 1)
+    if (!gameLiftServerBuildDist.empty()) {
+        return mye::RunServerBuildCli(projectDir, gameLiftServerBuildDist);
     }
     // --dump-index FILE (M87a): ウィンドウも D3D も作らず、組み込み型と CLI 表を JSON へ書いて終了する
     if (!dumpIndexPath.empty()) {

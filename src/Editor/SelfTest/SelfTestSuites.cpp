@@ -37,6 +37,7 @@
 #include "Editor/SourceControl/SourceControlSelfTest.h"
 #include "Editor/Tools/EngineIndexDumpSelfTest.h"
 #include "Editor/Tools/FractureEditorSelfTest.h"
+#include "Editor/Tools/GameLift/ServerPackageSelfTest.h"
 #include "Editor/Tools/NavEditorSelfTest.h"
 #include "Editor/Tools/PatrolRouteEditSelfTest.h"
 #include "Editor/Undo/UndoSelfTest.h"
@@ -281,6 +282,8 @@ const SelfTestSuite kSuites[] = {
     { "terminalconpty", mye::RunTerminalConPtySelfTest, SelfTestTier::Full, "M106c: ConPTY で cmd.exe を起動・echo 往復・リサイズ・再起動・非対応時の Unsupported" },
     { "terminalwindow", mye::RunTerminalLayoutSelfTest, SelfTestTier::Fast, "M106d: ターミナル窓の純関数 (セル→描画ラン・選択→文字列・ピクセル→行列・スクロール・出力への追従・キー振り分け・設定のクランプ)" },
     { "terminalvsenv", mye::RunTerminalVsEnvSelfTest, SelfTestTier::Fast, "M106e: set 出力の解析・環境差分・エンジン環境変数の組み立て・VS 環境ローダー (偽 fetch。純関数 + スレッド)" },
+    { "serverpackage", mye::RunServerPackageSelfTest, SelfTestTier::Fast, "M107b: GameLift 用サーバ版の組み立て (入れる/入れない・バイト一致・install.bat・足りない入力の全列挙・入れ替えの安全側)" },
+    { "serverpackagelocal", mye::RunServerPackageLocalSelfTest, SelfTestTier::Full, "M107b: 実 Server.exe の局所起動確認 (exit 5 + ready)・起動確認が組んだフォルダを汚さない" },
 };
 
 const SelfTestAlias kAliases[] = {

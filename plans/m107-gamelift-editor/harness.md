@@ -7,9 +7,9 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | OK | 1 | (本コミット) | Server.exe: gamelift-managed / 停止一本化 / ログ。nit 2 件 (StopRequest.h の Windows.h、--log-dir 時のエラー出先は sub-06 文書へ) |
-| sub-02 | 未着手 | 0 | | サーバ版の組み立て + 局所起動。OK 後に手動チェックポイント |
-| sub-03 | 未着手 | 0 | | aws CLI 層 + check_rules 規則 22 |
+| sub-01 | OK | 1 | 45131630 | Server.exe: gamelift-managed / 停止一本化 / ログ。nit 2 件 (StopRequest.h の Windows.h、--log-dir 時のエラー出先は sub-06 文書へ) |
+| sub-02 | OK | 1 | (本コミット) | サーバ版の組み立て + 局所起動。nit 2 件 (install.bat の start /wait = R9、BuildServerPackage が長い)。**手動チェックポイント待ち (ユーザー)** |
+| sub-03 | 実装中 | 0 | | aws CLI 層 + check_rules 規則 22 |
 | sub-04 | 未着手 | 0 | | GameLift 窓 共通部 + Anywhere |
 | sub-05 | 未着手 | 0 | | EC2 + 課金中表示 (チェックポイント通過が前提) |
 | sub-06 | 未着手 | 0 | | 文書・ADR-042・版 0.90.4 |
@@ -35,8 +35,11 @@
 
 ## 申し送り (セッション跨ぎ)
 - 事前調査の結果は `plans/m107-gamelift-editor/design-draft.md`
+- (司会 2026-11-27) **サブが OK になるたび、技術解説を Notion 活動記録に 1 ページ書く (ユーザー指示。人が読む前提で分かりやすく、詳しく。「なぜ」だけでなく**実際にどんなコードを書いたか** (起動〜停止の流れ、ファイルごとの変更、実際の差分からのコード抜粋と読み方、テストの仕組み) も書く。抜粋はコミットの差分から取り、創作しない)**。sub-01 = https://app.notion.com/p/42402024a4d48193bb6df9776c2fc320
 - (司会 2026-11-27) **M107 完了時に hooks を戻す (ユーザー指示)**。止まらないよう `C:\Users\akita\.claude\settings.json` の `hooks` 節を `C:\Users\akita\.claude\hooks-disabled-20261127.json` へ退避中 (全体のバックアップは `settings.json.bak-20261127-hooks`)。戻すときはバックアップで上書きせず、退避ファイルの `hooks` を現在の settings.json へ書き戻す (途中で変わった他の設定を消さないため)。戻したらユーザーに報告する
 - (planner 2026-11-27) spec.md は「仮確定」。AskUserQuestion が使えなかったため Q1〜Q5 と確定確認は司会がユーザーに聞く (spec 7.)。
 - (planner) **sub-02 の OK 後に手動チェックポイント** (sub-02.md 末尾の CLI 手順、EC2 c5.large を 1 時間未満)。結果を planner へ渡してから sub-05 に着手する。ERROR なら sub-02 差し戻しの可能性。
 - (planner) sub-01 と sub-03 は依存なしで並列可。sub-02 と sub-03 はどちらも `src/Editor/Tools/GameLift/` と `SelfTestSuites.cpp` を触るので、同時に走らせるなら合流時の競合に注意。
 - (planner) 見つけた既存バグ: `--hosting gamelift` は Ctrl+C のハンドラを持たず ProcessEnding が送られない (`LocalHosting.cpp:36` だけが登録)。`docs/gamelift-anywhere.md` 8 章の記述と食い違う。sub-01 で直し、sub-06 で文書を直す。
+- (司会 2026-11-27) 別件 (M107 と無関係、直さない): `modalsynth` の 1 項目 FAIL (`transient burst increases initial impact energy in [0, 15ms]`)。src/Engine は基点から差分なし、最終変更は 7ee637a3 (2026-11-19)。master の CI は 2026-11-24 以降 failure (基点では Rust の `pipe_is_owner_only_and_refuses_remote_clients`)。完了報告で別件として挙げる
+- (司会 2026-11-27) Notion 後回し M107-N1 (Defender 検疫 R8) を質問表に記載。sub-02 OK の時点で、Release Editor.exe が一度 `Behavior:Win32/DefenseEvasion.A!ml` で検疫された (02:01:45)

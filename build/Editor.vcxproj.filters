@@ -28,6 +28,9 @@
     <Filter Include="Tools\Browser">
       <UniqueIdentifier>{80B4F782-97D0-0606-BEC5-4807B880253C}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Tools\GameLift">
+      <UniqueIdentifier>{B61E00D2-DEAF-C573-3832-1EBE54E7AF30}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Tools\Terminal">
       <UniqueIdentifier>{35366E6A-E49B-F89F-E2EC-CE75566BD8B8}</UniqueIdentifier>
     </Filter>
@@ -368,6 +371,12 @@
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\FractureEditorSelfTest.cpp">
       <Filter>Tools</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackage.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.cpp">
+      <Filter>Tools\GameLift</Filter>
     </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\ModalTools.cpp">
       <Filter>Tools</Filter>
@@ -905,6 +914,12 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\FractureEditorSelfTest.h">
       <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackage.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.h">
+      <Filter>Tools\GameLift</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\ModalTools.h">
       <Filter>Tools</Filter>

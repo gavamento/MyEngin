@@ -141,6 +141,8 @@
     <ClCompile Include="..\src\Editor\Tools\FractureBakeCommit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\FractureBakeService.cpp" />
     <ClCompile Include="..\src\Editor\Tools\FractureEditorSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackage.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\ModalTools.cpp" />
     <ClCompile Include="..\src\Editor\Tools\NavBakeCommit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\NavBakeService.cpp" />
@@ -320,6 +322,8 @@
     <ClInclude Include="..\src\Editor\Tools\FractureBakeCommit.h" />
     <ClInclude Include="..\src\Editor\Tools\FractureBakeService.h" />
     <ClInclude Include="..\src\Editor\Tools\FractureEditorSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackage.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\ModalTools.h" />
     <ClInclude Include="..\src\Editor\Tools\NavBakeCommit.h" />
     <ClInclude Include="..\src\Editor\Tools\NavBakeService.h" />

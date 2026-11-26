@@ -301,6 +301,8 @@ aws CLI 層 (sub-03)
 - R4: EC2 のインスタンスで Server.exe の作業ディレクトリが `C:\game` 以外でも、assets は exe から探す (`FindAssetsRoot`) ので動くはずだが未確認 (受け入れ 8)。
 - R5: サーバに C# レーンが無いのは M81 からの制限。C# スクリプトを使うゲームは EC2 / Anywhere とも sim が食い違いうる (文書に明記)。
 - R6: `--exit-when-empty` は「予約中の再接続」を待たずに終わる (`ServerLoop.cpp:354`)。EC2 では 1 セッション = 1 プロセスで回すための選択で、開発用途として許容。
+- R8: Defender の振る舞い検知。sub-02 の実装中に Release の Editor.exe が一度 `Behavior:Win32/DefenseEvasion.A!ml` で検疫された (2026-11-27 02:01、再ビルド後 3 回は再検出なし)。M98 では MyEngineLauncher.exe が同じ検出名で、原因は「自分を複製して実行する」挙動だった (メモリ)。サーバ版の組み立ては exe を別フォルダへ写して起動するので、似た挙動に見えうる。チェックポイントと手動確認 28 / 29 で再発するかを見る。再発したら、局所起動確認を別の形にするか検討する (例: 写した exe を起動しない)
+- R9: `install.bat` は `vc_redist.x64.exe` を直接呼ぶ (`start /wait` を付けない)。Burn のブートストラップが子プロセスへ処理を移しても、バッチは完了を待つ見込み (未確認、記憶による)。チェックポイントで Server.exe が起動すれば足りる。起動しなければ `start "" /wait` へ変える (sub-02 の差し戻し)
 - R7: 料金・無料枠は確認していない (design-draft 3 章のとおり期間・東京の Windows 単価は未確認)。窓に単価を出さない理由。
 
 ### 出典 (planner が 2026-11-27 に取得)
@@ -318,3 +320,4 @@ aws CLI 層 (sub-03)
 (確定後の変更のみ)
 
 - 2026-11-27 (出所: ユーザー、司会経由): Q1〜Q5 と受け入れ条件 1〜29 が裁定どおり承認され、状態を「仮確定」から「確定」にした。仕様の中身は変更なし。
+- 2026-11-27 (出所: coder SELF_EVAL sub-02 round 1、planner が採用): 4.1.2 を次のように明確化した。(a) 出力先を入れ替えるのは「無い / 空 / `mye_server_build.json` がある」場合だけ。それ以外は拒否して、引数の誤りで別のフォルダを消さない (b) 書き出しフォルダと出力先が包含関係にあれば (どちら向きでも) 失敗 (c) 局所起動確認の後に、Server.exe が作ったファイル (`cache\hot_server` / `save_server` 等) を組んだフォルダから消す。upload-build に混ざるため (d) 局所起動確認のログは `<project>\cache\gamelift\server-localcheck.log` に置き、上限は 60 秒。あわせてリスク R8 (Defender) と R9 (install.bat の待ち) を 7. に足した。
