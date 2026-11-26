@@ -15,7 +15,10 @@
    `CreatePlayerSession` `GetGameSessionLogUrl` 等。開発中は `gamelift:*` で可、と既存手順書の流儀に合わせる)、
    費用の注意 (EC2 は台数 > 0 の間課金。帯の意味。必ず台数 0 か削除)、窓を使わない CLI 手順 (sub-02 のチェックポイント手順を整えたもの)、
    うまくいかないとき (フリートイベントの読み方)、既知の制限 (spec 7. R5〜R7、`--exit-when-empty`、1 インスタンス 1 プロセス)。
-3. **`docs/gamelift-anywhere.md`**: 8 章の停止の記述を実装 (sub-01) に合わせて直す。冒頭に「エディタの GameLift 窓で同じことができる」と
+3. **`docs/gamelift-anywhere.md`**: 8 章の停止の記述を実装 (sub-01) に合わせて直す。sub-01 で「Ctrl+C / `--stop-event` → ProcessEnding」が
+   全ホスティング共通になったので、記述の主旨はそのまま正しくなった。直すのは「M81 時点では gamelift で効いていなかった (M107 で修正)」の注記、
+   `--stop-event` の追記、「コンソールハンドラは hosting.Init (InitSDK 最大 30 秒) の後に入る = それ以前の Ctrl+C は即時終了」の注意。
+   `--log-dir` を付けると引数の矛盾エラーもログファイルへ出る (元の stderr には出ない) ことも書く。冒頭に「エディタの GameLift 窓で同じことができる」と
    `docs/gamelift-editor.md` への案内。「EC2 フリートは対象外」の文を直す。11 章の未確定 2 点は手動確認 28 の結果待ちとして残す。
 4. **`engine_spec.md`**: 該当章 (専用サーバ / オンライン / エディタの窓の一覧) に GameLift 窓と Server.exe の新しい引数。冒頭 Version 行。
 5. **`docs/test_checklists.md`**: 手動確認 28 / 29 の項目。

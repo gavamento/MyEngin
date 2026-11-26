@@ -17,7 +17,8 @@
 namespace mye {
 
 struct GameLiftHostingOptions {
-    GameLiftConnection connection;
+    GameLiftConnection connection;   // Anywhere のときだけ使う
+    bool managedEc2 = false;         // true: 引数なしの InitSDK (--hosting gamelift-managed)。connection は空
     uint32_t laneCount = 4;          // --max-players (sim のレーン数)。GameSession の最大人数との小さい方を入場の上限にする
     uint32_t healthStaleMs = 30000;  // Poll (メインループの周回) がこれより長く止まったらヘルスチェックに不健康と答える
     std::function<uint64_t()> nowMs; // 時計 (ms)。null = steady_clock。selftest が差し替える

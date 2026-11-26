@@ -90,13 +90,17 @@ bool GameLiftHosting::Fail(const char* what, const GameLiftResult& r)
 bool GameLiftHosting::Init()
 {
     shared_->lastPollMs.store(NowMs());
-    const GameLiftResult r = sdk_->InitSdk(opt_.connection);
+    const GameLiftResult r = opt_.managedEc2 ? sdk_->InitSdkManaged() : sdk_->InitSdk(opt_.connection);
     if (!r.ok) {
         return Fail("InitSDK", r);
     }
     initialised_ = true;
-    MYE_LOG_INFO("[gamelift] SDK initialised (fleet %s, host %s, process %s)", opt_.connection.fleetId.c_str(),
-                 opt_.connection.hostId.c_str(), opt_.connection.processId.c_str());
+    if (opt_.managedEc2) {
+        MYE_LOG_INFO("[gamelift] SDK initialised (managed EC2 fleet)");
+    } else {
+        MYE_LOG_INFO("[gamelift] SDK initialised (fleet %s, host %s, process %s)", opt_.connection.fleetId.c_str(),
+                     opt_.connection.hostId.c_str(), opt_.connection.processId.c_str());
+    }
     return true;
 }
 

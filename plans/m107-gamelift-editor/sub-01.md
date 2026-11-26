@@ -62,4 +62,12 @@ spec 5. の 1〜5。
 
 ## 実装メモ (coder が追記)
 
+SELF_EVAL: sub-01 (round 1)
+- 停止要求の受け口は ServerLoop 案 (新設 `StopRequest` を `ServerLoopConfig::stop` で渡し、Poll と同じ位置で Terminate に合流)。
+- `--hosting gamelift-managed` は `IGameLiftSdk::InitSdkManaged()` を追加、`GameLiftHostingOptions::managedEc2` で選ぶ。
+- ログ: wmain 先頭で stdout / stderr を `_IONBF`、`--log-dir` は CreateFileW (共有許可) + `_dup2` で fd 1/2 を差し替え。
+- 検証: Server.exe --selftest (Debug / Release) exit 0、check_rules 0 error、Editor `servernet,session` exit 0、手で managed 併記 exit 1。
+
 ## フィードバック履歴
+
+- round 1: VERDICT OK (planner, 2026-11-27)。planner が `bin\x64\Debug\Server.exe --selftest` を再実行して exit 0・M107 の 25 項目 PASS を確認 (81 秒)。指摘は nit 2 件 (申し送り): StopRequest.h の `<Windows.h>` を `void*` にしてヘッダの汚染を避ける余地 / `--log-dir` 時は MakeHosting の矛盾エラーもログファイルへ行く点を sub-06 の文書に書く。

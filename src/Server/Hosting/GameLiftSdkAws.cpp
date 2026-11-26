@@ -83,6 +83,20 @@ class AwsGameLiftSdk final : public IGameLiftSdk {
 public:
     GameLiftResult InitSdk(const GameLiftConnection& c) override
     {
+        const Gl::Server::Model::ServerParameters params(c.webSocketUrl, c.authToken, c.fleetId, c.hostId,
+                                                         c.processId);
+        return RunInit([params]() { return Gl::Server::InitSDK(params); });
+    }
+
+    // マネージド EC2: 接続情報は GameLift が環境変数で渡すので引数なし (GameLiftServerAPI.h)
+    GameLiftResult InitSdkManaged() override
+    {
+        return RunInit([]() { return Gl::Server::InitSDK(); });
+    }
+
+    // InitSDK を呼ぶ側の共通処理 (カスタムロガーの設定 + 30 秒の上限)
+    GameLiftResult RunInit(std::function<Gl::Server::InitSDKOutcome()> initCall)
+    {
         // ログの経路はプロセスで 1 度だけ決まる (InitSDK 後は変えられない)。失敗しても致命ではない
         const Gl::GenericOutcome logOutcome =
             Gl::Server::InitCustomLogger(Gl::Server::CustomLoggerConfiguration(&SdkLogSink, nullptr,
@@ -93,12 +107,10 @@ public:
         }
         // InitSDK は同期で、繋がらないと戻らない。別スレッドで走らせて待ち時間に上限を付ける。
         // 時間切れのスレッドは回収できないので切り離す (呼び出し側はプロセスを畳むこと)
-        const Gl::Server::Model::ServerParameters params(c.webSocketUrl, c.authToken, c.fleetId, c.hostId,
-                                                         c.processId);
         auto promise = std::make_shared<std::promise<GameLiftResult>>();
         std::future<GameLiftResult> future = promise->get_future();
-        std::thread([promise, params]() {
-            const Gl::Server::InitSDKOutcome o = Gl::Server::InitSDK(params);
+        std::thread([promise, initCall]() {
+            const Gl::Server::InitSDKOutcome o = initCall();
             GameLiftResult r;
             if (!o.IsSuccess()) {
                 r.ok = false;
@@ -110,8 +122,9 @@ public:
             GameLiftResult r;
             r.ok = false;
             r.error = "InitSDK did not finish within " + std::to_string(kInitTimeout.count())
-                + " s (the SDK is still retrying the WebSocket connection; check --gamelift-ws-url, the fleet / "
-                  "compute IDs and that the auth token has not expired)";
+                + " s (the SDK is still retrying the WebSocket connection; Anywhere: check --gamelift-ws-url, the "
+                  "fleet / compute IDs and that the auth token has not expired; managed EC2: the process must be "
+                  "started by GameLift)";
             return r;
         }
         return future.get();

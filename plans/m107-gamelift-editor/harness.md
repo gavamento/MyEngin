@@ -7,7 +7,7 @@
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
 |---|---|---|---|---|
-| sub-01 | 未着手 | 0 | | Server.exe: gamelift-managed / 停止一本化 / ログ |
+| sub-01 | OK | 1 | (本コミット) | Server.exe: gamelift-managed / 停止一本化 / ログ。nit 2 件 (StopRequest.h の Windows.h、--log-dir 時のエラー出先は sub-06 文書へ) |
 | sub-02 | 未着手 | 0 | | サーバ版の組み立て + 局所起動。OK 後に手動チェックポイント |
 | sub-03 | 未着手 | 0 | | aws CLI 層 + check_rules 規則 22 |
 | sub-04 | 未着手 | 0 | | GameLift 窓 共通部 + Anywhere |
@@ -24,7 +24,7 @@
   - サーバの場所: **両方を選べるようにする** (自分の PC = GameLift Anywhere / AWS 上 = マネージド EC2 フリート)
   - AWS の呼び方: **aws CLI を裏で呼ぶ** (AWS SDK for C++ は組み込まない)
   - 進め方: harness で回す
-- 質問の運用: **その場で聞く** (2026-11-27)
+- 質問の運用: ~~その場で聞く~~ → **推奨で進めて Notion に後回し** (2026-11-27、ユーザーが就寝するため変更。sub-01 の判定待ちの時点)。質問表: Notion 活動記録「M107 GameLift 窓: ハーネスの保留質問」https://app.notion.com/p/42402024a4d481cbbf8dd556d2ff9c45
 - 2026-11-27 planner の未決 (spec 7.) を司会が AskUserQuestion で確認。**6 件とも planner の裁定どおり**:
   - Q1 EC2 の実機確認: sub-02 の直後に手動チェックポイント (費用あり、ユーザーが CLI を貼る)
   - Q2 参加ボタンのクライアント: Runtime.exe (Anywhere = Editor.exe の隣 + `--project`、EC2 = 書き出しフォルダ、`--project` なし)
@@ -35,6 +35,7 @@
 
 ## 申し送り (セッション跨ぎ)
 - 事前調査の結果は `plans/m107-gamelift-editor/design-draft.md`
+- (司会 2026-11-27) **M107 完了時に hooks を戻す (ユーザー指示)**。止まらないよう `C:\Users\akita\.claude\settings.json` の `hooks` 節を `C:\Users\akita\.claude\hooks-disabled-20261127.json` へ退避中 (全体のバックアップは `settings.json.bak-20261127-hooks`)。戻すときはバックアップで上書きせず、退避ファイルの `hooks` を現在の settings.json へ書き戻す (途中で変わった他の設定を消さないため)。戻したらユーザーに報告する
 - (planner 2026-11-27) spec.md は「仮確定」。AskUserQuestion が使えなかったため Q1〜Q5 と確定確認は司会がユーザーに聞く (spec 7.)。
 - (planner) **sub-02 の OK 後に手動チェックポイント** (sub-02.md 末尾の CLI 手順、EC2 c5.large を 1 時間未満)。結果を planner へ渡してから sub-05 に着手する。ERROR なら sub-02 差し戻しの可能性。
 - (planner) sub-01 と sub-03 は依存なしで並列可。sub-02 と sub-03 はどちらも `src/Editor/Tools/GameLift/` と `SelfTestSuites.cpp` を触るので、同時に走らせるなら合流時の競合に注意。

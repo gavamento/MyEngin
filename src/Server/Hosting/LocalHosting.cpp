@@ -5,38 +5,12 @@
 //====================================================================================
 #include "Server/Hosting/LocalHosting.h"
 
-#include <atomic>
-
-#include <Windows.h>
-
 #include "Engine/Core/Diagnostics/Log.h"
 
 namespace mye {
-namespace {
-
-// コンソールのハンドラは別スレッドから呼ばれる。立てるのはこのフラグだけで、処理は Poll (メインスレッド) で行う
-std::atomic<bool> g_terminateRequested{ false };
-
-BOOL WINAPI ConsoleHandler(DWORD)
-{
-    g_terminateRequested.store(true);
-    return TRUE; // 既定の即時終了を止める (記録 .rep を閉じてから自分で抜ける)
-}
-
-} // namespace
-
-LocalHosting::~LocalHosting()
-{
-    Shutdown();
-}
 
 bool LocalHosting::Init()
 {
-    g_terminateRequested.store(false);
-    handlerInstalled_ = SetConsoleCtrlHandler(ConsoleHandler, TRUE) != FALSE;
-    if (!handlerInstalled_) {
-        MYE_LOG_WARN("[hosting] could not install the console handler; Ctrl+C will end the process abruptly");
-    }
     return true;
 }
 
@@ -54,20 +28,6 @@ void LocalHosting::Poll(std::vector<HostingEvent>& out)
         HostingEvent e;
         e.kind = HostingEventKind::StartSession;
         out.push_back(e);
-    }
-    if (g_terminateRequested.load() && !terminateSent_) {
-        terminateSent_ = true;
-        HostingEvent e;
-        e.kind = HostingEventKind::Terminate;
-        out.push_back(e);
-    }
-}
-
-void LocalHosting::Shutdown()
-{
-    if (handlerInstalled_) {
-        SetConsoleCtrlHandler(ConsoleHandler, FALSE);
-        handlerInstalled_ = false;
     }
 }
 

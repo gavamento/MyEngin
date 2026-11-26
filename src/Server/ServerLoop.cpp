@@ -61,6 +61,18 @@ uint64_t MakeSessionId(uint16_t port)
     return id == 0 ? 1 : id;
 }
 
+// ホスティングの Poll に、停止要求を Terminate として足す。停止要求の経路はここ 1 本
+// (ホスティングの種類を問わない)。Terminate は何度来ても呼び出し側が 1 回として扱う
+void PollWithStopRequest(IHostingProvider& hosting, const StopRequest* stop, std::vector<HostingEvent>& events)
+{
+    hosting.Poll(events);
+    if (stop != nullptr && stop->Requested()) {
+        HostingEvent e;
+        e.kind = HostingEventKind::Terminate;
+        events.push_back(e);
+    }
+}
+
 } // namespace
 
 uint32_t PeerTable::KeyOf(const NetAddress& from, bool create)
@@ -159,6 +171,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     if (!cfg.replayRecordPath.empty()) {
         logPaths.push_back(std::filesystem::absolute(cfg.replayRecordPath).wstring());
     }
+    logPaths.insert(logPaths.end(), cfg.extraLogPaths.begin(), cfg.extraLogPaths.end());
     if (!hosting.NotifyReady(socket.LocalPort(), logPaths)) {
         MYE_LOG_ERROR("[server] hosting '%s' could not be marked ready", hosting.Name());
         return kServerExitFailed;
@@ -167,7 +180,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     HostingDecision decision;
     while (!decision.startSession && !decision.terminate) {
         events.clear();
-        hosting.Poll(events);
+        PollWithStopRequest(hosting, cfg.stop, events);
         InterpretHostingEvents(events, decision);
         if (cfg.timeoutSec > 0 && NowMs(origin) > static_cast<uint64_t>(cfg.timeoutSec) * 1000) {
             MYE_LOG_ERROR("[server] timed out (%u s) before the hosting started a session", cfg.timeoutSec);
@@ -180,7 +193,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
         }
     }
     if (decision.terminate && !decision.startSession) {
-        MYE_LOG_INFO("[server] terminated by the hosting before a session started");
+        MYE_LOG_INFO("[server] terminated before a session started (hosting, Ctrl+C or --stop-event)");
         ReplayRecorder none;
         CloseSession(none, cfg.replayRecordPath, hosting);
         return kServerExitOk;
@@ -282,7 +295,7 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
     // 開始と同じ Poll で Terminate が来ていたら、セッションを始めてすぐ閉じる (落とさない)
     bool stop = decision.terminate;
     if (stop) {
-        MYE_LOG_INFO("[server] terminate requested by the hosting");
+        MYE_LOG_INFO("[server] terminate requested (hosting, Ctrl+C or --stop-event)");
     }
     while (!stop) {
         const uint64_t now = NowMs(origin);
@@ -308,11 +321,11 @@ int RunServerLoop(HeadlessSim& sim, IHostingProvider& hosting, const ServerLoopC
 
         // 2. ホスティングの出来事
         events.clear();
-        hosting.Poll(events);
+        PollWithStopRequest(hosting, cfg.stop, events);
         HostingDecision loopDecision;
         InterpretHostingEvents(events, loopDecision);
         if (loopDecision.terminate) {
-            MYE_LOG_INFO("[server] terminate requested by the hosting");
+            MYE_LOG_INFO("[server] terminate requested (hosting, Ctrl+C or --stop-event)");
             stop = true;
         }
 

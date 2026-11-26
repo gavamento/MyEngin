@@ -35,6 +35,7 @@
 #include "Server/Hosting/GameLiftHosting.h"
 #include "Server/Hosting/LocalHosting.h"
 #include "Server/ServerLoop.h"
+#include "Server/StopRequest.h"
 
 namespace mye {
 namespace {
@@ -65,6 +66,11 @@ public:
         calls.push_back("InitSdk");
         connection = c;
         return failInit ? GameLiftResult{ false, "ValidationException: bad auth token" } : GameLiftResult{};
+    }
+    GameLiftResult InitSdkManaged() override
+    {
+        calls.push_back("InitSdkManaged");
+        return failInit ? GameLiftResult{ false, "UnauthorizedException: not on a managed fleet" } : GameLiftResult{};
     }
     GameLiftResult ProcessReady(uint16_t port, const std::vector<std::string>& logPaths,
                                 const GameLiftCallbacks& callbacks) override
@@ -441,6 +447,110 @@ void TestGameLiftHosting(const CheckFn& check)
     }
 }
 
+// ---- マネージド EC2: 引数なしの InitSDK が 1 回。ProcessReady 以降は Anywhere と同じ ----
+void TestManagedHosting(const CheckFn& check)
+{
+    auto sdk = std::make_unique<FakeGameLiftSdk>();
+    FakeGameLiftSdk& raw = *sdk;
+    GameLiftHostingOptions opt;
+    opt.managedEc2 = true;
+    opt.laneCount = 4;
+    GameLiftHosting hosting(std::move(sdk), std::move(opt));
+    check(hosting.Init() && raw.calls.size() == 1 && raw.calls[0] == "InitSdkManaged" && raw.connection.fleetId.empty(),
+          "M107: --hosting gamelift-managed calls InitSDK() without arguments exactly once (no connection info)");
+    check(hosting.NotifyReady(7777, {}) && CountCalls(raw, "ProcessReady") == 1,
+          "M107: ProcessReady follows as with Anywhere");
+    hosting.Shutdown();
+    check(raw.endingCalls == 1 && raw.destroyCalls == 1 && CallsInOrder(raw, "ProcessEnding", "Destroy"),
+          "M107: ProcessEnding then Destroy once each");
+
+    auto failing = std::make_unique<FakeGameLiftSdk>();
+    failing->failInit = true;
+    FakeGameLiftSdk& failRaw = *failing;
+    GameLiftHostingOptions failOpt;
+    failOpt.managedEc2 = true;
+    GameLiftHosting failHosting(std::move(failing), std::move(failOpt));
+    check(!failHosting.Init() && failHosting.LastError().find("InitSDK failed") != std::string::npos
+              && failRaw.calls.size() == 1,
+          "M107: a failed managed InitSDK is explained and nothing else is called");
+}
+
+std::wstring UniqueEventName(const wchar_t* tag)
+{
+    return std::wstring(L"mye_server_selftest_") + tag + L"_" + std::to_wstring(GetCurrentProcessId());
+}
+
+// ---- 停止要求: 名前付きイベント (存在しなければ開けない / 立てば Requested / 立ちっぱなし) ----
+void TestStopRequest(const CheckFn& check)
+{
+    const std::wstring name = UniqueEventName(L"unit");
+    StopRequest none;
+    check(!none.OpenEvent(name) && !none.Requested(),
+          "M107: opening a named event that does not exist fails (it is never created)");
+    HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+    StopRequest stop;
+    check(stop.OpenEvent(name) && !stop.Requested(),
+          "M107: an existing event opens and is not requested until signalled");
+    SetEvent(ev);
+    check(stop.Requested(), "M107: signalling the event requests a stop");
+    ResetEvent(ev);
+    check(stop.Requested(), "M107: a request stays requested (latched)");
+    CloseHandle(ev);
+}
+
+// セッションが始まる前に停止要求が来ても (GameLift の managed)、ProcessEnding と Destroy を 1 回ずつ送って exit 0
+void TestLoopStopRequest(const CheckFn& check)
+{
+    HeadlessSimSetup setup;
+    setup.config.title = L"MyEngine Server (selftest)";
+    setup.config.localPlayers = 2;
+    setup.systemInput = true;
+    setup.scene.showcase = PickShowcase(nullptr, FindShowcase(L"--local-demo", /*editor=*/true));
+    HeadlessSim sim;
+    if (!check(sim.Init(setup), "M107: the headless sim starts for the stop-request loop test")) {
+        return;
+    }
+    auto sdk = std::make_unique<FakeGameLiftSdk>();
+    FakeGameLiftSdk& fake = *sdk;
+    GameLiftHostingOptions opt;
+    opt.managedEc2 = true;
+    opt.laneCount = 2;
+    GameLiftHosting hosting(std::move(sdk), std::move(opt));
+    if (!check(hosting.Init(), "M107: managed hosting initialises")) {
+        return;
+    }
+    const std::wstring name = UniqueEventName(L"loop");
+    HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+    StopRequest stop;
+    check(stop.OpenEvent(name), "M107: the stop event opens");
+
+    ServerLoopConfig lc;
+    lc.port = 0;
+    lc.session = DefaultServerSessionConfig(2, static_cast<uint32_t>(setup.config.netInputDelay));
+    FillSessionConfigFromProject(lc.session, setup.config);
+    lc.timeoutSec = 60; // 保険
+    lc.statsIntervalSec = 0;
+    lc.stop = &stop;
+    lc.extraLogPaths.push_back(L"C:\\logs\\server-1.log");
+    std::thread signaller([&]() {
+        for (int i = 0; i < 4000 && !fake.HasCallbacks(); ++i) {
+            std::this_thread::sleep_for(5ms);
+        }
+        std::this_thread::sleep_for(100ms);
+        SetEvent(ev);
+    });
+    const int rc = RunServerLoop(sim, hosting, lc);
+    signaller.join();
+    check(rc == kServerExitOk && fake.endingCalls == 1 && fake.activateCalls == 0,
+          "M107: a stop request before any game session ends the loop with exit 0 and one ProcessEnding");
+    check(fake.readyLogPaths.size() == 1 && fake.readyLogPaths[0] == "C:\\logs\\server-1.log",
+          "M107: --log-dir's file is offered to GameLift as a log to collect");
+    hosting.Shutdown();
+    check(fake.endingCalls == 1 && fake.destroyCalls == 1,
+          "M107: Shutdown destroys once and does not repeat ProcessEnding");
+    CloseHandle(ev);
+}
+
 // ---- 共通の幕引き関数 (InterpretHostingEvents / CloseSession) ----
 void TestSessionFunnel(const CheckFn& check, const std::filesystem::path& tempDir)
 {
@@ -561,7 +671,7 @@ void TestLoopTerminate(const CheckFn& check, const std::filesystem::path& tempDi
     std::filesystem::remove(repPath, ec);
 }
 
-// ---- 実プロセス: Ctrl+Break (LocalHosting のコンソールハンドラ) で .rep が閉じて exit 0 ----
+// ---- 実プロセス: Ctrl+Break (StopRequest のコンソールハンドラ。local でも GameLift でも同じ) で .rep が閉じて exit 0 ----
 void TestRealConsoleTerminate(const CheckFn& check, const std::filesystem::path& tempDir)
 {
     DWORD dummyPid = 0;
@@ -638,6 +748,160 @@ void TestRealConsoleTerminate(const CheckFn& check, const std::filesystem::path&
     std::filesystem::remove(logPath, ec);
 }
 
+// ---- 実プロセス (コンソール不要): --stop-event / --log-dir / ログが行ごとに届く / 不正な引数 ----
+struct ChildServer {
+    PROCESS_INFORMATION pi = {};
+    bool started = false;
+};
+
+// 自分自身 (Server.exe) を args 付きで起動する。stdout / stderr は outPath のファイル
+ChildServer LaunchSelf(const std::wstring& args, const std::wstring& outPath)
+{
+    ChildServer c;
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    std::wstring cmd = L"\"" + std::wstring(exePath) + L"\" " + args;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
+    HANDLE out = CreateFileW(outPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE in = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si = { sizeof(si) };
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = out;
+    si.hStdError = out;
+    si.hStdInput = in;
+    c.started = CreateProcessW(exePath, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si,
+                               &c.pi) != FALSE;
+    CloseHandle(out);
+    CloseHandle(in);
+    return c;
+}
+
+// 終了を待って終了コードを返す (時間切れは強制終了して 9999)
+DWORD FinishChild(ChildServer& c, DWORD waitMs)
+{
+    DWORD code = 9999;
+    if (WaitForSingleObject(c.pi.hProcess, waitMs) == WAIT_OBJECT_0) {
+        GetExitCodeProcess(c.pi.hProcess, &code);
+    } else {
+        TerminateProcess(c.pi.hProcess, 99);
+    }
+    CloseHandle(c.pi.hProcess);
+    CloseHandle(c.pi.hThread);
+    return code;
+}
+
+std::string ReadWholeFile(const std::wstring& path)
+{
+    std::ifstream f(std::filesystem::path(path), std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+// path のファイルに needle が現れるのを (子が生きている間) 最大 maxMs 待つ
+bool WaitForText(const std::wstring& path, const char* needle, const ChildServer& c, int maxMs)
+{
+    for (int waited = 0; waited < maxMs; waited += 100) {
+        if (ReadWholeFile(path).find(needle) != std::string::npos) {
+            return true;
+        }
+        if (WaitForSingleObject(c.pi.hProcess, 100) == WAIT_OBJECT_0) {
+            return ReadWholeFile(path).find(needle) != std::string::npos;
+        }
+    }
+    return false;
+}
+
+void TestRealStopEventAndLog(const CheckFn& check, const std::filesystem::path& tempDir)
+{
+    std::error_code ec;
+    const unsigned basePort = 40000 + (GetCurrentProcessId() % 20000);
+    const std::wstring repPath = (tempDir / L"mye_server_selftest_stop.rep").wstring();
+    const std::wstring outPath = (tempDir / L"mye_server_selftest_stop.out").wstring();
+    std::filesystem::remove(repPath, ec);
+
+    // 1. stdout をファイルへ向けた実プロセス。終了前に ready の行が読める (全バッファなら数 KB たまるまで出ない)。
+    //    --stop-event で exit 0・.rep が正しく閉じる
+    {
+        const std::wstring name = UniqueEventName(L"real");
+        HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+        ChildServer c = LaunchSelf(L"--local-demo --max-players 2 --port " + std::to_wstring(basePort)
+                                       + L" --server-timeout 90 --replay-record \"" + repPath + L"\" --stop-event " + name,
+                                   outPath);
+        if (check(c.started, "M107: a real Server.exe child starts (--stop-event)")) {
+            const bool ready = WaitForText(outPath, "ready on UDP port", c, 40000);
+            check(ready, "M107: the 'ready on UDP port' line is readable from the redirected stdout while the server runs");
+            // .rep が育ち始めた (= tick を回している) のを見てから止める
+            uint64_t last = 0;
+            bool growing = false;
+            for (int i = 0; i < 300 && !growing; ++i) {
+                std::this_thread::sleep_for(100ms);
+                std::error_code sec;
+                const uint64_t size = std::filesystem::exists(repPath, sec) ? std::filesystem::file_size(repPath, sec) : 0;
+                growing = size > 0 && last > 0 && size > last;
+                last = size;
+            }
+            SetEvent(ev);
+            const DWORD code = FinishChild(c, 30000);
+            check(growing && code == 0, "M107: signalling --stop-event stops the running server with exit 0");
+            ReplayPlayer p;
+            if (check(p.Load(repPath), "M107: the .rep left by the stopped server loads")) {
+                check(!p.RecoveredUnfinished() && p.TickCount() > 0,
+                      "M107: it was closed properly (header tickCount written back, not recovered)");
+            }
+        }
+        CloseHandle(ev);
+    }
+
+    // 2. --log-dir: <dir>\server-<pid>.log ができ、そこへ ready の行が届く。元の stdout には何も出ない
+    {
+        const std::filesystem::path logDir = tempDir / L"mye_server_selftest_logdir" / L"nested";
+        std::filesystem::remove_all(logDir.parent_path(), ec);
+        const std::wstring name = UniqueEventName(L"logdir");
+        HANDLE ev = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+        ChildServer c = LaunchSelf(L"--local-demo --max-players 2 --port " + std::to_wstring(basePort + 1)
+                                       + L" --server-timeout 90 --stop-event " + name + L" --log-dir \""
+                                       + logDir.wstring() + L"\"",
+                                   outPath);
+        if (check(c.started, "M107: a real Server.exe child starts (--log-dir)")) {
+            const std::wstring logFile =
+                (logDir / (L"server-" + std::to_wstring(c.pi.dwProcessId) + L".log")).wstring();
+            check(WaitForText(logFile, "ready on UDP port", c, 40000),
+                  "M107: --log-dir creates <dir>\\server-<pid>.log (and the directory) and the ready line reaches it");
+            SetEvent(ev);
+            check(FinishChild(c, 30000) == 0, "M107: the --log-dir server also stops with exit 0 on --stop-event");
+            check(ReadWholeFile(logFile).find("terminate requested") != std::string::npos
+                      && ReadWholeFile(outPath).empty(),
+                  "M107: the stop is logged to the file, and nothing goes to the original stdout");
+        }
+        CloseHandle(ev);
+        std::filesystem::remove_all(logDir.parent_path(), ec);
+    }
+
+    // 3. 存在しない名前は exit 1
+    {
+        ChildServer c = LaunchSelf(L"--local-demo --port " + std::to_wstring(basePort + 2)
+                                       + L" --stop-event mye_server_selftest_no_such_event_"
+                                       + std::to_wstring(GetCurrentProcessId()),
+                                   outPath);
+        const DWORD code = c.started ? FinishChild(c, 30000) : 9999;
+        check(code == 1 && ReadWholeFile(outPath).find("does not exist") != std::string::npos,
+              "M107: --stop-event with a name that does not exist exits 1 with a reason");
+    }
+    // 4. managed と Anywhere の引数の併記は exit 1 + 理由 (InitSDK を呼ぶ前)
+    {
+        ChildServer c = LaunchSelf(L"--local-demo --port " + std::to_wstring(basePort + 3)
+                                       + L" --hosting gamelift-managed --gamelift-fleet-id x",
+                                   outPath);
+        const DWORD code = c.started ? FinishChild(c, 30000) : 9999;
+        const std::string text = ReadWholeFile(outPath);
+        check(code == 1 && text.find("conflicts with") != std::string::npos && text.find("[gamelift]") == std::string::npos,
+              "M107: gamelift-managed together with a --gamelift-* option exits 1 with a reason before InitSDK");
+    }
+    std::filesystem::remove(repPath, ec);
+    std::filesystem::remove(outPath, ec);
+}
+
 } // namespace
 
 bool RunServerSelfTest()
@@ -658,8 +922,12 @@ bool RunServerSelfTest()
 
     TestPeerTable(check);
     TestGameLiftHosting(check);
+    TestManagedHosting(check);
+    TestStopRequest(check);
     TestSessionFunnel(check, tempDir);
     TestLoopTerminate(check, tempDir);
+    TestLoopStopRequest(check);
+    TestRealStopEventAndLog(check, tempDir);
     TestRealConsoleTerminate(check, tempDir);
     // Server.exe でも Recast 系のハッシュが Editor と一致することを確かめる (M82a)
     check(RunNavDeterminismSelfTest(), "NavMesh: Recast のビット一致と状態の復元");

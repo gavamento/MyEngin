@@ -5,6 +5,8 @@
 //====================================================================================
 #include <cstdio>
 #include <filesystem>
+#include <fcntl.h>
+#include <io.h>
 #include <memory>
 #include <string>
 
@@ -25,6 +27,7 @@
 #include "Server/Hosting/LocalHosting.h"
 #include "Server/ServerLoop.h"
 #include "Server/ServerSelfTest.h"
+#include "Server/StopRequest.h"
 
 namespace {
 
@@ -78,6 +81,8 @@ struct ServerOptions {
     std::wstring gameLiftFleetId;
     std::wstring gameLiftHostId;
     std::wstring gameLiftProcessId; // 省略時はプロセス ID
+    std::wstring stopEvent;         // --stop-event: 既存の名前付きイベント。立つと Ctrl+C と同じ停止
+    std::wstring logDir;            // --log-dir: <dir>\server-<pid>.log へ stdout / stderr を向ける
 };
 
 // GameLift のトークンを渡す環境変数 (約 15 分で失効する)
@@ -86,19 +91,26 @@ constexpr const wchar_t* kGameLiftTokenEnv = L"MYE_GAMELIFT_AUTH_TOKEN";
 void PrintUsage()
 {
     std::fprintf(stderr,
-                 "usage: Server.exe [--port N] [--hosting local|gamelift] [--max-players 1..4] [--*-demo | --scene <path>]\n"
+                 "usage: Server.exe [--port N] [--hosting local|gamelift|gamelift-managed] [--max-players 1..4]\n"
+                 "                  [--*-demo | --scene <path>] [--stop-event NAME] [--log-dir DIR]\n"
                  "                  [--net-delay N] [--net-deadline N] [--net-rejoin-timeout N] [--net-loss N]\n"
                  "                  [--replay-record <file.rep>] [--replay-ticks N] [--exit-when-empty] [--loopback]\n"
                  "                  [--server-timeout SEC] [--allow-game-mismatch] [--project <dir>] [--synth-input]\n"
                  "                  [--crash-test KIND --crash-at-tick N] [--no-crash-handler]\n"
                  "                  [--gamelift-ws-url URL --gamelift-fleet-id ID --gamelift-host-id ID\n"
                  "                   [--gamelift-process-id ID]]   (--hosting gamelift; token in env MYE_GAMELIFT_AUTH_TOKEN)\n"
+                 "                  (--hosting gamelift-managed: managed EC2 fleet, InitSDK() without arguments; takes no\n"
+                 "                   --gamelift-* option and no token)\n"
                  "       Server.exe --replay-verify <file.rep> [--*-demo | --scene <path>] [--project <dir>]\n"
                  "       Server.exe --selftest\n"
                  "  (live server)    Runs the confirmed-input server on UDP port N (default 7777) until every client has\n"
                  "                   left (--exit-when-empty), --replay-ticks is reached, --server-timeout expires or\n"
-                 "                   Ctrl+C / the hosting terminates it. The .rep is written as the session runs and closed\n"
-                 "                   on every normal exit. exit 0 = normal, 1 = failed, 5 = --server-timeout.\n"
+                 "                   Ctrl+C / --stop-event / the hosting terminates it. The .rep is written as the session runs and\n"
+                 "                   closed on every normal exit. exit 0 = normal, 1 = failed, 5 = --server-timeout.\n"
+                 "  --stop-event     Opens an existing named event (it must exist, else exit 1); signalling it stops the\n"
+                 "                   server like Ctrl+C (any hosting): the .rep is closed, GameLift gets ProcessEnding.\n"
+                 "  --log-dir        Creates DIR and writes stdout / stderr to DIR\\server-<pid>.log (also offered to\n"
+                 "                   GameLift as a log to collect). Log lines reach stdout / stderr / the file one by one.\n"
                  "  --replay-verify  Replays a .rep headlessly and compares every tick's world hash.\n"
                  "                   exit 0 = all ticks identical, 1 = mismatch / could not run, "
                  "2 = a GPU / audio module was loaded.\n"
@@ -130,8 +142,22 @@ std::unique_ptr<mye::IHostingProvider> MakeHosting(const ServerOptions& opt)
     if (opt.hosting == L"local") {
         return std::make_unique<mye::LocalHosting>();
     }
+    if (opt.hosting == L"gamelift-managed") {
+        // マネージド EC2 の接続情報は GameLift が与える。Anywhere の引数との併記は矛盾なので InitSDK 前に止める
+        if (!opt.gameLiftWsUrl.empty() || !opt.gameLiftFleetId.empty() || !opt.gameLiftHostId.empty()
+            || !opt.gameLiftProcessId.empty()) {
+            std::fprintf(stderr,
+                         "--hosting gamelift-managed conflicts with --gamelift-ws-url / --gamelift-fleet-id / "
+                         "--gamelift-host-id / --gamelift-process-id (those are for --hosting gamelift)\n");
+            return nullptr;
+        }
+        mye::GameLiftHostingOptions managed;
+        managed.managedEc2 = true;
+        managed.laneCount = static_cast<uint32_t>(opt.maxPlayers);
+        return std::make_unique<mye::GameLiftHosting>(mye::CreateAwsGameLiftSdk(), std::move(managed));
+    }
     if (opt.hosting != L"gamelift") {
-        std::fprintf(stderr, "--hosting %s is not known (local | gamelift)\n",
+        std::fprintf(stderr, "--hosting %s is not known (local | gamelift | gamelift-managed)\n",
                      mye::WideToUtf8(opt.hosting).c_str());
         return nullptr;
     }
@@ -168,13 +194,48 @@ std::unique_ptr<mye::IHostingProvider> MakeHosting(const ServerOptions& opt)
     return std::make_unique<mye::GameLiftHosting>(mye::CreateAwsGameLiftSdk(), std::move(go));
 }
 
+// stdout / stderr を dir\server-<pid>.log へ向ける。成功したらそのファイルの絶対パスを返す (失敗は空 + stderr に理由)。
+// stdout / stderr の FILE はそのまま (バッファ設定も維持) で、下の fd 1 / 2 だけを差し替える
+std::wstring RedirectLogToFile(const std::wstring& dir)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::filesystem::path path =
+        std::filesystem::absolute(std::filesystem::path(dir) / (L"server-" + std::to_wstring(GetCurrentProcessId()) + L".log"), ec);
+    // 読み手 (エディタ・tail) が開いたままでも読めるよう、共有を許す CreateFileW で開く
+    // (freopen / fopen_s は他者の読み取りを拒むことがある)
+    const HANDLE file = ec ? INVALID_HANDLE_VALUE
+                           : CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const int fd = file == INVALID_HANDLE_VALUE ? -1 : _open_osfhandle(reinterpret_cast<intptr_t>(file), _O_WRONLY);
+    if (fd < 0) {
+        std::fprintf(stderr, "--log-dir: could not open %s for writing\n", mye::WideToUtf8(path.wstring()).c_str());
+        return {};
+    }
+    // 2 本を同じファイルへ (_dup2 が複製したハンドルは書き込み位置を共有する)。元の fd は閉じてよい
+    const bool redirected = _dup2(fd, _fileno(stdout)) == 0 && _dup2(fd, _fileno(stderr)) == 0;
+    _close(fd);
+    if (!redirected) {
+        std::fprintf(stderr, "--log-dir: could not redirect stdout / stderr\n");
+        return {};
+    }
+    return path.wstring();
+}
+
 // 実運用ループを回す。sim の起動・H2 の自己検査・ホスティングの寿命をここで持つ
 int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool tickLimitGiven,
-                  mye::CrashTestKind crashKind)
+                  mye::CrashTestKind crashKind, const std::wstring& logFilePath)
 {
     // 接続情報の不備は sim の起動 (数秒) より先に知らせる
     std::unique_ptr<mye::IHostingProvider> hostingPtr = MakeHosting(opt);
     if (hostingPtr == nullptr) {
+        return 1;
+    }
+    // 停止要求の受け口 (ホスティングの種類によらず 1 つ)。イベントが開けないのは呼び出し側の誤りなので sim より先に exit 1
+    mye::StopRequest stop;
+    if (!opt.stopEvent.empty() && !stop.OpenEvent(opt.stopEvent)) {
+        std::fprintf(stderr, "--stop-event %s: the named event does not exist (the caller must create it first)\n",
+                     mye::WideToUtf8(opt.stopEvent).c_str());
         return 1;
     }
     mye::IHostingProvider& hosting = *hostingPtr;
@@ -213,6 +274,10 @@ int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool t
     lc.timeoutSec = static_cast<uint32_t>(opt.timeoutSec);
     lc.crashTestKind = static_cast<uint8_t>(crashKind);
     lc.crashAtTick = setup.config.crashTestTick;
+    lc.stop = &stop;
+    if (!logFilePath.empty()) {
+        lc.extraLogPaths.push_back(logFilePath);
+    }
 
     if (!hosting.Init()) {
         MYE_LOG_ERROR("[server] hosting '%s' failed to initialise", hosting.Name());
@@ -222,6 +287,8 @@ int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool t
         TerminateProcess(GetCurrentProcess(), 1);
         return 1;
     }
+    // Init (InitSDK は最大 30 秒かかる) が済んでから入れる。それまでの Ctrl+C は既定どおり即時終了
+    stop.InstallConsoleHandler();
     const int rc = mye::RunServerLoop(sim, hosting, lc);
     hosting.Shutdown();
     // 終了前の H2 検査: ライブサーバでも GPU / 音声 / C# ホストを一度もロードしていないこと
@@ -235,6 +302,10 @@ int RunLiveServer(mye::HeadlessSimSetup& setup, const ServerOptions& opt, bool t
 
 int wmain(int argc, wchar_t** argv)
 {
+    // stdout がファイル・パイプのとき CRT は全バッファにする (ログが数 KB たまるまで届かない)。
+    // MSVC では _IOLBF が _IOFBF 扱いなので、行ごとに届けるには _IONBF (ログは 1 行 1 回の fputs)
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
     mye::HeadlessSimSetup setup;
     setup.config.title = L"MyEngine Server";
     mye::EngineCliExtras cli;
@@ -291,6 +362,10 @@ int wmain(int argc, wchar_t** argv)
             opt.loopback = true;
         } else if (arg == L"--server-timeout" && i + 1 < argc) {
             opt.timeoutSec = _wtoi(argv[++i]);
+        } else if (arg == L"--stop-event" && i + 1 < argc) {
+            opt.stopEvent = argv[++i];
+        } else if (arg == L"--log-dir" && i + 1 < argc) {
+            opt.logDir = argv[++i];
         } else if (arg == L"--gamelift-ws-url" && i + 1 < argc) {
             opt.gameLiftWsUrl = argv[++i];
         } else if (arg == L"--gamelift-fleet-id" && i + 1 < argc) {
@@ -350,7 +425,14 @@ int wmain(int argc, wchar_t** argv)
                 return 1;
             }
         }
-        return RunLiveServer(setup, opt, tickLimitGiven, crashKind);
+        std::wstring logFilePath;
+        if (!opt.logDir.empty()) {
+            logFilePath = RedirectLogToFile(opt.logDir);
+            if (logFilePath.empty()) {
+                return 1;
+            }
+        }
+        return RunLiveServer(setup, opt, tickLimitGiven, crashKind, logFilePath);
     }
 
     int exitCode = 0;

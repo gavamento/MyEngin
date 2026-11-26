@@ -47,7 +47,10 @@ class IGameLiftSdk {
 public:
     virtual ~IGameLiftSdk() = default;
 
+    // Anywhere: 接続情報を渡して InitSDK する
     virtual GameLiftResult InitSdk(const GameLiftConnection& connection) = 0;
+    // マネージド EC2: 引数なしの InitSDK (接続情報は GameLift が環境変数で与える)
+    virtual GameLiftResult InitSdkManaged() = 0;
     virtual GameLiftResult ProcessReady(uint16_t port, const std::vector<std::string>& logPaths,
                                         const GameLiftCallbacks& callbacks) = 0;
     virtual GameLiftResult ActivateGameSession() = 0;

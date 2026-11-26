@@ -12,6 +12,7 @@
 #include "Engine/Engine/Session/SessionTypes.h"
 #include "Engine/Platform/Net/UdpSocket.h"
 #include "Server/Hosting/IHostingProvider.h"
+#include "Server/StopRequest.h"
 
 namespace mye {
 
@@ -33,6 +34,10 @@ struct ServerLoopConfig {
     // 逐次記録した .rep とクラッシュバンドルの検証に使う。0 = 無効
     uint8_t crashTestKind = 0;       // CrashTestKind
     int64_t crashAtTick = 0;
+    // 停止要求 (Ctrl+C / --stop-event)。ホスティングの Poll と同じ位置で見て、Terminate と同じ扱いにする。null = 無し
+    const StopRequest* stop = nullptr;
+    // ホスティングへ回収を頼むログ (--log-dir のファイル)。.rep のパスに続けて ProcessReady へ渡す
+    std::vector<std::wstring> extraLogPaths;
 };
 
 // .rep の逐次書き出しの flush 間隔 (tick)。異常終了で失う記録は最大でこの長さ (60 tick = 1 秒)
