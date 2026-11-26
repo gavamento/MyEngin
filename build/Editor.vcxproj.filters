@@ -372,6 +372,18 @@
     <ClCompile Include="..\src\Editor\Tools\FractureEditorSelfTest.cpp">
       <Filter>Tools</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\AwsCliCommands.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\AwsCliParse.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\CliProcess.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.cpp">
+      <Filter>Tools\GameLift</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackage.cpp">
       <Filter>Tools\GameLift</Filter>
     </ClCompile>
@@ -914,6 +926,18 @@
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\FractureEditorSelfTest.h">
       <Filter>Tools</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\AwsCliCommands.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\AwsCliParse.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\CliProcess.h">
+      <Filter>Tools\GameLift</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.h">
+      <Filter>Tools\GameLift</Filter>
     </ClInclude>
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackage.h">
       <Filter>Tools\GameLift</Filter>

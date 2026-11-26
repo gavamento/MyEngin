@@ -65,6 +65,17 @@ try {
         '#include "Editor/Tools/Terminal/TerminalSession.h"',
         '#include "Editor/Tools/TerminalLike.h"'
     ) -Encoding UTF8
+    # 規則 22 (M107): GameLift 窓 (Editor\Tools\GameLift) を下位層から include しない。Editor 側と、コメント内の言及は通す
+    Set-Content -Path (Join-Path $browserBadDir 'Bad22.cpp') -Value @(
+        '#include "Editor/Tools/GameLift/CliProcess.h"',
+        '#  include <Editor\Tools\GameLift\AwsCliParse.h>',
+        '// #include "Editor/Tools/GameLift/Commented.h" はコメントの中なので許容'
+    ) -Encoding UTF8
+    Set-Content -Path (Join-Path $trackRuntimeDir 'Bad22Runtime.h') -Value @('#include "../Editor/Tools/GameLift/AwsCliCommands.h"') -Encoding UTF8
+    Set-Content -Path (Join-Path $trackEditorDir 'Good22.cpp') -Value @(
+        '#include "Editor/Tools/GameLift/CliProcess.h"',
+        '#include "Editor/Tools/GameLiftLike.h"'
+    ) -Encoding UTF8
     $out = & pwsh -NoProfile -File $checker -SourceRoot $root 2>&1 | Out-String
     $rule18 = @($out -split "`n" | Where-Object { $_ -match '\[rule 18\]' })
     $fail = 0
@@ -100,6 +111,15 @@ try {
     if ($rule21.Count -ne 3) { Write-Host "FAIL: expected exactly 3 rule 21 errors in total, got $($rule21.Count)"; $fail21++ }
     if ($fail21 -eq 0) { Write-Host 'PASS: rule 21 flags includes of Editor\Tools\Terminal from Server / Runtime (3), spares the Editor layer and comments' }
     $fail += $fail21
+
+    $rule22 = @($out -split "`n" | Where-Object { $_ -match '\[rule 22\]' })
+    $fail22 = 0
+    if (@($rule22 | Where-Object { $_ -match 'Bad22\.cpp' }).Count -ne 2) { Write-Host "FAIL: expected 2 rule 22 errors in Bad22.cpp (comment excluded), got $(@($rule22 | Where-Object { $_ -match 'Bad22\.cpp' }).Count)"; $fail22++ }
+    if (@($rule22 | Where-Object { $_ -match 'Bad22Runtime\.h' }).Count -ne 1) { Write-Host 'FAIL: Runtime must not include Editor\Tools\GameLift'; $fail22++ }
+    if (@($rule22 | Where-Object { $_ -match 'Good22\.cpp' }).Count -ne 0) { Write-Host 'FAIL: an Editor file including Tools\GameLift must not be flagged'; $fail22++ }
+    if ($rule22.Count -ne 3) { Write-Host "FAIL: expected exactly 3 rule 22 errors in total, got $($rule22.Count)"; $fail22++ }
+    if ($fail22 -eq 0) { Write-Host 'PASS: rule 22 flags includes of Editor\Tools\GameLift from Server / Runtime (3), spares the Editor layer and comments' }
+    $fail += $fail22
     exit $(if ($fail -eq 0) { 0 } else { 1 })
 }
 finally {

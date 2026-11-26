@@ -1524,6 +1524,19 @@ foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extens
     }
 }
 
+# 規則 22: GameLift 窓 (M107) は Editor 層に閉じ込める
+# aws CLI を子プロセスとして呼ぶ機能は、エディタの UI 状態であって sim の入力ではない。
+# Engine / Runtime / GameLogic / Shared / Server から Editor\Tools\GameLift\ を include した瞬間に、ゲーム側が外部 CLI の結果と結合する。
+# 静的に見えるのは include だけなので、そこを機械検査する (規則 19〜21 と同じ作り。-SourceRoot でフィクスチャを差し替えて自己検査できる)
+$gameLiftRoots = @('Engine', 'Runtime', 'GameLogic', 'Shared', 'Server')
+foreach ($f in (Get-ChildItem -Recurse -File $srcDirs | Where-Object { $_.Extension -in '.cpp', '.h', '.hpp', '.inl' })) {
+    $rel = $f.FullName.Substring($srcRootFull.Length).TrimStart([char]92)
+    $top = ($rel -split '[\\/]')[0]
+    if ($gameLiftRoots -contains $top) {
+        Test-CodeLines $f '#\s*include\s*[<"][^>"]*Editor[\\/]Tools[\\/]GameLift[\\/]' 'rule 22' 'the GameLift window is an Editor-layer feature - do not include it from Engine / Runtime / GameLogic / Shared / Server'
+    }
+}
+
 Write-Host "=== result: $errors error(s), $warnings warning(s) ==="
 if ($errors -gt 0) { exit 1 }
 exit 0

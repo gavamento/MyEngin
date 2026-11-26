@@ -141,6 +141,10 @@
     <ClCompile Include="..\src\Editor\Tools\FractureBakeCommit.cpp" />
     <ClCompile Include="..\src\Editor\Tools\FractureBakeService.cpp" />
     <ClCompile Include="..\src\Editor\Tools\FractureEditorSelfTest.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\AwsCliCommands.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\AwsCliParse.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\CliProcess.cpp" />
+    <ClCompile Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackage.cpp" />
     <ClCompile Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.cpp" />
     <ClCompile Include="..\src\Editor\Tools\ModalTools.cpp" />
@@ -322,6 +326,10 @@
     <ClInclude Include="..\src\Editor\Tools\FractureBakeCommit.h" />
     <ClInclude Include="..\src\Editor\Tools\FractureBakeService.h" />
     <ClInclude Include="..\src\Editor\Tools\FractureEditorSelfTest.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\AwsCliCommands.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\AwsCliParse.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\CliProcess.h" />
+    <ClInclude Include="..\src\Editor\Tools\GameLift\GameLiftCliSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackage.h" />
     <ClInclude Include="..\src\Editor\Tools\GameLift\ServerPackageSelfTest.h" />
     <ClInclude Include="..\src\Editor\Tools\ModalTools.h" />

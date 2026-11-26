@@ -20,12 +20,20 @@ spec 4.1.4 (共通) と 4.1.5 (Anywhere)、4.3 のうち Anywhere タブと確�
    `<project>\cache\gamelift\server-<日時>.log` へ (sub-01 で行単位に届く)。窓はログを読んで `ProcessReady sent` で「待機中」、
    プロセス終了で exit code とログ末尾 8 行を出す。停止 = イベント → 10 秒待つ → 終わらなければ TerminateProcess + 警告。
    エディタ終了時も同じ停止手順。
+   - (VERDICT sub-03 round 1 の回答) Server.exe の起動には `CliProcess` を**使わない**。`CliProcess` は stdout を全部メモリへ溜めるので、短い CLI 呼び出し専用とする。
+     Server.exe は stdout / stderr をファイルへ向ける専用の起動にする。環境ブロックは sub-03 の `BuildEnvironmentBlock` を使い、
+     継承ハンドルは `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` で絞り、Job (kill-on-close) に入れる (作りは `CliProcess::Start` と同じ)。
+     既存の `ChildProcess.{h,cpp}` の振る舞いは変えない。
 5. **クライアントの起動**: `<exeDir>\Runtime.exe --project <proj> --net-connect <ip>:<port> --player-session-id <id>`
    (player session を作った同じ流れで直ちに。作業ディレクトリ = プロジェクト)。
 6. **設定の保存**: `<project>\.mye\editor_settings.json` の `gameLift` (D17)。トークンは書かない。
 7. **aws login を開く**: 新しいコンソール窓で `aws login` (対話はユーザーがそちら)。完了待ちはしない。
 8. **UI 文字列**: `LocalizationTable.inl` に両言語。識別子の接頭辞は既存と衝突しない名前 (例 `GameLift_`)。
-9. 自己テスト (偽 CLI = プロセス内の差し替え。必要なら `cmd.exe`) と、一時プローブ + `--screenshot` の撮影 (プローブはコミットしない)。
+9. **(VERDICT sub-03 round 1 #1 からの持ち越し)** sub-03 の `AwsCliCommands` の入力検査を項目ごとにする (spec D14 の改訂)。
+   コンピュート名とロケーション接尾辞は英数と `-` だけ (`_` `.` は拒否)、接尾辞は `custom-` を足して 64 文字以内。
+   コンピュート名の既定は PC 名を英数と `-` へ整えたもの (`_` `.` → `-`、空なら `mye-dev-pc`)。
+   `gameliftcli` スイートに `my_pc` / `a.b` / 長すぎる接尾辞を拒否する項目を足す。
+10. 自己テスト (偽 CLI = プロセス内の差し替え。必要なら `cmd.exe`) と、一時プローブ + `--screenshot` の撮影 (プローブはコミットしない)。
 
 ## やらないこと (このサブでは)
 
