@@ -2,7 +2,7 @@
 
 - 依頼原文: AWSとつなげてオンラインできる機能をもっと簡単に使えるように死体
 - 開始: 2026-11-27 / 基点コミット: 276f8613af9e7981cb125ee2d1173b4e51b00fa1
-- フェーズ: 実装
+- フェーズ: 実装 (sub-05 はユーザーの手動チェックポイント待ち)
 
 ## サブ進捗
 | サブ | 状態 | 往復 | コミット | メモ |
@@ -10,7 +10,7 @@
 | sub-01 | OK | 1 | 45131630 | Server.exe: gamelift-managed / 停止一本化 / ログ。nit 2 件 (StopRequest.h の Windows.h、--log-dir 時のエラー出先は sub-06 文書へ) |
 | sub-02 | OK | 1 | 0c391a7c | サーバ版の組み立て + 局所起動。nit 2 件 (install.bat の start /wait = R9、BuildServerPackage が長い)。**手動チェックポイント待ち (ユーザー)** |
 | sub-03 | OK | 1 | d34384a8 | aws CLI 層 + check_rules 規則 22。should 1 件 (コンピュート名・ロケーションの許可文字が AWS より広い) は spec D14 を直して sub-04 の 9 項へ持ち越し |
-| sub-04 | OK | 2 | (本コミット) | GameLift 窓 共通部 + Anywhere。round 1 REWORK (確認ダイアログ裏のリージョン欄が空 = 撮影段取り + 編集中の欄が追従しない弱点、640x720 へ)。nit: SyncField の ClearActiveID が別の欄の編集も外す |
+| sub-04 | OK | 2 | 8cb8137b | GameLift 窓 共通部 + Anywhere。round 1 REWORK (確認ダイアログ裏のリージョン欄が空 = 撮影段取り + 編集中の欄が追従しない弱点、640x720 へ)。nit: SyncField の ClearActiveID が別の欄の編集も外す |
 | sub-05 | 未着手 | 0 | | EC2 + 課金中表示 (チェックポイント通過が前提) |
 | sub-06 | 未着手 | 0 | | 文書・ADR-042・版 0.90.4 |
 
@@ -35,7 +35,7 @@
 
 ## 申し送り (セッション跨ぎ)
 - 事前調査の結果は `plans/m107-gamelift-editor/design-draft.md`
-- (司会 2026-11-27) **サブが OK になるたび、技術解説を Notion 活動記録に 1 ページ書く (ユーザー指示。人が読む前提で分かりやすく、詳しく。「なぜ」だけでなく**実際にどんなコードを書いたか** (起動〜停止の流れ、ファイルごとの変更、実際の差分からのコード抜粋と読み方、テストの仕組み) も書く。抜粋はコミットの差分から取り、創作しない)**。sub-01 = https://app.notion.com/p/42402024a4d48193bb6df9776c2fc320 / sub-02 = https://app.notion.com/p/42402024a4d48134bc47f95116d24f2d / sub-03 = https://app.notion.com/p/42402024a4d481d8b444ff44fbce1839
+- (司会 2026-11-27) **サブが OK になるたび、技術解説を Notion 活動記録に 1 ページ書く (ユーザー指示。人が読む前提で分かりやすく、詳しく。「なぜ」だけでなく**実際にどんなコードを書いたか** (起動〜停止の流れ、ファイルごとの変更、実際の差分からのコード抜粋と読み方、テストの仕組み) も書く。抜粋はコミットの差分から取り、創作しない)**。sub-01 = https://app.notion.com/p/42402024a4d48193bb6df9776c2fc320 / sub-02 = https://app.notion.com/p/42402024a4d48134bc47f95116d24f2d / sub-03 = https://app.notion.com/p/42402024a4d481d8b444ff44fbce1839 / sub-04 = https://app.notion.com/p/42402024a4d481d3863ac0b9be4bd081
 - (司会 2026-11-27) **M107 完了時に hooks を戻す (ユーザー指示)**。止まらないよう `C:\Users\akita\.claude\settings.json` の `hooks` 節を `C:\Users\akita\.claude\hooks-disabled-20261127.json` へ退避中 (全体のバックアップは `settings.json.bak-20261127-hooks`)。戻すときはバックアップで上書きせず、退避ファイルの `hooks` を現在の settings.json へ書き戻す (途中で変わった他の設定を消さないため)。戻したらユーザーに報告する
 - (planner 2026-11-27) spec.md は「仮確定」。AskUserQuestion が使えなかったため Q1〜Q5 と確定確認は司会がユーザーに聞く (spec 7.)。
 - (planner) **sub-02 の OK 後に手動チェックポイント** (sub-02.md 末尾の CLI 手順、EC2 c5.large を 1 時間未満)。結果を planner へ渡してから sub-05 に着手する。ERROR なら sub-02 差し戻しの可能性。

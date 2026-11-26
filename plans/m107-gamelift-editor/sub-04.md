@@ -1,7 +1,7 @@
 # sub-04: GameLift 窓: 共通部と Anywhere の手順
 
 - 依存: sub-01 (`--stop-event` / 行単位ログ)、sub-03 (CLI 層)
-- 状態: 未着手
+- 状態: OK (commit 8cb8137b)
 - 往復: 0
 
 ## やること
